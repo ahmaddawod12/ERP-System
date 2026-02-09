@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "625201590447",
+    "project_id": "cooling-inventory-5be04",
+    "storage_bucket": "cooling-inventory-5be04.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:625201590447:android:ebcc193555186b2997a45a",
+        "android_client_info": {
+          "package_name": "com.coolinginventory.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNlZzuofLLkFf36UeaSwfpMBxWjnkz2t0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

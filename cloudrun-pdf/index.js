@@ -1,0 +1,684 @@
+/**
+ * Cloud Run Service: PDF Document Generator & Preview (Merged)
+ * 
+ * Single service handling both PDF generation and preview using shared Puppeteer browser.
+ * - /generate - Generates final PDFs and saves to Firestore + Storage
+ * - /preview - Generates preview PDFs with temporary storage
+ * 
+ * Configuration:
+ * - Min instances: 0 (scale to zero when idle)
+ * - Max instances: 5 (testing level)
+ * - Concurrency: 2 (2 browser tabs per instance - shared between preview & generate)
+ * - Memory: 2Gi
+ * - CPU: 2
+ * - Timeout: 300s
+ * 
+ * Email Delivery:
+ * - Sends document emails to clients if email is provided
+ * - Supports SendGrid and Amazon SES providers
+ * - Configure via EMAIL_PROVIDER environment variable
+ */
+
+const express = require('express');
+const admin = require('firebase-admin');
+const puppeteer = require('puppeteer');
+const sanitizeHtml = require('sanitize-html');
+const { v4: uuidv4 } = require('uuid');
+
+// Email service for document delivery
+const { getEmailServiceInstance, getDocumentTitle } = require('./emailService');
+
+// Initialize Firebase Admin with storage bucket
+admin.initializeApp({
+  storageBucket: 'cooling-inventory-5be04.firebasestorage.app'
+});
+const db = admin.firestore();
+const storage = admin.storage();
+
+const app = express();
+app.use(express.json());
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+const PREVIEW_URL_EXPIRATION = 60 * 60; // 1 hour in seconds
+const MAX_ITEMS_PER_DOCUMENT = 100;
+const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_CONCURRENT_TABS = 2; // Shared between preview and generate
+const TAB_WAIT_TIMEOUT = 10000; // 10 seconds
+const DOC_TYPE = {
+  PRICE_PROPOSAL: 10,
+  DELIVERY_NOTE: 200,
+  RETURN_CERTIFICATE: 210,
+  TAX_INVOICE: 305,
+  REFUND: 330,
+  RECEIPT: 400
+};
+// ============================================================================
+// SHARED BROWSER MANAGEMENT (Singleton)
+// ============================================================================
+let browserInstance = null;
+let activeTabs = 0;
+
+/**
+ * Get or create shared browser instance
+ * Browser is shared between preview and generate tasks
+ */
+async function getBrowser() {
+  if (!browserInstance) {
+    console.log('Launching new shared browser instance...');
+    browserInstance = await puppeteer.launch({
+      headless: 'new',
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+      ],
+    });
+    
+    browserInstance.on('disconnected', () => {
+      console.log('Browser disconnected, will create new instance on next request');
+      browserInstance = null;
+      activeTabs = 0;
+    });
+  }
+  return browserInstance;
+}
+
+/**
+ * Acquire a browser tab slot (blocks until available)
+ */
+async function acquireTab(taskId, taskType) {
+  const waitStartTime = Date.now();
+  
+  while (activeTabs >= MAX_CONCURRENT_TABS) {
+    const waitElapsed = Date.now() - waitStartTime;
+    
+    if (waitElapsed > TAB_WAIT_TIMEOUT) {
+      console.error(`[${taskType}:${taskId}] Timeout waiting for tab after ${waitElapsed}ms. Forcing reset.`);
+      activeTabs = 0;
+      break;
+    }
+    
+    console.log(`[${taskType}:${taskId}] Waiting for tab. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  
+  activeTabs++;
+  console.log(`[${taskType}:${taskId}] Tab acquired. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+}
+
+/**
+ * Release a browser tab slot
+ */
+function releaseTab(taskId, taskType) {
+  if (activeTabs > 0) {
+    activeTabs--;
+  }
+  console.log(`[${taskType}:${taskId}] Tab released. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+}
+
+// ============================================================================
+// HTML TEMPLATE GENERATOR
+// ============================================================================
+const generateDocumentHTML = require('./htmlTemplate');
+
+// ============================================================================
+// PREVIEW TASK PROCESSOR
+// ============================================================================
+async function processPreviewTask(taskData) {
+  const { taskId, documentType, documentData, username, companyName } = taskData;
+  const startTime = Date.now();
+  let page = null;
+  let tabAcquired = false;
+  
+  console.log(`[preview:${taskId}] Processing`, { documentType, username, companyName });
+  
+  try {
+    await acquireTab(taskId, 'preview');
+    tabAcquired = true;
+    
+    const { type, client, items, company, language, documentNumber, date, notes } = documentData;
+    
+    // Validate items
+    if (items && items.length > MAX_ITEMS_PER_DOCUMENT) {
+      throw new Error(`Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed`);
+    }
+    
+    // Fetch logo from Firebase Storage
+    let logoUrl = null;
+    if (companyName) {
+      try {
+        const bucket = storage.bucket();
+        const logoPath = `companies/${companyName}/logo.png`;
+        const logoFile = bucket.file(logoPath);
+        const [exists] = await logoFile.exists();
+        
+        if (exists) {
+          // Download the logo file content
+          const [logoBuffer] = await logoFile.download();
+          // Convert to base64 data URL
+          const base64Logo = logoBuffer.toString('base64');
+          logoUrl = `data:image/png;base64,${base64Logo}`;
+          console.log(`[preview:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
+        } else {
+          console.log(`[preview:${taskId}] No logo found at ${logoPath}`);
+        }
+      } catch (logoError) {
+        console.warn(`[preview:${taskId}] Error fetching logo:`, logoError.message);
+      }
+    }
+    
+    // Generate HTML - for preview, confirmationNumber is empty (not yet approved by Tax Authority)
+    const html = generateDocumentHTML({
+      type: type || documentType,
+      client,
+      items,
+      company,
+      language: language || 'he',
+      documentNumber,
+      date,
+      notes,
+      logoUrl,
+      confirmationNumber: '', // Empty for preview - will be filled after Tax Authority approval
+    });
+    
+    const htmlSize = Buffer.byteLength(html, 'utf8');
+    if (htmlSize > MAX_HTML_SIZE) {
+      throw new Error(`Document HTML too large (${htmlSize} bytes)`);
+    }
+    
+    // Generate PDF using shared browser
+    const browser = await getBrowser();
+    page = await browser.newPage();
+    
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20mm', right: '15mm', bottom: '20mm', left: '15mm' },
+      timeout: 30000
+    });
+    
+    await page.close();
+    page = null;
+    releaseTab(taskId, 'preview');
+    tabAcquired = false;
+    
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      throw new Error('Generated PDF is empty');
+    }
+    
+    const pdfSize = pdfBuffer.length;
+    
+    // Upload to Firebase Storage (temporary preview)
+    const timestamp = Date.now();
+    const previewId = `preview_${documentType}_${timestamp}`;
+    const fileName = `${previewId}.pdf`;
+    const filePath = `previews/${username}/${fileName}`;
+    
+    const bucket = storage.bucket();
+    const file = bucket.file(filePath);
+    const downloadToken = uuidv4();
+    
+    await file.save(pdfBuffer, {
+      metadata: {
+        contentType: 'application/pdf',
+        metadata: {
+          documentType,
+          createdBy: username,
+          createdAt: new Date().toISOString(),
+          isPreview: 'true',
+          taskId,
+          expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString(),
+          firebaseStorageDownloadTokens: downloadToken
+        }
+      }
+    });
+    
+    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
+    
+    const totalTime = Date.now() - startTime;
+    
+    // Update task status
+    await db.collection('documentTasks').doc(taskId).update({
+      status: 'completed',
+      previewURL: downloadUrl,
+      storagePath: filePath,
+      pdfSize,
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processingTimeMs: totalTime,
+      expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString()
+    });
+    
+    console.log(`[preview:${taskId}] Completed`, { pdfSize, totalTime });
+    return { success: true, taskId, previewURL: downloadUrl, pdfSize };
+    
+  } catch (error) {
+    console.error(`[preview:${taskId}] Failed:`, error.message);
+    
+    if (page) {
+      try { await page.close(); } catch (e) { /* ignore */ }
+    }
+    if (tabAcquired) {
+      releaseTab(taskId, 'preview');
+    }
+    
+    await db.collection('documentTasks').doc(taskId).update({
+      status: 'failed',
+      error: error.message,
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processingTimeMs: Date.now() - startTime
+    });
+    
+    throw error;
+  }
+}
+
+// ============================================================================
+// GENERATE TASK PROCESSOR
+// ============================================================================
+async function processGenerateTask(taskData) {
+  const { 
+    taskId, 
+    documentType, 
+    documentData,
+    username, 
+    companyName, 
+    documentId,
+    documentNumber,
+    confirmationNumber, // Tax Authority confirmation number for tax invoices
+    userProfile, // User profile for role-based cache path determination
+  } = taskData;
+  
+  // Determine user role for cache path
+  const userRole = userProfile?.role || 'manager'; // Default to manager if not provided
+  
+  const startTime = Date.now();
+  let page = null;
+  let tabAcquired = false;
+  
+  console.log(`[generate:${taskId}] Processing`, { documentType, username, companyName, documentId, confirmationNumber, userRole });
+  
+  try {
+    await acquireTab(taskId, 'generate');
+    tabAcquired = true;
+    
+    if (!documentId) {
+      throw new Error('Document ID is required');
+    }
+    
+    if (!documentData) {
+      throw new Error('Document data is required');
+    }
+    
+    const { client, items, company, language, date, notes, totals } = documentData;
+    
+    if (!client || !client.name) {
+      throw new Error('Client name is required');
+    }
+    
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      throw new Error('At least one item is required');
+    }
+    
+    if (!company || !company.name) {
+      throw new Error('Company data is required');
+    }
+    
+    // Calculate totals
+    let totalBeforeVat = totals?.totalBeforeVat || 0;
+    let vatAmount = totals?.vatAmount || 0;
+    let totalWithVat = totals?.totalWithVat || 0;
+    
+    if (!totals) {
+      items.forEach(item => {
+        totalBeforeVat += (item.quantity || 1) * (item.price || 0);
+      });
+      vatAmount = totalBeforeVat * 0.18;
+      totalWithVat = totalBeforeVat + vatAmount;
+    }
+    
+    // Fetch logo from Firebase Storage
+    let logoUrl = null;
+    if (companyName) {
+      try {
+        const bucket = storage.bucket();
+        const logoPath = `companies/${companyName}/logo.png`;
+        const logoFile = bucket.file(logoPath);
+        const [exists] = await logoFile.exists();
+        
+        if (exists) {
+          // Download the logo file content
+          const [logoBuffer] = await logoFile.download();
+          // Convert to base64 data URL
+          const base64Logo = logoBuffer.toString('base64');
+          logoUrl = `data:image/png;base64,${base64Logo}`;
+          console.log(`[generate:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
+        } else {
+          console.log(`[generate:${taskId}] No logo found at ${logoPath}`);
+        }
+      } catch (logoError) {
+        console.warn(`[generate:${taskId}] Error fetching logo:`, logoError.message);
+      }
+    }
+    
+    // Generate HTML with all document data including confirmation number
+    const html = generateDocumentHTML({
+      type: documentType,
+      client,
+      items,
+      company,
+      language: language || 'he',
+      documentNumber: documentNumber || documentId,
+      date,
+      notes,
+      logoUrl,
+      confirmationNumber, // Tax Authority confirmation number (מספר הקצאה)
+    });
+    
+    const htmlSize = Buffer.byteLength(html, 'utf8');
+    if (htmlSize > MAX_HTML_SIZE) {
+      throw new Error('Document HTML too large');
+    }
+    
+    // Generate PDF using shared browser
+    const browser = await getBrowser();
+    page = await browser.newPage();
+    
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20mm', right: '15mm', bottom: '20mm', left: '15mm' },
+      timeout: 30000
+    });
+    
+    await page.close();
+    page = null;
+    releaseTab(taskId, 'generate');
+    tabAcquired = false;
+    
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      throw new Error('Generated PDF is empty');
+    }
+    
+    const pdfSize = pdfBuffer.length;
+    
+    // Upload to Storage (permanent)
+    const fileName = `${documentId}.pdf`;
+    const bucket = storage.bucket();
+    const yearMonth = date ? date.slice(0, 7) : new Date().toISOString().slice(0, 7);
+    const filePath = `companies/${companyName}/${yearMonth}/${documentId}/${fileName}`;
+    const file = bucket.file(filePath);
+    const downloadToken = uuidv4();
+    
+    await file.save(pdfBuffer, {
+      metadata: {
+        contentType: 'application/pdf',
+        metadata: {
+          documentType,
+          documentId,
+          createdBy: username,
+          generatedAt: new Date().toISOString(),
+          pdfSize: pdfSize.toString(),
+          firebaseStorageDownloadTokens: downloadToken
+        }
+      }
+    });
+    
+    const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
+    
+    // Determine cache path based on user role
+    // Manager: companies/{companyName}/business_data/cache
+    // User/Basic: {username}/cache
+    const getCachePath = () => {
+      if (userRole === 'manager') {
+        return `companies/${companyName}/business_data/cache`;
+      } else {
+        return `${username}/cache`;
+      }
+    };
+    const cachePath = getCachePath();
+    console.log(`[generate:${taskId}] Using cache path: ${cachePath} for role: ${userRole}`);
+    
+    // Save/update certification data
+    const certificationRef = db.doc(`companies/${companyName}/certifications/c_${documentId}`);
+    const isNewDocument = documentType !== 305;
+    
+    if (isNewDocument) {
+      await certificationRef.set({
+        type: documentType,
+        clientName: client.name,
+        clientEmail: client.email || null,
+        clientPhone: client.phone || null,
+        clientAddress: client.address || null,
+        ...(client.clientId && { clientId: client.clientId }),
+        ...(client.id && !client.clientId && { clientId: client.id }),
+        items: items.map(item => ({
+          description: item.description,
+          quantity: item.quantity,
+          price: item.price,
+          id: item.partId || null,
+        })),
+        notes: notes || null,
+        createdBy: username,
+        createdAt: (new Date()).toISOString(),
+        totalBeforeVat: Math.round(totalBeforeVat * 100) / 100,
+        vatAmount: Math.round(vatAmount * 100) / 100,
+        totalWithVat: Math.round(totalWithVat * 100) / 100,
+        downloadURL,
+        storagePath: filePath,
+      });
+      let documentNumberField;
+      switch (documentType) {
+        case DOC_TYPE.PRICE_PROPOSAL:
+          documentNumberField = 'document_numbers.priceProposal';
+          break;
+        case DOC_TYPE.REFUND:
+          documentNumberField = 'document_numbers.refund';
+          break;
+        case DOC_TYPE.RETURN_CERTIFICATE:
+          documentNumberField = 'document_numbers.returnCertificate';
+          break;
+        case DOC_TYPE.RECEIPT:
+          documentNumberField = 'document_numbers.receipt';
+          break;
+        case DOC_TYPE.DELIVERY_NOTE:
+          documentNumberField = 'document_numbers.deliveryNote';
+          break;
+        default:
+          documentNumber = 1;
+      }
+      if (documentNumberField) {
+        // Update business_info document numbers (always in company path)
+        let businessInfoRef = admin.firestore().doc(`companies/${companyName}/business_data/business_info`);
+        await businessInfoRef.update({
+          [documentNumberField]: admin.firestore.FieldValue.increment(1),
+          last_updated: new Date().toISOString()
+        });
+        
+        console.log(`[generate:${taskId}] Document counter incremented `, { documentType, documentNumber, userRole });
+      }
+    } else {
+      await certificationRef.update({
+        downloadURL,
+        storagePath: filePath,
+      });
+    }
+    
+    // Update certification cache version based on role
+    await db.doc(cachePath).update({
+      [`c_${documentId}`]: 1
+    });
+    console.log(`[generate:${taskId}] Updated certification cache at ${cachePath}`);
+
+    // ========================================================================
+    // EMAIL DELIVERY TO CLIENT
+    // ========================================================================
+    let emailSent = false;
+    let emailMessageId = null;
+    let emailError = null;
+    
+    // Send email if client has email address
+    if (client.email && client.email.trim()) {
+      try {
+        const emailService = getEmailServiceInstance();
+        const documentTitle = getDocumentTitle(documentType, documentNumber || documentId, language || 'he');
+        
+        console.log(`[generate:${taskId}] Sending email to client`, {
+          to: client.email,
+          documentTitle,
+          documentType,
+        });
+        
+        const emailResult = await emailService.sendDocumentEmail({
+          recipientEmail: client.email,
+          recipientName: client.name,
+          documentTitle,
+          documentUrl: downloadURL,
+          language: language || 'he',
+          businessInfo: company,
+        });
+        
+        emailSent = emailResult.success;
+        emailMessageId = emailResult.messageId;
+        emailError = emailResult.error;
+        
+        if (emailSent) {
+          console.log(`[generate:${taskId}] Email sent successfully`, { messageId: emailMessageId });
+        } else {
+          console.warn(`[generate:${taskId}] Email failed`, { error: emailError });
+        }
+      } catch (emailErr) {
+        console.error(`[generate:${taskId}] Email error:`, emailErr.message);
+        emailError = emailErr.message;
+      }
+    } else {
+      console.log(`[generate:${taskId}] No client email - skipping email delivery`);
+    }
+    
+    const totalTime = Date.now() - startTime;
+    
+    // Update task status with email delivery info
+    // Ensure no undefined values are passed to Firestore
+    await db.collection('documentTasks').doc(taskId).update({
+      status: 'completed',
+      documentId,
+      downloadURL,
+      storagePath: filePath,
+      pdfSize,
+      completedAt: (new Date()).toISOString(),
+      processingTimeMs: totalTime,
+      isNewDocument,
+      // Email delivery tracking (never undefined)
+      emailSent: emailSent === true,
+      emailMessageId: emailMessageId || null,
+      emailError: emailError || null,
+      emailRecipient: client.email || null,
+    });
+    
+    console.log(`[generate:${taskId}] Completed`, { documentId, pdfSize, totalTime, emailSent });
+    return { success: true, taskId, documentId, downloadURL, pdfSize, emailSent };
+    
+  } catch (error) {
+    console.error(`[generate:${taskId}] Failed:`, error.message);
+    
+    if (page) {
+      try { await page.close(); } catch (e) { /* ignore */ }
+    }
+    if (tabAcquired) {
+      releaseTab(taskId, 'generate');
+    }
+    
+    await db.collection('documentTasks').doc(taskId).update({
+      status: 'failed',
+      error: error.message,
+      completedAt: (new Date()).toISOString(),
+      processingTimeMs: Date.now() - startTime
+    });
+    
+    throw error;
+  }
+}
+
+// ============================================================================
+// PUB/SUB PUSH ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /preview - Pub/Sub push endpoint for preview tasks
+ */
+app.post('/preview', async (req, res) => {
+  try {
+    if (!req.body || !req.body.message) {
+      return res.status(400).send('Invalid Pub/Sub message format');
+    }
+    
+    const messageData = JSON.parse(
+      Buffer.from(req.body.message.data, 'base64').toString()
+    );
+    
+    console.log('Received preview task:', messageData.taskId);
+    await processPreviewTask(messageData);
+    res.status(200).send('OK');
+    
+  } catch (error) {
+    console.error('Preview task error:', error.message);
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+/**
+ * POST /generate - Pub/Sub push endpoint for generate tasks
+ */
+app.post('/generate', async (req, res) => {
+  try {
+    if (!req.body || !req.body.message) {
+      return res.status(400).send('Invalid Pub/Sub message format');
+    }
+    
+    const messageData = JSON.parse(
+      Buffer.from(req.body.message.data, 'base64').toString()
+    );
+    
+    console.log('Received generate task:', messageData.taskId);
+    await processGenerateTask(messageData);
+    res.status(200).send('OK');
+    
+  } catch (error) {
+    console.error('Generate task error:', error.message);
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+/**
+ * GET /health - Health check endpoint
+ */
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    service: 'pdf-service',
+    activeTabs,
+    maxTabs: MAX_CONCURRENT_TABS,
+    hasBrowser: !!browserInstance,
+    endpoints: ['/preview', '/generate', '/health']
+  });
+});
+
+// ============================================================================
+// START SERVER
+// ============================================================================
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`PDF Service listening on port ${PORT}`);
+  console.log(`Endpoints: POST /preview, POST /generate, GET /health`);
+  console.log(`Max concurrent tabs: ${MAX_CONCURRENT_TABS} (shared between preview & generate)`);
+});

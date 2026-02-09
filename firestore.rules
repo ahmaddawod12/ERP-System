@@ -1,0 +1,337 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get username from email
+    function getUsername() {
+      return request.auth.token.email.split('@')[0];
+    }
+    
+    // Helper function to get user's company name from their profile
+    function getUserCompany() {
+      return get(/databases/$(database)/documents/$(getUsername())/profile).data.companyName;
+    }
+    
+    // Helper function to check if user belongs to a company
+    function hasCompany() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/$(getUsername())/profile) &&
+             'companyName' in get(/databases/$(database)/documents/$(getUsername())/profile).data;
+    }
+    
+    // Helper function to check if user is a manager
+    function isManager() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/$(getUsername())/profile) &&
+             get(/databases/$(database)/documents/$(getUsername())/profile).data.role == 'manager';
+    }
+    
+    // Helper function to check if user is a worker
+    function isWorker() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/$(getUsername())/profile) &&
+             get(/databases/$(database)/documents/$(getUsername())/profile).data.role == 'worker';
+    }
+    
+    // Helper function to check if user is a standard user (not manager or worker)
+    function isUser() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/$(getUsername())/profile) &&
+             get(/databases/$(database)/documents/$(getUsername())/profile).data.role == 'user';
+    }
+    
+    // Helper function to check if user has 'basic' role
+    function isBasic() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/$(getUsername())/profile) &&
+             get(/databases/$(database)/documents/$(getUsername())/profile).data.role == 'basic';
+    }
+    
+    // Helper function to check if user is a dev
+    function isDev() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/$(getUsername())/profile) &&
+             get(/databases/$(database)/documents/$(getUsername())/profile).data.role == 'dev';
+    }
+    
+    // Helper function to check if authenticated user owns the company
+    function ownsCompany(companyName) {
+      return hasCompany() && getUserCompany() == companyName;
+    }
+    
+    // Helper function to check if a worker belongs to manager's company
+    function isWorkerInManagerCompany(workerUsername) {
+      return isManager() && hasCompany() &&
+             exists(/databases/$(database)/documents/$(workerUsername)/profile) &&
+             get(/databases/$(database)/documents/$(workerUsername)/profile).data.companyName == getUserCompany();
+    }
+    
+    // Company data rules - Managers, Users, and Basic can manage their company, Workers can read
+    match /companies/{companyName} {
+      // Allow reading company metadata
+      allow read: if ownsCompany(companyName) && (isManager() || isUser() || isWorker() || isBasic());
+      
+      // Allow creating company document (for initial setup)
+      allow create: if isAuthenticated() && 
+                       (isManager() || isUser() || isWorker());
+      
+      // Allow updating nextClientId field for client counter (managers, users, workers)
+      allow update: if ownsCompany(companyName) && 
+                       (isManager() || isUser() || isWorker());
+      
+      // Workers collection - only managers can write
+      match /workers/{document=**} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser());
+        allow write, delete: if ownsCompany(companyName) && isManager();
+      }
+      
+      // Jobs collection - managers can write, workers can update their assigned jobs
+      match /jobs/{jobId} {
+        allow read: if ownsCompany(companyName) && (isManager() || isWorker() || isUser());
+        allow create: if ownsCompany(companyName) && isManager();
+        allow update: if ownsCompany(companyName) && 
+                         (isManager() || 
+                          (isWorker() && resource.data.assignedTo == getUsername()));
+        allow delete: if ownsCompany(companyName) && isManager();
+      }
+      
+      // PendingJobs collection - workers can read/write only their own jobs
+      match /PendingJobs/{jobId} {
+        // Managers can read all pending jobs in their company
+        allow read: if ownsCompany(companyName) && isManager();
+        // Workers can read only jobs where completedBy matches their username
+        allow read: if ownsCompany(companyName) && isWorker() && 
+                       resource.data.completedBy == getUsername();
+        // Users can read only jobs where completedBy matches their username
+        allow read: if ownsCompany(companyName) && isUser() && 
+                       resource.data.completedBy == getUsername();
+        
+        // Managers can create/update/delete any pending job
+        allow write, delete: if ownsCompany(companyName) && isManager();
+        
+        // Workers can CREATE and UPDATE only their own pending jobs (completedBy matches)
+        allow create: if ownsCompany(companyName) && isWorker() && 
+                         request.resource.data.completedBy == getUsername();
+        allow update: if ownsCompany(companyName) && isWorker() && 
+                         resource.data.completedBy == getUsername() &&
+                         request.resource.data.completedBy == getUsername();
+        
+        // Users can CREATE and UPDATE only their own pending jobs (completedBy matches)
+        allow create: if ownsCompany(companyName) && isUser() && 
+                         request.resource.data.completedBy == getUsername();
+        allow update: if ownsCompany(companyName) && isUser() && 
+                         resource.data.completedBy == getUsername() &&
+                         request.resource.data.completedBy == getUsername();
+      }
+      
+      // FinishedJobs collection - workers can read only their own finished jobs
+      match /FinishedJobs/{jobId} {
+        // Managers can read all finished jobs in their company
+        allow read: if ownsCompany(companyName) && isManager();
+        // Workers can read only finished jobs where completedBy matches their username
+        allow read: if ownsCompany(companyName) && isWorker() && 
+                       resource.data.completedBy == getUsername();
+        // Users can read only finished jobs where completedBy matches their username
+        allow read: if ownsCompany(companyName) && isUser() && 
+                       resource.data.completedBy == getUsername();
+        
+        // Managers can write any finished job
+        allow write, delete: if ownsCompany(companyName) && isManager();
+        
+        // Workers can CREATE finished jobs they completed
+        allow create: if ownsCompany(companyName) && isWorker() && 
+                         request.resource.data.completedBy == getUsername();
+        
+        // Users can CREATE finished jobs they created
+        allow create: if ownsCompany(companyName) && isUser() && 
+                         request.resource.data.completedBy == getUsername();
+      }
+      
+      // Finished jobs collection (legacy) - managers and users can write their own, workers can read
+      match /finishedJobs/{jobId} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser() || isWorker());
+        // Managers can write any finished job
+        allow write: if ownsCompany(companyName) && isManager();
+        // Users can write finished jobs they created
+        allow write: if ownsCompany(companyName) && isUser() && 
+                        (request.resource.data.completedBy == getUsername() || 
+                         request.resource.data.assignedBy == getUsername());
+        allow delete: if ownsCompany(companyName) && 
+                         (isManager() || 
+                          (isUser() && resource.data.completedBy == getUsername()));
+      }
+      
+      // Documents collection (for generated PDFs metadata if stored in Firestore)
+      match /documents/{document=**} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser());
+        allow write, delete: if ownsCompany(companyName) && (isManager() || isUser());
+      }
+      
+      // Invoice submissions to Tax Authority
+      match /invoiceSubmissions/{submissionId} {
+        // Managers and Users can read all invoice submissions in their company
+        allow read: if ownsCompany(companyName) && (isManager() || isUser());
+        // Managers and Users can create/update invoice submissions
+        allow create, update: if ownsCompany(companyName) && (isManager() || isUser());
+        // Only managers can delete invoice submissions
+        allow delete: if ownsCompany(companyName) && isManager();
+      }
+      
+      // Business data at company level (business_info, token, inventory, etc.)
+      // Includes company cache document for version tracking
+      // Allow initial setup for new users - business_info can be written by any authenticated user
+      match /business_data/{document} {
+        // Read requires ownership
+        allow read: if isAuthenticated() && 
+                       (ownsCompany(companyName) || 
+                        (exists(/databases/$(database)/documents/$(getUsername())/profile) && 
+                         get(/databases/$(database)/documents/$(getUsername())/profile).data.companyName == companyName));
+        
+        // ─── Inventory document: workers can read only, managers can read/write/update (no delete) ───
+        // Workers can READ the inventory document (to pick company parts)
+        allow read: if document == 'inventory' && ownsCompany(companyName) && isWorker();
+        // Managers can create and update the inventory document but NOT delete
+        allow create, update: if document == 'inventory' && ownsCompany(companyName) && isManager();
+        
+        // Write business_info - only allow initial creation (no updates/deletes from client)
+        // Cloud Functions (Admin SDK) handle all updates to business_info (document counters, etc.)
+        allow create: if document == 'business_info' && isAuthenticated();
+        // Other documents require ownership and correct role
+        allow write: if document != 'business_info' && document != 'inventory' && ownsCompany(companyName) && (isManager() || isUser() || isBasic());
+        
+        // Workers can ONLY update the cache document (to increment job versions when submitting)
+        allow update: if ownsCompany(companyName) && isWorker() && document == 'cache';
+      }
+      
+      // Document locks (for Pub/Sub busy flags)
+      match /documentLocks/{document=**} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser());
+        allow write: if ownsCompany(companyName) && (isManager() || isUser());
+      }
+      
+      // Certifications (generated documents metadata)
+      match /certifications/{document=**} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser() || isWorker() || isBasic());
+        allow write: if ownsCompany(companyName) && (isManager() || isUser() || isBasic());
+      }
+      
+      // Clients collection - shared client directory for the company
+      match /clients/{clientId} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser() || isWorker());
+        allow write: if ownsCompany(companyName) && (isManager() || isUser() || isWorker());
+      }
+      
+      // Any other company subcollections - restrict to managers only
+      match /{document=**} {
+        allow read: if ownsCompany(companyName) && (isManager() || isUser());
+        allow write, delete: if ownsCompany(companyName) && isManager();
+      }
+    }
+    
+    // User profile rules (includes manager, user, worker, basic)
+    match /{username}/profile {
+      // Users can read their own profile
+      allow read: if isAuthenticated() && getUsername() == username;
+      // Users can update their own profile but NOT change role or companyName
+      allow update: if isAuthenticated() && getUsername() == username &&
+                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'companyName']));
+      // Only allow profile creation with proper initial data
+      allow create: if isAuthenticated() && getUsername() == username &&
+                       request.resource.data.keys().hasAll(['role', 'email']);
+      // Managers can read profiles of workers in their company
+      allow read: if isManager() && isWorkerInManagerCompany(username);
+      // Managers can create/update worker profiles in their company
+      allow write: if isManager() && isWorkerInManagerCompany(username);
+    }
+    
+    // User cache rules - stores version numbers and cached data
+    // Basic role: only caches profile, business_info, certifications (NO inventory, NO jobs)
+    match /{username}/cache {
+      // Users (including basic) can read/write their own cache
+      allow read, write: if isAuthenticated() && getUsername() == username;
+      // Managers can read/write cache of workers in their company (for sync purposes and version updates)
+      allow read, write: if isManager() && isWorkerInManagerCompany(username);
+    }
+    
+    // User inventory rules
+    // NOTE: Basic role does NOT have inventory access
+    match /{username}/inventory {
+      // Users (excluding basic) can read/write their own inventory
+      allow read, write: if isAuthenticated() && getUsername() == username && !isBasic();
+      // Managers can read/write inventory of workers in their company
+      allow read, write: if isManager() && isWorkerInManagerCompany(username);
+    }
+    
+    // User jobs rules
+    // NOTE: Basic role does NOT have jobs access
+    match /{username}/jobs/{document=**} {
+      // Users (excluding basic) can read/write their own jobs
+      allow read, write: if isAuthenticated() && getUsername() == username && !isBasic();
+      // Managers can read/write jobs of workers in their company
+      allow read, write: if isManager() && isWorkerInManagerCompany(username);
+    }
+    
+    // Document tasks collection (for Pub/Sub PDF generation tracking)
+    match /documentTasks/{taskId} {
+      // Users can read their own tasks (created by them)
+      allow read: if isAuthenticated() && 
+                     resource.data.createdBy == request.auth.token.email;
+      // Users can read tasks for their company
+      allow read: if isAuthenticated() && 
+                     hasCompany() && 
+                     resource.data.companyName == getUserCompany();
+      // Allow authenticated users to create tasks
+      allow create: if isAuthenticated() && 
+                       request.resource.data.createdBy == request.auth.token.email;
+      // Only Cloud Functions should update/delete (uses Admin SDK, bypasses rules)
+      allow update: if false;
+      allow delete: if false;
+    }
+    
+    // Support conversations collection
+    match /conversations/{conversationId} {
+      // Dev users can read/write all conversations
+      allow read, write: if isDev();
+      
+      // Normal users can read their own conversations (userId is username from email)
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == getUsername();
+      
+      // Normal users can create new conversations with their own userId (username)
+      allow create: if isAuthenticated() && 
+                       request.resource.data.userId == getUsername();
+      
+      // Normal users can update their own conversations
+      // Allow if: 1) conversation is open, OR 2) closed but updating unreadForUser to 0 (marking as read)
+      allow update: if isAuthenticated() && 
+                       resource.data.userId == getUsername() &&
+                       request.resource.data.userId == getUsername() &&
+                       (resource.data.status == 'open' || 
+                        (resource.data.status == 'closed' && request.resource.data.unreadForUser == 0));
+      
+      // Normal users can delete their own conversations
+      allow delete: if isAuthenticated() && 
+                       resource.data.userId == getUsername();
+      
+      // Messages subcollection
+      match /messages/{messageId} {
+        // Dev users can read/write all messages
+        allow read, write: if isDev();
+        
+        // Normal users can read messages from their own conversations
+        allow read: if isAuthenticated() && 
+                       get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == getUsername();
+        
+        // Normal users can create messages in their own conversations (senderRole must be 'user')
+        allow create: if isAuthenticated() && 
+                         get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == getUsername() &&
+                         request.resource.data.senderRole == 'user';
+      }
+    }
+  }
+}

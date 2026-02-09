@@ -15,7 +15,7 @@
  * // Publish a preview task
  * const taskId = await publishPreview({
  *   documentType: 'priceProposal',
- *   companyName: 'mycompany',
+ *   companyId: 'mycompany',
  *   documentData: { client, items, language, date }
  * });
  * 
@@ -183,12 +183,21 @@ export function useDocumentTask(options = {}) {
       }
     }, (err) => {
       console.error('Error listening to task:', err);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
       const errorMsg = 'Failed to track task status';
       setError(errorMsg);
       setIsLoading(false);
       
       if (callbacksRef.current.onError) {
         callbacksRef.current.onError(errorMsg);
+      }
+
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
       }
     });
   }, []);
@@ -198,7 +207,7 @@ export function useDocumentTask(options = {}) {
    * 
    * @param {Object} params
    * @param {string} params.documentType - 'taxInvoice', 'priceProposal', 'refund', 'returnCertificate'
-   * @param {string} params.companyName - Company name for storage
+   * @param {string} params.companyId - Company ID for storage
    * @param {Object} params.documentData - Document data (client, items, etc.)
    * @returns {Promise<string>} Task ID
    */
@@ -243,7 +252,7 @@ export function useDocumentTask(options = {}) {
    * 
    * @param {Object} params
    * @param {string} params.documentType - 'taxInvoice', 'priceProposal', 'refund', 'returnCertificate'
-   * @param {string} params.companyName - Company name for storage
+   * @param {string} params.companyId - Company ID for storage
    * @param {Object} [params.documentData] - Document data (for non-taxInvoice)
    * @param {string} [params.documentId] - Document ID (for taxInvoice)
    * @returns {Promise<string>} Task ID

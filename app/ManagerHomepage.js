@@ -24,7 +24,7 @@ export default function ManagerHomepage() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { username } = useAuth();
+  const { uid } = useAuth();
   const [activeTab, setActiveTab] = useState('management');
   const insets = useSafeAreaInsets();
   const colors = getColors(isDarkMode);

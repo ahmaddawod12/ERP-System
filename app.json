@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Cooling Inventory",
-    "slug": "cooling-inventory",
+    "name": "erp-system",
+    "slug": "erp-system",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,7 +15,7 @@
     "ios": {
       "googleServicesFile": "./GoogleService-Info.plist",
       "supportsTablet": true,
-      "bundleIdentifier": "com.coolinginventory.app",
+      "bundleIdentifier": "erpsystem.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": ["remote-notification", "fetch"]
@@ -29,7 +29,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1e3a8a"
       },
-      "package": "com.coolinginventory.app",
+      "package": "erpsystem.app",
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "CAMERA",
@@ -84,18 +84,15 @@
         }
       ]
     ],
-    "scheme": "coolinginventory",
+    "scheme": "erpsystem",
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f1493d53-bf00-426a-9cdc-cb0ccc5066e7"
+        "projectId": "80bc4597-cc65-476b-80d6-1e88c88e2d7b"
       }
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/032c5ae3-4292-43e3-9e8e-75a672c2de12"
     }
   }
 }

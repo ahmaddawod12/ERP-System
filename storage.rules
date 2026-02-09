@@ -7,88 +7,88 @@ service firebase.storage {
       return request.auth != null;
     }
     
-    // Helper function to get username from email
-    function getUsername() {
-      return request.auth.token.email.split('@')[0];
+    // Helper function to get the authenticated user's identifier (Firebase UID)
+    function getUid() {
+      return request.auth.uid;
     }
     
     // Helper function to check if user is a manager with access to worker's data
-    function isManagerOfWorker(workerUsername) {
+    function isManagerOfWorker(workerId) {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUsername())/profile) &&
-             firestore.get(/databases/(default)/documents/$(getUsername())/profile).data.role == 'manager' &&
-             firestore.exists(/databases/(default)/documents/$(workerUsername)/profile) &&
-             firestore.exists(/databases/(default)/documents/$(getUsername())/profile) &&
-             'companyName' in firestore.get(/databases/(default)/documents/$(getUsername())/profile).data &&
-             'companyName' in firestore.get(/databases/(default)/documents/$(workerUsername)/profile).data &&
-             firestore.get(/databases/(default)/documents/$(getUsername())/profile).data.companyName == 
-             firestore.get(/databases/(default)/documents/$(workerUsername)/profile).data.companyName;
+             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
+             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.role == 'manager' &&
+             firestore.exists(/databases/(default)/documents/$(workerId)/profile) &&
+             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
+             'companyId' in firestore.get(/databases/(default)/documents/$(getUid())/profile).data &&
+             'companyId' in firestore.get(/databases/(default)/documents/$(workerId)/profile).data &&
+             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.companyId == 
+             firestore.get(/databases/(default)/documents/$(workerId)/profile).data.companyId;
     }
     
     // Helper function to check if user is a standard user (not manager or worker)
     function isUser() {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUsername())/profile) &&
-             firestore.get(/databases/(default)/documents/$(getUsername())/profile).data.role == 'user';
+             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
+             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.role == 'user';
     }
     
     // Helper function to check if user is a manager
     function isManager() {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUsername())/profile) &&
-             firestore.get(/databases/(default)/documents/$(getUsername())/profile).data.role == 'manager';
+             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
+             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.role == 'manager';
     }
     
     // Helper function to check if user owns the company
-    function ownsCompany(companyName) {
+    function ownsCompany(companyId) {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUsername())/profile) &&
-             'companyName' in firestore.get(/databases/(default)/documents/$(getUsername())/profile).data &&
-             firestore.get(/databases/(default)/documents/$(getUsername())/profile).data.companyName == companyName;
+             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
+             'companyId' in firestore.get(/databases/(default)/documents/$(getUid())/profile).data &&
+             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.companyId == companyId;
     }
     
     // User job photos and signatures
-    // Path: {username}/jobs/{jobId}/{filename}
-    match /{username}/jobs/{jobId}/{filename} {
+    // Path: {uid}/jobs/{jobId}/{filename}
+    match /{uid}/jobs/{jobId}/{filename} {
       // Users can read/write/delete their own job files
-      allow read, write, delete: if isAuthenticated() && getUsername() == username;
+      allow read, write, delete: if isAuthenticated() && getUid() == uid;
       
       // Managers can read/write/delete files of workers in their company
-      allow read, write, delete: if isManagerOfWorker(username);
+      allow read, write, delete: if isManagerOfWorker(uid);
     }
     
     // Inventory or other user files
-    // Path: {username}/inventory/{filename}
-    match /{username}/inventory/{filename} {
+    // Path: {uid}/inventory/{filename}
+    match /{uid}/inventory/{filename} {
       // Users can read/write/delete their own inventory files
-      allow read, write, delete: if isAuthenticated() && getUsername() == username;
+      allow read, write, delete: if isAuthenticated() && getUid() == uid;
       
       // Managers can read/write/delete inventory files of workers in their company
-      allow read, write, delete: if isManagerOfWorker(username);
+      allow read, write, delete: if isManagerOfWorker(uid);
     }
     
     // Company-level storage for documents (PDFs, invoices, etc.)
-    // Path: companies/{companyName}/documents/{filename}
-    match /companies/{companyName}/documents/{filename} {
+    // Path: companies/{companyId}/documents/{filename}
+    match /companies/{companyId}/documents/{filename} {
       // Managers and users can read/write/delete documents in their own company
-      allow read, write, delete: if ownsCompany(companyName) && (isManager() || isUser());
+      allow read, write, delete: if ownsCompany(companyId) && (isManager() || isUser());
     }
     
     // Company-level storage for job-related files
-    // Path: companies/{companyName}/jobs/{jobId}/{filename}
-    match /companies/{companyName}/jobs/{jobId}/{filename} {
+    // Path: companies/{companyId}/jobs/{jobId}/{filename}
+    match /companies/{companyId}/jobs/{jobId}/{filename} {
       // Managers can manage all company job files
-      allow read, write, delete: if ownsCompany(companyName) && isManager();
+      allow read, write, delete: if ownsCompany(companyId) && isManager();
       // Users can manage files for jobs they created
-      allow read, write, delete: if ownsCompany(companyName) && isUser();
+      allow read, write, delete: if ownsCompany(companyId) && isUser();
     }
     
     // Archived data (finishedJobs & certifications moved from Firestore to Storage)
-    // Path: companies/{companyName}/archives/{archiveFile}
+    // Path: companies/{companyId}/archives/{archiveFile}
     // Written by Cloud Run Job (Admin SDK, bypasses rules), read by mobile app
-    match /companies/{companyName}/archives/{archiveFile} {
+    match /companies/{companyId}/archives/{archiveFile} {
       // Any authenticated user who belongs to this company can read archives
-      allow read: if ownsCompany(companyName);
+      allow read: if ownsCompany(companyId);
     }
   }
 }

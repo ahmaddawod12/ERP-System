@@ -5,12 +5,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { auth, db, doc, getDoc, onAuthStateChanged, onSnapshot } from '../firebase';
-import { getUsernameFromEmail } from '../utils/helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * Hook for managing authentication state
- * @returns {Object} { user, loading, error, username, userRole }
+ * @returns {Object} { user, loading, error, uid, userRole }
  */
 export const useAuth = () => {
   const [user, setUser] = useState(null);
@@ -24,9 +23,9 @@ export const useAuth = () => {
       
       if (authUser) {
         try {
-          const username = getUsernameFromEmail(authUser.email);
+          const uid = authUser.uid;
           // React Native Firebase modular API
-          const userDocRef = doc(db, username, 'profile');
+          const userDocRef = doc(db, uid, 'profile');
           const userDoc = await getDoc(userDocRef);
           
           if (userDoc.exists()) {
@@ -46,11 +45,12 @@ export const useAuth = () => {
     return () => unsubscribe();
   }, []);
 
-  const username = useMemo(() => {
-    return user ? getUsernameFromEmail(user.email) : null;
+  const uid = useMemo(() => {
+    return user ? user.uid : null;
   }, [user]);
 
-  return { user, loading, error, username, userRole };
+  // Backward-compatible alias
+  return { user, loading, error, uid, username: uid, userRole };
 };
 
 /**
@@ -163,22 +163,22 @@ export const useFirestoreDoc = (...pathSegments) => {
 
 /**
  * Hook for managing user profile with real-time updates
- * @param {string} username - Username to fetch profile for
+ * @param {string} uid - User UID to fetch profile for
  * @returns {Object} { profile, loading, error, refresh }
  */
-export const useUserProfile = (username) => {
-  return useFirestoreDoc(username, 'profile');
+export const useUserProfile = (uid) => {
+  return useFirestoreDoc(uid, 'profile');
 };
 
 /**
  * Hook for managing company data
- * @param {string} companyName - Company name
+ * @param {string} companyId - Company ID
  * @returns {Object} { companyData, loading, error }
  */
-export const useCompanyData = (companyName) => {
+export const useCompanyData = (companyId) => {
   const { data: workersData, loading: workersLoading } = useFirestoreDoc(
     'companies', 
-    companyName, 
+    companyId, 
     'workers', 
     'list'
   );

@@ -32,7 +32,6 @@ import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../theme';
 import { GlobalHeader } from '../components';
-import { getUsernameFromEmail } from '../utils/helpers';
 
 export default function SupportChat() {
   const router = useRouter();
@@ -183,7 +182,7 @@ export default function SupportChat() {
       const msg = convData[`message${i}`];
       msgs.push({
         id: `message${i}`,
-        senderUsername: msg.senderUsername,
+        senderUid: msg.senderUid,
         text: msg.text,
         index: i,
       });
@@ -214,12 +213,12 @@ export default function SupportChat() {
 
     try {
       setLoading(true);
-      const username = getUsernameFromEmail(user.email);
+      const uid = user.uid;
       
       // Fetch only open conversations
       const conversationsRef = collection(db, 'conversations');
       const q = query(conversationsRef, 
-        where('userId', '==', username),
+        where('userId', '==', uid),
         where('status', '==', 'open')
       );
       const openSnapshot = await getDocs(q);
@@ -299,7 +298,7 @@ export default function SupportChat() {
     if (!user) return;
     
     const trimmedMessage = message.trim();
-    const username = getUsernameFromEmail(user.email);
+    const uid = user.uid;
     setMessage('');
     setSending(true);
     
@@ -319,7 +318,7 @@ export default function SupportChat() {
         
         transaction.update(convRef, {
           [messageKey]: {
-            senderUsername: username,
+            senderUid: uid,
             text: trimmedMessage,
           },
           status: 'open',
@@ -345,12 +344,12 @@ export default function SupportChat() {
     if (!user) return;
     
     setLoadingHistory(true);
-    const username = getUsernameFromEmail(user.email);
+    const uid = user.uid;
     
     try {
       const conversationsRef = collection(db, 'conversations');
       const q = query(conversationsRef,
-        where('userId', '==', username),
+        where('userId', '==', uid),
         where('status', '==', 'closed')
       );
       const snapshot = await getDocs(q);
@@ -368,7 +367,7 @@ export default function SupportChat() {
       
       // Fetch open conversations for main page refresh
       const openSnapshot = await conversationsRef
-        .where('userId', '==', username)
+        .where('userId', '==', uid)
         .where('status', '==', 'open')
         .get();
       const openConvs = openSnapshot.docs
@@ -441,13 +440,13 @@ export default function SupportChat() {
     try {
       // Create new conversation
       const conversationsRef = collection(db, 'conversations');
-      const userName = getUsernameFromEmail(user.email);
+      const uid = user.uid;
       
       // Ensure category is a string
       const categoryValue = typeof category === 'string' ? category : (typeof selectedCategory === 'string' ? selectedCategory : 'general');
       
       const newConvRef = await addDoc(conversationsRef, {
-        userId: userName,
+        userId: uid,
         userName: profile.name,
         status: 'open',
         category: categoryValue,
@@ -551,7 +550,7 @@ export default function SupportChat() {
     const trimmedMessage = formattedMessage.trim();
     if (!trimmedMessage) return;
     
-    const username = getUsernameFromEmail(user.email);
+    const uid = user.uid;
     setShowTemplateForm(false);
     setTemplateAnswers({});
     setSending(true);
@@ -572,7 +571,7 @@ export default function SupportChat() {
         
         transaction.update(convRef, {
           [messageKey]: {
-            senderUsername: username,
+            senderUid: uid,
             text: trimmedMessage,
           },
           status: 'open',
@@ -642,8 +641,8 @@ export default function SupportChat() {
 
   const renderMessage = ({ item }) => {
     const user = auth.currentUser;
-    const username = user ? getUsernameFromEmail(user.email) : '';
-    const isUser = item.senderUsername === username;
+    const uid = user ? user.uid : '';
+    const isUser = item.senderUid === uid;
     
     return (
       <View style={[

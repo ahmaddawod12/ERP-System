@@ -4,7 +4,7 @@
  * Uses @react-native-firebase/messaging for FCM (token management, background messages)
  * Uses @notifee/react-native for local notifications (foreground display, advanced features)
  * 
- * Tokens are stored as native FCM tokens in user profile: {username}/profile.pushToken
+ * Tokens are stored as native FCM tokens in user profile: {uid}/profile.pushToken
  * 
  * SETUP REQUIREMENTS:
  * - iOS: APNs key uploaded to Firebase Console
@@ -32,7 +32,6 @@ import {
   getAPNSToken,
   AuthorizationStatus
 } from '../firebase';
-import { getUsernameFromEmail } from './helpers';
 
 // Default Android notification channel ID
 const DEFAULT_CHANNEL_ID = 'smart_job_default';
@@ -139,12 +138,12 @@ export async function getFCMToken() {
  * Saves native FCM token to Firestore user profile
  * Always overwrites existing token (handles token rotation)
  * 
- * @param {string} userEmail - User's email address
+ * @param {string} userId - User's Firebase Auth UID
  * @returns {Promise<boolean>} Success status
  */
-export async function registerPushTokenForUser(userEmail) {
-  if (!userEmail) {
-    console.error('registerPushTokenForUser: No user email provided');
+export async function registerPushTokenForUser(userId) {
+  if (!userId) {
+    console.error('registerPushTokenForUser: No userId provided');
     return false;
   }
 
@@ -157,9 +156,8 @@ export async function registerPushTokenForUser(userEmail) {
       return false;
     }
 
-    const username = getUsernameFromEmail(userEmail);
-    // React Native Firebase modular API
-    const profileRef = doc(db, username, 'profile');
+    // React Native Firebase modular API - use UID directly as document path
+    const profileRef = doc(db, userId, 'profile');
 
     // Check if token has changed
     const profileSnap = await getDoc(profileRef);
@@ -179,7 +177,7 @@ export async function registerPushTokenForUser(userEmail) {
       pushTokenType: 'fcm', // Mark as FCM token (not Expo)
     });
 
-    console.log(`✅ FCM token registered for ${username}`);
+    console.log(`✅ FCM token registered for ${userId}`);
     return true;
   } catch (error) {
     console.error('Error registering push token:', error);

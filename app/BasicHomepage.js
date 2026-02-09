@@ -14,7 +14,6 @@ import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
-import { useAuth } from '../hooks';
 import { GlobalHeader, LoadingSpinner, ScrollableContainer } from '../components';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -23,7 +22,6 @@ export default function BasicHomepage() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { username } = useAuth();
   const { businessInfo } = useCache();
   const [activeTab, setActiveTab] = useState('business');
   const colors = getColors(isDarkMode);

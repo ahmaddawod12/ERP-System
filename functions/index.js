@@ -100,10 +100,42 @@ setGlobalOptions({
 });
 
 /**
- * Helper function to get username from email
+ * Helper: Look up a user's Firebase UID from their email via Firebase Auth.
+ * @param {string} email - The user's email address
+ * @returns {Promise<string>} The user's Firebase UID
  */
-function getUsernameFromEmail(email) {
-  return email.split('@')[0];
+async function getUidFromEmail(email) {
+  const userRecord = await admin.auth().getUserByEmail(email);
+  return userRecord.uid;
+}
+
+/**
+ * Normalize user-provided email input for consistent auth/doc keys.
+ */
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+/**
+ * Basic email shape validation.
+ */
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/**
+ * Normalize certification document IDs.
+ * Firestore certification docs are stored with "c_" prefix.
+ */
+function toCertificationDocId(documentId) {
+  const raw = String(documentId || '').trim();
+  if (!raw) return '';
+  return raw.startsWith('c_') ? raw : `c_${raw}`;
+}
+
+function toBaseDocumentId(documentId) {
+  const raw = String(documentId || '').trim();
+  return raw.startsWith('c_') ? raw.slice(2) : raw;
 }
 
 /**
@@ -117,7 +149,7 @@ function getUsernameFromEmail(email) {
  * @param {string} userEmail - User's email (for logging and token cleanup)
  * @returns {Promise<{success: boolean, messageId?: string, reason?: string, error?: string}>}
  */
-async function sendPushNotification(pushToken, title, body, data = {}, userEmail = '') {
+async function sendPushNotification(pushToken, title, body, data = {}, userId = '') {
   try {
     logger.info('sendPushNotification called', { 
       token: pushToken ? pushToken.substring(0, 30) + '...' : 'null',
@@ -145,7 +177,7 @@ async function sendPushNotification(pushToken, title, body, data = {}, userEmail
     }
     
     // Send via FCM for native tokens
-    logger.info(`Sending FCM notification to ${userEmail || 'unknown user'}`);
+    logger.info(`Sending FCM notification to ${userId || 'unknown user'}`);
     
     const message = {
       notification: {
@@ -185,28 +217,27 @@ async function sendPushNotification(pushToken, title, body, data = {}, userEmail
     };
     
     const response = await admin.messaging().send(message);
-    logger.info(`Successfully sent FCM notification to ${userEmail}`, { messageId: response });
+    logger.info(`Successfully sent FCM notification to ${userId}`, { messageId: response });
     
     return { success: true, messageId: response };
     
   } catch (error) {
-    logger.error(`Error sending notification to ${userEmail}:`, error);
+    logger.error(`Error sending notification to ${userId}:`, error);
     
     // If token is invalid or expired, remove it from user profile
     if (error.code === 'messaging/invalid-registration-token' || 
         error.code === 'messaging/registration-token-not-registered' ||
         error.code === 'messaging/invalid-argument') {
       
-      if (userEmail) {
+      if (userId) {
         try {
-          const username = getUsernameFromEmail(userEmail);
-          await admin.firestore().doc(`${username}/profile`).update({
+          await admin.firestore().doc(`${userId}/profile`).update({
             pushToken: admin.firestore.FieldValue.delete(),
             pushTokenType: admin.firestore.FieldValue.delete(),
           });
-          logger.info(`Removed invalid FCM token for ${userEmail}`);
+          logger.info(`Removed invalid FCM token for ${userId}`);
         } catch (updateError) {
-          logger.error(`Failed to remove invalid token for ${userEmail}:`, updateError);
+          logger.error(`Failed to remove invalid token for ${userId}:`, updateError);
         }
       }
       
@@ -220,16 +251,19 @@ async function sendPushNotification(pushToken, title, body, data = {}, userEmail
 
 /**
  * Helper function to verify manager authorization
+ * Uses Firebase Auth UID for document paths.
+ * @param {Object} auth - Firebase auth context (request.auth)
+ * @param {string|null} targetWorkerUid - Worker's UID (null for add action)
+ * @param {string} companyId - Company name
  */
-async function verifyManagerAuth(auth, targetWorkerEmail, companyName) {
+async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
   if (!auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  const managerEmail = auth.token.email;
-  const managerUsername = getUsernameFromEmail(managerEmail);
+  const managerUid = auth.uid;
 
-  const managerProfileRef = admin.firestore().doc(`${managerUsername}/profile`);
+  const managerProfileRef = admin.firestore().doc(`${managerUid}/profile`);
   const managerProfile = await managerProfileRef.get();
 
   if (!managerProfile.exists) {
@@ -242,13 +276,12 @@ async function verifyManagerAuth(auth, targetWorkerEmail, companyName) {
     throw new HttpsError('permission-denied', 'Only managers can perform this action');
   }
 
-  if (managerData.companyName !== companyName) {
+  if (managerData.companyId !== companyId) {
     throw new HttpsError('permission-denied', 'Manager can only manage workers from their own company');
   }
 
-  if (targetWorkerEmail) {
-    const workerUsername = getUsernameFromEmail(targetWorkerEmail);
-    const workerProfileRef = admin.firestore().doc(`${workerUsername}/profile`);
+  if (targetWorkerUid) {
+    const workerProfileRef = admin.firestore().doc(`${targetWorkerUid}/profile`);
     const workerProfile = await workerProfileRef.get();
 
     if (!workerProfile.exists) {
@@ -261,20 +294,20 @@ async function verifyManagerAuth(auth, targetWorkerEmail, companyName) {
       throw new HttpsError('permission-denied', 'Target user is not a worker');
     }
 
-    if (workerData.companyName !== companyName) {
+    if (workerData.companyId !== companyId) {
       throw new HttpsError('permission-denied', 'Worker is not from the same company');
     }
   }
 
-  return { managerUsername, managerEmail };
+  return { managerUid, managerEmail: auth.token.email };
 }
 
 /**
  * Helper function to save audit logs
  */
-async function saveAuditLog(companyName, action, performedBy, documentId, documentType) {
+async function saveAuditLog(companyId, action, performedBy, documentId, documentType) {
   try {
-    const auditLogRef = admin.firestore().collection(`companies/${companyName}/auditLogs`).doc();
+    const auditLogRef = admin.firestore().collection(`companies/${companyId}/auditLogs`).doc();
     await auditLogRef.set({
       action: action,
       performedBy: performedBy,
@@ -282,7 +315,7 @@ async function saveAuditLog(companyName, action, performedBy, documentId, docume
       documentId: documentId || null,
       documentType: documentType || null,
     });
-    logger.info(`Audit log saved for ${action} by ${performedBy} in company ${companyName}`);
+    logger.info(`Audit log saved for ${action} by ${performedBy} in company ${companyId}`);
   } catch (error) {
     logger.error(`Failed to save audit log for ${action}:`, error);
   }
@@ -313,21 +346,33 @@ async function recursiveDelete(path) {
  * Usage:
  * - action: 'add' | 'edit' | 'delete'
  * - email: worker's email (required)
- * - companyName: company name (required)
- * - password: required for 'add', optional for 'edit'
+ * - companyId: company name (required)
+ * - password: required for 'add'
  * - name: optional
  * - phoneNumber: optional
- * - newEmail: optional for 'edit'
+ * - newEmail: currently not supported for 'edit'
  * - newPassword: optional for 'edit'
  */
 exports.manageWorker = onCall(async (request) => {
   try {
-    const { action, email, password, name, phoneNumber, companyName, newEmail, newPassword } = request.data;
+    const {
+      action,
+      email: rawEmail,
+      password,
+      name,
+      phoneNumber,
+      companyId: rawCompanyId,
+      newEmail: rawNewEmail,
+      newPassword
+    } = request.data;
+    const email = normalizeEmail(rawEmail);
+    const companyId = String(rawCompanyId || '').trim();
+    const newEmail = rawNewEmail ? normalizeEmail(rawNewEmail) : '';
 
     logger.info('manageWorker called', { 
       action,
       email,
-      companyName,
+      companyId,
       hasAuth: !!request.auth,
       authEmail: request.auth?.token?.email
     });
@@ -338,14 +383,34 @@ exports.manageWorker = onCall(async (request) => {
     }
 
     // Validate required parameters
-    if (!email || !companyName) {
+    if (!email || !companyId) {
       throw new HttpsError('invalid-argument', 'Email and company name are required');
+    }
+    if (!isValidEmail(email)) {
+      throw new HttpsError('invalid-argument', 'Invalid worker email format');
+    }
+    if (newEmail && !isValidEmail(newEmail)) {
+      throw new HttpsError('invalid-argument', 'Invalid new email format');
+    }
+    if (password && password.length < 8) {
+      throw new HttpsError('invalid-argument', 'Password must be at least 8 characters');
+    }
+    if (newPassword && newPassword.length < 8) {
+      throw new HttpsError('invalid-argument', 'New password must be at least 8 characters');
     }
 
     // Verify manager authentication
-    await verifyManagerAuth(request.auth, action === 'add' ? null : email, companyName);
-
-    const workerUsername = getUsernameFromEmail(email);
+    // For add, we don't have a worker UID yet; for edit/delete, look up worker UID from email
+    let workerUid = null;
+    if (action !== 'add') {
+      try {
+        const workerRecord = await admin.auth().getUserByEmail(email);
+        workerUid = workerRecord.uid;
+      } catch (authLookupError) {
+        throw new HttpsError('not-found', `Worker with email ${email} not found in authentication system`);
+      }
+    }
+    await verifyManagerAuth(request.auth, workerUid, companyId);
 
     // ========== ADD WORKER ==========
     if (action === 'add') {
@@ -357,91 +422,72 @@ exports.manageWorker = onCall(async (request) => {
       const userRecord = await admin.auth().createUser({
         email: email,
         password: password,
-        displayName: name || workerUsername,
+        displayName: name || email.split('@')[0],
       });
+      workerUid = userRecord.uid;
 
-      logger.info(`Created Authentication user for worker: ${email}`, { uid: userRecord.uid });
+      logger.info(`Created Authentication user for worker: ${email}`, { uid: workerUid });
 
-      // Create worker profile in Firestore
-      const workerProfileRef = admin.firestore().doc(`${workerUsername}/profile`);
+      // Create worker profile in Firestore (keyed by UID)
+      const workerProfileRef = admin.firestore().doc(`${workerUid}/profile`);
       await workerProfileRef.set({
         email: email,
         role: 'worker',
-        companyName: companyName,
+        companyId: companyId,
         name: name || '',
         phoneNumber: phoneNumber || '',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        uid: userRecord.uid
+        uid: workerUid
       });
-      const workersInventoryRef = admin.firestore().doc(`${workerUsername}/cache`);
-      await workersInventoryRef.set({
+      const workerCacheRef = admin.firestore().doc(`${workerUid}/cache`);
+      await workerCacheRef.set({
         profile : 1});
-      logger.info(`Created Firestore profile for worker: ${email}`);
+      logger.info(`Created Firestore profile for worker: ${email} (uid: ${workerUid})`);
 
-      // Add worker to company's worker list
-      const workerListRef = admin.firestore().doc(`companies/${companyName}/workers/${workerUsername}`);
+      // Add worker to company's worker list (keyed by UID)
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerUid}`);
       await workerListRef.set({
         email: email,
-        password: password,
         name: name || '',
         phoneNumber: phoneNumber || '',
-        username: workerUsername,
-        uid: userRecord.uid,
+        uid: workerUid,
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      logger.info(`Added worker to company list: ${companyName}`);
-      await saveAuditLog(companyName, 'addWorker', request.auth.token.email);
+      logger.info(`Added worker to company list: ${companyId}`);
+      await saveAuditLog(companyId, 'addWorker', request.auth.token.email);
 
       return {
         success: true,
-        uid: userRecord.uid,
+        uid: workerUid,
         message: 'Worker account created successfully'
       };
     }
 
     // ========== DELETE WORKER ==========
     if (action === 'delete') {
-      // Get worker's UID from Firestore
-      const workerProfileRef = admin.firestore().doc(`${workerUsername}/profile`);
-      const workerProfile = await workerProfileRef.get();
-
-      if (!workerProfile.exists) {
-        throw new HttpsError('not-found', 'Worker profile not found');
-      }
-
-      const workerUid = workerProfile.data().uid;
+      // workerUid already obtained above via admin.auth().getUserByEmail()
 
       // Delete Authentication user
-      if (workerUid) {
-        await admin.auth().deleteUser(workerUid);
-        logger.info(`Deleted Authentication user for worker: ${email}`);
-      } else {
-        try {
-          const userRecord = await admin.auth().getUserByEmail(email);
-          await admin.auth().deleteUser(userRecord.uid);
-          logger.info(`Deleted Authentication user for worker (by email): ${email}`);
-        } catch (authError) {
-          logger.warn(`Could not find auth user for ${email}:`, authError);
-        }
-      }
+      await admin.auth().deleteUser(workerUid);
+      logger.info(`Deleted Authentication user for worker: ${email} (uid: ${workerUid})`);
 
-      // Delete ALL worker data recursively
-      logger.info(`Starting recursive delete for worker folder: ${workerUsername}`);
+      // Delete ALL worker data recursively (using UID-based path)
+      logger.info(`Starting recursive delete for worker folder: ${workerUid}`);
       
       try {
-        await recursiveDelete(workerUsername);
-        logger.info(`Deleted entire Firestore folder for worker: ${workerUsername}`);
+        await recursiveDelete(workerUid);
+        logger.info(`Deleted entire Firestore folder for worker uid: ${workerUid}`);
       } catch (deleteError) {
-        logger.error(`Error during recursive delete for ${workerUsername}:`, deleteError);
+        logger.error(`Error during recursive delete for ${workerUid}:`, deleteError);
       }
 
-      // Remove worker from company's worker list
-      const workerListRef = admin.firestore().doc(`companies/${companyName}/workers/${workerUsername}`);
+      // Remove worker from company's worker list (keyed by UID)
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerUid}`);
       await workerListRef.delete();
-      logger.info(`Removed worker from company list: ${companyName}`);
+      logger.info(`Removed worker from company list: ${companyId}`);
 
-      await saveAuditLog(companyName, 'deleteWorker', request.auth.token.email);
+      await saveAuditLog(companyId, 'deleteWorker', request.auth.token.email);
 
       return {
         success: true,
@@ -454,28 +500,23 @@ exports.manageWorker = onCall(async (request) => {
       if (!newEmail && !newPassword && name === undefined && phoneNumber === undefined) {
         throw new HttpsError('invalid-argument', 'At least one field must be provided for update');
       }
+      if (newEmail) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Changing worker email is not currently supported. Create a new worker account instead.'
+        );
+      }
 
-      // Get worker's UID from Firestore
-      const workerProfileRef = admin.firestore().doc(`${workerUsername}/profile`);
+      // Read worker profile (using UID-based path)
+      const workerProfileRef = admin.firestore().doc(`${workerUid}/profile`);
       const workerProfile = await workerProfileRef.get();
 
       if (!workerProfile.exists) {
         throw new HttpsError('not-found', 'Worker profile not found');
       }
 
-      const workerData = workerProfile.data();
-      const workerUid = workerData.uid;
-
-      if (!workerUid) {
-        const userRecord = await admin.auth().getUserByEmail(email);
-        workerData.uid = userRecord.uid;
-      }
-
       // Prepare Authentication updates
       const authUpdates = {};
-      if (newEmail) {
-        authUpdates.email = newEmail;
-      }
       if (newPassword) {
         authUpdates.password = newPassword;
       }
@@ -485,15 +526,14 @@ exports.manageWorker = onCall(async (request) => {
 
       // Update Firebase Authentication
       if (Object.keys(authUpdates).length > 0) {
-        await admin.auth().updateUser(workerData.uid, authUpdates);
-        logger.info(`Updated Authentication for worker: ${email}`, authUpdates);
+        await admin.auth().updateUser(workerUid, authUpdates);
+        logger.info(`Updated Authentication for worker: ${email}`, {
+          updatedFields: Object.keys(authUpdates),
+        });
       }
 
       // Prepare Firestore updates
       const firestoreUpdates = {};
-      if (newEmail) {
-        firestoreUpdates.email = newEmail;
-      }
       if (name) {
         firestoreUpdates.name = name;
       }
@@ -505,71 +545,27 @@ exports.manageWorker = onCall(async (request) => {
       // Update worker profile in Firestore
       if (Object.keys(firestoreUpdates).length > 0) {
         await workerProfileRef.update(firestoreUpdates);
-        logger.info(`Updated Firestore profile for worker: ${email}`);
+        logger.info(`Updated Firestore profile for worker: ${email} (uid: ${workerUid})`);
       }
 
-      // If email changed, update company's worker list
-      if (newEmail) {
-        const newWorkerUsername = getUsernameFromEmail(newEmail);
-        
-        const oldWorkerListRef = admin.firestore().doc(`companies/${companyName}/workers/${workerUsername}`);
-        const oldWorkerDoc = await oldWorkerListRef.get();
-        const currentWorkerData = oldWorkerDoc.data() || {};
+      // Update company's worker list (keyed by UID)
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerUid}`);
+      const updateData = {};
+      updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
+      if (name) {
+        updateData.name = name;
+      }
+      if (phoneNumber !== undefined) {
+        updateData.phoneNumber = phoneNumber;
+      }
+      updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
-        await oldWorkerListRef.delete();
-        
-        const newWorkerListRef = admin.firestore().doc(`companies/${companyName}/workers/${newWorkerUsername}`);
-        await newWorkerListRef.set({
-          ...currentWorkerData,
-          email: newEmail,
-          username: newWorkerUsername,
-          password: newPassword || currentWorkerData.password,
-          name: name || currentWorkerData.name,
-          phoneNumber: phoneNumber !== undefined ? phoneNumber : currentWorkerData.phoneNumber,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        logger.info(`Updated worker in company list: ${companyName}`);
-
-        // Move worker profile to new username path
-        const newWorkerProfileRef = admin.firestore().doc(`${newWorkerUsername}/profile`);
-        await newWorkerProfileRef.set({
-          ...workerData,
-          ...firestoreUpdates
-        });
-        await workerProfileRef.delete();
-
-        // Move inventory to new username path
-        const oldInventoryRef = admin.firestore().doc(`${workerUsername}/inventory/parts`);
-        const newInventoryRef = admin.firestore().doc(`${newWorkerUsername}/inventory/parts`);
-        const inventoryDoc = await oldInventoryRef.get();
-        if (inventoryDoc.exists) {
-          await newInventoryRef.set(inventoryDoc.data());
-          await oldInventoryRef.delete();
-        }
-
-        logger.info(`Moved worker data from ${workerUsername} to ${newWorkerUsername}`);
-      } else {
-        const workerListRef = admin.firestore().doc(`companies/${companyName}/workers/${workerUsername}`);
-        const updateData = {};
-        if (newPassword) {
-          updateData.password = newPassword;
-        }
-        if (name) {
-          updateData.name = name;
-        }
-        if (phoneNumber !== undefined) {
-          updateData.phoneNumber = phoneNumber;
-        }
-        updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-
-        if (Object.keys(updateData).length > 0) {
-          await workerListRef.update(updateData);
-          logger.info(`Updated worker in company list: ${companyName}`);
-        }
+      if (Object.keys(updateData).length > 0) {
+        await workerListRef.update(updateData);
+        logger.info(`Updated worker in company list: ${companyId}`);
       }
 
-      await saveAuditLog(companyName, 'editWorker', request.auth.token.email);
+      await saveAuditLog(companyId, 'editWorker', request.auth.token.email);
 
       return {
         success: true,
@@ -604,11 +600,11 @@ exports.manageWorker = onCall(async (request) => {
  * 
  * DEDUPLICATION: Uses notificationLog collection keyed by {jobId}_assigned
  * 
- * Triggered on: companies/{companyName}/PendingJobs/{jobId} document creation
+ * Triggered on: companies/{companyId}/PendingJobs/{jobId} document creation
  * Condition: status === 'pending' && completedBy exists (worker assignment)
  */
 exports.onJobAssignTrigger = onDocumentCreated({
-  document: 'companies/{companyName}/PendingJobs/{jobId}',
+  document: 'companies/{companyId}/PendingJobs/{jobId}',
   region: 'us-central1'
 }, async (event) => {
   const startTime = Date.now();
@@ -616,7 +612,7 @@ exports.onJobAssignTrigger = onDocumentCreated({
   try {
     const snapshot = event.data;
     const jobData = snapshot.data();
-    const companyName = event.params.companyName;
+    const companyId = event.params.companyId;
     const jobId = event.params.jobId;
 
     // Only proceed if status is 'pending' and job is assigned to a worker
@@ -629,17 +625,17 @@ exports.onJobAssignTrigger = onDocumentCreated({
       return;
     }
 
-    const workerUsername = jobData.completedBy;
+    const workerUserId = jobData.completedBy;
     const jobTitle = jobData.title || 'Untitled Job';
-    const managerUsername = jobData.MUser;
+    const managerUserId = jobData.MUser;
     const managerName = jobData.MName;
 
     logger.info('Job assignment detected', {
       jobId,
       jobTitle,
-      workerUsername,
-      managerUsername,
-      companyName
+      workerUserId,
+      managerUserId,
+      companyId
     });
 
     // DEDUPLICATION CHECK: Check if notification already sent for this job assignment
@@ -656,12 +652,12 @@ exports.onJobAssignTrigger = onDocumentCreated({
       return;
     }
 
-    // Get worker profile for email and push token
-    const workerProfileRef = admin.firestore().doc(`${workerUsername}/profile`);
+    // Get worker profile for email and push token (using UID-based path)
+    const workerProfileRef = admin.firestore().doc(`${workerUserId}/profile`);
     const workerProfile = await workerProfileRef.get();
 
     if (!workerProfile.exists) {
-      logger.warn('Worker profile not found', { workerUsername });
+      logger.warn('Worker profile not found', { workerUserId });
       return;
     }
 
@@ -670,13 +666,13 @@ exports.onJobAssignTrigger = onDocumentCreated({
     const workerPushToken = workerData?.pushToken;
 
     if (!workerEmail) {
-      logger.warn('No email found in worker profile', { workerUsername });
+      logger.warn('No email found in worker profile', { workerUserId });
       return;
     }
 
     if (!workerPushToken) {
       logger.info('No push token for worker - notification skipped', {
-        workerUsername,
+        workerUserId,
         workerEmail,
         message: 'Worker will see job when they login'
       });
@@ -689,7 +685,7 @@ exports.onJobAssignTrigger = onDocumentCreated({
     const notificationData = {
       type: 'job_assigned',
       jobId,
-      companyName,
+      companyId,
       screen: 'Workerjob',
       timestamp: new Date().toISOString()
     };
@@ -707,12 +703,12 @@ exports.onJobAssignTrigger = onDocumentCreated({
       await notificationLogRef.set({
         jobId,
         notificationType: 'assigned',
-        workerUsername,
+        workerUserId,
         workerEmail,
-        managerUsername,
+        managerUserId,
         managerName,
         jobTitle,
-        companyName,
+        companyId,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         messageId: notificationResult.messageId || null,
         duration: Date.now() - startTime
@@ -721,7 +717,7 @@ exports.onJobAssignTrigger = onDocumentCreated({
 
     logger.info('Job assignment notification sent', {
       jobId,
-      workerUsername,
+      workerUserId,
       notificationSent: notificationResult.success,
       messageId: notificationResult.messageId,
       duration: Date.now() - startTime
@@ -732,7 +728,7 @@ exports.onJobAssignTrigger = onDocumentCreated({
       error: error.message,
       stack: error.stack,
       jobId: event.params.jobId,
-      companyName: event.params.companyName
+      companyId: event.params.companyId
     });
   }
 });
@@ -743,11 +739,11 @@ exports.onJobAssignTrigger = onDocumentCreated({
  * 
  * DEDUPLICATION: Uses notificationLog collection keyed by {jobId}_submitted
  * 
- * Triggered on: companies/{companyName}/PendingJobs/{jobId} document update
+ * Triggered on: companies/{companyId}/PendingJobs/{jobId} document update
  * Condition: status changed to 'waiting'
  */
 exports.onJobSubmitTrigger = onDocumentUpdated({
-  document: 'companies/{companyName}/PendingJobs/{jobId}',
+  document: 'companies/{companyId}/PendingJobs/{jobId}',
   region: 'us-central1'
 }, async (event) => {
   const startTime = Date.now();
@@ -755,7 +751,7 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
   try {
     const beforeData = event.data.before.data();
     const afterData = event.data.after.data();
-    const companyName = event.params.companyName;
+    const companyId = event.params.companyId;
     const jobId = event.params.jobId;
 
     // Only proceed if status changed to 'waiting'
@@ -768,17 +764,17 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       return;
     }
 
-    const workerUsername = afterData.completedBy || 'Unknown Worker';
+    const workerUserId = afterData.completedBy || 'Unknown Worker';
     const jobTitle = afterData.title || 'Untitled Job';
-    const managerUsername = afterData.MUser;
+    const managerUserId = afterData.MUser;
     const workerName = afterData.name;
 
     logger.info('Job submission detected', {
       jobId,
       jobTitle,
-      workerUsername,
-      managerUsername,
-      companyName
+      workerUserId,
+      managerUserId,
+      companyId
     });
 
     // DEDUPLICATION CHECK: Check if notification already sent for this job submission
@@ -795,18 +791,18 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       return;
     }
 
-    // Determine manager username
-    if (!managerUsername) {
-      logger.warn('No manager username (MUser) found in job', { jobId, companyName });
+    // Determine manager userId
+    if (!managerUserId) {
+      logger.warn('No manager userId (MUser) found in job', { jobId, companyId });
       return;
     }
 
-    // Get manager profile for email and push token
-    const managerProfileRef = admin.firestore().doc(`${managerUsername}/profile`);
+    // Get manager profile for email and push token (using UID-based path)
+    const managerProfileRef = admin.firestore().doc(`${managerUserId}/profile`);
     const managerProfile = await managerProfileRef.get();
 
     if (!managerProfile.exists) {
-      logger.warn('Manager profile not found', { managerUsername });
+      logger.warn('Manager profile not found', { managerUserId });
       return;
     }
 
@@ -815,13 +811,13 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
     const managerPushToken = managerData?.pushToken;
 
     if (!managerEmail) {
-      logger.warn('No email found in manager profile', { managerUsername });
+      logger.warn('No email found in manager profile', { managerUserId });
       return;
     }
 
     if (!managerPushToken) {
       logger.info('No push token for manager - notification skipped', {
-        managerUsername,
+        managerUserId,
         managerEmail,
         message: 'Manager will see job when they login'
       });
@@ -834,7 +830,7 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
     const notificationData = {
       type: 'job_submitted',
       jobId,
-      companyName,
+      companyId,
       screen: 'ManageJobs',
       timestamp: new Date().toISOString()
     };
@@ -852,12 +848,12 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       await notificationLogRef.set({
         jobId,
         notificationType: 'submitted',
-        workerUsername,
+        workerUserId,
         workerName,
-        managerUsername,
+        managerUserId,
         managerEmail,
         jobTitle,
-        companyName,
+        companyId,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         messageId: notificationResult.messageId || null,
         duration: Date.now() - startTime
@@ -866,8 +862,8 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
 
     logger.info('Job submission notification sent', {
       jobId,
-      managerUsername,
-      workerUsername,
+      managerUserId,
+      workerUserId,
       notificationSent: notificationResult.success,
       messageId: notificationResult.messageId,
       duration: Date.now() - startTime
@@ -878,7 +874,7 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       error: error.message,
       stack: error.stack,
       jobId: event.params.jobId,
-      companyName: event.params.companyName
+      companyId: event.params.companyId
     });
   }
 });
@@ -914,11 +910,11 @@ exports.startTaxAuthorityAuth = onCall({
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    const username = getUsernameFromEmail(request.auth.token.email);
-    logger.info('startTaxAuthorityAuth called', { username });
+    const uid = request.auth.uid;
+    logger.info('startTaxAuthorityAuth called', { uid });
 
     // Verify user is a manager
-    const userProfileRef = admin.firestore().doc(`${username}/profile`);
+    const userProfileRef = admin.firestore().doc(`${uid}/profile`);
     const userProfile = await userProfileRef.get();
 
     if (!userProfile.exists) {
@@ -930,8 +926,8 @@ exports.startTaxAuthorityAuth = onCall({
       throw new HttpsError('permission-denied', 'Only managers can authorize Tax Authority access');
     }
 
-    const companyName = userData.companyName;
-    if (!companyName) {
+    const companyId = userData.companyId;
+    if (!companyId) {
       throw new HttpsError('failed-precondition', 'User has no company assigned');
     }
 
@@ -939,14 +935,14 @@ exports.startTaxAuthorityAuth = onCall({
     const callbackUrl = 'https://taxauthoritycallback-5zymz2qeza-zf.a.run.app';
 
     // Store pending authorization in Firestore to track which company initiated the flow
-    // The callback will look up this record to get the companyName
+    // The callback will look up this record to get the companyId
     const pendingAuthRef = admin.firestore().collection('taxAuthPending').doc();
     const authId = pendingAuthRef.id;
     
     await pendingAuthRef.set({
       authId: authId,
-      companyName: companyName,
-      username: username,
+      companyId: companyId,
+      uid: uid,
       email: request.auth.token.email,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtMillis: Date.now(),
@@ -956,8 +952,8 @@ exports.startTaxAuthorityAuth = onCall({
 
     logger.info('Starting Tax Authority OAuth flow', {
       authId: authId,
-      companyName: companyName,
-      username: username,
+      companyId: companyId,
+      uid: uid,
       callbackUrl: callbackUrl,
     });
 
@@ -973,8 +969,8 @@ exports.startTaxAuthorityAuth = onCall({
 
     logger.info('Generated authorization URL', { 
       authId: authId,
-      username, 
-      companyName,
+      uid, 
+      companyId,
       callbackUrl
     });
 
@@ -1066,7 +1062,7 @@ exports.taxAuthorityCallback = onRequest({
       // Skip to HTML response with existing data
       const tokenExchangeSuccess = existingData.tokenExchangeSuccess || false;
       const tokenExchangeError = existingData.tokenExchangeError || null;
-      const companyName = existingData.companyName || null;
+      const companyId = existingData.companyId || null;
       
       // Generate HTML with existing data and return
       return res.send(generateSuccessHTML(deepLink, tokenExchangeSuccess, tokenExchangeError));
@@ -1094,7 +1090,7 @@ exports.taxAuthorityCallback = onRequest({
     
     let tokenExchangeSuccess = false;
     let tokenExchangeError = null;
-    let companyName = null;
+    let companyId = null;
 
     try {
       // Look up the pending authorization from Firestore (most recent within last 10 minutes)
@@ -1107,18 +1103,18 @@ exports.taxAuthorityCallback = onRequest({
       
       const pendingAuthSnapshot = await pendingAuthQuery.get();
       
-      let companyNameFromAuth = null;
+      let companyIdFromAuth = null;
       let pendingAuthDoc = null;
       
       if (!pendingAuthSnapshot.empty) {
         pendingAuthDoc = pendingAuthSnapshot.docs[0];
         const pendingAuthData = pendingAuthDoc.data();
-        companyNameFromAuth = pendingAuthData.companyName;
+        companyIdFromAuth = pendingAuthData.companyId;
         
         logger.info('Found pending authorization', {
           authId: pendingAuthDoc.id,
-          companyName: companyNameFromAuth,
-          username: pendingAuthData.username,
+          companyId: companyIdFromAuth,
+          uid: pendingAuthData.uid,
           age: Date.now() - pendingAuthData.createdAtMillis
         });
         
@@ -1140,7 +1136,7 @@ exports.taxAuthorityCallback = onRequest({
         callbackUrl: callbackUrl,
         codeLength: code.length,
         clientId: TAX_AUTHORITY_CONFIG.clientId,
-        companyName: companyNameFromAuth
+        companyId: companyIdFromAuth
       });
 
       // Exchange authorization code for tokens (axios-retry handles retries automatically)
@@ -1180,15 +1176,15 @@ exports.taxAuthorityCallback = onRequest({
         : now + (90 * 24 * 60 * 60 * 1000); // Fallback to 90 days if not provided
 
       // Use company name from pending authorization record
-      companyName = companyNameFromAuth;
+      companyId = companyIdFromAuth;
 
-      if (!companyName) {
-        logger.warn('No companyName from pending auth - tokens saved but not linked to company');
+      if (!companyId) {
+        logger.warn('No companyId from pending auth - tokens saved but not linked to company');
       }
 
       // Save tokens directly to company settings in Firebase (if company known)
-      if (companyName) {
-        const companySettingsRef = admin.firestore().doc(`companies/${companyName}/business_data/token`);
+      if (companyId) {
+        const companySettingsRef = admin.firestore().doc(`companies/${companyId}/business_data/token`);
         await companySettingsRef.set({
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
@@ -1198,10 +1194,10 @@ exports.taxAuthorityCallback = onRequest({
           callbackId: callbackRecordRef.id,
         }, { merge: true });
 
-        logger.info('Tokens saved directly to company settings', { companyName });
+        logger.info('Tokens saved directly to company settings', { companyId });
 
         // Save audit log
-        await saveAuditLog(companyName, 'taxAuthorityAuthorized', 'system_callback');
+        await saveAuditLog(companyId, 'taxAuthorityAuthorized', 'system_callback');
       }
 
       // Update the callback record with tokens (backup/reference)
@@ -1209,7 +1205,7 @@ exports.taxAuthorityCallback = onRequest({
         used: true,
         usedAt: admin.firestore.FieldValue.serverTimestamp(),
         tokenExchangeSuccess: true,
-        companyName: companyName,
+        companyId: companyId,
         accessToken: tokenData.access_token,
         refreshToken: tokenData.refresh_token,
         expiresIn: tokenData.expires_in,
@@ -1275,7 +1271,7 @@ exports.taxAuthorityCallback = onRequest({
  * @param {Object} request.data.client - Client details {name, email, phone, address, id}
  * @param {Array} request.data.items - Invoice items [{description, quantity, price}]
  * @param {Object} request.data.company - Company details {name, email, phone, address, vatNumber, etc.}
- * @param {string} request.data.companyName - Company name for Firestore path
+ * @param {string} request.data.companyId - Company name for Firestore path
  * @param {Object} request.data.businessInfo - Business registration data {vat_number, document_numbers, etc.}
  * @param {string} request.data.language - Language (he, en, ar)
  * @param {string} request.data.date - Invoice date YYYY-MM-DD
@@ -1313,8 +1309,8 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    const username = getUsernameFromEmail(request.auth.token.email);
-    logger.info('Processing invoice for user', { username });
+    const uid = request.auth.uid;
+    logger.info('Processing invoice for user', { uid });
 
     // Get user profile to check role (accept from frontend or fetch)
     let userData;
@@ -1324,7 +1320,7 @@ exports.getInvoiceApproval = onCall({
       logger.info('Using cached user profile from frontend');
     } else {
       // Fallback: fetch from Firestore (backwards compatibility)
-      const userProfileRef = admin.firestore().doc(`${username}/profile`);
+      const userProfileRef = admin.firestore().doc(`${uid}/profile`);
       const userProfile = await userProfileRef.get();
         if (!userProfile.exists) {
         throw new HttpsError('not-found', 'User profile not found');
@@ -1339,11 +1335,11 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('permission-denied', 'Only managers and users can submit invoices to Tax Authority');
     }
 
-    logger.info('User authorized', { username, role });
+    logger.info('User authorized', { uid, role });
 
     // Extract document data from request
     const {
-      type, client, items, company, companyName,
+      type, client, items, company, companyId,
       language, date, notes, jobData, jobsData, priceProposalId
     } = request.data;
 
@@ -1360,15 +1356,15 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('invalid-argument', 'At least one item is required');
     }
     if (!company || !company.name) {
-      throw new HttpsError('invalid-argument', 'Company name is required');
+      throw new HttpsError('invalid-argument', 'Company ID is required');
     }
-    if (!companyName) {
-      throw new HttpsError('invalid-argument', 'Company name is required for Firestore');
+    if (!companyId) {
+      throw new HttpsError('invalid-argument', 'Company ID is required for Firestore');
     }
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
-    const businessRegRef = admin.firestore().doc(`companies/${companyName}/business_data/business_info`);
+    const businessRegRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
     const businessRegDoc = await businessRegRef.get();
     if (!businessRegDoc.exists) {
       throw new HttpsError('not-found', 'Business registration not found. Please register your business first.');
@@ -1379,8 +1375,8 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('invalid-argument', 'Missing VAT number in business registration. Please complete your business registration.');
     }
 
-    // Verify companyName matches user's company
-    if (userData.companyName && userData.companyName !== companyName) {
+    // Verify companyId matches user's company
+    if (userData.companyId && userData.companyId !== companyId) {
       throw new HttpsError('permission-denied', 'Company name mismatch');
     }
 
@@ -1394,7 +1390,7 @@ exports.getInvoiceApproval = onCall({
 
     logger.info('Preparing Tax Authority submission', {
       documentId,
-      companyName,
+      companyId,
       itemCount: items.length,
       clientName: client.name,
       documentNumber,
@@ -1410,7 +1406,7 @@ exports.getInvoiceApproval = onCall({
     const totalWithVat = totalBeforeVat + vatAmount;
 
     // Get access token from Firestore
-    const tokenRef = admin.firestore().doc(`companies/${companyName}/business_data/token`);
+    const tokenRef = admin.firestore().doc(`companies/${companyId}/business_data/token`);
     const tokenDoc = await tokenRef.get();
 
     if (!tokenDoc.exists || !tokenDoc.data().accessToken) {
@@ -1427,7 +1423,7 @@ exports.getInvoiceApproval = onCall({
     
     if (isTokenExpired) {
       logger.info('Access token expired, automatically refreshing...', { 
-        companyName,
+        companyId,
         expiresAt: new Date(accessTokenExpiresAt).toISOString()
       });
 
@@ -1497,12 +1493,12 @@ exports.getInvoiceApproval = onCall({
         await tokenRef.update(updateData);
 
         logger.info('Tokens updated in Firestore after auto-refresh', { 
-          companyName,
+          companyId,
           newExpiresAt: new Date(accessTokenExpiresAt).toISOString()
         });
 
         // Save audit log for auto-refresh
-        await saveAuditLog(companyName, 'taxAuthorityTokenAutoRefreshed', request.auth.token.email);
+        await saveAuditLog(companyId, 'taxAuthorityTokenAutoRefreshed', request.auth.token.email);
 
       } catch (refreshError) {
         logger.error('Failed to auto-refresh access token', {
@@ -1518,7 +1514,7 @@ exports.getInvoiceApproval = onCall({
           
           // If refresh token is invalid, clear the stored tokens
           if (status === 400 || status === 401) {
-            logger.warn('Refresh token invalid, clearing stored tokens', { companyName });
+            logger.warn('Refresh token invalid, clearing stored tokens', { companyId });
             await tokenRef.update({
               accessToken: admin.firestore.FieldValue.delete(),
               refreshToken: admin.firestore.FieldValue.delete(),
@@ -1549,7 +1545,7 @@ exports.getInvoiceApproval = onCall({
       }
     } else {
       logger.info('Access token is valid, proceeding with invoice submission', {
-        companyName,
+        companyId,
         expiresAt: new Date(accessTokenExpiresAt).toISOString(),
         timeUntilExpiry: Math.round((accessTokenExpiresAt - Date.now()) / 1000 / 60) + ' minutes'
       });
@@ -1575,7 +1571,7 @@ exports.getInvoiceApproval = onCall({
       invoice_type: 305, // 305 = Tax invoice (חשבונית מס)
       vat_number: businessInfo.vat_number ,
       //user_id: 15, // REQUIRED: User ID in Tax Authority system (use fixed test value for sandbox)
-      user_name: username,
+      user_name: userData.name || userData.email || uid, // Use display name, fallback to email/UID
       invoice_reference_number: paddedDocNumber,
     };
 
@@ -1654,7 +1650,7 @@ exports.getInvoiceApproval = onCall({
     }
 
     logger.info('Submitting invoice to Tax Authority', {
-      companyName,
+      companyId,
       documentId,
       invoiceId: taxAuthorityData.invoice_id,
       itemCount: taxAuthorityData.items.length,
@@ -1815,7 +1811,7 @@ exports.getInvoiceApproval = onCall({
       documentNumber
     });
 
-    const certificationRef = admin.firestore().doc(`companies/${companyName}/certifications/c_${documentId}`);
+    const certificationRef = admin.firestore().doc(`companies/${companyId}/certifications/c_${documentId}`);
     const certificationData = {
       type: DOC_TYPE.TAX_INVOICE, // Store numeric type (305)
       documentNumber: documentNumber, // Use the date-number-type format
@@ -1829,7 +1825,7 @@ exports.getInvoiceApproval = onCall({
       items: items,
       language: language || 'he',
       notes: notes || null,
-      createdBy: username,
+      createdBy: uid,
       createdAt: new Date().toISOString(),
       jobData: jobData || null,
       jobsData: jobsData || null, // Multi-job references
@@ -1846,7 +1842,7 @@ exports.getInvoiceApproval = onCall({
       await certificationRef.set(certificationData);
       logger.info('Document saved to Firestore with approval', {
         documentId,
-        path: `companies/${companyName}/certifications/${documentId}`,
+        path: `companies/${companyId}/certifications/${toCertificationDocId(documentId)}`,
         confirmationNumber
       });
 
@@ -1872,7 +1868,7 @@ exports.getInvoiceApproval = onCall({
         const batch = admin.firestore().batch();
         const cacheUpdates = {};
         for (const jobId of allJobRefs) {
-          const finishedJobPath = `companies/${companyName}/finishedJobs/${jobId}`;
+          const finishedJobPath = `companies/${companyId}/finishedJobs/${jobId}`;
           try {
             const finishedJobRef = admin.firestore().doc(finishedJobPath);
             batch.update(finishedJobRef, {
@@ -1893,7 +1889,7 @@ exports.getInvoiceApproval = onCall({
         // Mark price proposal as used if provided
         if (priceProposalId) {
           try {
-            const proposalRef = admin.firestore().doc(`companies/${companyName}/certifications/${priceProposalId}`);
+            const proposalRef = admin.firestore().doc(`companies/${companyId}/certifications/${toCertificationDocId(priceProposalId)}`);
             batch.update(proposalRef, {
               isUsed: true,
               usedByDocumentId: documentId,
@@ -1911,7 +1907,7 @@ exports.getInvoiceApproval = onCall({
         
         // Determine cache path based on user role
         const isManager = role === 'manager';
-        const cachePath = isManager? `companies/${companyName}/business_data/cache`: `${username}/cache`;
+        const cachePath = isManager? `companies/${companyId}/business_data/cache`: `${uid}/cache`;
         const cacheRef = admin.firestore().doc(cachePath);
         batch.update(cacheRef, {
           ...cacheUpdates,
@@ -1948,12 +1944,12 @@ exports.getInvoiceApproval = onCall({
     // Increment document counter
     if (businessInfo.document_numbers) {
       try {
-        const businessInfoRef = admin.firestore().doc(`companies/${companyName}/business_data/business_info`);
+        const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
         await businessInfoRef.update({
           'document_numbers.taxInvoice': admin.firestore.FieldValue.increment(1),
           last_updated: new Date().toISOString()
         });
-        const businessCacheRef = admin.firestore().doc(`companies/${companyName}/business_data/cache`);
+        const businessCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
         await businessCacheRef.update({
           business_info: admin.firestore.FieldValue.increment(1),
           lastUpdated: new Date().toISOString()
@@ -1969,7 +1965,7 @@ exports.getInvoiceApproval = onCall({
 
     // Save audit log for Tax Authority submission
     await saveAuditLog(
-      companyName,
+      companyId,
       'submitInvoiceToTaxAuthority',
       request.auth.token.email,
       documentId,
@@ -1989,7 +1985,7 @@ exports.getInvoiceApproval = onCall({
     try {
       // Build company data from business info for the PDF generation task
       const companyData = {
-        name: businessInfo.he_name || businessInfo.en_name || businessInfo.business_name || companyName,
+        name: businessInfo.he_name || businessInfo.en_name || businessInfo.business_name || companyId,
         nameHe: businessInfo.he_name || '',
         nameEn: businessInfo.en_name || '',
         email: businessInfo.business_email || businessInfo.email || '',
@@ -2038,9 +2034,9 @@ exports.getInvoiceApproval = onCall({
         documentNumber: documentNumber,
         completeDocumentData: completeDocumentData,
         certificationData: certificationData,
-        username: username,
-        companyName: companyName,
-        createdByEmail: request.auth.token.email,
+        uid: uid,
+        companyId: companyId,
+        createdByUid: request.auth.uid,
         userProfile: userData, // Pass user profile for role-based cache path
       });
 
@@ -2051,7 +2047,7 @@ exports.getInvoiceApproval = onCall({
         taskId, 
         messageId: result.messageId, 
         documentId,
-        companyName 
+        companyId 
       });
 
     } catch (pubsubError) {
@@ -2071,7 +2067,7 @@ exports.getInvoiceApproval = onCall({
     return {
       success: true,
       documentId: documentId,
-      savedPath: `companies/${companyName}/certifications/${documentId}`,
+      savedPath: `companies/${companyId}/certifications/${toCertificationDocId(documentId)}`,
       status: response.status,
       message: response.data?.message || 'Invoice approved and saved successfully',
       confirmation_number: confirmationNumber,
@@ -2144,49 +2140,44 @@ exports.getInvoiceApproval = onCall({
 // =============================================================================
 
 /**
- * Helper function to check if a company is currently generating a document
- * This prevents duplicate documents from being created
- */
-async function checkCompanyBusyFlag(companyName, documentType) {
-  const busyRef = admin.firestore().doc(`companies/${companyName}/documentLocks/${documentType}`);
-  const busyDoc = await busyRef.get();
-  
-  if (busyDoc.exists) {
-    const data = busyDoc.data();
-    const lockTime = data.lockedAt?.toMillis() || 0;
-    const now = Date.now();
-    
-    // If lock is older than 5 minutes, consider it stale
-    if (now - lockTime < 5 * 60 * 1000) {
-      return {
-        isBusy: true,
-        lockedBy: data.lockedBy,
-        lockedAt: data.lockedAt
-      };
-    }
-  }
-  
-  return { isBusy: false };
-}
-
-/**
- * Helper function to set company busy flag
- */
-async function setCompanyBusyFlag(companyName, documentType, username, taskId) {
-  const busyRef = admin.firestore().doc(`companies/${companyName}/documentLocks/${documentType}`);
-  await busyRef.set({
-    lockedBy: username,
-    taskId: taskId,
-    lockedAt: admin.firestore.FieldValue.serverTimestamp()
-  });
-}
-
-/**
  * Helper function to clear company busy flag
  */
-async function clearCompanyBusyFlag(companyName, documentType) {
-  const busyRef = admin.firestore().doc(`companies/${companyName}/documentLocks/${documentType}`);
+async function clearCompanyBusyFlag(companyId, documentType) {
+  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
   await busyRef.delete();
+}
+
+/**
+ * Atomically acquire a company busy flag.
+ * Prevents race conditions between check + set across concurrent requests.
+ */
+async function acquireCompanyBusyFlag(companyId, documentType, uid, taskId) {
+  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
+  const staleAfterMs = 5 * 60 * 1000;
+
+  await admin.firestore().runTransaction(async (tx) => {
+    const busyDoc = await tx.get(busyRef);
+    if (busyDoc.exists) {
+      const data = busyDoc.data() || {};
+      const lockTime = data.lockedAt?.toMillis?.() || 0;
+      const now = Date.now();
+      const isFreshLock = lockTime && (now - lockTime < staleAfterMs);
+
+      if (isFreshLock) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Another document is being generated. Please wait a few seconds and try again.',
+          { lockedBy: data.lockedBy || 'unknown' }
+        );
+      }
+    }
+
+    tx.set(busyRef, {
+      lockedBy: uid,
+      taskId,
+      lockedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
 }
 
 /**
@@ -2201,9 +2192,9 @@ async function clearCompanyBusyFlag(companyName, documentType) {
  * @param {number} params.documentNumber - Pre-assigned document number
  * @param {Object} params.completeDocumentData - Complete document data with all fields
  * @param {Object} params.certificationData - Certification data (for taxInvoice)
- * @param {string} params.username - Username
- * @param {string} params.companyName - Company name
- * @param {string} params.createdByEmail - User email
+ * @param {string} params.uid - uid
+ * @param {string} params.companyId - Company name
+ * @param {string} params.createdByUid - User's Firebase UID
  * @param {Object} [params.userProfile] - User profile with role for cache path determination
  * 
  * @returns {Object} { taskId, messageId, published: true }
@@ -2214,78 +2205,85 @@ async function publishGenerateTaskHelper({
   documentNumber,
   completeDocumentData,
   certificationData,
-  username,
-  companyName,
-  createdByEmail,
+  uid,
+  companyId,
+  createdByUid,
   userProfile
 }) {
-  // Check busy flag
-  const busyCheck = await checkCompanyBusyFlag(companyName, `generate_${documentType}`);
-  if (busyCheck.isBusy) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Another document is being generated. Please wait a few seconds and try again.',
-      { lockedBy: busyCheck.lockedBy }
-    );
-  }
-
-  // Generate task ID
+  const lockType = `generate_${documentType}`;
   const taskId = `generate_${documentType}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  let lockAcquired = false;
 
-  // Set busy flag
-  await setCompanyBusyFlag(companyName, `generate_${documentType}`, username, taskId);
+  // Acquire lock atomically to avoid check/set race under concurrent requests.
+  await acquireCompanyBusyFlag(companyId, lockType, uid, taskId);
+  lockAcquired = true;
 
-  // Create task document in Firestore for tracking
-  const taskRef = admin.firestore().doc(`documentTasks/${taskId}`);
-  await taskRef.set({
-    taskId: taskId,
-    type: 'generate',
-    taskType: 'generate',
-    documentType: documentType,
-    companyName: companyName,
-    documentId: documentId,
-    documentNumber: documentNumber,
-    username: username,
-    createdBy: createdByEmail,
-    status: 'pending',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    documentData: completeDocumentData
-  });
+  try {
+    // Create task document in Firestore for tracking
+    const taskRef = admin.firestore().doc(`documentTasks/${taskId}`);
+    await taskRef.set({
+      taskId: taskId,
+      type: 'generate',
+      taskType: 'generate',
+      documentType: documentType,
+      companyId: companyId,
+      documentId: documentId,
+      documentNumber: documentNumber,
+      uid: uid,
+      createdBy: createdByUid,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      documentData: completeDocumentData
+    });
 
-  // Prepare message with ALL data - Cloud Run does NO fetching
-  const messageData = {
-    taskId: taskId,
-    documentType: documentType,
-    documentId: documentId,
-    documentNumber: documentNumber,
-    documentData: completeDocumentData,
-    username: username,
-    companyName: companyName,
-    certificationData: certificationData,  // Existing cert data for taxInvoice
-    userProfile: userProfile || null, // User profile for role-based cache path
-    // Pass confirmation number at top level for easy access in Cloud Run
-    confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
-  };
+    // Prepare message with ALL data - Cloud Run does NO fetching
+    const messageData = {
+      taskId: taskId,
+      documentType: documentType,
+      documentId: documentId,
+      documentNumber: documentNumber,
+      documentData: completeDocumentData,
+      uid: uid,
+      companyId: companyId,
+      certificationData: certificationData,  // Existing cert data for taxInvoice
+      userProfile: userProfile || null, // User profile for role-based cache path
+      // Pass confirmation number at top level for easy access in Cloud Run
+      confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
+    };
 
-  // Publish to Pub/Sub
-  const topic = pubsub.topic(GENERATE_TOPIC);
-  const messageBuffer = Buffer.from(JSON.stringify(messageData));
-  const messageId = await topic.publishMessage({ data: messageBuffer });
+    // Publish to Pub/Sub
+    const topic = pubsub.topic(GENERATE_TOPIC);
+    const messageBuffer = Buffer.from(JSON.stringify(messageData));
+    const messageId = await topic.publishMessage({ data: messageBuffer });
 
-  logger.info('Generate task published via helper', { taskId, messageId, documentType, documentId });
+    logger.info('Generate task published via helper', { taskId, messageId, documentType, documentId });
 
-  // Update task with message ID
-  await taskRef.update({
-    status: 'queued',
-    pubsubMessageId: messageId,
-    queuedAt: admin.firestore.FieldValue.serverTimestamp()
-  });
+    // Update task with message ID
+    await taskRef.update({
+      status: 'queued',
+      pubsubMessageId: messageId,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
 
-  return {
-    taskId: taskId,
-    messageId: messageId,
-    published: true
-  };
+    return {
+      taskId: taskId,
+      messageId: messageId,
+      published: true
+    };
+  } catch (error) {
+    if (lockAcquired) {
+      try {
+        await clearCompanyBusyFlag(companyId, lockType);
+      } catch (unlockError) {
+        logger.error('Failed to clear busy flag after publishGenerateTaskHelper error', {
+          lockType,
+          companyId,
+          error: unlockError.message
+        });
+      }
+    }
+    throw error;
+  }
 }
 
 /**
@@ -2302,15 +2300,20 @@ exports.publishPreviewTask = onCall({
   memory: "256MiB",
   timeoutSeconds: 30
 }, async (request) => {
+  let lockAcquired = false;
+  let lockType = '';
+  let companyIdForUnlock = '';
   try {
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    const username = getUsernameFromEmail(request.auth.token.email);
-    logger.info('Publishing preview task', { username });
+    const uid = request.auth.uid;
+    logger.info('Publishing preview task', { uid });
 
-    const { documentType, documentData, companyName } = request.data;
+    const { documentType, documentData, companyId } = request.data;
+    companyIdForUnlock = companyId;
+    lockType = `preview_${documentType}`;
 
     // Validate required fields
     if (!documentType) {
@@ -2319,8 +2322,8 @@ exports.publishPreviewTask = onCall({
     if (!documentData) {
       throw new HttpsError('invalid-argument', 'Document data is required');
     }
-    if (!companyName) {
-      throw new HttpsError('invalid-argument', 'Company name is required');
+    if (!companyId) {
+      throw new HttpsError('invalid-argument', 'Company ID is required');
     }
 
     // Validate document data
@@ -2338,7 +2341,7 @@ exports.publishPreviewTask = onCall({
       logger.info('Using cached user profile from frontend', { role: userProfile.role });
     } else {
       // Fallback: fetch from Firestore
-      const userProfileRef = admin.firestore().doc(`${username}/profile`);
+      const userProfileRef = admin.firestore().doc(`${uid}/profile`);
       const userProfileDoc = await userProfileRef.get();
       if (userProfileDoc.exists) {
         userProfile = userProfileDoc.data();
@@ -2347,7 +2350,7 @@ exports.publishPreviewTask = onCall({
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
-    const businessInfoRef = admin.firestore().doc(`companies/${companyName}/business_data/business_info`);
+    const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
     const businessInfoDoc = await businessInfoRef.get();
     if (!businessInfoDoc.exists) {
       throw new HttpsError('failed-precondition', 'Business information not found. Please complete business registration.');
@@ -2356,7 +2359,7 @@ exports.publishPreviewTask = onCall({
 
     // Build company data from business_info
     const companyData = {
-      name: businessInfo.he_name || businessInfo.en_name || companyName,
+      name: businessInfo.he_name || businessInfo.en_name || companyId,
       email: businessInfo.business_email || '',
       phone: businessInfo.business_phone || '',
       address: businessInfo.address || '',
@@ -2412,21 +2415,12 @@ exports.publishPreviewTask = onCall({
       }
     };
 
-    // Check busy flag
-    const busyCheck = await checkCompanyBusyFlag(companyName, `preview_${documentType}`);
-    if (busyCheck.isBusy) {
-      throw new HttpsError(
-        'failed-precondition',
-        'Another preview is being generated. Please wait a few seconds and try again.',
-        { lockedBy: busyCheck.lockedBy }
-      );
-    }
-
     // Generate task ID
     const taskId = `preview_${documentType}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    // Set busy flag
-    await setCompanyBusyFlag(companyName, `preview_${documentType}`, username, taskId);
+    // Acquire lock atomically to avoid concurrent duplicate previews.
+    await acquireCompanyBusyFlag(companyId, lockType, uid, taskId);
+    lockAcquired = true;
 
     // Create task document in Firestore for tracking
     const taskRef = admin.firestore().doc(`documentTasks/${taskId}`);
@@ -2434,11 +2428,11 @@ exports.publishPreviewTask = onCall({
       taskId: taskId,
       type: 'preview',
       documentType: documentType,
-      username: username,
-      companyName: companyName,
+      uid: uid,
+      companyId: companyId,
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdBy: request.auth.token.email,
+      createdBy: request.auth.uid,
       documentData: completeDocumentData
     });
 
@@ -2447,8 +2441,8 @@ exports.publishPreviewTask = onCall({
       taskId: taskId,
       documentType: documentType,
       documentData: completeDocumentData,
-      username: username,
-      companyName: companyName
+      uid: uid,
+      companyId: companyId
     };
 
     // Publish to Pub/Sub
@@ -2473,6 +2467,18 @@ exports.publishPreviewTask = onCall({
     };
 
   } catch (error) {
+    if (lockAcquired) {
+      try {
+        await clearCompanyBusyFlag(companyIdForUnlock, lockType);
+      } catch (unlockError) {
+        logger.error('Failed to clear preview busy flag after error', {
+          companyId: companyIdForUnlock,
+          lockType,
+          error: unlockError.message
+        });
+      }
+    }
+
     logger.error('Error publishing preview task:', error);
     
     if (error instanceof HttpsError) {
@@ -2510,17 +2516,17 @@ exports.publishGenerateTask = onCall({
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    const username = getUsernameFromEmail(request.auth.token.email);
-    logger.info('Publishing generate task', { username });
+    const uid = request.auth.uid;
+    logger.info('Publishing generate task', { uid });
 
-    const { documentType, documentData, companyName, documentId: providedDocId } = request.data;
+    const { documentType, documentData, companyId, documentId: providedDocId } = request.data;
 
     // Validate required fields
     if (!documentType) {
       throw new HttpsError('invalid-argument', 'Document type is required');
     }
-    if (!companyName) {
-      throw new HttpsError('invalid-argument', 'Company name is required');
+    if (!companyId) {
+      throw new HttpsError('invalid-argument', 'Company ID is required');
     }
 
     // Convert documentType to number for consistency
@@ -2550,7 +2556,7 @@ exports.publishGenerateTask = onCall({
       logger.info('Using cached user profile from frontend', { role: userProfile.role });
     } else {
       // Fallback: fetch from Firestore
-      const userProfileRef = admin.firestore().doc(`${username}/profile`);
+      const userProfileRef = admin.firestore().doc(`${uid}/profile`);
       const userProfileDoc = await userProfileRef.get();
       if (userProfileDoc.exists) {
         userProfile = userProfileDoc.data();
@@ -2559,7 +2565,7 @@ exports.publishGenerateTask = onCall({
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
-    const businessInfoRef2 = admin.firestore().doc(`companies/${companyName}/business_data/business_info`);
+    const businessInfoRef2 = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
     const businessInfoDoc2 = await businessInfoRef2.get();
     if (!businessInfoDoc2.exists) {
       throw new HttpsError('failed-precondition', 'Business information not found. Please complete business registration.');
@@ -2568,7 +2574,7 @@ exports.publishGenerateTask = onCall({
 
     // Build company data from business_info
     const companyData = {
-      name: businessInfo.he_name || businessInfo.en_name || companyName,
+      name: businessInfo.he_name || businessInfo.en_name || companyId,
       email: businessInfo.business_email || '',
       phone: businessInfo.business_phone || '',
       address: businessInfo.address || '',
@@ -2583,14 +2589,15 @@ exports.publishGenerateTask = onCall({
     // Handle tax invoice vs other types
     if (numericDocType === DOC_TYPE.TAX_INVOICE) {
       // Tax invoice - document already exists (approved via getInvoiceApproval)
-      documentId = providedDocId;
+      const certDocId = toCertificationDocId(providedDocId);
+      documentId = toBaseDocumentId(providedDocId);
       
       // Fetch existing certification to get all data
-      const certRef = admin.firestore().doc(`companies/${companyName}/certifications/${documentId}`);
+      const certRef = admin.firestore().doc(`companies/${companyId}/certifications/${certDocId}`);
       const certDoc = await certRef.get();
       
       if (!certDoc.exists) {
-        throw new HttpsError('not-found', `Document ${documentId} not found`);
+        throw new HttpsError('not-found', `Document ${certDocId} not found`);
       }
       
       certificationData = certDoc.data();
@@ -2687,9 +2694,9 @@ exports.publishGenerateTask = onCall({
       documentNumber,
       completeDocumentData,
       certificationData,
-      username,
-      companyName,
-      createdByEmail: request.auth.token.email,
+      uid,
+      companyId,
+      createdByUid: request.auth.uid,
       userProfile: userProfile, // Pass user profile for role-based cache path
     });
 
@@ -2728,11 +2735,11 @@ exports.onTaskCompleted = onDocumentUpdated({
   if (beforeData.status !== afterData.status && 
       (afterData.status === 'completed' || afterData.status === 'failed')) {
     
-    const { companyName, type, documentType } = afterData;
+    const { companyId, type, documentType } = afterData;
     const lockType = `${type}_${documentType}`;
     
     try {
-      await clearCompanyBusyFlag(companyName, lockType);
+      await clearCompanyBusyFlag(companyId, lockType);
       logger.info('Busy flag cleared for task', { 
         taskId: afterData.taskId, 
         status: afterData.status 

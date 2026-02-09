@@ -1,10 +1,68 @@
-# GitHub Copilot Instructions for Smart-Job Application
+# GitHub Copilot Instructions for Smart-Job ERP
 
 ## 🎯 Application Overview
 
-**Smart-Job** is a comprehensive **cross-platform mobile job management, inventory tracking, and document generation application** built with **React Native Expo Router**. The app is designed for **both iOS and Android platforms** and serves cooling/HVAC technicians, workers, and managers to efficiently manage jobs, track inventory parts, and generate professional business documents.
+**Smart-Job ERP** is a comprehensive **cross-platform business management system** built with **React Native Expo Router**. The app is designed for **both iOS and Android platforms** and serves **solo business owners** and **business owners with teams of workers** to efficiently manage jobs, track inventory parts, and generate professional business documents.
+
+**Target Users**:
+- **Solo business owners** (User/Basic roles) — manage their own jobs, inventory, and documents
+- **Business owners with teams** (Manager role) — manage workers, assign jobs, track company-wide inventory
+- **Team members** (Worker role) — complete assigned jobs, track personal inventory from company stock
+- **Developers** (Dev role) — internal access for development and testing
 
 **⚠️ CRITICAL: All code written for this project MUST be compatible with both iOS and Android platforms. Always use platform-agnostic React Native components and APIs, or use Platform-specific code when necessary.**
+
+---
+
+## 🚨 IDENTITY MODEL — uid & companyId
+
+### ⚠️ NEVER USE `username` OR `getUsernameFromEmail` — ALWAYS USE `uid`
+
+The app uses **Firebase Auth UID** (`auth().currentUser.uid`) as the primary user identifier. The old `username` model (derived from email prefix) has been **completely removed**.
+
+- **`uid`**: Firebase Auth UID — used for ALL Firestore document paths and field references
+- **`companyId`**: Company identifier — used for ALL company-related Firestore paths
+- **`getUsernameFromEmail()`**: **REMOVED** — this function no longer exists in the codebase
+
+### ⛔ FORBIDDEN — DO NOT USE
+```javascript
+// ❌ NEVER DO THIS — getUsernameFromEmail was removed
+const username = getUsernameFromEmail(email);
+
+// ❌ NEVER reference username-based paths
+db.collection(username).doc('profile')
+
+// ❌ NEVER use companyName for Firestore paths
+db.collection('companies').doc(companyName)
+
+// ❌ NEVER use these old field names
+{ workerUsername: '...', companyName: '...', senderUsername: '...' }
+```
+
+### ✅ REQUIRED — ALWAYS DO THIS
+```javascript
+// ✅ Get uid from Firebase Auth
+const uid = auth().currentUser.uid;
+
+// ✅ Use uid for all user document paths
+db.collection(uid).doc('profile')
+
+// ✅ Use companyId for company paths
+db.collection('companies').doc(companyId)
+
+// ✅ Use these field names
+{ workerId: '...', companyId: '...', senderUid: '...' }
+```
+
+### Field Name Mapping (Old → New)
+| Old Field | New Field |
+|-----------|-----------|
+| `workerUsername` | `workerId` |
+| `senderUsername` | `senderUid` |
+| `createdByUsername` | `createdByUid` |
+| `completedByUsername` | `completedByUid` |
+| `companyName` | `companyId` |
+| `username` (in profiles) | `uid` |
 
 ---
 
@@ -97,26 +155,175 @@ alert.info('Title', 'Message');
 - **Language Support**: Multi-language (English, Hebrew, Arabic)
 - **Theme**: Light/Dark mode with AsyncStorage persistence
 - **Cross-Platform**: iOS & Android compatible
-- **Document Generation**: Server-side PDF generation with Firebase Cloud Functions
+- **Document Generation**: Server-side PDF generation with Firebase Cloud Functions + Cloud Run
+- **Subscription Gating**: `withGate` HOC for feature access control
 
 ### Key Features
 - **Custom Alert System**: Modern gradient-based alerts replacing native Alert.alert()
-- **Role-based access control** (Manager, Worker, User)
+- **Role-based access control** (Manager, Worker, User, Basic, Dev)
+- **Subscription-based feature gating** via `withGate` HOC
+- **Module architecture** — screens in `modules/`, thin wrappers in `app/`
 - **Real-time job tracking** and monitoring
-- **Inventory management** with low-stock alerts
+- **Role-split inventory management** (personal, team, company)
 - **Photo capture** and gallery integration
 - **Digital signature** collection
 - **GPS location** tracking
 - **Multi-language support** (EN, HE, AR)
 - **Dark/Light theme** switching
-- **Offline-first** with AsyncStorage caching
+- **Offline-first** with MMKV caching
 - **Professional document generation** (Tax Invoices, Price Proposals, Refunds, Return Certificates)
 - **Global navigation** with centralized header (back button + settings)
 
 ---
 
-## 📁 File Structure & Detailed Explanations
+## 🏛️ Module Architecture & withGate Pattern
 
+### Overview
+
+The app uses a **module-based architecture** where:
+1. **`modules/`** contains all business logic and screen implementations, organized by feature
+2. **`app/`** contains **thin wrapper files** that import from modules and apply subscription gating via `withGate`
+3. **`modules/shared/gating/`** contains the gating infrastructure
+
+### The `withGate` HOC
+
+Every gated screen in `app/` follows this 3-line pattern:
+
+```javascript
+import { withGate } from '../modules/shared/gating/withGate';
+import Screen from '../modules/team/screens/ManageJobs';
+export default withGate(Screen, { module: 'team', roles: ['manager'] });
+```
+
+**What `withGate` does:**
+1. Checks if user's **role** is in the allowed `roles` array
+2. Checks if user's **subscription** includes the required `module`
+3. If either check fails, shows `NotAvailableScreen`
+4. While loading, shows a spinner
+
+**Options:**
+- `module` (string) — Required module name in subscription's `enabledModules`
+- `roles` (string[]) — Allowed roles for this screen
+- `roleModules` (object) — Role-specific additional module requirements
+
+### Module Directory Structure
+
+```
+modules/
+├── team/                        # Team management features (manager/worker)
+│   ├── index.js                 # Module barrel exports
+│   └── screens/
+│       ├── ManageJobs.js        # Manager: manage pending jobs, accept/deny
+│       ├── CreateJob.js         # Manager: assign jobs to workers
+│       ├── WorkersMonitor.js    # Manager: monitor worker inventory & jobs
+│       ├── JobMonitor.js        # Manager: real-time company job monitoring
+│       ├── WorkersUsers.js      # Manager: create/edit/delete worker accounts
+│       └── Workerjob.js         # Worker: view/complete assigned jobs
+│
+├── solojob/                     # Solo job management (user/manager)
+│   ├── index.js
+│   └── screens/
+│       ├── Userjob.js           # User: job list and creation hub
+│       ├── FillJob.js           # User: fill out a new job
+│       └── EditJob.js           # User: edit existing job
+│
+├── documents/                   # Document generation features
+│   ├── index.js
+│   └── screens/
+│       ├── GeneralDocuments.js  # Document hub / type selection
+│       ├── CreateDocument.js    # Create new documents (invoice, proposal, etc.)
+│       ├── GenerateTaxInvoice.js # Generate tax invoice from completed job
+│       ├── DocumentHistory.js   # View document history
+│       └── ViewCertification.js # View individual certification/document
+│
+├── inventory/                   # Inventory management (split by role)
+│   ├── personal/               # Solo user inventory (free-form parts)
+│   │   ├── index.js
+│   │   └── screens/
+│   │       └── UserInventory.js
+│   ├── teaminventory/          # Worker inventory (picks from company stock)
+│   │   ├── index.js
+│   │   └── screens/
+│   │       └── inventory.js     # WorkerInventory
+│   └── company/                # Manager company-wide stock management
+│       ├── index.js
+│       └── screens/
+│           └── CompanyInventory.js
+│
+└── shared/                     # Shared infrastructure
+    └── gating/
+        ├── index.js            # isSubscriptionActive, isModuleEnabled, hasRoleAccess
+        ├── withGate.js         # HOC for subscription gating
+        └── NotAvailableScreen.js # Shown when access is denied
+```
+
+### App Wrapper Files
+
+Each gated screen in `app/` is a thin 3-line wrapper:
+
+| App File | Module Screen | Gate Config |
+|----------|--------------|-------------|
+| `app/ManageJobs.js` | `modules/team/screens/ManageJobs` | `module: 'team', roles: ['manager']` |
+| `app/CreateJob.js` | `modules/team/screens/CreateJob` | `module: 'team', roles: ['manager']` |
+| `app/WorkersMonitor.js` | `modules/team/screens/WorkersMonitor` | `module: 'team', roles: ['manager']` |
+| `app/JobMonitor.js` | `modules/team/screens/JobMonitor` | `module: 'team', roles: ['manager']` |
+| `app/WorkersUsers.js` | `modules/team/screens/WorkersUsers` | `module: 'team', roles: ['manager']` |
+| `app/Workerjob.js` | `modules/team/screens/Workerjob` | `module: 'team', roles: ['worker']` |
+| `app/Userjob.js` | `modules/solojob/screens/Userjob` | `module: 'jobs', roles: ['user', 'manager']` |
+| `app/FillJob.js` | `modules/solojob/screens/FillJob` | `module: 'jobs', roles: ['user', 'manager']` |
+| `app/EditJob.js` | `modules/solojob/screens/EditJob` | `module: 'jobs', roles: ['user', 'manager']` |
+| `app/GeneralDocuments.js` | `modules/documents/screens/GeneralDocuments` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/CreateDocument.js` | `modules/documents/screens/CreateDocument` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/GenerateTaxInvoice.js` | `modules/documents/screens/GenerateTaxInvoice` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/DocumentHistory.js` | `modules/documents/screens/DocumentHistory` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/ViewCertification.js` | `modules/documents/screens/ViewCertification` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/CompanyInventory.js` | `modules/inventory/company/screens/CompanyInventory` | `module: 'inventory', roles: ['manager', 'user']` |
+
+### Special: `app/inventory.js` (Role-Aware Router)
+
+`app/inventory.js` is **not** a simple 3-line wrapper. It's a role-aware router wrapped with `withGate`:
+
+```javascript
+import WorkerInventory from '../modules/inventory/teaminventory/screens/inventory';
+import UserInventory from '../modules/inventory/personal/screens/UserInventory';
+
+function InventoryRouter() {
+  const { profile } = useCache();
+  const role = profile?.role;
+  // worker / manager → WorkerInventory (company-linked parts)
+  // user / basic     → UserInventory   (personal free-form parts)
+  if (role === 'worker' || role === 'manager') return <WorkerInventory />;
+  return <UserInventory />;
+}
+
+export default withGate(InventoryRouter, {
+  module: 'inventory',
+  roles: ['manager', 'worker', 'user', 'basic'],
+  roleModules: { worker: ['teaminventory', 'inventory'] }
+});
+```
+
+### Non-Gated App Screens
+
+These screens in `app/` are **NOT wrapped with `withGate`** (they are full implementations or special screens):
+
+- `app/_layout.js` — Root layout with providers
+- `app/index.js` — Auth gate / entry point
+- `app/Login.js` — Authentication screen
+- `app/ManagerHomepage.js` — Manager dashboard
+- `app/WorkerHomepage.js` — Worker dashboard
+- `app/UserHomepage.js` — User dashboard
+- `app/BasicHomepage.js` — Basic user dashboard
+- `app/Settings.js` — Settings screen
+- `app/BusinessReg.js` — Business registration
+- `app/ClientBook.js` — Client address book
+- `app/Permission.js` — Permission management
+- `app/DevInbox.js` — Developer inbox
+- `app/SupportChat.js` — Support chat
+
+---
+
+## 📁 File Structure & Detailed Explanations
 
 **Cross-Platform Note**: All dependencies are Expo-compatible and work on both iOS and Android.
 
@@ -179,9 +386,11 @@ alert.info('Title', 'Message');
 
 ---
 
-### 🔷 App Directory (Screens/Routes)
+### 🔷 App Directory (Routes & Wrappers)
 
-All files in the `app/` directory are **Expo Router screens** that render on both iOS and Android with identical functionality.
+Files in `app/` fall into two categories:
+1. **Full screens** — homepages, login, settings, etc.
+2. **Thin wrappers** — 3-line files using `withGate` to gate module screens
 
 ---
 
@@ -192,9 +401,11 @@ All files in the `app/` directory are **Expo Router screens** that render on bot
   2. `SafeAreaProvider`: Handles notch/status bar on iOS and Android
   3. `ThemeProvider`: Global dark/light mode state
   4. `LanguageProvider`: Global language state (EN, HE, AR)
-  5. `Stack`: Expo Router navigation stack
+  5. `CacheProvider`: MMKV caching + subscription state
+  6. `AlertProvider`: Custom alert system
+  7. `Stack`: Expo Router navigation stack
 - **Registered Screens**: All app screens with `headerShown: false`
-- **Navigation Flow**: Handles role-based routing (Manager/Worker/User)
+- **Navigation Flow**: Handles role-based routing (Manager/Worker/User/Basic)
 
 **Cross-Platform Note**: SafeAreaProvider automatically handles iPhone notches and Android system bars.
 
@@ -209,10 +420,11 @@ All files in the `app/` directory are **Expo Router screens** that render on bot
     - `manager` → ManagerHomepage
     - `worker` → WorkerHomepage
     - `user` → UserHomepage
+    - `basic` → BasicHomepage
   - Shows Login screen for unauthenticated users
-- **User Role Detection**: Fetches user profile from Firestore using username (email prefix)
+- **User Role Detection**: Fetches user profile from Firestore using `uid` (Firebase Auth UID)
+- **Cache Initialization**: Calls `initializeCache(uid)` after login
 - **Error Handling**: Defaults to UserHomepage if profile fetch fails
-
 
 ---
 
@@ -222,457 +434,187 @@ All files in the `app/` directory are **Expo Router screens** that render on bot
   - Email and password input fields
   - Language toggle (EN/HE/AR) in header
   - Theme toggle (light/dark) in header
-  - Error handling with platform-native alerts
+  - Error handling with custom alerts
   - Auto-navigation after successful login
-- **UI Components**:
-  - `GlobalHeader`: Language and theme controls
-  - `Input`: Custom styled text inputs
-  - `LinearGradient`: Visual polish
 - **Authentication Flow**:
   1. Validates input fields
   2. Signs in with Firebase Authentication
-  3. Fetches user profile from Firestore
-  4. Routes to appropriate homepage based on role
-  5. Creates default profile if none exists
+  3. Gets `uid` from `auth().currentUser.uid`
+  4. Fetches user profile from `{uid}/profile`
+  5. Initializes cache via `initializeCache(uid)`
+  6. Routes to appropriate homepage based on role
 
 ---
 
 #### `app/ManagerHomepage.js`
-**Purpose**: Manager dashboard with four tabs - Management, Work, Job Monitor, and Documents (iOS and Android).
+**Purpose**: Manager dashboard with tabs — Management, Work, Job Monitor, and Documents (iOS and Android).
 - **Features**:
-  - **Management Tab**:
-    - Workers Monitor card → Navigate to WorkersMonitor screen
-    - Manage Workers card → Navigate to WorkersUsers screen
-  - **Work Tab**:
-    - My Inventory card → Navigate to inventory screen
-    - My Jobs card → Navigate to Userjob screen
-  - **Job Monitor Tab**:
-    - Company-wide job tracking → Navigate to JobMonitor screen
-  - **Documents Tab**: NEW!
-    - General Documents card → Navigate to GeneralDocuments screen (view/generate business documents)
+  - **Management Tab**: Workers Monitor, Manage Workers, Company Inventory
+  - **Work Tab**: My Inventory, My Jobs
+  - **Job Monitor Tab**: Company-wide job tracking
+  - **Documents Tab**: General Documents, Document History
   - Logout button with confirmation
   - GlobalHeader component (back button + settings)
-- **UI**: Colorful gradient cards with icons (MaterialCommunityIcons, Feather)
-- **Navigation**: Uses Expo Router's `useRouter()` for navigation
-- **Tab State**: URL-based tab management with query parameters
-
-**Cross-Platform Note**: LinearGradient renders identically on iOS and Android. SafeAreaInsets handles different screen shapes.
 
 ---
 
 #### `app/WorkerHomepage.js`
 **Purpose**: Worker dashboard with job and inventory access (iOS and Android).
-- **Features**:
-  - My Jobs card → Navigate to Workerjob screen (view/complete assigned jobs)
-  - My Inventory card → Navigate to inventory screen
-  - Logout button
-- **UI**: Clean card-based layout with icons
+- **Features**: My Jobs, My Inventory, Logout
 - **Role**: Workers can only view assigned jobs, not create them
 
 ---
 
 #### `app/UserHomepage.js`
 **Purpose**: Standard user dashboard for creating and managing own jobs (iOS and Android).
-- **Features**:
-  - Create & Fill Job card → Navigate to Userjob screen
-  - My Inventory card → Navigate to inventory screen
-  - Logout button
-- **UI**: Consistent card design with icons
+- **Features**: Create & Fill Job, My Inventory, Documents, Logout
 - **Role**: Users create their own jobs (not assigned by managers)
 
 ---
 
-#### `app/Userjob.js` (1732 lines)
-**Purpose**: Complex job creation and management screen for users (iOS and Android).
-- **Features**:
-  1. **Job List View**: Display all created jobs
-  2. **Create New Job**: Full job form with:
-     - Job title and description
-     - Time worked (from/to) with custom time picker
-     - Customer name
-     - Location (manual entry or GPS)
-     - Photo capture (camera or gallery, max 5 photos)
-     - Client signature pad
-     - Parts used (select from inventory with quantity)
-  3. **Draft System**: Auto-saves drafts to AsyncStorage
-  4. **Edit Jobs**: Modify existing jobs
-  5. **Delete Jobs**: Remove jobs with confirmation
-  6. **Parts Inventory Tracking**: Deducts parts from user's inventory
-- **Modals**:
-  - Time picker modal (custom scrollable)
-  - Photo picker modal (camera/gallery)
-  - Signature pad modal (canvas-based)
-  - Parts selection modal (searchable list)
-- **Storage**:
-  - Firebase Storage: Photos and signatures
-  - Firebase Firestore: Job data in `{username}/jobs/all/{jobId}`
-  - AsyncStorage: Draft data persistence
-- **Permissions**: Camera, Photo Library, Location (iOS and Android)
-
-**Cross-Platform Considerations**:
-- **Camera**: Uses `expo-image-picker` with platform permission requests
-- **Location**: Uses `expo-location` with proper permission handling
-- **File System**: Uses `expo-file-system` for signature file operations
-- **KeyboardAvoidingView**: Platform-specific behavior (iOS: "padding", Android: "height")
-- **SafeAreaView**: Handles notches and system bars
+#### `app/BasicHomepage.js`
+**Purpose**: Basic user dashboard with limited features (iOS and Android).
+- **Role**: Basic users have limited access based on subscription
 
 ---
 
-#### `app/Workerjob.js` (2654 lines)
-**Purpose**: Worker screen to view and complete assigned jobs (iOS and Android).
+#### Thin Wrapper Files in `app/`
+
+All other gated screen files (ManageJobs.js, CreateJob.js, Workerjob.js, Userjob.js, FillJob.js, EditJob.js, etc.) are **3-line wrappers** as documented in the Module Architecture section above.
+
+---
+
+### 🔷 Module Screens — Key Details
+
+#### `modules/solojob/screens/Userjob.js`
+**Purpose**: Job list and creation hub for solo users.
+- **Firestore Path**: `{uid}/jobs/all/{jobId}`
+- **Features**: Job list view, create new job (navigates to FillJob), edit/delete jobs
+
+#### `modules/solojob/screens/FillJob.js`
+**Purpose**: Full job form for creating a new job.
 - **Features**:
-  1. **Job List**: Display jobs assigned by manager with status filters
-     - Status: pending, received, waiting, accepted, denied
-  2. **Fill Job Details**: Complete assigned jobs with:
-     - Time worked (from/to)
-     - Location (GPS or manual)
-     - Customer name
-     - Job description
-     - Photos (camera/gallery)
-     - Client signature
-     - Parts used (inventory tracking)
-  3. **Mark as Received**: Change status from pending to received
-  4. **Submit for Approval**: Send completed job to manager
-  5. **Draft System**: Resume incomplete jobs
-  6. **Quick Actions on Job Cards**:
-     - **Waze Button**: Opens Waze with job location for navigation
-     - **Phone Button**: Opens phone dialer to call client
-     - **WhatsApp Button**: Opens WhatsApp chat with client (validates Israeli phone numbers)
-- **Firestore Structure**:
-  - Jobs stored in `companies/{companyName}/jobs/{jobId}`
-  - Worker username linked to job
-  - Status updates in real-time
-- **Inventory Deduction**: Automatically reduces inventory when parts are used and accepted by manager
+  - Job title and description
+  - Time worked (from/to) with custom time picker
+  - Customer name via ClientSelector
+  - Location (manual entry or GPS)
+  - Photo capture (camera or gallery, max 5 photos)
+  - Client signature pad
+  - Parts used (select from inventory with quantity)
+  - Draft system (auto-saves to AsyncStorage)
+- **Storage**:
+  - Firebase Storage: Photos and signatures
+  - Firebase Firestore: Job data in `{uid}/jobs/all/{jobId}`
+  - AsyncStorage: Draft data persistence
+
+#### `modules/solojob/screens/EditJob.js`
+**Purpose**: Edit an existing job.
+- **Firestore Path**: `{uid}/jobs/all/{jobId}`
+
+#### `modules/team/screens/Workerjob.js`
+**Purpose**: Worker screen to view and complete assigned jobs.
+- **Firestore Path**: `companies/{companyId}/PendingJobs/{jobId}`
+- **Features**:
+  - Job list with status filters (pending, received, waiting, accepted, denied)
+  - Fill job details (time, location, photos, signature, parts)
+  - Mark as received, submit for approval
+  - Quick actions: Waze navigation, phone dialer, WhatsApp
+- **Field References**: Uses `workerId` (not `workerUsername`)
 
 **WhatsApp Integration (Israeli Phone Validation)**:
 ```javascript
-// handleOpenWhatsApp validates Israeli mobile numbers before opening WhatsApp
 // Valid formats: 05XXXXXXXX, +97205XXXXXXXX, 97205XXXXXXXX
 // Israeli mobile prefixes: 050, 052, 053, 054, 055, 058
 const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
-
-// Opens WhatsApp deep link: https://wa.me/972XXXXXXXXX
+// Opens: https://wa.me/972XXXXXXXXX
 ```
 
-**Cross-Platform Considerations**:
-- **Modal**: Platform-adaptive behavior on iOS and Android
-- **ActivityIndicator**: Native loading spinners
-- **Image**: Optimized image loading with caching
-- **Platform-specific styling**: Different padding for iOS vs Android
-- **Linking API**: Used for Waze, Phone, and WhatsApp deep links (works on both platforms)
+#### `modules/team/screens/ManageJobs.js`
+**Purpose**: Manager screen for accepting/denying submitted jobs.
+- **Firestore Paths**:
+  - Reads: `companies/{companyId}/PendingJobs`
+  - Writes: `companies/{companyId}/finishedJobs` (on accept)
+  - Updates worker inventory: `{workerId}/inventory/parts` (on accept)
 
----
+#### `modules/team/screens/CreateJob.js`
+**Purpose**: Manager tool to assign jobs to workers.
+- **Firestore Path**: `companies/{companyId}/PendingJobs/{jobId}`
+- **Job includes**: `assignedTo` (workerId), `assignedBy` (manager uid), `status: 'pending'`
 
-#### `app/JobMonitor.js` (1080 lines)
-**Purpose**: Manager screen to monitor all company jobs in real-time (iOS and Android).
-- **Features**:
-  1. **Job Status Filters**:
-     - All, Pending, Received, Waiting, Finished
-  2. **Date Filter**: Filter jobs by creation date
-  3. **Real-time Updates**: Uses Firestore `onSnapshot` listeners
-  4. **Job Details Modal**: View full job information
-  5. **Approve/Deny Jobs**: Manager actions for submitted jobs
-  6. **Worker Names**: Displays worker name for each job
-  7. **Photo Gallery**: Scrollable horizontal photos
-  8. **Signature Display**: View client signatures
-- **Firestore Queries**:
-  - Listens to `companies/{companyName}/jobs` collection
-  - Categorizes by status in real-time
-  - Fetches worker profiles for display names
-- **UI**: Color-coded status badges, expandable job cards
+#### `modules/team/screens/JobMonitor.js`
+**Purpose**: Real-time monitoring of all company jobs.
+- **Firestore Path**: `companies/{companyId}/PendingJobs` + `companies/{companyId}/finishedJobs`
+- **Features**: Status filters, date filters, approve/deny, photo gallery, signature display
 
-**Cross-Platform Considerations**:
-- **Firestore Listeners**: Work identically on iOS and Android
-- **Image Loading**: Platform-optimized caching
-- **ScrollView**: Native smooth scrolling
-- **Date Picker**: Platform-native date pickers
+#### `modules/team/screens/WorkersMonitor.js`
+**Purpose**: Monitor worker inventory and jobs.
+- **Firestore Paths**:
+  - Worker list: `companies/{companyId}/workers/{workerId}`
+  - Worker inventory: `{workerId}/inventory/parts`
+  - Worker jobs: filtered from `companies/{companyId}/PendingJobs`
 
----
-
-#### `app/ManageJobs.js` (672 lines) **NEW**
-**Purpose**: Manager screen for managing pending/in-process jobs with Accept/Deny functionality (iOS and Android).
-- **Features**:
-  1. **Create Job Button**: Navigate to CreateJob screen to assign new jobs to workers
-  2. **Pending Jobs List**: Real-time display of jobs with status 'pending', 'received', or 'waiting'
-  3. **Accept Job**: Approve submitted jobs with status 'waiting'
-     - Automatically deducts parts from worker's inventory
-     - Moves job to finished jobs collection
-     - Updates job status to 'finished'
-  4. **Deny Job**: Reject submitted jobs
-     - Updates job status to 'denied'
-     - Notifies worker
-  5. **Job Details Modal**: View complete job information including photos, signatures, parts used
-  6. **Real-time Updates**: Uses Firestore `onSnapshot` listeners for live job updates
-  7. **Status Badges**: Color-coded job status indicators (pending, received, waiting)
-- **Firestore Structure**:
-  - Reads from: `companies/{companyName}/jobs` collection
-  - Writes to: `companies/{companyName}/finishedJobs` collection (on accept)
-  - Updates worker inventory: `{workerUsername}/inventory/parts` (on accept)
-- **Manager Workflow**:
-  1. View jobs in pending/received/waiting status
-  2. Click job to view full details
-  3. Accept job → Deduct parts from worker inventory → Move to finished jobs
-  4. Deny job → Update status to 'denied'
-- **UI**: Card-based layout with status badges, worker names, creation timestamps
-- **Navigation**: Integrated in ManagerHomepage's Job Monitor tab (replaces old CreateJob button)
-
-**Cross-Platform Considerations**:
-- **Firestore Listeners**: Real-time updates work identically on iOS and Android
-- **Custom Alerts**: Uses alert.confirm() for Accept/Deny confirmations
-- **Modal**: Native modal component for job details
-- **Image Rendering**: Optimized photo gallery display
-
----
-
-#### `app/inventory.js` (872 lines)
-**Purpose**: Inventory management screen for tracking parts (iOS and Android).
-- **Features**:
-  1. **Add New Parts**: Name, quantity, low-stock threshold
-  2. **View Parts List**: Scrollable list with search
-  3. **Use Parts**: Deduct quantity with modal
-  4. **Add Quantity**: Increase stock
-  5. **Delete Parts**: Remove with confirmation
-  6. **Low Stock Warnings**: Visual indicators and alerts
-  7. **Real-time Updates**: Firestore `onSnapshot` listener
-- **Firestore Structure**:
-  - `{username}/inventory/parts` (single document with parts object)
-  - Each part: `{ name, quantity, lowThreshold }`
-- **UI Components**:
-  - Search bar for filtering parts
-  - Color-coded cards (red for low stock)
-  - Modals for add/use/delete actions
-
-**Cross-Platform Considerations**:
-- **Modal**: Native modal on both platforms
-- **Alert**: Platform-native alert dialogs
-- **TextInput**: Native keyboard handling
-- **Real-time Listeners**: Firestore SDK works identically
-
----
-
-
-#### `app/WorkersMonitor.js` (1428 lines)
-**Purpose**: Manager tool to monitor worker inventory and jobs (iOS and Android).
-- **Features**:
-  1. **Worker Selection**: Dropdown/list of all company workers
-  2. **Worker Jobs Tab**: View all jobs assigned to selected worker
-     - Approve/deny submitted jobs
-     - Edit job details
-     - View job photos and signatures
-  3. **Worker Inventory Tab**: View worker's parts inventory
-     - Edit worker inventory quantities
-     - Add/remove parts
-  4. **Create Job**: Assign new job to selected worker
-  5. **Real-time Updates**: Live monitoring with Firestore listeners
-- **Firestore Structure**:
-  - Worker list: `companies/{companyName}/workers/list`
-  - Worker jobs: `companies/{companyName}/jobs` (filtered by worker)
-  - Worker inventory: `{workerUsername}/inventory/parts`
-- **Manager Actions**:
-  - Approve job → Move to finished jobs collection
-  - Deny job → Update status to denied
-  - Edit job → Update job fields
-  - Create job → New document in jobs collection
-
-**Cross-Platform Considerations**:
-- **Multiple Modals**: Native modal stacking
-- **FlatList**: Optimized list rendering on both platforms
-- **Complex State**: Works identically on iOS and Android
-
----
-
-#### `app/WorkersUsers.js` (808 lines)
-**Purpose**: Manager tool to create, edit, and delete worker accounts (iOS and Android).
-- **Features**:
-  1. **Worker List**: Display all workers with email/name/phone
-  2. **Add Worker**: Create new worker account
-     - Email, password, name, phone number
-     - Auto-creates Firestore profile
-  3. **Edit Worker**: Update worker details
-  4. **Delete Worker**: Remove worker with confirmation
-- **Firestore Structure**:
-  - `companies/{companyName}/workers/list`: Worker credentials
-  - `{workerUsername}/profile`: Worker profile with role='worker'
-- **Worker Data**:
+#### `modules/team/screens/WorkersUsers.js`
+**Purpose**: Create, edit, delete worker accounts.
+- **Firestore Paths**:
+  - `companies/{companyId}/workers/{workerId}`: Worker data
+  - `{workerId}/profile`: Worker profile with `role: 'worker'`, `companyId`
+- **Worker Profile**:
   ```javascript
   {
     email: string,
-    password: string,
     phoneNumber: string,
     name: string,
     role: 'worker',
-    companyName: string
+    companyId: string
   }
   ```
-- **Security Note**: Passwords stored in Firestore (consider Firebase Auth in future)
 
-**Cross-Platform Considerations**:
-- **KeyboardAvoidingView**: Platform-specific behavior
-- **TextInput**: Native keyboard types (email-address, phone-pad)
-- **Modal**: Full-screen modal on both platforms
+#### `modules/documents/screens/GeneralDocuments.js`
+**Purpose**: Document hub for selecting document types.
+- **Document Types**: Tax Invoice, Price Proposal, Refund, Return Certificate
 
----
+#### `modules/documents/screens/CreateDocument.js`
+**Purpose**: Create new documents (all types except tax invoice from job).
+- **Features**: Customer details, line items, calculations, PDF generation via Cloud Function
 
-#### `app/GeneralDocuments.js`
-**Purpose**: Document hub for generating and viewing business documents (iOS and Android).
-- **Features**:
-  1. **Document Types**:
-     - Tax Invoice (חשבונית מס / فاتورة ضريبية)
-     - Price Proposal (הצעת מחיר / عرض سعر)
-     - Refund (זיכוי / رد)
-     - Return Certificate (תעודת החזרה / شهادة إرجاع)
-  2. **Navigation**: Routes to specific document creation/generation screens
-  3. **Multi-language**: Full Hebrew and Arabic support for document types
-- **UI**: Card-based layout with document type icons
-- **Navigation Flow**:
-  - Tax Invoice → GenerateTaxInvoice (view/generate from completed jobs)
-  - Price Proposal → CreatePriceProposal (create new proposal)
-  - Refund → CreateRefund (create refund document)
-  - Return Certificate → CreateReturnCertificate (create return certificate)
-
-**Cross-Platform Note**: Uses GlobalHeader for consistent navigation and settings access.
-
----
-
-#### `app/GenerateTaxInvoice.js`
-**Purpose**: Generate tax invoices from completed jobs (iOS and Android).
-- **Features**:
-  1. **Job Selection**: Browse all completed jobs with search
-  2. **Job Details View**: Display job information, photos, and signatures
-  3. **PDF Generation**: Generate professional tax invoice via Firebase Cloud Function
-  4. **Real-time Data**: Fetch completed jobs from Firestore
-  5. **Search & Filter**: Search jobs by title, customer name, or description
+#### `modules/documents/screens/GenerateTaxInvoice.js`
+**Purpose**: Generate tax invoices from completed jobs.
 - **Firestore Queries**:
-  - Fetches from `{username}/jobs/all` where status = 'finished'
-  - Fetches from `companies/{companyName}/finishedJobs` for managers
-- **PDF Generation Flow**:
-  1. Select completed job
-  2. Send job data to Cloud Function
-  3. Cloud Function generates PDF
-  4. Download/view PDF
-- **UI**: Searchable list with job cards and modal details view
+  - Solo: `{uid}/jobs/all` where status = 'finished'
+  - Manager: `companies/{companyId}/finishedJobs`
 
-**Cross-Platform Considerations**:
-- **Firebase Cloud Functions**: Server-side PDF generation (platform-independent)
-- **PDF Viewing**: Uses platform-native PDF viewers
-- **Real-time Listeners**: Firestore onSnapshot for live updates
+#### `modules/documents/screens/DocumentHistory.js`
+**Purpose**: View history of generated documents/certifications.
+
+#### `modules/documents/screens/ViewCertification.js`
+**Purpose**: View individual certification/document details.
 
 ---
 
-#### `app/CreatePriceProposal.js`
-**Purpose**: Create professional price proposals for customers (iOS and Android).
-- **Features**:
-  1. **Customer Details**: Name, email, phone, address
-  2. **Proposal Details**: Project description, valid until date
-  3. **Line Items**: Add multiple items with description, quantity, price
-  4. **Calculations**: Auto-calculate subtotal, VAT (17%), and total
-  5. **Terms & Conditions**: Custom notes section
-  6. **PDF Generation**: Generate via Firebase Cloud Function
-- **Form Fields**:
-  - Customer: name*, email, phone, address
-  - Proposal: description*, valid until date*
-  - Items: [{ description*, quantity*, price* }]
-  - Additional: notes, terms
-- **Validation**: Required fields marked with asterisk
-- **PDF Output**: Professional invoice-style PDF with company branding
+### 🔷 Inventory System (Split by Role)
 
-**Cross-Platform Considerations**:
-- **KeyboardAvoidingView**: Platform-specific behavior for input handling
-- **ScrollView**: Smooth scrolling on both platforms
-- **DateTimePicker**: Platform-native date pickers
+#### `modules/inventory/personal/screens/UserInventory.js`
+**Purpose**: Inventory for solo users (User/Basic roles).
+- **Features**: Free-form add/edit/delete parts, no company link
+- **Firestore Path**: `{uid}/inventory/parts`
+- **Data**: `{ partName: { quantity, lowThreshold } }`
 
----
+#### `modules/inventory/teaminventory/screens/inventory.js` (WorkerInventory)
+**Purpose**: Inventory for workers — picks parts from company inventory.
+- **Features**: Select parts from company stock, track personal quantities
+- **Firestore Paths**:
+  - Personal: `{uid}/inventory/parts`
+  - Company stock: `companies/{companyId}/business_data/inventory`
 
-#### `app/CreateRefund.js`
-**Purpose**: Create refund documents for returned items/services (iOS and Android).
-- **Features**:
-  1. **Customer Information**: Name, email, phone
-  2. **Original Invoice**: Reference number, date
-  3. **Refund Items**: Multiple items with descriptions, quantities, amounts
-  4. **Refund Reason**: Text field for explanation
-  5. **Calculations**: Auto-calculate totals with VAT
-  6. **PDF Generation**: Generate refund certificate via Cloud Function
-- **Form Structure**:
-  - Customer: name*, email, phone*
-  - Original invoice: number*, date*
-  - Items: [{ description*, quantity*, amount* }]
-  - Reason: text field
-- **Business Logic**:
-  - Validates all required fields
-  - Calculates VAT (17%)
-  - Generates unique refund ID
-- **PDF Output**: Official refund document with calculations
+#### `modules/inventory/company/screens/CompanyInventory.js`
+**Purpose**: Manager screen for company-wide stock management.
+- **Features**: Add/edit/delete company parts, set thresholds, low-stock alerts
+- **Firestore Path**: `companies/{companyId}/business_data/inventory`
 
-**Cross-Platform Considerations**:
-- **Dynamic Form**: Add/remove items functionality
-- **Platform Keyboard**: Proper keyboard type for number inputs
-- **Modal Alerts**: Native alert dialogs
-
----
-
-#### `app/CreateReturnCertificate.js`
-**Purpose**: Create return certificates for equipment/materials (iOS and Android).
-- **Features**:
-  1. **Customer Details**: Name, phone, address
-  2. **Return Information**: Item details, reason, condition
-  3. **Item List**: Multiple returnable items with conditions
-  4. **Signature Collection**: Customer signature for acknowledgment
-  5. **PDF Generation**: Official return certificate document
-- **Form Fields**:
-  - Customer: name*, phone*, address
-  - Items: [{ name*, quantity*, condition*, reason }]
-  - Signature: digital signature pad
-- **Item Conditions**: New, Used-Good, Used-Fair, Damaged
-- **Return Reasons**: Defective, Wrong item, Not needed, Other
-- **PDF Output**: Certificate with customer signature and itemized list
-
-**Cross-Platform Considerations**:
-- **SignaturePad Component**: WebView-based signature capture
-- **FileSystem**: Signature file conversion and storage
-- **Cloud Function**: Server-side PDF generation with signature embedding
-
----
-
-#### `app/CreateJob.js`
-**Purpose**: Manager tool to assign jobs to workers (iOS and Android).
-- **Features**:
-  1. **Worker Selection**: Choose worker from company list
-  2. **Job Details**: Title, description, location, due date
-  3. **Assignment**: Create job in company jobs collection
-  4. **Notifications**: Worker receives assigned job
-- **Form Fields**:
-  - Worker: dropdown selection*
-  - Job: title*, description*, location, due date
-- **Firestore Structure**:
-  - Saves to `companies/{companyName}/jobs/{jobId}`
-  - Job includes: assignedTo, assignedBy, status='pending'
-- **Workflow**:
-  1. Manager creates job
-  2. Job appears in worker's Workerjob screen
-  3. Worker completes and submits
-  4. Manager approves in JobMonitor
-
-**Cross-Platform Considerations**:
-- **Dropdown Picker**: Platform-native picker components
-- **Date Picker**: Platform-specific date selection
-- **Real-time Updates**: Job instantly appears for worker
-
----
-
-#### `app/AlertDemo.js` (226 lines) **DEV/DEMO ONLY**
-**Purpose**: Demo screen to showcase and test all custom alert styles (iOS and Android).
-- **Features**:
-  1. **Alert Type Showcase**: Demonstrates all 5 alert types (info, success, error, warning, confirm)
-  2. **Interactive Buttons**: Touch to trigger each alert type
-  3. **Multi-button Examples**: Shows confirm dialogs with 2-3 buttons
-  4. **Custom Icons**: Demonstrates custom icon usage
-  5. **Real-world Patterns**: Common alert patterns (delete confirm, save changes, etc.)
-- **Purpose**: Testing and documentation for custom alert system
-- **Usage**: Navigate to `/AlertDemo` to test alerts during development
-- **UI**: Card-based layout with gradient buttons matching alert types
-- **Note**: This is a development/demo screen and can be removed in production
-
-**Cross-Platform Note**: All alert behaviors are identical on iOS and Android.
+#### `app/inventory.js` (Role Router)
+**Purpose**: Routes to the correct inventory screen based on user role.
+- `worker` / `manager` → WorkerInventory
+- `user` / `basic` → UserInventory
 
 ---
 
@@ -682,285 +624,65 @@ All components are **reusable, cross-platform UI elements** that work identicall
 
 ---
 
-#### `components/CustomAlert.js` (217 lines) **NEW**
+#### `components/CustomAlert.js`
 **Purpose**: Beautiful custom alert modal replacing React Native's Alert.alert()
-- **Exports**: CustomAlert component
-- **Features**:
-  1. **5 Alert Types**: info, success, error, warning, confirm
-  2. **Gradient Headers**: Colorful gradient backgrounds with icons
-  3. **Smooth Animations**: Scale and fade animations on appear/disappear
-  4. **Flexible Buttons**: Support for 1-2 buttons with different styles
-  5. **Dark Mode Support**: Automatic theme adaptation
-  6. **Icon Customization**: Support for custom icons with Ionicons/MaterialCommunityIcons
-- **Props**:
-  - `visible`: Boolean to show/hide modal
-  - `type`: 'info' | 'success' | 'error' | 'warning' | 'confirm'
-  - `title`: Alert title
-  - `message`: Alert message
-  - `buttons`: Array of button objects with text, style, onPress
-  - `icon`: Optional custom icon object
-  - `onDismiss`: Callback when alert is dismissed
-- **Button Styles**:
-  - `primary`/`default`: Blue gradient
-  - `destructive`: Red gradient
-  - `cancel`: Gray button
-- **Usage**: Should NOT be used directly - use `useAlert()` hook instead
+- **Usage**: Should NOT be used directly — use `useAlert()` hook instead
+- **Features**: 5 alert types, gradient headers, smooth animations, dark mode support
 
-**Cross-Platform Note**: Uses Animated API with native driver for 60 FPS animations on both iOS and Android.
+#### `components/Button.js`
+**Purpose**: Reusable button components (PrimaryButton, SecondaryButton, DangerButton, TextButton).
 
----
+#### `components/Card.js`
+**Purpose**: Reusable card containers (Card, CardHeader, CardContent, CardFooter).
 
-#### `components/Button.js` (179 lines)
-**Purpose**: Reusable button components with different styles (iOS and Android).
-- **Exports**:
-  1. **PrimaryButton**: Main action button (blue gradient)
-  2. **SecondaryButton**: Secondary actions (outlined)
-  3. **DangerButton**: Destructive actions (red)
-  4. **TextButton**: Minimal text-only button
-- **Props**:
-  - `onPress`: Callback function
-  - `title`: Button text
-  - `loading`: Shows ActivityIndicator (platform-native)
-  - `disabled`: Grays out and disables touch
-  - `style`, `textStyle`: Custom styling
-- **Features**:
-  - Loading state with spinner
-  - Disabled state styling
-  - Active opacity feedback
+#### `components/Input.js`
+**Purpose**: Text input components with validation (Input, SearchInput).
 
-**Cross-Platform Note**: TouchableOpacity and ActivityIndicator render natively on both platforms.
+#### `components/Loading.js`
+**Purpose**: Loading indicators (LoadingSpinner, FullScreenLoader, SkeletonLoader).
 
----
+#### `components/LoadingOverlay.js`
+**Purpose**: Full-screen loading overlay for blocking operations.
 
-#### `components/Card.js` (88 lines)
-**Purpose**: Reusable card container components (iOS and Android).
-- **Exports**:
-  1. **Card**: Base card container with optional elevation
-  2. **CardHeader**: Header section with title/subtitle/action
-  3. **CardContent**: Main content area with padding
-  4. **CardFooter**: Footer section with top border
-- **Props**:
-  - `children`: Content to render inside
-  - `onPress`: Optional press handler (makes card touchable)
-  - `elevated`: Adds shadow/elevation (platform-adaptive)
-  - `style`: Custom styling
-- **Styling**: Uses theme colors, spacing, and shadows
+#### `components/PhotoPicker.js`
+**Purpose**: Photo selection with camera and gallery support (max 5 photos, 0.8 quality compression).
 
-**Cross-Platform Note**: Shadow styles adapt automatically using Platform.select in theme.js.
+#### `components/SignaturePad.js`
+**Purpose**: Digital signature capture via WebView canvas.
 
----
+#### `components/TimePicker.js`
+**Purpose**: Custom scrollable time picker (HH:MM format).
 
-#### `components/Input.js` (139 lines)
-**Purpose**: Reusable text input components with validation (iOS and Android).
-- **Exports**:
-  1. **Input**: Standard text input with label
-  2. **SearchInput**: Search-specific input with icon
-- **Props**:
-  - `label`: Optional label text
-  - `value`, `onChangeText`: Controlled input
-  - `placeholder`: Placeholder text
-  - `error`: Error message (shows red border)
-  - `helperText`: Help text below input
-  - `required`: Shows asterisk on label
-  - `multiline`: Multi-line text area
-  - `numberOfLines`: Lines for multiline
-- **Features**:
-  - Error state styling
-  - Helper text
-  - Required field indicator
-  - Auto-dismiss keyboard on submit
-  - Platform-adaptive keyboard behavior
+#### `components/ViewJobDetails.js`
+**Purpose**: Modal to display full job details (info, photos, signature, parts).
 
-**Cross-Platform Considerations**:
-- **Keyboard.dismiss()**: Works on both platforms
-- **returnKeyType**: Platform-specific keyboard return key
-- **textAlignVertical**: Android-specific prop for multiline
+#### `components/GlobalHeader.js`
+**Purpose**: Global navigation header with back button, theme, and language controls.
+- **Back Button**: Automatically appears on all pages except homepages
+- **Settings Button**: Opens modal with theme and language options
+- **IMPORTANT**: GlobalHeader should be included on every screen
 
----
+#### `components/ClientSelector.js` / `components/ClientSelectorModal.js`
+**Purpose**: Client selection components for job forms and documents.
+- **Data Source**: `cachedClients` from CacheContext
 
-#### `components/Loading.js` (317 lines)
-**Purpose**: Beautiful loading indicators (iOS and Android).
-- **Exports**:
-  1. **LoadingSpinner**: Small rotating spinner with pulse animation
-  2. **FullScreenLoader**: Full-screen loader with multiple rings and dots
-  3. **SkeletonLoader**: Skeleton loading placeholders
-- **Features**:
-  - Animated with React Native Animated API
-  - Customizable size
-  - Smooth animations (60 FPS)
-  - Linear gradients
-- **Animations**:
-  - Rotation animation
-  - Pulse/scale animation
-  - Fade-in animation
-  - Bouncing dots animation
+#### `components/InventoryItemSearch.js`
+**Purpose**: Searchable inventory item picker for job parts selection.
 
-**Cross-Platform Note**: Animated API uses native driver (useNativeDriver: true) for 60 FPS performance on both platforms.
+#### `components/PartsSelector.js`
+**Purpose**: Parts selection modal for choosing inventory items with quantities.
 
----
+#### `components/DateFilter.js`
+**Purpose**: Date filtering component for job/document lists.
 
-#### `components/PhotoPicker.js` (426 lines)
-**Purpose**: Custom photo selection interface with camera and gallery support (iOS and Android).
-- **Features**:
-  1. **Take Photo**: Launch camera
-  2. **Choose from Gallery**: Launch gallery (multi-select supported)
-  3. **Photo Preview**: Display selected photos with remove option
-  4. **Max Photos**: Limit number of photos (default 5)
-  5. **Existing Photos**: Support for editing with pre-loaded photos
-- **Props**:
-  - `visible`: Modal visibility
-  - `onClose`: Close callback
-  - `onPhotosSelected`: Callback with selected photos array
-  - `maxPhotos`: Maximum allowed photos
-  - `existingPhotos`: Pre-selected photos
-- **Permissions**:
-  - **iOS**: Camera and Photo Library
-  - **Android**: CAMERA and READ_EXTERNAL_STORAGE
-- **Image Quality**: 0.8 compression for storage optimization
+#### `components/ScrollableContainer.js`
+**Purpose**: Reusable scrollable container with keyboard avoidance.
 
-**Cross-Platform Considerations**:
-- **expo-image-picker**: Handles platform permissions automatically
-- **ImagePicker.requestCameraPermissionsAsync()**: Works on both platforms
-- **ImagePicker.requestMediaLibraryPermissionsAsync()**: Works on both platforms
-- **Multi-select**: Android native, iOS uses picker sheet
-
----
-
-#### `components/SignaturePad.js` (190 lines)
-**Purpose**: Digital signature capture component (iOS and Android).
-- **Features**:
-  1. **Canvas Drawing**: Smooth signature drawing with WebView
-  2. **Clear Button**: Reset signature
-  3. **Save Button**: Capture signature as base64 PNG
-  4. **File Conversion**: Converts base64 to file URI using expo-file-system
-- **Implementation**:
-  - Uses `react-native-signature-canvas` (WebView-based)
-  - Saves to cache directory as PNG file
-  - Returns file URI for upload
-- **Props**:
-  - `onSave`: Callback with file URI
-  - `onCancel`: Close handler
-- **File System**:
-  - **iOS**: Saves to cache directory
-  - **Android**: Saves to cache directory
-  - Uses legacy FileSystem API with Base64 encoding
-
-**Cross-Platform Considerations**:
-- **WebView**: Uses react-native-webview (works on both platforms)
-- **FileSystem**: expo-file-system legacy API (compatible with both)
-- **Base64 Conversion**: Platform-agnostic
-
----
-
-#### `components/TimePicker.js` (353 lines)
-**Purpose**: Custom scrollable time picker (better than native pickers, iOS and Android).
-- **Features**:
-  1. **Hour Selector**: 00-23 scrollable column
-  2. **Minute Selector**: 00-59 scrollable column
-  3. **Smooth Scrolling**: FlatList with snap-to-interval
-  4. **Selection Indicator**: Visual highlight of selected time
-  5. **HH:MM Format**: Returns formatted time string
-- **Props**:
-  - `visible`: Modal visibility
-  - `onClose`: Cancel callback
-  - `onConfirm`: Callback with time string, hour, minute
-  - `initialHour`, `initialMinute`: Default values
-  - `title`: Modal title
-- **Implementation**:
-  - Uses FlatList with `snapToInterval` for smooth selection
-  - Auto-scrolls to initial value
-  - Handles scroll events to update selection
-
-**Cross-Platform Note**: FlatList provides native scrolling performance on both iOS and Android.
-
----
-
-#### `components/ViewJobDetails.js` (368 lines)
-**Purpose**: Modal component to display full job details (iOS and Android).
-- **Features**:
-  1. **Job Information**: Title, description, location, customer name
-  2. **Time Information**: Time worked, due date, created date
-  3. **Status Badge**: Color-coded status indicator
-  4. **Parts Used**: List of parts with quantities
-  5. **Photo Gallery**: Horizontal scrollable photos with tap-to-enlarge
-  6. **Signature Display**: Client signature image
-- **Props**:
-  - `visible`: Modal visibility
-  - `job`: Job object with all data
-  - `onClose`: Close callback
-  - `translations`: Localized strings
-  - `getStatusColor`: Function to get status color
-  - `onImagePress`: Photo enlarge callback
-  - `isDarkMode`: Theme flag
-- **UI**: Full-screen modal with ScrollView for long content
-
-**Cross-Platform Note**: Modal renders natively on both iOS (presentation style) and Android (dialog).
-
----
-
-#### `components/GlobalHeader.js` (235 lines)
-**Purpose**: Global navigation header with back button, theme, and language controls (iOS and Android).
-- **Features**:
-  1. **Back Button**: Automatically appears on all pages except homepages (ManagerHomepage, WorkerHomepage, UserHomepage)
-     - Positioned top-left
-     - Uses `router.back()` from expo-router
-     - Detects current page with `usePathname()`
-  2. **Settings Button**: Opens modal with theme and language options
-     - Positioned top-right
-     - Modal overlay with settings panel
-  3. **Theme Selection**: Light/Dark mode toggle with visual indicators
-  4. **Language Selection**: EN/HE/AR options with visual indicators
-  5. **Settings Modal**: Beautiful centered modal with:
-     - Theme section (Light/Dark buttons)
-     - Language section (EN/HE/AR buttons)
-     - Close button
-- **Implementation**:
-  - Uses Context API for global theme and language state
-  - Absolute positioning for floating header
-  - Platform-specific top padding (iOS notch handling)
-  - Conditional rendering based on pathname
-- **Icons**: Ionicons and MaterialCommunityIcons (cross-platform)
-- **State Management**:
-  - `useRouter()`: Navigation
-  - `usePathname()`: Current route detection
-  - `useLanguageContext()`: Global language state
-  - `useThemeContext()`: Global theme state
-
-**Cross-Platform Considerations**:
-- **Platform.OS**: Adjusts top padding for iOS status bar (60px) vs Android (48px)
-- **Modal**: Native modal with transparent overlay
-- **TouchableOpacity**: Native touch feedback
-- **AsyncStorage**: Persists theme and language preferences on both platforms
-- **Navigation**: expo-router works identically on iOS and Android
-
-**IMPORTANT**: GlobalHeader should be included on every screen. It automatically handles:
-- Showing/hiding back button based on current route
-- Providing consistent settings access
-- Maintaining theme and language state globally
-
----
-
-#### `components/ErrorBoundary.js` (140 lines)
-**Purpose**: Catches JavaScript errors and displays fallback UI (iOS and Android).
-- **Features**:
-  1. **Error Catching**: React class component with componentDidCatch
-  2. **Fallback UI**: Friendly error message with retry button
-  3. **Dev Mode Details**: Shows error stack trace in development
-  4. **Reset Handler**: Try again button to reset error state
-- **Implementation**:
-  - React Error Boundary pattern
-  - Logs errors to console
-  - Shows error details only in __DEV__ mode
-- **UI**: Centered card with error message and retry button
-
-**Cross-Platform Note**: Error boundaries work identically on iOS and Android.
-
----
+#### `components/ErrorBoundary.js`
+**Purpose**: Catches JavaScript errors and displays fallback UI.
 
 #### `components/index.js`
 **Purpose**: Barrel export file for easy component imports.
-- **Exports**: All components from single import
-- **Usage**: `import { Button, Card, Input } from '../components';`
 
 ---
 
@@ -970,101 +692,53 @@ Global state management using React Context API (works identically on iOS and An
 
 ---
 
-#### `contexts/LanguageContext.js` (67 lines)
+#### `contexts/LanguageContext.js`
 **Purpose**: Global language state management (EN, HE, AR).
-- **Features**:
-  1. **Language State**: Current selected language
-  2. **Toggle Language**: Cycles through EN → HE → AR
-  3. **AsyncStorage Persistence**: Remembers preference
-  4. **Provider Component**: Wraps entire app
-- **Exports**:
-  - `LanguageProvider`: Context provider component
-  - `useLanguageContext`: Hook to access language state
-- **Methods**:
-  - `language`: Current language code
-  - `setLanguage(code)`: Set specific language
-  - `toggleLanguage()`: Cycle to next language
-- **Persistence**: Saves to AsyncStorage with key `app_language`
+- **Exports**: `LanguageProvider`, `useLanguageContext`
+- **Methods**: `language`, `setLanguage(code)`, `toggleLanguage()`
+- **Persistence**: AsyncStorage with key `app_language`
 
-**Cross-Platform Note**: AsyncStorage works identically on iOS and Android with native storage backends.
-
----
-
-#### `contexts/ThemeContext.js` (66 lines)
+#### `contexts/ThemeContext.js`
 **Purpose**: Global theme state management (light/dark mode).
-- **Features**:
-  1. **Theme State**: Current theme (light or dark)
-  2. **Toggle Theme**: Switch between light and dark
-  3. **AsyncStorage Persistence**: Remembers preference
-  4. **Provider Component**: Wraps entire app
-- **Exports**:
-  - `ThemeProvider`: Context provider component
-  - `useThemeContext`: Hook to access theme state
-- **Methods**:
-  - `isDarkMode`: Boolean indicating current theme
-  - `setTheme(isDark)`: Set specific theme
-  - `toggleTheme()`: Toggle between light and dark
-- **Persistence**: Saves to AsyncStorage with key `app_theme`
+- **Exports**: `ThemeProvider`, `useThemeContext`
+- **Methods**: `isDarkMode`, `setTheme(isDark)`, `toggleTheme()`
+- **Persistence**: AsyncStorage with key `app_theme`
 
-**Cross-Platform Note**: Theme colors adapt automatically for platform-specific UI elements.
-
----
-
-#### `contexts/AlertContext.js` (110 lines) **NEW**
+#### `contexts/AlertContext.js`
 **Purpose**: Global alert state management for custom alert dialogs.
-- **Features**:
-  1. **Alert State**: Manages visibility, type, content of current alert
-  2. **Helper Methods**: Convenience functions for common alert patterns
-  3. **Provider Component**: Wraps entire app with AlertProvider
-- **Exports**:
-  - `AlertProvider`: Context provider component with CustomAlert integration
-  - `useAlert`: Hook to access alert functionality
-- **Methods**:
-  - `showAlert(type, title, message, buttons, icon)`: Show custom alert
-  - `hideAlert()`: Dismiss current alert
-  - `success(title, message, buttons)`: Show success alert (green)
-  - `error(title, message, buttons)`: Show error alert (red)
-  - `warning(title, message, buttons)`: Show warning alert (yellow)
-  - `info(title, message, buttons)`: Show info alert (blue)
-  - `confirm(title, message, buttons)`: Show confirmation dialog (purple)
-- **Integration**: AlertProvider wraps entire app in _layout.js
-- **Usage Example**:
-  ```javascript
-  const alert = useAlert();
-  alert.success('Success', 'Job created successfully!');
-  alert.confirm('Delete Job', 'Are you sure?', [
-    { text: 'Cancel', style: 'cancel', onPress: () => {} },
-    { text: 'Delete', style: 'destructive', onPress: handleDelete }
-  ]);
-  ```
+- **Exports**: `AlertProvider`, `useAlert`
+- **Methods**: `showAlert()`, `hideAlert()`, `success()`, `error()`, `warning()`, `info()`, `confirm()`
 
-**Cross-Platform Note**: Modal and state management work identically on iOS and Android.
+#### `contexts/HeaderContext.js`
+**Purpose**: Global header state management for dynamic header content.
 
----
-
-#### `contexts/CacheContext.js` (~600 lines) **NEW - CRITICAL**
+#### `contexts/CacheContext.js` (~2500 lines) **CRITICAL**
 **Purpose**: High-performance MMKV-based caching system to minimize Firebase reads and enable offline-first functionality.
 
 ⚠️ **CRITICAL: This is the primary data caching system. NEVER use AsyncStorage for user profile data. Always use the `useCache()` hook.**
 
 - **Features**:
   1. **MMKV Storage**: Uses `react-native-mmkv` for ultra-fast synchronous key-value storage (10x faster than AsyncStorage)
-  2. **Role-Based Cache Structure**: Separate cache structures for Manager, Worker, and User roles
-  3. **Version-Based Invalidation**: Real-time Firebase listeners track version changes (e.g., `inventory: 3`) to trigger cache refresh
-  4. **90-Day Expiry**: Automatically cleans up `finishedJobs` and `certifications` older than 90 days
+  2. **Role-Based Cache Structure**: Separate cache structures for Manager, Worker, User, and Basic roles
+  3. **Version-Based Invalidation**: Real-time Firebase listeners track version changes to trigger cache refresh
+  4. **90-Day Expiry**: Automatically cleans up old `finishedJobs` and `certifications`
   5. **Offline-First**: Immediate UI updates from cache while Firebase syncs in background
-  6. **Cross-Device Sync**: Version increments in Firestore trigger all devices to refresh their caches
+  6. **Cross-Device Sync**: Version increments in Firestore trigger all devices to refresh
+  7. **Subscription State**: Tracks user subscription for feature gating
 
-- **Exports**:
-  - `CacheProvider`: Context provider component wrapping entire app
-  - `useCache`: Hook to access all cache functionality
+- **Exports**: `CacheProvider`, `useCache`
+
+- **MMKV Cache Keys**:
+  - `cache_uid` (was `cache_username`)
+  - `cache_company_id` (was `cache_company_name`)
+  - `cache_profile`, `cache_inventory`, `cache_pending_jobs`, etc.
 
 - **Cache Structure by Role**:
 
-  **Manager Cache** (Firestore: `{username}/cache` + `companies/{companyName}/business_data/cache`):
+  **Manager Cache** (Firestore: `{uid}/cache` + `companies/{companyId}/business_data/cache`):
   ```javascript
   {
-    profile: { role, email, companyName, name, phoneNumber },
+    profile: { role, email, companyId, name, phoneNumber },
     inventory: { partName: { quantity, lowThreshold } },
     workersList: [{ email, name, phoneNumber }],
     pendingJobs: [{ id, title, status, assignedTo, ... }],
@@ -1075,10 +749,10 @@ Global state management using React Context API (works identically on iOS and An
   }
   ```
 
-  **Worker Cache** (Firestore: `{username}/cache`):
+  **Worker Cache** (Firestore: `{uid}/cache`):
   ```javascript
   {
-    profile: { role, email, companyName, name, phoneNumber },
+    profile: { role, email, companyId, name, phoneNumber },
     inventory: { partName: { quantity, lowThreshold } },
     pendingJobs: [{ id, title, status, ... }],
     finishedJobs: [{ id, title, finishedAt, ... }],
@@ -1086,10 +760,10 @@ Global state management using React Context API (works identically on iOS and An
   }
   ```
 
-  **User Cache** (Firestore: `{username}/cache`):
+  **User/Basic Cache** (Firestore: `{uid}/cache`):
   ```javascript
   {
-    profile: { role, email, companyName, name, phoneNumber },
+    profile: { role, email, companyId, name, phoneNumber },
     inventory: { partName: { quantity, lowThreshold } },
     finishedJobs: [{ id, title, finishedAt, ... }],
     certifications: [{ id, type, createdAt, ... }],
@@ -1098,48 +772,32 @@ Global state management using React Context API (works identically on iOS and An
   }
   ```
 
-- **Methods**:
-  - `initializeCache(username, role, companyName)`: Initialize cache for logged-in user
+- **Primary Methods**:
+  - `initializeCache(uid)`: Initialize cache for logged-in user (takes single `uid` param)
   - `clearCache()`: Clear all cached data (call on logout)
-  - `getUsername()`: Get cached username
-  - `getCompanyName()`: Get cached company name
+  - `getUid()`: Get cached user UID **(PRIMARY)**
+  - `getCompanyId()`: Get cached company ID **(PRIMARY)**
+  - `getUsername()`: **Deprecated alias** → same as `getUid()`
+  - `getCompanyName()`: **Deprecated alias** → same as `getCompanyId()`
   - `profile`: Current user profile object (alias: `cachedProfile`)
-  - `cachedProfile`: Current user profile object (for passing to Cloud Functions)
-  - `cachedInventory`: Cached inventory parts
-  - `cachedWorkersList`: Cached workers list (manager only)
-  - `cachedPendingJobs`: Cached pending jobs
-  - `cachedFinishedJobs`: Cached finished jobs
-  - `cachedCertifications`: Cached certifications/documents
-  - `cachedBusinessInfo`: Cached business registration info
-  - `cachedClients`: Cached clients list (shared company data)
-  - `updateInventory(inventoryData)`: Update cached inventory
-  - `updateWorkersList(workersList)`: Update cached workers list
-  - `addJob(jobData)`: Add job to pending jobs cache
-  - `updateJob(jobId, updates)`: Update existing job in cache
-  - `moveJobToFinished(jobData)`: Move job from pending to finished
-  - `incrementCacheVersion(field)`: Increment version to trigger refresh on other devices
-  - `fetchClients(companyName)`: Fetch all clients from Firebase
-  - `addClient(clientData)`: Add new client (auto-generates ID via transaction)
-  - `updateClient(clientId, updates)`: Update existing client
-  - `deleteClient(clientId)`: Delete client from company
-  - `fetchOlderJobs(beforeTimestamp)`: Paginate to load older jobs
-  - `cleanupExpiredCache()`: Remove data older than 90 days (based on finishedAt for jobs, createdAt for certifications)
+  - `subscription`: Current subscription state (used by `withGate`)
+  - `cachedInventory`, `cachedWorkersList`, `cachedPendingJobs`, `cachedFinishedJobs`
+  - `cachedCertifications`, `cachedBusinessInfo`, `cachedClients`
+  - `updateInventory()`, `updateWorkersList()`, `addJob()`, `updateJob()`
+  - `moveJobToFinished()`, `incrementCacheVersion(field)`
+  - `fetchClients()`, `addClient()`, `updateClient()`, `deleteClient()`
+  - `fetchOlderJobs()`, `cleanupExpiredCache()`
 
 - **Version-Based Invalidation**:
-  Each cache field has a version stored as `fieldname: version_number` in Firestore (e.g., `inventory: 3`):
-  - `profile`, `inventory`, `pendingJobs`
-  - `finishedJobs`, `workersList`, `certifications`, `clients`
+  Each cache field has a version in Firestore (e.g., `inventory: 3`):
   
   **Client cache versioning is role-based:**
   - Manager → increments `clients` in company cache (`isCompanyCache = true`)
   - Worker/User/Basic → increments `clients` in user cache (`isCompanyCache = false`)
   
-  When data changes, increment the version:
   ```javascript
-  // When a worker's inventory changes (e.g., job accepted)
+  // When data changes, increment version
   await incrementCacheVersion('inventory');
-  
-  // When jobs list changes
   await incrementCacheVersion('pendingJobs');
   ```
 
@@ -1149,29 +807,23 @@ Global state management using React Context API (works identically on iOS and An
 
   function MyComponent() {
     const {
-      getCompanyName,
-      getUsername,
+      getCompanyId,    // PRIMARY — use this
+      getUid,          // PRIMARY — use this
       profile,
-      cachedProfile,  // Same as profile, use when passing to Cloud Functions
+      cachedProfile,
       cachedBusinessInfo,
       cachedInventory,
       cachedPendingJobs,
-      cachedClients,   // Cached clients list (shared company data)
+      cachedClients,
       updateInventory,
       addClient,
       incrementCacheVersion,
       moveJobToFinished
     } = useCache();
 
-    // Get company name (synchronous from MMKV)
-    const companyName = getCompanyName();
+    const companyId = getCompanyId();
+    const uid = getUid();
 
-    // Access cached data directly
-    const inventory = cachedInventory;
-    const jobs = cachedPendingJobs;
-    const clients = cachedClients;
-
-    // Update cache and increment version for other devices
     const handleAcceptJob = async (job) => {
       await moveJobToFinished(job);
       await incrementCacheVersion('pendingJobs');
@@ -1181,19 +833,8 @@ Global state management using React Context API (works identically on iOS and An
 
 - **Integration with Firestore**:
   The CacheContext sets up `onSnapshot` listeners on version documents:
-  - User cache versions: `{username}/cache`
-  - Company cache versions: `companies/{companyName}/business_data/cache`
-  
-  When a version changes in Firestore, the local cache is automatically refreshed.
-
-- **90-Day Cleanup**:
-  ```javascript
-  const CACHE_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
-  const ARCHIVE_BOUNDARY_MS = 180 * 24 * 60 * 60 * 1000; // ~6 months
-  
-  // Called automatically on app initialization
-  cleanupExpiredCache();
-  ```
+  - User cache versions: `{uid}/cache`
+  - Company cache versions: `companies/{companyId}/business_data/cache`
 
 - **3-Tier Data Access**:
   | Age | Storage Tier | Access Method |
@@ -1202,38 +843,28 @@ Global state management using React Context API (works identically on iOS and An
   | 90-180 days | Firestore | `getDataForMonth()` queries Firestore |
   | 180+ days | Cloud Storage | `getDataForMonth()` falls back to `fetchFromArchive()` |
 
-  The `getDataForMonth()` and `getDataForDateRange()` methods automatically handle all 3 tiers:
-  1. Check MMKV cache for data within 90 days
-  2. Query Firestore for data between 90-180 days
-  3. If Firestore returns 0 docs for a month older than ~6 months, download the JSON archive from Cloud Storage
-
 - **Archive Fallback**:
   ```javascript
-  // Automatically handled by getDataForMonth:
   const data = await getDataForMonth(new Date(2025, 6, 1), 'finishedJobs');
-  // If July 2025 data was archived to Storage, it's downloaded and returned
-  
-  // Direct archive access (for advanced use):
-  const archived = await fetchFromArchive(companyName, 2025, 7, 'finishedJobs');
+  const archived = await fetchFromArchive(companyId, 2025, 7, 'finishedJobs');
   ```
 
 **Cross-Platform Note**: MMKV uses native iOS Keychain and Android SharedPreferences for secure, fast storage.
 
 ### ⚠️ CACHE SYSTEM RULES
 
-1. **NEVER use AsyncStorage for user profile data** - Always use `useCache()` hook
-2. **ALWAYS call `incrementCacheVersion(field)` after modifying data** - This triggers other devices to refresh
-3. **ALWAYS use `getCompanyName()` instead of reading from AsyncStorage profile**
-4. **Draft data can still use AsyncStorage** - Only profile/inventory/jobs data must use cache
+1. **NEVER use AsyncStorage for user profile data** — Always use `useCache()` hook
+2. **ALWAYS call `incrementCacheVersion(field)` after modifying data** — This triggers other devices to refresh
+3. **ALWAYS use `getCompanyId()` instead of reading from AsyncStorage profile**
+4. **ALWAYS use `getUid()` to get the current user identifier**
+5. **Draft data can still use AsyncStorage** — Only profile/inventory/jobs data must use cache
 
-### Example: Converting from AsyncStorage to Cache
+### Example: Correct Cache Usage
 
 **❌ OLD WAY (DO NOT USE)**:
 ```javascript
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const cachedProfile = await AsyncStorage.getItem('userProfile');
-const profile = JSON.parse(cachedProfile);
+// WRONG — getUsernameFromEmail was removed, companyName is deprecated
+const username = getUsernameFromEmail(email);
 const companyName = profile.companyName;
 ```
 
@@ -1241,8 +872,9 @@ const companyName = profile.companyName;
 ```javascript
 import { useCache } from '../contexts/CacheContext';
 
-const { getCompanyName } = useCache();
-const companyName = getCompanyName(); // Synchronous!
+const { getUid, getCompanyId } = useCache();
+const uid = getUid();           // Synchronous from MMKV
+const companyId = getCompanyId(); // Synchronous from MMKV
 ```
 
 ---
@@ -1253,40 +885,31 @@ Custom React hooks for reusable logic (iOS and Android).
 
 ---
 
-#### `hooks/index.js` (228 lines)
+#### `hooks/index.js`
 **Purpose**: Collection of custom hooks to reduce boilerplate.
 - **Exports**:
   1. **useAuth()**: Authentication state and user info
-     - Returns: `{ user, loading, error, username, userRole }`
+     - Returns: `{ user, loading, error, uid, username: uid, userRole }`
+     - `uid` is the PRIMARY identifier (Firebase Auth UID)
+     - `username` is a **backward-compatible alias** for `uid`
      - Listens to Firebase auth state
-     - Fetches user profile from Firestore
+     - Fetches user profile from `{uid}/profile`
   2. **useLanguage(translations)**: Language state with translations
      - Returns: `{ language, setLanguage, t }`
-     - Manages language preference
-     - Provides translation function
   3. **useFirestoreDoc(...pathSegments)**: Real-time Firestore document
      - Returns: `{ data, loading, error, refresh }`
-     - Sets up onSnapshot listener
-     - Auto-cleanup on unmount
   4. **useFirestoreCollection(...)**: Real-time Firestore collection
      - Returns: `{ data, loading, error, refresh }`
-     - Query support
-     - Real-time updates
   5. **useDebouncedValue(value, delay)**: Debounced value for search
-     - Returns: Debounced value
-     - Useful for search inputs
+  6. **useUserProfile(uid)**: Fetch user profile by UID
+     - Param: `uid` (NOT username)
+  7. **useCompanyData(companyId)**: Fetch company data
+     - Param: `companyId` (NOT companyName)
 
-**Cross-Platform Note**: All hooks work identically on iOS and Android.
-
----
-
-#### `hooks/useDocumentTask.js` **NEW - CRITICAL FOR DOCUMENT GENERATION**
+#### `hooks/useDocumentTask.js` **CRITICAL FOR DOCUMENT GENERATION**
 **Purpose**: Custom hook for publishing document generation tasks to Cloud Functions via Pub/Sub.
 
-⚠️ **CRITICAL: This hook sends both `cachedBusinessInfo` AND `cachedProfile` to Cloud Functions for document generation.**
-
-- **Exports**:
-  - `useDocumentTask`: Hook for document preview and generation
+⚠️ **CRITICAL: This hook sends `cachedBusinessInfo`, `cachedProfile`, `uid`, and `companyId` to Cloud Functions.**
 
 - **Usage**:
   ```javascript
@@ -1295,7 +918,6 @@ Custom React hooks for reusable logic (iOS and Android).
   function DocumentScreen() {
     const { publishPreview, publishGenerate, isPublishing, error } = useDocumentTask();
     
-    // Generate preview PDF
     const handlePreview = async () => {
       const result = await publishPreview({
         type: 305,  // NUMERIC! DOC_TYPE.TAX_INVOICE
@@ -1303,10 +925,8 @@ Custom React hooks for reusable logic (iOS and Android).
         items: [{ description, quantity, price }],
         language: 'he'
       });
-      // result contains { success, previewUrl, taskId }
     };
     
-    // Generate final document
     const handleGenerate = async () => {
       const result = await publishGenerate({
         type: 305,
@@ -1315,7 +935,6 @@ Custom React hooks for reusable logic (iOS and Android).
         documentName: 'Invoice #123',
         language: 'he'
       });
-      // result contains { success, downloadUrl, documentId, taskId }
     };
   }
   ```
@@ -1323,20 +942,16 @@ Custom React hooks for reusable logic (iOS and Android).
 - **What it sends to Cloud Functions**:
   ```javascript
   {
-    ...documentParams,           // type, client, items, language, etc.
-    businessInfo: cachedBusinessInfo,  // From CacheContext
-    userProfile: cachedProfile,        // From CacheContext (CRITICAL!)
-    username: getUsername(),           // From CacheContext
-    companyName: getCompanyName()      // From CacheContext
+    ...documentParams,
+    businessInfo: cachedBusinessInfo,
+    userProfile: cachedProfile,
+    uid: getUid(),
+    companyId: getCompanyId()
   }
   ```
 
-- **Cloud Function Integration**:
-  - Calls `publishPreviewTask` for preview generation
-  - Calls `publishGenerateTask` for final document generation
-  - Both functions receive `userProfile` and use it for company info fallback
-
-**Cross-Platform Note**: Works identically on iOS and Android.
+#### `hooks/useAppStateListener.js`
+**Purpose**: Listens to app state changes (foreground/background) for cache sync.
 
 ---
 
@@ -1346,35 +961,42 @@ Utility helper functions (platform-agnostic).
 
 ---
 
-#### `utils/helpers.js` (138 lines)
+#### `utils/helpers.js`
 **Purpose**: Common utility functions to reduce code duplication.
 - **Exports**:
-  1. **getUsernameFromEmail(email)**: Extract username from email
-  2. **formatDate(date, locale)**: Format date to locale string
-  3. **formatDateTime(date, locale)**: Format date and time
-  4. **isValidEmail(email)**: Validate email format with regex
-  5. **truncateText(text, maxLength)**: Truncate long text with ellipsis
-  6. **calculateTimeDifference(timeFrom, timeTo)**: Calculate minutes between times
-  7. **formatDuration(minutes)**: Format minutes to "Xh Ym" string
-  8. **getInitials(name)**: Get initials from full name
-  9. **sortByDate(array, key, order)**: Sort array by date field
-  10. **generateId()**: Generate unique ID
-  11. **debounce(func, wait)**: Debounce function calls
+  1. **generateBase62Id()**: Generate a base-62 random ID
+  2. **generateJobId()**: Generate a job ID with prefix
+  3. **generatePendingJobId()**: Generate pending job ID
+  4. **generateFinishedJobId()**: Generate finished job ID
+  5. **generateCertificationId()**: Generate certification ID
+  6. **getDocTypeFromId(docId)**: Extract document type from ID
+  7. **convertToFinishedJobId(pendingJobId)**: Convert pending → finished job ID
+  8. **formatDate(date, locale)**: Format date to locale string
+  9. **formatDateTime(date, locale)**: Format date and time
+  10. **isValidEmail(email)**: Validate email format with regex
+  11. **truncateText(text, maxLength)**: Truncate long text with ellipsis
+  12. **calculateTimeDifference(timeFrom, timeTo)**: Calculate minutes between times
+  13. **formatDuration(minutes)**: Format minutes to "Xh Ym" string
+  14. **debounce(func, wait)**: Debounce function calls
+  15. **deepClone(obj)**: Deep clone an object
 
-**Cross-Platform Note**: All functions are pure JavaScript with no platform-specific code.
+⚠️ **`getUsernameFromEmail()` has been REMOVED** — it no longer exists. Always use `auth().currentUser.uid`.
+
+#### `utils/notifications.js`
+**Purpose**: Push notification utilities for sending/handling notifications.
 
 ---
 
 ## 🗂️ Firestore Database Structure
 
-The app uses Firebase Firestore with the following structure (works identically on iOS and Android):
+The app uses Firebase Firestore with the following structure. **All paths use `uid` (Firebase Auth UID) and `companyId`**.
 
 ```
 Firestore Root
 │
-├── {username} (document per user)
+├── {uid} (document per user — keyed by Firebase Auth UID)
 │   ├── profile (document)
-│   │   └── { role, email, companyName, phoneNumber, name }
+│   │   └── { role, email, companyId, phoneNumber, name }
 │   │
 │   ├── inventory (document)
 │   │   └── { parts: { partName: { quantity, lowThreshold } } }
@@ -1382,17 +1004,17 @@ Firestore Root
 │   ├── cache (document - version tracking)
 │   │   └── { profile: 1, inventory: 5, clients: 2, ... }
 │   │
-│   ├── jobs (collection)
-│   │   └── all (collection)
-│   │       └── {jobId} (document)
-│   │           └── { title, description, location, photos[], signature, ... }
+│   └── jobs (collection)
+│       └── all (collection)
+│           └── {jobId} (document)
+│               └── { title, description, location, photos[], signature, ... }
 │
 └── companies (collection)
-    └── {companyName} (document)
+    └── {companyId} (document — keyed by company identifier)
         │   └── { nextClientId: number }
         │
         ├── workers (collection)
-        │   └── {workerId} (document)
+        │   └── {workerId} (document — workerId = worker's uid)
         │       └── { email, phoneNumber, name, role }
         │
         ├── clients (collection)
@@ -1401,7 +1023,7 @@ Firestore Root
         │
         ├── PendingJobs (collection)
         │   └── {jobId} (document)
-        │       └── { title, status, assignedTo, completedBy, ... }
+        │       └── { title, status, assignedTo (workerId), completedByUid, ... }
         │
         ├── finishedJobs (collection)
         │   └── {jobId} (document)
@@ -1409,7 +1031,7 @@ Firestore Root
         │
         ├── certifications (collection)
         │   └── {certId} (document)
-        │       └── { type, documentNumber, clientName, items[], downloadURL, ... }
+        │       └── { type, documentNumber, clientName, items[], downloadURL, createdByUid, ... }
         │
         └── business_data (collection)
             ├── business_info (document)
@@ -1417,8 +1039,19 @@ Firestore Root
             ├── inventory (document - company-wide parts list)
             │   └── { parts: { partName: { quantity, lowThreshold } } }
             └── cache (document - version tracking for company data)
-                └── { workers: 2, business_info: 1, clients: 3, p_ABC12: 1, f_XYZ99: 2, c_QWE45: 1 }
+                └── { workers: 2, business_info: 1, clients: 3, ... }
 ```
+
+### Key Field Names
+
+| Field | Description | Notes |
+|-------|-------------|-------|
+| `companyId` | Company identifier | Was `companyName` |
+| `workerId` | Worker's Firebase Auth UID | Was `workerUsername` |
+| `assignedTo` | Worker UID job is assigned to | Uses `workerId` |
+| `createdByUid` | UID of user who created the record | Was `createdByUsername` |
+| `completedByUid` | UID of user who completed the job | Was `completedByUsername` |
+| `senderUid` | UID of message sender | Was `senderUsername` |
 
 **Cross-Platform Note**: Firestore SDK handles data synchronization identically on iOS and Android.
 
@@ -1447,9 +1080,6 @@ The app uses a **custom Puppeteer-based document generation system** via Cloud R
 
 ### Cloud Run PDF Service (`cloudrun-pdf/`)
 
-The Cloud Run service handles PDF generation and email delivery:
-
-#### Files Structure
 ```
 cloudrun-pdf/
 ├── index.js           # Express server with /preview and /generate endpoints
@@ -1463,10 +1093,10 @@ cloudrun-pdf/
 #### Role-Based Cache Paths
 
 **⚠️ CRITICAL**: When generating documents, cache versions must be updated based on user role:
-- **Manager**: `companies/{companyName}/business_data/cache`
-- **User/Basic**: `{username}/cache`
+- **Manager**: `companies/{companyId}/business_data/cache`
+- **User/Basic**: `{uid}/cache`
 
-The `userProfile` is passed from the mobile app through Cloud Functions to Cloud Run, which uses `userProfile.role` to determine the correct cache path for incrementing certification and business_info cache versions.
+The `userProfile` is passed from the mobile app through Cloud Functions to Cloud Run, which uses `userProfile.role` to determine the correct cache path.
 
 #### Endpoints
 
@@ -1480,68 +1110,27 @@ The `userProfile` is passed from the mobile app through Cloud Functions to Cloud
 
 When a document is generated, if the client has an email address, the system automatically sends an email with the download link.
 
-#### Supported Providers
-
 | Provider | Environment Variable | Best For |
 |----------|---------------------|----------|
 | **SendGrid** (default) | `EMAIL_PROVIDER=sendgrid` | Most use cases |
 | **Amazon SES** | `EMAIL_PROVIDER=ses` | AWS infrastructure |
 
-#### Email Format
-
-**Subject:** `{Document Title} - Smart-Job`
-- Example: `חשבונית מס מספר 18 - Smart-Job`
-
-**Body includes:**
-- Greeting in client's language (HE/EN/AR)
-- Document title
-- Download button with PDF link
-- Company footer
-
-#### Configuration
-
-```bash
-# Required for SendGrid
-EMAIL_PROVIDER=sendgrid
-SENDGRID_API_KEY=SG.xxxxxxxxxxxx
-SENDER_EMAIL=noreply@yourdomain.com
-SENDER_NAME=Smart-Job
-
-# Required for Amazon SES
-EMAIL_PROVIDER=ses
-AWS_REGION=eu-west-1
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
-SENDER_EMAIL=noreply@yourdomain.com
-```
-
 See `cloudrun-pdf/EMAIL_SETUP.md` for complete setup instructions.
 
 ### Tax Invoice Special Features
 
-Tax invoices (חשבונית מס) have special handling for Israeli Tax Authority compliance:
-
-#### Confirmation Number (מספר הקצאה)
-
-- Each tax invoice requires approval from Israeli Tax Authority
-- The confirmation number is obtained via `getInvoiceApproval` Cloud Function
-- Displayed on the PDF under the document title
-- For previews, this field shows empty (approval not yet obtained)
-
-#### Client VAT Number (ע.מ לקוח)
-
-- Business customers require VAT number (עוסק מורשה)
-- Stored as `clientVatNumber` in Firestore
-- Displayed in the client information section of the PDF
+- **Confirmation Number (מספר הקצאה)**: Obtained via `getInvoiceApproval` Cloud Function for Israeli Tax Authority compliance
+- **Client VAT Number (ע.מ לקוח)**: Stored as `clientVatNumber` in Firestore
 
 ### Cloud Functions (functions/index.js)
 
+All Cloud Functions use `uid` and `companyId` (not `username`/`companyName`).
+
 #### Document Type Constants (DOC_TYPE)
 
-**⚠️ CRITICAL: Document types are ALWAYS numeric. Never use string identifiers like 'taxInvoice' or 'priceProposal'.**
+**⚠️ CRITICAL: Document types are ALWAYS numeric. Never use string identifiers.**
 
 ```javascript
-// Document Type Constants - USE THESE EVERYWHERE
 const DOC_TYPE = {
   PRICE_PROPOSAL: 10,      // הצעת מחיר
   DELIVERY_NOTE: 200,      // תעודת משלוח
@@ -1551,155 +1140,78 @@ const DOC_TYPE = {
   RECEIPT: 400             // קבלה
 };
 
-// Document ID Suffix Constants
 const DOC_SUFFIX = {
-  [DOC_TYPE.TAX_INVOICE]: 'TI',        // Tax Invoice
-  [DOC_TYPE.PRICE_PROPOSAL]: 'PP',     // Price Proposal
-  [DOC_TYPE.REFUND]: 'RD',             // Refund
-  [DOC_TYPE.RETURN_CERTIFICATE]: 'RC', // Return Certificate
-  [DOC_TYPE.DELIVERY_NOTE]: 'DN',      // Delivery Note
-  [DOC_TYPE.RECEIPT]: 'RT'             // Receipt
+  [DOC_TYPE.TAX_INVOICE]: 'TI',
+  [DOC_TYPE.PRICE_PROPOSAL]: 'PP',
+  [DOC_TYPE.REFUND]: 'RD',
+  [DOC_TYPE.RETURN_CERTIFICATE]: 'RC',
+  [DOC_TYPE.DELIVERY_NOTE]: 'DN',
+  [DOC_TYPE.RECEIPT]: 'RT'
 };
 ```
 
 #### Document ID Format
 
-Document IDs follow the format: `${YYYYMMDD}${paddedDocNumber}${suffix}`
+`${YYYYMMDD}${paddedDocNumber}${suffix}` — e.g., `20260130000001TI`
 
-**Example**: `20260130000001TI` (Tax Invoice #1 created on January 30, 2026)
+#### Key Functions
 
-- **YYYYMMDD**: Date in year-month-day format
-- **paddedDocNumber**: 6-digit zero-padded document number (e.g., 000001)
-- **suffix**: 2-letter type suffix (TI, PP, RD, RC, DN, RT)
+1. **`publishPreviewTask`** — Publish preview task to Pub/Sub
+2. **`publishGenerateTask`** — Generate final PDF + send email
+3. **`getInvoiceApproval`** — Get Israeli Tax Authority confirmation number
 
-#### 1. `publishPreviewTask` - Request Preview
-Publishes a preview task to Pub/Sub for processing by Cloud Run.
+All functions receive `uid` and `companyId` (not `username`/`companyName`).
 
-**Input Parameters**:
+**Input example**:
 ```javascript
 {
-  type: 305,  // NUMERIC! Use DOC_TYPE constants (10, 200, 210, 305, 330, 400)
-  client: {
-    name: string (required),
-    email?: string,
-    phone?: string,
-    address?: string,
-    clientVatNumber?: string  // For business customers
-  },
-  items: [{
-    description: string (required),
-    quantity: number (required),
-    price: number (required)
-  }],
-  company: {
-    name: string (required),
-    email?: string,
-    phone?: string,
-    address?: string,
-    vatNumber?: string
-  },
-  language: 'he' | 'en' | 'ar' (default: 'he'),
-  documentNumber?: string,
-  date?: string (ISO format),
-  notes?: string
+  type: 305,  // NUMERIC!
+  client: { name, email, phone, address, clientVatNumber },
+  items: [{ description, quantity, price }],
+  language: 'he',
+  companyId: string,  // NOT companyName
+  uid: string         // NOT username
 }
 ```
-
-#### 2. `publishGenerateTask` - Generate Document
-Generates final PDF, saves to storage, and sends email to client.
-
-**Additional fields for generate**:
-```javascript
-{
-  ...previewParams,
-  companyName: string (required),
-  documentName?: string,
-  jobData?: object,
-  confirmationNumber?: string  // For tax invoices (from Tax Authority)
-}
-```
-
-#### 3. `getInvoiceApproval` - Tax Authority Approval
-Submits tax invoice to Israeli Tax Authority and obtains confirmation number.
-
-**Input**:
-```javascript
-{
-  type: 305,  // MUST be DOC_TYPE.TAX_INVOICE (305)
-  client: { name, clientVatNumber, ... },
-  items: [...],
-  company: { name, vatNumber, ... },
-  companyName: string
-}
-```
-
-**Output**:
-```javascript
-{
-  success: true,
-  documentId: "20260130000001TI",  // New format: YYYYMMDD + padded number + suffix
-  confirmationNumber: "1234567890",  // מספר הקצאה
-  invoiceNumber: "000001",
-  taskId: "generate_305_..."  // Uses numeric type
-}
-```
-
-### Document Types (Numeric)
-
-| Type Code | Suffix | Hebrew | English | VAT Required |
-|-----------|--------|--------|---------|--------------|
-| `10` | PP | הצעת מחיר | Price Proposal | No |
-| `200` | DN | תעודת משלוח | Delivery Note | No |
-| `210` | RC | תעודת החזרה | Return Certificate | No |
-| `305` | TI | חשבונית מס | Tax Invoice | Yes (client) |
-| `330` | RD | זיכוי | Refund | No |
-| `400` | RT | קבלה | Receipt | No |
 
 ### ⚠️ Document Type Usage Rules
 
 **❌ NEVER DO THIS:**
 ```javascript
-// WRONG - String types are deprecated
-const type = 'taxInvoice';
-const type = 'priceProposal';
-if (type === 'receipt') { ... }
+const type = 'taxInvoice';     // WRONG — string types are deprecated
+const type = 'priceProposal';  // WRONG
 ```
 
 **✅ ALWAYS DO THIS:**
 ```javascript
-// CORRECT - Always use numeric types
 const type = DOC_TYPE.TAX_INVOICE;  // 305
 const type = DOC_TYPE.PRICE_PROPOSAL;  // 10
-if (type === DOC_TYPE.RECEIPT) { ... }  // type === 400
-
-// Direct numeric comparison is also acceptable
 const isTaxInvoice = type === 305;
-const isReceipt = type === 400;
 ```
 
-### Storage & Firestore Structure
+### Storage & Firestore Structure (Documents)
 
 ```
 Firebase Storage:
-├── companies/{companyName}/{YYYY-MM}/{documentId}/
-│   └── {documentId}.pdf          # e.g., 20260130000001TI.pdf
-└── previews/{username}/
-    └── preview_{type}_{timestamp}.pdf  # type is numeric (e.g., preview_305_1706...)
+├── companies/{companyId}/{YYYY-MM}/{documentId}/
+│   └── {documentId}.pdf
+└── previews/{uid}/
+    └── preview_{type}_{timestamp}.pdf
 
 Firestore:
-├── companies/{companyName}/certifications/c_{documentId}
-│   ├── type: 305,                 # NUMERIC type (10, 200, 210, 305, 330, 400)
-│   ├── documentType: 'taxInvoice' # Legacy string for display purposes only
+├── companies/{companyId}/certifications/c_{documentId}
+│   ├── type: 305
+│   ├── documentType: 'taxInvoice'  # Legacy display string only
 │   ├── documentNumber: '000001'
 │   ├── clientName, clientEmail, clientPhone, clientAddress
-│   ├── clientVatNumber            # For business customers
+│   ├── clientVatNumber
 │   ├── items[], totals
 │   ├── downloadURL, storagePath
-│   ├── taxAuthorityConfirmationNumber  # For tax invoices
-│   └── createdBy, createdAt
+│   ├── taxAuthorityConfirmationNumber
+│   └── createdByUid, createdAt
 └── documentTasks/{taskId}
     ├── status: 'pending' | 'queued' | 'completed' | 'failed'
-    ├── documentType: 305          # NUMERIC type
+    ├── documentType: 305
     ├── emailSent, emailMessageId, emailRecipient
     └── downloadURL, pdfSize
 ```
@@ -1717,28 +1229,13 @@ Firestore:
 - **Notes Section**: Optional custom notes
 - **Footer**: Smart-Job branding + timestamp
 
-
 ---
 
 ## 📦 Data Archiver System (Firestore → Cloud Storage)
 
 ### Overview
 
-A **Cloud Run Job** runs monthly to migrate old data from Firestore to Cloud Storage, reducing storage costs. Data older than ~6 months is archived as monthly JSON files.
-
-### Architecture
-
-```
-┌─────────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│ Cloud Scheduler     │───▶│ Cloud Run Job    │───▶│ Cloud Storage    │
-│ (1st of each month) │     │ (archiver-job)   │     │ (JSON archives)  │
-└─────────────────────┘     └──────┬───────────┘     └──────────────────┘
-                                    │
-                              ┌────┴───────────┐
-                              │  Firestore     │
-                              │  (delete old)  │
-                              └────────────────┘
-```
+A **Cloud Run Job** runs monthly to migrate old data from Firestore to Cloud Storage, reducing storage costs.
 
 ### Data Tiering
 
@@ -1752,14 +1249,14 @@ A **Cloud Run Job** runs monthly to migrate old data from Firestore to Cloud Sto
 
 ### What Gets Archived
 
-- **finishedJobs**: `companies/{companyName}/finishedJobs` → archived by `finishedAt`
-- **certifications**: `companies/{companyName}/certifications` → archived by `createdAt`
+- **finishedJobs**: `companies/{companyId}/finishedJobs` → archived by `finishedAt`
+- **certifications**: `companies/{companyId}/certifications` → archived by `createdAt`
 
 ### Storage Structure
 
 ```
-gs://{bucket}/companies/{companyName}/archives/
-├── manifest.json          # Idempotency tracking
+gs://{bucket}/companies/{companyId}/archives/
+├── manifest.json
 ├── {YYYY}-{M}-j.json      # finishedJobs for that month
 └── {YYYY}-{M}-c.json      # certifications for that month
 ```
@@ -1768,43 +1265,22 @@ gs://{bucket}/companies/{companyName}/archives/
 
 ```
 cloudrun-archiver/
-├── index.js        # Main archiver logic
-├── package.json    # Dependencies
-└── Dockerfile      # Container config
+├── index.js        # Main archiver logic (uses companyId, not companyName)
+├── package.json
+└── Dockerfile
 ```
 
-**Month Calculation**: If today is month M, archive month M-6. Handles year boundaries.
-- July 2026 → archives January 2026
-- March 2026 → archives September 2025
-
-**Safety Guarantees**:
-- Upload-before-delete: data verified in Storage before Firestore deletion
-- Idempotent: manifest tracks completed archives, safe to re-run
-- Per-company isolation: failure in one company doesn’t affect others
-- Batch deletes: Firestore batched writes (max 500 per batch)
+**Safety Guarantees**: Upload-before-delete, idempotent, per-company isolation, batch deletes.
 
 ### Mobile App Integration
 
-The `CacheContext.js` handles 3-tier data access automatically:
-
 ```javascript
-// getDataForMonth automatically checks: Cache → Firestore → Storage
 const data = await getDataForMonth(new Date(2025, 6, 1), 'finishedJobs');
-
-// getDataForDateRange handles ranges spanning multiple tiers
 const rangeData = await getDataForDateRange(startDate, endDate, 'certifications');
-
-// Direct archive access
-const archived = await fetchFromArchive(companyName, 2025, 7, 'finishedJobs');
+const archived = await fetchFromArchive(companyId, 2025, 7, 'finishedJobs');
 ```
 
-### Setup
-
 See `ARCHIVER_SETUP.md` for complete deployment instructions.
-
----
-
-**Cross-Platform Note**: Firestore SDK handles data synchronization identically on iOS and Android.
 
 ---
 
@@ -1812,18 +1288,18 @@ See `ARCHIVER_SETUP.md` for complete deployment instructions.
 
 ### Cross-Platform Design Principles
 1. **Platform-Adaptive Components**: Use Platform.select for iOS/Android differences
-2. **Native Feedback**: TouchableOpacity for buttons, native alerts
+2. **Native Feedback**: TouchableOpacity for buttons, custom alerts
 3. **Safe Areas**: SafeAreaView for notches and system bars
 4. **Keyboard Handling**: KeyboardAvoidingView with platform-specific behavior
 5. **Consistent Styling**: Use theme.js for all colors and spacing
 6. **Responsive Design**: Use Dimensions API for screen size adaptation
 
 ### Common Patterns
-- **Modal Dialogs**: Full-screen modals with close button (native on both platforms)
+- **Modal Dialogs**: Full-screen modals with close button
 - **Loading States**: LoadingSpinner or ActivityIndicator during async operations
-- **Error Handling**: Platform-native Alert.alert() for user messages
+- **Error Handling**: Custom alert system (NEVER Alert.alert())
 - **Form Validation**: Red borders and error messages below inputs
-- **Confirmation Dialogs**: Alert.alert with buttons for destructive actions
+- **Confirmation Dialogs**: `alert.confirm()` for destructive actions
 - **Image Display**: Optimized Image component with loading states
 - **List Rendering**: FlatList for performance (virtualized scrolling)
 
@@ -1832,16 +1308,25 @@ See `ARCHIVER_SETUP.md` for complete deployment instructions.
 ## 🔐 Authentication & Authorization
 
 ### Role-Based Access Control
-- **Manager**: Full access to all features, create workers, monitor all jobs
-- **Worker**: View assigned jobs, complete jobs, manage own inventory
-- **User**: Create own jobs, manage own inventory
+- **Manager**: Full access to all features, create workers, monitor all jobs, company inventory
+- **Worker**: View assigned jobs, complete jobs, pick from company inventory
+- **User**: Full solo features — create own jobs, manage own inventory, generate documents
+- **Basic**: Limited solo features based on subscription
+- **Dev**: Internal development access
 
 ### Firebase Authentication
 - Email/Password authentication
-- AsyncStorage persistence (stays logged in)
+- `uid` = `auth().currentUser.uid` — used as primary identifier everywhere
 - Auto-logout on Firebase auth state change
 
+### Subscription Gating
+- Screens are gated by `withGate` HOC checking role + subscription + module
+- Subscription state stored in CacheContext
+- Module access controlled by `enabledModules` in subscription
+
 ### Firestore Security Rules
+- Use `getUid()` helper (was `getUsername()`)
+- All paths use `{uid}` and `{companyId}`
 - Users can only read/write their own documents
 - Managers can access company data
 - Workers can access assigned jobs
@@ -1853,12 +1338,8 @@ See `ARCHIVER_SETUP.md` for complete deployment instructions.
 ## 📷 Media Handling (iOS and Android)
 
 ### Camera Permissions
-- **iOS**: Add to Info.plist (handled by app.json)
-  - NSCameraUsageDescription
-  - NSPhotoLibraryUsageDescription
-- **Android**: Add to AndroidManifest.xml (handled by app.json)
-  - CAMERA
-  - READ_EXTERNAL_STORAGE
+- **iOS**: NSCameraUsageDescription, NSPhotoLibraryUsageDescription (via app.json)
+- **Android**: CAMERA, READ_EXTERNAL_STORAGE (via app.json)
 
 ### Photo Capture Flow
 1. Request permissions with `expo-image-picker`
@@ -1876,8 +1357,6 @@ See `ARCHIVER_SETUP.md` for complete deployment instructions.
 5. Upload to Firebase Storage
 6. Save download URL in Firestore
 
-**Cross-Platform Note**: expo-image-picker and expo-file-system handle platform differences automatically.
-
 ---
 
 ## 🌍 Multi-Language Support
@@ -1892,22 +1371,12 @@ Each screen defines a `t` object with translations:
 ```javascript
 const t = language === 'en' ? {
   title: 'Dashboard',
-  // ... English strings
 } : language === 'he' ? {
   title: 'לוח בקרה',
-  // ... Hebrew strings
 } : {
   title: 'لوحة التحكم',
-  // ... Arabic strings
 };
 ```
-
-### RTL Layout
-- **Note**: Full RTL support requires additional configuration
-- Current implementation: Text translations only
-- Future improvement: Add I18nManager for full RTL layout
-
-**Cross-Platform Note**: Both iOS and Android support RTL layouts natively with I18nManager.
 
 ---
 
@@ -1915,84 +1384,82 @@ const t = language === 'en' ? {
 
 ### When Writing New Code
 
-1. **Always Check Platform Compatibility**
-   - Use `Platform.OS === 'ios'` or `Platform.OS === 'android'` when needed
-   - Prefer cross-platform APIs (most React Native and Expo APIs are cross-platform)
+1. **NEVER use `username` or `getUsernameFromEmail`**
+   - `getUsernameFromEmail` was completely removed from the codebase
+   - Always use `uid` from `auth().currentUser.uid` or `getUid()` from CacheContext
+   - All Firestore paths use `{uid}/` not `{username}/`
 
-2. **Use Theme System**
+2. **NEVER use `companyName` for Firestore paths**
+   - Always use `companyId` from `getCompanyId()` in CacheContext
+   - All company paths use `companies/{companyId}/`
+
+3. **Screens go in `modules/`, thin wrappers in `app/`**
+   - New screen logic goes in `modules/{feature}/screens/`
+   - `app/` files are 3-line wrappers: import withGate, import Screen, export gated screen
+   - Only homepages, login, settings, and special screens are full implementations in `app/`
+
+4. **Use `withGate` HOC for subscription gating**
+   ```javascript
+   import { withGate } from '../modules/shared/gating/withGate';
+   import Screen from '../modules/{feature}/screens/{ScreenName}';
+   export default withGate(Screen, { module: '{moduleName}', roles: ['{role1}', '{role2}'] });
+   ```
+
+5. **Inventory is split by role**
+   - `UserInventory` — for `user`/`basic` roles, free-form parts
+   - `WorkerInventory` — for `worker` role, picks from company stock
+   - `CompanyInventory` — for `manager` role, company-wide stock management
+
+6. **Always Check Platform Compatibility**
+   - Use `Platform.OS === 'ios'` or `Platform.OS === 'android'` when needed
+   - Prefer cross-platform APIs
+
+7. **Use Theme System**
    - Import colors from `theme.js` using `getColors(isDarkMode)`
-   - Use theme spacing, typography, and shadows
    - Never hardcode colors or spacing values
 
-3. **Handle Loading States**
+8. **Handle Loading States**
    - Show LoadingSpinner during async operations
-   - Disable buttons during loading (`loading={true}`)
-   - Use ActivityIndicator for small loading indicators
+   - Disable buttons during loading
 
-4. **Error Handling & User Feedback**
-   - **ALWAYS use custom alert system** - Never use Alert.alert()
-   - Import: `import { useAlert } from '../contexts/AlertContext';`
-   - Get instance: `const alert = useAlert();`
+9. **Error Handling & User Feedback**
+   - **ALWAYS use custom alert system** — Never use Alert.alert()
+   - `import { useAlert } from '../contexts/AlertContext';`
    - Use try-catch for all Firebase operations
-   - Show user-friendly error messages with `alert.error('Error', message)`
-   - Show success confirmations with `alert.success('Success', message)`
-   - Show confirmations with `alert.confirm(title, message, buttons)`
-   - Log errors to console for debugging
-   - Never expose sensitive error details to users
+   - `alert.error('Error', message)`, `alert.success('Success', message)`
+   - `alert.confirm(title, message, buttons)` for confirmations
 
-5. **Form Validation**
-   - Validate input before submission
-   - Show error messages below input fields
-   - Disable submit button when form is invalid
-   - Use `isValidEmail()` helper for email validation
+10. **Firestore Operations**
+    - Always check if user is authenticated
+    - Use `uid` from `auth().currentUser.uid` for user document paths
+    - Use `companyId` from `getCompanyId()` for company paths
+    - Use field names: `workerId`, `createdByUid`, `completedByUid`
+    - Handle errors gracefully (user might be offline)
+    - Use real-time listeners (`onSnapshot`) for live data
 
-6. **Firestore Operations**
-   - Always check if user is authenticated
-   - Use `getUsernameFromEmail()` to get username
-   - Handle errors gracefully (user might be offline)
-   - Use real-time listeners (`onSnapshot`) for live data
+11. **Navigation**
+    - Use `useRouter()` from expo-router
+    - `router.push()` for forward, `router.back()` for backward, `router.replace()` for auth
+    - **NEVER create individual back buttons** — GlobalHeader handles all navigation
+    - Always include `<GlobalHeader />` at the end of your screen JSX
 
-7. **Image Handling**
-   - Request permissions before accessing camera/gallery
-   - Compress images (quality: 0.8) before upload
-   - Show loading indicator during upload
-   - Handle upload errors gracefully
-
-8. **Navigation**
-   - Use `useRouter()` from expo-router
-   - Use `router.push()` for forward navigation
-   - Use `router.back()` for backward navigation (handled by GlobalHeader)
-   - Use `router.replace()` for auth transitions
-   - **NEVER create individual back buttons** - GlobalHeader handles all navigation
-   - Always include `<GlobalHeader />` at the end of your screen JSX
-
-9. **Async Storage**
-   - Use for user preferences (theme, language)
-   - Use for draft data (offline support)
-   - Always handle errors (storage might be full)
-   - Clear old data periodically
-
-10. **Accessibility**
-    - Add `accessibilityLabel` to touchable elements
-    - Use semantic HTML-like components
-    - Ensure sufficient color contrast
-    - Test with screen readers (TalkBack on Android, VoiceOver on iOS)
+12. **Cache System**
+    - Use `useCache()` for all profile/inventory/jobs data
+    - Use AsyncStorage only for drafts and preferences (theme, language)
+    - Always call `incrementCacheVersion(field)` after data mutations
+    - Use `getUid()` and `getCompanyId()` (not the deprecated aliases)
 
 ### Platform-Specific Considerations
 
 #### iOS-Specific
-- Use `Platform.OS === 'ios'` for iOS-only code
 - Handle safe area insets for notched devices
 - Use higher top padding for status bar (60-70px)
-- Test on multiple iPhone models (SE, 13, 14 Pro, etc.)
 - Shadow properties: shadowColor, shadowOffset, shadowOpacity, shadowRadius
 
 #### Android-Specific
-- Use `Platform.OS === 'android'` for Android-only code
-- Use elevation for shadows instead of shadow properties
+- Use elevation for shadows
 - Handle back button with `BackHandler` API
-- Test on multiple Android versions (8+)
-- Consider different screen densities (mdpi, hdpi, xhdpi, xxhdpi)
+- Consider different screen densities
 
 ### Testing Checklist
 - ✅ Test on iOS device/simulator
@@ -2006,24 +1473,16 @@ const t = language === 'en' ? {
 - ✅ Test gallery permissions (deny/allow)
 - ✅ Test location permissions (deny/allow)
 - ✅ Test keyboard behavior (inputs covered/visible)
-- ✅ Test with VoiceOver/TalkBack (accessibility)
+- ✅ Test subscription gating (access denied screens)
 
 ---
 
-
 ### Building for Production
 ```bash
-# Build iOS app (requires Apple Developer account)
 eas build --platform ios
-
-# Build Android APK/AAB
 eas build --platform android
-
-# Build for both platforms
 eas build --platform all
 ```
-
-**Note**: Use Expo Application Services (EAS) for production builds.
 
 ---
 
@@ -2035,112 +1494,97 @@ eas build --platform all
 - `expo-router`: ~6.0.15 (File-based navigation)
 
 ### Firebase (React Native Firebase v23)
-- `@react-native-firebase/app`: ^23.8.5 (Firebase core - iOS & Android)
-- `@react-native-firebase/auth`: ^23.8.5 (Authentication - iOS & Android)
-- `@react-native-firebase/firestore`: ^23.8.5 (Database - iOS & Android)
-- `@react-native-firebase/storage`: ^23.8.5 (File storage - iOS & Android)
-- `@react-native-firebase/functions`: ^23.8.5 (Cloud Functions - iOS & Android)
-- `@react-native-firebase/messaging`: ^23.8.5 (Push notifications - iOS & Android)
+- `@react-native-firebase/app`: ^23.8.5
+- `@react-native-firebase/auth`: ^23.8.5
+- `@react-native-firebase/firestore`: ^23.8.5
+- `@react-native-firebase/storage`: ^23.8.5
+- `@react-native-firebase/functions`: ^23.8.5
+- `@react-native-firebase/messaging`: ^23.8.5
 
 ### UI Components
-- `expo-linear-gradient`: ~15.0.7 (Gradients - iOS & Android)
-- `@expo/vector-icons`: ^15.0.3 (Icons - iOS & Android)
-- `react-native-safe-area-context`: ~5.6.0 (Safe areas - iOS & Android)
+- `expo-linear-gradient`: ~15.0.7
+- `@expo/vector-icons`: ^15.0.3
+- `react-native-safe-area-context`: ~5.6.0
 
 ### Media & Sensors
-- `expo-camera`: ~17.0.9 (Camera - iOS & Android)
-- `expo-image-picker`: ~17.0.8 (Gallery - iOS & Android)
-- `expo-location`: ~19.0.7 (GPS - iOS & Android)
-- `expo-file-system`: ^19.0.21 (File operations - iOS & Android)
+- `expo-camera`: ~17.0.9
+- `expo-image-picker`: ~17.0.8
+- `expo-location`: ~19.0.7
+- `expo-file-system`: ^19.0.21
 
 ### Signature
-- `react-native-signature-canvas`: ^4.7.2 (Signature pad - iOS & Android WebView)
-- `react-native-webview`: 13.15.0 (WebView - iOS & Android)
+- `react-native-signature-canvas`: ^4.7.2
+- `react-native-webview`: 13.15.0
 
 ### Storage
-- `@react-native-async-storage/async-storage`: 2.2.0 (Local storage for drafts/preferences - iOS & Android)
-- `react-native-mmkv`: ^4.1.1 (High-performance cache storage - iOS & Android)
+- `@react-native-async-storage/async-storage`: 2.2.0 (drafts/preferences only)
+- `react-native-mmkv`: ^4.1.1 (primary cache storage)
 
 ### Gestures & Animation
-- `react-native-gesture-handler`: ~2.28.0 (Touch gestures - iOS & Android)
-- `react-native-reanimated`: ~4.1.1 (Animations - iOS & Android)
-
----
-
-## 🎯 Future Improvements
-
-### Recommended Enhancements
-1. **Push Notifications**: Notify workers of new jobs (expo-notifications)
-2. **Offline Mode**: Queue actions when offline, sync when online
-3. **Advanced Search**: Full-text search in jobs and inventory
-4. **Job Templates**: Save common job types as templates
-5. **Barcode Scanner**: Scan parts for inventory (expo-barcode-scanner)
-6. **Chat Feature**: Real-time chat between managers and workers
-7. **Analytics Dashboard**: Visual charts for job statistics
-8. **Advanced Permissions**: Fine-grained role permissions
-9. **Voice Input**: Voice-to-text for descriptions (expo-speech)
-
-### Security Improvements
-1. Move worker passwords to Firebase Authentication
-2. Implement Firestore Security Rules
-3. Add rate limiting for API calls
-4. Encrypt sensitive data in AsyncStorage
+- `react-native-gesture-handler`: ~2.28.0
+- `react-native-reanimated`: ~4.1.1
 
 ---
 
 ## ⚠️ Important Notes
 
-1. **Cross-Platform First**: Always write code that works on both iOS and Android
-2. **Firebase Config**: Never commit Firebase config to public repositories
-3. **Permissions**: Always request permissions before accessing camera/location
-4. **Error Handling**: Always wrap Firebase calls in try-catch
-5. **Loading States**: Always show loading indicators during async operations
-6. **Offline Support**: Handle offline scenarios gracefully
-7. **Image Optimization**: Compress images before upload (max 800kb)
-8. **AsyncStorage Limits**: Keep stored data under 6MB
-9. **Firestore Limits**: Max 1MB per document, 500 writes/sec per database
-10. **Testing**: Test on real devices, not just simulators/emulators
+1. **UID-first**: Always use `uid` (Firebase Auth UID) — never derive identifiers from email
+2. **companyId-first**: Always use `companyId` — never use `companyName` for Firestore paths
+3. **Module architecture**: Screen logic in `modules/`, thin wrappers in `app/`
+4. **withGate**: Every gated screen must use the `withGate` HOC
+5. **Cross-Platform First**: Always write code that works on both iOS and Android
+6. **Firebase Config**: Never commit Firebase config to public repositories
+7. **Custom Alerts Only**: Never use `Alert.alert()` — always use `useAlert()` hook
+8. **Cache System**: Use `useCache()` for all persistent data, AsyncStorage only for drafts
+9. **Permissions**: Always request permissions before accessing camera/location
+10. **Error Handling**: Always wrap Firebase calls in try-catch
+11. **Loading States**: Always show loading indicators during async operations
+12. **Offline Support**: Handle offline scenarios gracefully
+13. **Image Optimization**: Compress images before upload (max 800kb)
 
 ---
 
 ## 🏁 Summary
 
-Smart-Job is a **production-ready, cross-platform mobile application** built with React Native and Expo that runs seamlessly on **both iOS and Android devices**. The app provides comprehensive job management, inventory tracking, and professional document generation for cooling/HVAC professionals.
+Smart-Job ERP is a **production-ready, cross-platform business management system** built with React Native and Expo that runs seamlessly on **both iOS and Android devices**. The app provides comprehensive job management, inventory tracking, and professional document generation for **solo business owners and teams**.
 
 **Key Strengths**:
 - ✅ Full iOS and Android compatibility
-- ✅ Role-based access control (Manager, Worker, User)
+- ✅ Role-based access control (Manager, Worker, User, Basic, Dev)
+- ✅ Subscription-based feature gating with `withGate` HOC
+- ✅ Module architecture (modules/ for logic, app/ for routing)
+- ✅ UID-based identity model (Firebase Auth UID)
 - ✅ Real-time data synchronization with Firebase
-- ✅ Offline-first architecture with AsyncStorage
+- ✅ Offline-first architecture with MMKV caching
 - ✅ Multi-language support (EN, HE, AR)
 - ✅ Dark/Light theme with persistence
-- ✅ Professional UI with consistent design system
-- ✅ Camera, gallery, and signature capture
-- ✅ GPS location tracking
+- ✅ Role-split inventory (personal, team, company)
 - ✅ Professional document generation (Tax Invoices, Price Proposals, Refunds, Return Certificates)
-- ✅ Server-side PDF generation with Firebase Cloud Functions
-- ✅ Centralized navigation with GlobalHeader (back button + settings on every screen)
-- ✅ Comprehensive error handling
-- ✅ Reusable component library
-- ✅ Custom hooks for common patterns
-- ✅ Type-safe with JSDoc comments
+- ✅ Server-side PDF generation via Cloud Run
+- ✅ Centralized navigation with GlobalHeader
+- ✅ Custom alert system (never native Alert.alert())
+- ✅ 3-tier data access (MMKV → Firestore → Cloud Storage archives)
 
 **Architecture Highlights**:
-- **GlobalHeader Component**: Provides consistent navigation (back button) and settings access (theme/language) on every screen except homepages
-- **Document Generation System**: Four document types with server-side PDF generation via Firebase Cloud Functions
-- **Tabbed Manager Dashboard**: Four tabs (Management, Work, Job Monitor, Documents) with URL-based state management
-- **Real-time Job Monitoring**: Live Firestore listeners for instant job status updates
-- **Smart Inventory Tracking**: Low-stock alerts and automatic deduction when jobs are approved
+- **Module Architecture**: Business logic in `modules/`, thin wrappers in `app/` with `withGate`
+- **UID Identity Model**: All user references use Firebase Auth UID, not email-derived usernames
+- **CompanyId References**: All company paths use `companyId`, not `companyName`
+- **Inventory Split**: Personal (solo users), Team (workers from company stock), Company (manager stock)
+- **GlobalHeader Component**: Consistent navigation and settings on every screen
+- **Document Generation System**: Numeric document types with server-side PDF generation
 
 **When working with this codebase**:
-1. Always prioritize cross-platform compatibility
-2. Follow the established patterns for consistency and maintainability
-3. NEVER create individual back buttons - use GlobalHeader
-4. Always include `<GlobalHeader />` on every screen
-5. Use Firebase Cloud Functions for server-side operations like PDF generation
+1. Always use `uid` (never `username` or `getUsernameFromEmail`)
+2. Always use `companyId` (never `companyName`)
+3. Screen logic goes in `modules/`, thin wrappers in `app/`
+4. Use `withGate` for subscription gating
+5. Use `useCache()` for data access (getUid, getCompanyId)
+6. Use custom alert system (never Alert.alert())
+7. Always include `<GlobalHeader />` on every screen
+8. Prioritize cross-platform compatibility
 
 ---
 
-*Last Updated: January 30, 2025*
-*App Version: 1.0.0*
+*Last Updated: February 10, 2026*
+*App Version: 2.0.0*
 *Platforms: iOS & Android*

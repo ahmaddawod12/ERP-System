@@ -9,7 +9,6 @@ import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { Input, GlobalHeader, LoadingSpinner, ScrollableContainer } from '../components';
-import { getUsernameFromEmail } from '../utils/helpers';
 import { increment, updateDoc } from '@react-native-firebase/firestore';
 
 export default function BusinessReg() {
@@ -21,7 +20,7 @@ export default function BusinessReg() {
   const colors = getColors(isDarkMode);
   
   // Get params from route
-  const companyName = params.companyName;
+  const companyId = params.companyId;
   const userRole = params.userRole;
 
   const [loading, setLoading] = useState(false);
@@ -192,11 +191,11 @@ export default function BusinessReg() {
     try {
       // Get current user info
       const currentUser = auth.currentUser;
-      const username = currentUser ? getUsernameFromEmail(currentUser.email) : 'unknown';
+      const uid = currentUser ? currentUser.uid : 'unknown';
       
       // CRITICAL: Ensure user profile exists in Firestore BEFORE saving business_info
       // The Firestore rules check if profile exists to authorize business_info write
-      const userProfileRef = doc(db, username, 'profile');
+      const userProfileRef = doc(db, uid, 'profile');
       const userProfileSnap = await getDoc(userProfileRef);
       
       if (!userProfileSnap.exists()) {
@@ -205,14 +204,14 @@ export default function BusinessReg() {
         await setDoc(userProfileRef, {
           email: currentUser.email,
           role: userRole || 'user',
-          companyName: companyName,
+          companyId: companyId,
           createdAt: new Date().toISOString(),
         });
       } else {
-        // Update profile to ensure companyName is set
-        console.log('Updating user profile companyName...');
+        // Update profile to ensure companyId is set
+        console.log('Updating user profile companyId...');
         await setDoc(userProfileRef, {
-          companyName: companyName,
+          companyId: companyId,
           updatedAt: new Date().toISOString(),
         }, { merge: true });
       }
@@ -250,21 +249,26 @@ export default function BusinessReg() {
         
         // Metadata
         registered_at: new Date().toISOString(),
-        registered_by: username,
+        registered_by: uid,
         registered_by_role: userRole || 'user',
         last_updated: new Date().toISOString(),
       };
-      const businessInfoRef = doc(db, 'companies', companyName, 'business_data', 'business_info');
+      const businessInfoRef = doc(db, 'companies', companyId, 'business_data', 'business_info');
       await setDoc(businessInfoRef, businessData);
-      if(userRole !== 'manager') {
-        updateDoc(doc(db,username,'cache'), {
-          business_info: increment(1),
-        });
+      try {
+        if (userRole !== 'manager') {
+          await updateDoc(doc(db, uid, 'cache'), {
+            business_info: increment(1),
+          });
+        } else {
+          await updateDoc(doc(db, 'companies', companyId, 'business_data', 'cache'), {
+            business_info: increment(1),
+          });
+        }
+      } catch (cacheError) {
+        // Cache version bump is non-blocking for registration success.
+        console.warn('Failed to increment business_info cache version:', cacheError?.message || cacheError);
       }
-      else{
-        updateDoc(doc(db, 'companies', companyName, 'business_data', 'cache'), {
-        business_info: increment(1),
-      });}
 
       alert.success(t.success, 'You can now use all app features');
       

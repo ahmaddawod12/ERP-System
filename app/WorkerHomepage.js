@@ -22,7 +22,7 @@ export default function WorkerHomepage() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { username } = useAuth();
+  const { uid } = useAuth();
   const colors = getColors(isDarkMode);
 
   const t = language === 'en' ? {

@@ -19,13 +19,11 @@ import { getColors, gradients, spacing, borderRadius, shadows, typography } from
 import { GlobalHeader } from '../components/GlobalHeader';
 import { ScrollableContainer } from '../components';
 import { auth, db, functions, middleEastFunctions, doc, getDoc, onSnapshot, httpsCallable } from '../firebase';
-import { useRouter } from 'expo-router';
 
 export default function Permission() {
   const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
   const alert = useAlert();
-  const router = useRouter();
   const colors = getColors(isDarkMode);
 
   const [loading, setLoading] = useState(false);
@@ -117,12 +115,12 @@ export default function Permission() {
     const user = auth.currentUser;
     if (!user) return;
 
-    const username = user.email.split('@')[0];
+    const uid = user.uid;
     
     // First get user's company name, then listen to company's token
     const setupListener = async () => {
       try {
-        const userProfileRef = doc(db, username, 'profile');
+        const userProfileRef = doc(db, uid, 'profile');
         const userProfileSnap = await getDoc(userProfileRef);
         
         if (!userProfileSnap.exists()) {
@@ -132,16 +130,16 @@ export default function Permission() {
         }
         
         const userData = userProfileSnap.data();
-        const companyName = userData.companyName;
+        const companyId = userData.companyId;
         
-        if (!companyName) {
+        if (!companyId) {
           console.error('No company name found for user');
           setTokenStatus({ hasTokens: false });
           return;
         }
         
         // Listen to company-specific token location
-        const tokenDocRef = doc(db, 'companies', companyName, 'business_data', 'token');
+        const tokenDocRef = doc(db, 'companies', companyId, 'business_data', 'token');
         
         const unsubscribe = onSnapshot(tokenDocRef, (docSnap) => {
           
@@ -160,21 +158,21 @@ export default function Permission() {
               expiresAt: data.accessTokenExpiresAt ? new Date(data.accessTokenExpiresAt).toLocaleString(language) : null,
               refreshTokenExpiresAt: data.refreshTokenExpiresAt ? new Date(data.refreshTokenExpiresAt).toLocaleString(language) : null,
               lastUpdated: data.lastUpdated ? new Date(data.lastUpdated?.toMillis?.() || data.lastUpdated).toLocaleString(language) : null,
-              companyName: companyName,
+              companyId: companyId,
               isExpired: data.refreshTokenExpiresAt ? new Date(data.refreshTokenExpiresAt) < new Date() : false,
             });
           } else {
-            console.log('⚠️ No token document found for company:', companyName);
+            console.log('⚠️ No token document found for company:', companyId);
             setTokenStatus({
               hasTokens: false,
-              companyName: companyName,
+              companyId: companyId,
             });
           }
         }, (error) => {
           console.error('Error listening to token status:', error);
           setTokenStatus({
             hasTokens: false,
-            companyName: companyName,
+            companyId: companyId,
           });
         });
         
@@ -342,7 +340,7 @@ export default function Permission() {
                   {t.companyName}:
                 </Text>
                 <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
-                  {tokenStatus.companyName}
+                  {tokenStatus.companyId}
                 </Text>
               </View>
 
@@ -413,6 +411,28 @@ export default function Permission() {
               )}
             </LinearGradient>
           </TouchableOpacity>
+
+          {tokenStatus?.hasTokens && (
+            <TouchableOpacity
+              style={styles.refreshButton}
+              onPress={handleRefreshToken}
+              disabled={refreshing}
+            >
+              <LinearGradient
+                colors={['#2563EB', '#1D4ED8']}
+                style={styles.gradientButton}
+              >
+                {refreshing ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="refresh" size={24} color="white" />
+                    <Text style={styles.buttonText}>{t.refreshButton}</Text>
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
         </View>
       </ScrollableContainer>
 
@@ -505,11 +525,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   infoValue: {
-  testButton: {
-    borderRadius: borderRadius.md,
-    overflow: 'hidden',
-    ...shadows.medium,
-  },
     fontSize: typography.sm,
     flex: 2,
     textAlign: 'right',

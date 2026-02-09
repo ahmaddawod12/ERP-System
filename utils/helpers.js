@@ -96,19 +96,6 @@ export const convertToFinishedJobId = (pendingJobId) => {
 };
 
 /**
- * Extract username from email address
- * @param {string} email - Full email address
- * @returns {string} Username portion before @
- */
-export const getUsernameFromEmail = (email) => {
-  if (!email || typeof email !== 'string') {
-    console.warn('Invalid email provided to getUsernameFromEmail:', email);
-    return '';
-  }
-  return email.split('@')[0];
-};
-
-/**
  * Format date to localized string
  * @param {Date|string} date - Date object or ISO string
  * @param {string} locale - Locale code (default: 'en-US')

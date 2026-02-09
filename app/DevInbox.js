@@ -98,7 +98,7 @@ export default function DevInbox() {
       const msg = convData[`message${i}`];
       msgs.push({
         id: `message${i}`,
-        senderUsername: msg.senderUsername,
+        senderUid: msg.senderUid,
         text: msg.text,
         index: i,
       });
@@ -241,7 +241,7 @@ export default function DevInbox() {
         
         transaction.update(convRef, {
           [messageKey]: {
-            senderUsername: 'dev',
+            senderUid: 'dev',
             text: trimmedReply,
           },
           lastMessage: trimmedReply,
@@ -406,7 +406,7 @@ export default function DevInbox() {
   };
 
   const renderMessage = ({ item }) => {
-    const isDev = item.senderUsername === 'dev';
+    const isDev = item.senderUid === 'dev';
     
     return (
       <View style={[

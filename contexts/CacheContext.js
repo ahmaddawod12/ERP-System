@@ -11,8 +11,8 @@
  * - Individual documents have version numbers: { p_ABC12: 1, f_XYZ99: 3, c_QWE45: 1 }
  * 
  * Example cache documents:
- * - User cache ({username}/cache): { profile: 1, inventory: 50, f_ABC12: 1, f_XYZ99: 2 }
- * - Company cache (companies/{companyName}/business_data/cache): 
+ * - User cache ({uid}/cache): { profile: 1, inventory: 50, f_ABC12: 1, f_XYZ99: 2 }
+ * - Company cache (companies/{companyId}/business_data/cache): 
  *   { workers: 2, business_info: 1, p_ABC12: 1, f_XYZ99: 2, c_QWE45: 1 }
  * 
  * Document Type Detection:
@@ -32,11 +32,11 @@
  * - certifications: delete when createdAt > 90 days
  * 
  * Firestore Cache Docs:
- * - Manager personal: {username}/cache (profile, inventory)
- * - Company: companies/{companyName}/business_data/cache (workers, business_info, clients, all jobs/certs)
- * - Worker: {username}/cache (profile, inventory, clients, pendingJobs, finishedJobs)
- * - User: {username}/cache (profile, inventory, clients, finishedJobs, business_info, certifications)
- * - Basic: {username}/cache (profile, clients, business_info, certifications) - NO inventory, NO jobs
+ * - Manager personal: {uid}/cache (profile, inventory)
+ * - Company: companies/{companyId}/business_data/cache (workers, business_info, clients, all jobs/certs)
+ * - Worker: {uid}/cache (profile, inventory, clients, pendingJobs, finishedJobs)
+ * - User: {uid}/cache (profile, inventory, clients, finishedJobs, business_info, certifications)
+ * - Basic: {uid}/cache (profile, clients, business_info, certifications) - NO inventory, NO jobs
  * 
  * Listener Setup by Role:
  * - Manager: 2 listeners (user cache: profile/inventory, company cache: workers/business_info/clients/jobs/certs)
@@ -47,7 +47,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, runTransaction, FieldValue } from '../firebase';
-import { getUsernameFromEmail, getDocTypeFromId } from '../utils/helpers';
+import { getDocTypeFromId } from '../utils/helpers';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
@@ -58,7 +58,7 @@ export const storage = createMMKV({
   id: 'smart-job-cache'
 });
 
-console.log('✅ MMKV initialized successfully');
+console.log('? MMKV initialized successfully');
 
 // For backwards compatibility
 export const getStorage = () => storage;
@@ -92,8 +92,8 @@ const CACHE_KEYS = {
   // Metadata
   LAST_SYNC: 'cache_last_sync',
   USER_ROLE: 'cache_user_role',
-  USERNAME: 'cache_username',
-  COMPANY_NAME: 'cache_company_name',
+  UID: 'cache_uid',
+  COMPANY_ID: 'cache_company_id',
 };
 
 // 90 days in milliseconds
@@ -230,18 +230,23 @@ export function CacheProvider({ children }) {
   const [companyFinishedJobs, setCompanyFinishedJobs] = useState([]);
   const [certifications, setCertifications] = useState([]);
   const [clients, setClients] = useState([]);
+  const [subscription, setSubscription] = useState(null);
   const [cacheVersions, setCacheVersions] = useState({});
   const [companyCacheVersions, setCompanyCacheVersions] = useState({});
   
   // Refs for cleanup
   const unsubscribeRef = useRef(null);
   const companyUnsubscribeRef = useRef(null);
+  const subscriptionUnsubscribeRef = useRef(null);
   const listenersActiveRef = useRef(false); // Track if listeners are currently active
   
-  // Get current user info from cache
-  const getUsername = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USERNAME), []);
+  // Get current user info from cache (canonical names)
+  const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
   const getUserRole = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_ROLE), []);
-  const getCompanyName = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_NAME), []);
+  const getCompanyId = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID), []);
+  // Backward-compatible aliases (deprecated � use getUid/getCompanyId)
+  const getUsername = getUid;
+  const getCompanyName = getCompanyId;
 
   /**
    * Pause Firestore listeners when app is backgrounded (CRITICAL for Android)
@@ -249,7 +254,7 @@ export function CacheProvider({ children }) {
   const pauseListeners = useCallback(() => {
     if (!listenersActiveRef.current) return; // Already paused
     
-    console.log('⏸️ [CACHE] Pausing Firestore listeners to prevent background reads');
+    console.log('?? [CACHE] Pausing Firestore listeners to prevent background reads');
     
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -258,6 +263,10 @@ export function CacheProvider({ children }) {
     if (companyUnsubscribeRef.current) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
+    }
+    if (subscriptionUnsubscribeRef.current) {
+      subscriptionUnsubscribeRef.current();
+      subscriptionUnsubscribeRef.current = null;
     }
     
     listenersActiveRef.current = false;
@@ -269,17 +278,17 @@ export function CacheProvider({ children }) {
   const resumeListeners = useCallback(() => {
     if (listenersActiveRef.current) return; // Already active
     
-    console.log('▶️ [CACHE] Resuming Firestore listeners');
+    console.log('?? [CACHE] Resuming Firestore listeners');
     
-    const username = getUsername();
+    const uid = getUid();
     const role = getUserRole();
-    const companyName = getCompanyName();
+    const companyId = getCompanyId();
     
-    if (username && role) {
-      setupCacheListeners(username, role, companyName);
+    if (uid && role) {
+      setupCacheListeners(uid, role, companyId);
       listenersActiveRef.current = true;
     }
-  }, [getUsername, getUserRole, getCompanyName]); // Will define setupCacheListeners below
+  }, [getUid, getUserRole, getCompanyId]); // Will define setupCacheListeners below
 
   // Android lifecycle: Pause listeners when app backgrounds, resume when active
   useAppStateListener({
@@ -302,7 +311,7 @@ export function CacheProvider({ children }) {
    * This ensures all data for the same day is cleaned up in one go, preventing
    * repeated partial cleanups on each login.
    */
-  const cleanupExpiredCache = useCallback(async (data, type, username, companyName, role) => {
+  const cleanupExpiredCache = useCallback(async (data, type, uid, companyId, role) => {
     // Calculate the cutoff: 90 days ago, truncated to start of day (00:00:00.000)
     const now = new Date();
     const cutoffDate = new Date(now.getTime() - CACHE_EXPIRY_MS);
@@ -336,8 +345,8 @@ export function CacheProvider({ children }) {
     });
     
     // Delete expired IDs from Firebase cache docs
-    if (expiredIds.length > 0 && username) {
-      console.log(`🗑️ Deleting ${expiredIds.length} expired ${type} from cache docs:`, expiredIds.join(', '));
+    if (expiredIds.length > 0 && uid) {
+      console.log(`??? Deleting ${expiredIds.length} expired ${type} from cache docs:`, expiredIds.join(', '));
       
       try {
         const batch = writeBatch(db);
@@ -345,7 +354,7 @@ export function CacheProvider({ children }) {
         // Determine which cache doc to update based on role
         if (role === 'manager') {
           // Manager: delete from company cache
-          const companyCacheRef = doc(db, 'companies', companyName, 'business_data', 'cache');
+          const companyCacheRef = doc(db, 'companies', companyId, 'business_data', 'cache');
           const deleteFields = {};
           expiredIds.forEach(id => {
             deleteFields[id] = FieldValue.delete();
@@ -353,7 +362,7 @@ export function CacheProvider({ children }) {
           batch.update(companyCacheRef, deleteFields);
         } else if (role === 'worker') {
           // Worker: delete from user cache
-          const userCacheRef = doc(db, username, 'cache');
+          const userCacheRef = doc(db, uid, 'cache');
           const deleteFields = {};
           expiredIds.forEach(id => {
             deleteFields[id] = FieldValue.delete();
@@ -361,7 +370,7 @@ export function CacheProvider({ children }) {
           batch.update(userCacheRef, deleteFields);
         } else {
           // User: delete from user cache (and company cache for certs)
-          const userCacheRef = doc(db, username, 'cache');
+          const userCacheRef = doc(db, uid, 'cache');
           const deleteFields = {};
           expiredIds.forEach(id => {
             deleteFields[id] = FieldValue.delete();
@@ -370,7 +379,7 @@ export function CacheProvider({ children }) {
         }
         
         await batch.commit();
-        console.log('✅ Expired IDs deleted from cache docs');
+        console.log('? Expired IDs deleted from cache docs');
       } catch (error) {
         console.error('Error deleting expired IDs from cache docs:', error);
       }
@@ -383,11 +392,11 @@ export function CacheProvider({ children }) {
    * Load data from local cache
    */
   const loadFromLocalCache = useCallback(() => {
-    console.log('📱 [CACHE READ] Loading from local MMKV cache...');
+    console.log('?? [CACHE READ] Loading from local MMKV cache...');
     
-    const cachedUsername = mmkvHelpers.getString(CACHE_KEYS.USERNAME);
+    const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
     const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
-    const cachedCompanyName = mmkvHelpers.getString(CACHE_KEYS.COMPANY_NAME);
+    const cachedCompanyId = mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID);
     const cachedProfile = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
     const cachedInventory = mmkvHelpers.getObject(CACHE_KEYS.INVENTORY);
     const cachedPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS);
@@ -398,6 +407,7 @@ export function CacheProvider({ children }) {
     const cachedCertifications = mmkvHelpers.getObject(CACHE_KEYS.CERTIFICATIONS);
     const cachedHasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO);
     const cachedClients = mmkvHelpers.getObject(CACHE_KEYS.CLIENTS);
+    const cachedSubscription = mmkvHelpers.getObject(CACHE_KEYS.SUBSCRIPTION);
     const cachedVersions = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS);
     const cachedCompanyVersions = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_CACHE_VERSIONS);
     
@@ -410,14 +420,15 @@ export function CacheProvider({ children }) {
     if (cachedCompanyFinishedJobs) setCompanyFinishedJobs(cachedCompanyFinishedJobs);
     if (cachedCertifications) setCertifications(cachedCertifications);
     if (cachedClients) setClients(cachedClients);
+    if (cachedSubscription) setSubscription(cachedSubscription);
     if (cachedVersions) setCacheVersions(cachedVersions);
     if (cachedCompanyVersions) setCompanyCacheVersions(cachedCompanyVersions);
     
     return {
       hasCache: !!cachedProfile,
-      username: cachedUsername,
+      uid: cachedUid,
       role: cachedRole,
-      companyName: cachedCompanyName,
+      companyId: cachedCompanyId,
       profile: cachedProfile,
       hasBusinessInfo: cachedHasBusinessInfo === 'true',
       versions: cachedVersions || {},
@@ -473,19 +484,19 @@ export function CacheProvider({ children }) {
    * Fetch individual data from Firebase
    * For collections (jobs/certs), only fetch specific document IDs
    */
-  const fetchDataFromFirebase = useCallback(async (field, username, companyName, role) => {
-    console.log(`🔥 [FIREBASE READ] Fetching ${field} from Firebase...`);
+  const fetchDataFromFirebase = useCallback(async (field, uid, companyId, role) => {
+    console.log(`?? [FIREBASE READ] Fetching ${field} from Firebase...`);
     
     try {
       switch (field) {
         case 'profile': {
-          const profileRef = doc(db, username, 'profile');
+          const profileRef = doc(db, uid, 'profile');
           const profileDoc = await getDoc(profileRef);
           return profileDoc.exists() ? profileDoc.data() : null;
         }
         
         case 'inventory': {
-          const inventoryRef = doc(db, username, 'inventory');
+          const inventoryRef = doc(db, uid, 'inventory');
           const inventoryDoc = await getDoc(inventoryRef);
           if (inventoryDoc.exists()) {
             const inventoryData = inventoryDoc.data();
@@ -496,11 +507,18 @@ export function CacheProvider({ children }) {
         
         case 'workers': {
           if (role === 'manager') {
-            const workersRef = collection(db, 'companies', companyName, 'workers');
+            const workersRef = collection(db, 'companies', companyId, 'workers');
             const snapshot = await getDocs(workersRef);
             const workersData = {};
             snapshot.forEach(docSnap => {
-              workersData[docSnap.id] = docSnap.data();
+              const workerDoc = docSnap.data() || {};
+              // Workers are now keyed by UID in Firestore
+              const workerUid = docSnap.id;
+              workersData[workerUid] = {
+                ...workerDoc,
+                uid: workerUid,
+                workerId: workerDoc.workerId || workerUid,
+              };
             });
             return workersData;
           }
@@ -514,8 +532,8 @@ export function CacheProvider({ children }) {
         }
         
         case 'clients': {
-          if (!companyName) return [];
-          const clientsRef = collection(db, 'companies', companyName, 'clients');
+          if (!companyId) return [];
+          const clientsRef = collection(db, 'companies', companyId, 'clients');
           const snapshot = await getDocs(clientsRef);
           const clientsList = [];
           snapshot.forEach(d => {
@@ -541,8 +559,8 @@ export function CacheProvider({ children }) {
    * - f_ = finishedJobs
    * - c_ = certifications
    */
-  const fetchDocumentById = useCallback(async (docId, username, companyName, role) => {
-    console.log(`🔥 [FIREBASE READ] Fetching document ${docId} from Firebase...`);
+  const fetchDocumentById = useCallback(async (docId, uid, companyId, role) => {
+    console.log(`?? [FIREBASE READ] Fetching document ${docId} from Firebase...`);
     
     try {
       const docType = getDocTypeFromId(docId);
@@ -550,21 +568,21 @@ export function CacheProvider({ children }) {
       let docSnap;
       
       if (docType === 'pendingJob') {
-        docRef = doc(db, 'companies', companyName, 'PendingJobs', docId);
+        docRef = doc(db, 'companies', companyId, 'PendingJobs', docId);
         docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
           return { id: docId, ...docSnap.data() };
         }
       } else if (docType === 'finishedJob') {
-        docRef = doc(db, 'companies', companyName, 'finishedJobs', docId);
+        docRef = doc(db, 'companies', companyId, 'finishedJobs', docId);
         docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
           return { id: docId, ...docSnap.data() };
         }
       } else if (docType === 'certification') {
-        docRef = doc(db, 'companies', companyName, 'certifications', docId);
+        docRef = doc(db, 'companies', companyId, 'certifications', docId);
         docSnap = await getDoc(docRef);
         
         if (docSnap.exists()) {
@@ -572,24 +590,24 @@ export function CacheProvider({ children }) {
         }
       } else {
         // Legacy fallback - try all collections
-        console.log(`⚠️ Unknown prefix for ${docId}, trying all collections...`);
+        console.log(`?? Unknown prefix for ${docId}, trying all collections...`);
         
         // Try pending jobs first
-        docRef = doc(db, 'companies', companyName, 'PendingJobs', docId);
+        docRef = doc(db, 'companies', companyId, 'PendingJobs', docId);
         docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           return { id: docId, ...docSnap.data() };
         }
         
         // Try finished jobs
-        docRef = doc(db, 'companies', companyName, 'finishedJobs', docId);
+        docRef = doc(db, 'companies', companyId, 'finishedJobs', docId);
         docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           return { id: docId, ...docSnap.data() };
         }
         
         // Try certifications
-        docRef = doc(db, 'companies', companyName, 'certifications', docId);
+        docRef = doc(db, 'companies', companyId, 'certifications', docId);
         docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           return { id: docId, ...docSnap.data() };
@@ -608,14 +626,14 @@ export function CacheProvider({ children }) {
    * Fetch all recent jobs (within 90 days) from Firebase
    * Used on first initialization when no local cache exists
    */
-  const fetchAllRecentJobs = useCallback(async (username, companyName, role) => {
+  const fetchAllRecentJobs = useCallback(async (uid, companyId, role) => {
     // Dev role has no jobs or certifications - return early
     if (role === 'dev') {
-      console.log('👤 Dev role: skipping all jobs/certifications fetch (early return)');
+      console.log('?? Dev role: skipping all jobs/certifications fetch (early return)');
       return { pendingJobsData: [], finishedJobsData: [], certificationsData: [] };
     }
     
-    console.log('🔥 [FIREBASE READ] Fetching all recent jobs from Firebase (first-time init)...');
+    console.log('?? [FIREBASE READ] Fetching all recent jobs from Firebase (first-time init)...');
     const ninetyDaysAgo = getCacheStartDate().toISOString();
     
     try {
@@ -625,81 +643,81 @@ export function CacheProvider({ children }) {
       
       if (role === 'manager') {
         // Manager: fetch all company pending jobs
-        const pendingRef = collection(db, 'companies', companyName, 'PendingJobs');
+        const pendingRef = collection(db, 'companies', companyId, 'PendingJobs');
         const pendingSnapshot = await getDocs(pendingRef);
         pendingJobsData = pendingSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${pendingJobsData.length} pending jobs for manager`);
+        console.log(`?? Fetched ${pendingJobsData.length} pending jobs for manager`);
         
         // Manager: fetch all company finished jobs (within 90 days)
-        const finishedRef = collection(db, 'companies', companyName, 'finishedJobs');
+        const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
         const finishedQuery = query(finishedRef, where('finishedAt', '>=', ninetyDaysAgo));
         const finishedSnapshot = await getDocs(finishedQuery);
         finishedJobsData = finishedSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${finishedJobsData.length} finished jobs for manager`);
+        console.log(`?? Fetched ${finishedJobsData.length} finished jobs for manager`);
         
         // Manager: fetch all company certifications (within 90 days)
-        const certsRef = collection(db, 'companies', companyName, 'certifications');
+        const certsRef = collection(db, 'companies', companyId, 'certifications');
         const certsQuery = query(certsRef, where('createdAt', '>=', ninetyDaysAgo));
         const certsSnapshot = await getDocs(certsQuery);
         certificationsData = certsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${certificationsData.length} certifications for manager`);
+        console.log(`?? Fetched ${certificationsData.length} certifications for manager`);
         
       } else if (role === 'worker') {
         // Worker: fetch assigned pending jobs
-        const pendingRef = collection(db, 'companies', companyName, 'PendingJobs');
-        const pendingQuery = query(pendingRef, where('completedBy', '==', username));
+        const pendingRef = collection(db, 'companies', companyId, 'PendingJobs');
+        const pendingQuery = query(pendingRef, where('completedBy', '==', uid));
         const pendingSnapshot = await getDocs(pendingQuery);
         pendingJobsData = pendingSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${pendingJobsData.length} pending jobs for worker`);
+        console.log(`?? Fetched ${pendingJobsData.length} pending jobs for worker`);
         
         // Worker: fetch own finished jobs (within 90 days)
-        const finishedRef = collection(db, 'companies', companyName, 'finishedJobs');
+        const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
         const finishedQuery = query(
           finishedRef, 
-          where('completedBy', '==', username),
+          where('completedBy', '==', uid),
           where('finishedAt', '>=', ninetyDaysAgo)
         );
         const finishedSnapshot = await getDocs(finishedQuery);
         finishedJobsData = finishedSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${finishedJobsData.length} finished jobs for worker`);
+        console.log(`?? Fetched ${finishedJobsData.length} finished jobs for worker`);
         
       } else if (role === 'user') {
         // User: fetch own finished jobs (within 90 days)
-        const finishedRef = collection(db, 'companies', companyName, 'finishedJobs');
+        const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
         const finishedQuery = query(
           finishedRef,
-          where('completedBy', '==', username),
+          where('completedBy', '==', uid),
           where('finishedAt', '>=', ninetyDaysAgo)
         );
         const finishedSnapshot = await getDocs(finishedQuery);
         finishedJobsData = finishedSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${finishedJobsData.length} finished jobs for user`);
+        console.log(`?? Fetched ${finishedJobsData.length} finished jobs for user`);
         
         // User: fetch own certifications (within 90 days)
-        const certsRef = collection(db, 'companies', companyName, 'certifications');
+        const certsRef = collection(db, 'companies', companyId, 'certifications');
         const certsQuery = query(
           certsRef,
-          where('createdByUsername', '==', username),
+          where('createdByUid', '==', uid),
           where('createdAt', '>=', ninetyDaysAgo)
         );
         const certsSnapshot = await getDocs(certsQuery);
         certificationsData = certsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${certificationsData.length} certifications for user`);
+        console.log(`?? Fetched ${certificationsData.length} certifications for user`);
       } else if (role === 'basic') {
         // Basic: fetch only certifications (NO jobs, NO inventory)
-        const certsRef = collection(db, 'companies', companyName, 'certifications');
+        const certsRef = collection(db, 'companies', companyId, 'certifications');
         const certsQuery = query(
           certsRef,
-          where('createdByUsername', '==', username),
+          where('createdByUid', '==', uid),
           where('createdAt', '>=', ninetyDaysAgo)
         );
         const certsSnapshot = await getDocs(certsQuery);
         certificationsData = certsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`📥 Fetched ${certificationsData.length} certifications for basic user`);
+        console.log(`?? Fetched ${certificationsData.length} certifications for basic user`);
         // Basic role has no pending/finished jobs - keep arrays empty
       } else if (role === 'dev') {
         // Dev role: NO jobs, NO certifications (support-only role)
-        console.log('👤 Dev role: skipping all jobs/certifications fetch');
+        console.log('?? Dev role: skipping all jobs/certifications fetch');
         // All arrays stay empty
       }
       
@@ -735,12 +753,12 @@ export function CacheProvider({ children }) {
    * - Worker: 1 listener (user cache only: profile/inventory/clients/pendingJobs/finishedJobs)
    * - User: 1 listener (user cache only: profile/inventory/clients/finishedJobs/business_info/certifications)
    */
-  const setupCacheListeners = useCallback((username, role, companyName) => {
-    console.log(`👂 Setting up cache listeners for ${role}...`);
+  const setupCacheListeners = useCallback((uid, role, companyId) => {
+    console.log(`?? Setting up cache listeners for ${role}...`);
     
     // Dev role doesn't need cache listeners
     if (role === 'dev') {
-      console.log('👤 Dev role: skipping cache listeners (support-only role)');
+      console.log('?? Dev role: skipping cache listeners (support-only role)');
       return;
     }
     
@@ -753,18 +771,22 @@ export function CacheProvider({ children }) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
     }
+    if (subscriptionUnsubscribeRef.current) {
+      subscriptionUnsubscribeRef.current();
+      subscriptionUnsubscribeRef.current = null;
+    }
     
     // =====================================================
     // USER CACHE LISTENER (for all roles)
     // =====================================================
-    const userCacheRef = doc(db, username, 'cache');
+    const userCacheRef = doc(db, uid, 'cache');
     unsubscribeRef.current = onSnapshot(userCacheRef, async (snapshot) => {
       if (!snapshot.exists()) return;
       
       const remoteVersions = snapshot.data();
       const localVersions = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
       
-      console.log('📡 User cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
+      console.log('?? User cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
       
       // Define standard fields based on role for user cache
       // Basic role: only profile (no inventory, no business_info cached)
@@ -780,8 +802,8 @@ export function CacheProvider({ children }) {
         const localVersion = localVersions[field] || 0;
         
         if (remoteVersion > localVersion) {
-          console.log(`🔄 Version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
-          const data = await fetchDataFromFirebase(field, username, companyName, role);
+          console.log(`?? Version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
+          const data = await fetchDataFromFirebase(field, uid, companyId, role);
           if (data !== null) {
             const cacheKey = getCacheKeyForField(field);
             saveToLocalCache(cacheKey, data);
@@ -815,7 +837,7 @@ export function CacheProvider({ children }) {
           const existsLocally = existsInPending || existsInFinished || existsInCerts;
           
           if (!existsLocally || remoteVersion > localVersion) {
-            console.log(`🔄 Document ${docId} needs fetch: exists=${existsLocally}, local=${localVersion}, remote=${remoteVersion}`);
+            console.log(`?? Document ${docId} needs fetch: exists=${existsLocally}, local=${localVersion}, remote=${remoteVersion}`);
             documentsToFetch.push(docId);
             localVersions[docId] = remoteVersion;
           }
@@ -830,7 +852,7 @@ export function CacheProvider({ children }) {
         
         for (const localDocId of allLocalDocIds) {
           if (!documentFields.includes(localDocId) && !remoteVersions[localDocId]) {
-            console.log(`🗑️ Document ${localDocId} exists locally but not in remote cache - marking for deletion`);
+            console.log(`??? Document ${localDocId} exists locally but not in remote cache - marking for deletion`);
             documentsToDelete.push(localDocId);
             delete localVersions[localDocId];
           }
@@ -849,14 +871,14 @@ export function CacheProvider({ children }) {
         
         // Fetch missing/outdated documents
         if (documentsToFetch.length > 0) {
-          console.log(`📥 Fetching ${documentsToFetch.length} documents:`, documentsToFetch.join(', '));
+          console.log(`?? Fetching ${documentsToFetch.length} documents:`, documentsToFetch.join(', '));
           
           for (const docId of documentsToFetch) {
-            const docData = await fetchDocumentById(docId, username, companyName, role);
+            const docData = await fetchDocumentById(docId, uid, companyId, role);
             
             if (docData) {
               // For workers, only cache if assigned to them
-              if (role === 'worker' && docData.completedBy !== username) {
+              if (role === 'worker' && docData.completedBy !== uid) {
                 continue;
               }
               
@@ -899,15 +921,15 @@ export function CacheProvider({ children }) {
     // Workers and users don't need company cache listener
     // because their cache is updated directly when jobs are assigned/changed
     // =====================================================
-    if (role === 'manager' && companyName) {
-      const companyCacheRef = doc(db, 'companies', companyName, 'business_data', 'cache');
+    if (role === 'manager' && companyId) {
+      const companyCacheRef = doc(db, 'companies', companyId, 'business_data', 'cache');
       companyUnsubscribeRef.current = onSnapshot(companyCacheRef, async (snapshot) => {
         if (!snapshot.exists()) return;
         
         const remoteVersions = snapshot.data();
         const localVersions = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_CACHE_VERSIONS) || {};
         
-        console.log('📡 Company cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
+        console.log('?? Company cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
         
         // Check standard company fields (business_info excluded - fetched by Cloud Functions only)
         const standardCompanyFields = ['workers', 'clients'];
@@ -917,8 +939,8 @@ export function CacheProvider({ children }) {
           const localVersion = localVersions[field] || 0;
           
           if (remoteVersion > localVersion) {
-            console.log(`🔄 Company version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
-            const data = await fetchDataFromFirebase(field, username, companyName, role);
+            console.log(`?? Company version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
+            const data = await fetchDataFromFirebase(field, uid, companyId, role);
             if (data !== null) {
               const cacheKey = getCacheKeyForField(field);
               saveToLocalCache(cacheKey, data);
@@ -950,7 +972,7 @@ export function CacheProvider({ children }) {
           const existsLocally = existsInPending || existsInFinished || existsInCerts;
           
           if (!existsLocally || remoteVersion > localVersion) {
-            console.log(`🔄 Company document ${docId} needs fetch: exists=${existsLocally}, local=${localVersion}, remote=${remoteVersion}`);
+            console.log(`?? Company document ${docId} needs fetch: exists=${existsLocally}, local=${localVersion}, remote=${remoteVersion}`);
             documentsToFetch.push(docId);
             localVersions[docId] = remoteVersion;
           }
@@ -965,7 +987,7 @@ export function CacheProvider({ children }) {
         
         for (const localDocId of allLocalCompanyDocIds) {
           if (!documentFields.includes(localDocId) && !remoteVersions[localDocId]) {
-            console.log(`🗑️ Company document ${localDocId} exists locally but not in remote cache - marking for deletion`);
+            console.log(`??? Company document ${localDocId} exists locally but not in remote cache - marking for deletion`);
             documentsToDelete.push(localDocId);
             delete localVersions[localDocId];
           }
@@ -984,10 +1006,10 @@ export function CacheProvider({ children }) {
         
         // Fetch missing/outdated documents
         if (documentsToFetch.length > 0) {
-          console.log(`📥 Fetching ${documentsToFetch.length} company documents:`, documentsToFetch.join(', '));
+          console.log(`?? Fetching ${documentsToFetch.length} company documents:`, documentsToFetch.join(', '));
           
           for (const docId of documentsToFetch) {
-            const docData = await fetchDocumentById(docId, username, companyName, role);
+            const docData = await fetchDocumentById(docId, uid, companyId, role);
             
             if (docData) {
               const docType = getDocumentType(docData);
@@ -1024,10 +1046,35 @@ export function CacheProvider({ children }) {
       });
     }
     
+    // =====================================================
+    // SUBSCRIPTION LISTENER (for all roles)
+    // =====================================================
+    if (companyId) {
+      if (subscriptionUnsubscribeRef.current) {
+        subscriptionUnsubscribeRef.current();
+        subscriptionUnsubscribeRef.current = null;
+      }
+      const subscriptionRef = doc(db, 'companies', companyId, 'business_data', 'subscription');
+      subscriptionUnsubscribeRef.current = onSnapshot(subscriptionRef, (snapshot) => {
+        if (!snapshot.exists()) {
+          console.log('?? No subscription document found');
+          setSubscription(null);
+          saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, null);
+          return;
+        }
+        const subData = snapshot.data();
+        console.log('?? Subscription snapshot received:', subData?.plan, subData?.status);
+        setSubscription(subData);
+        saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
+      }, (error) => {
+        console.error('Subscription listener error:', error);
+      });
+    }
+    
     // Mark listeners as active
     listenersActiveRef.current = true;
     
-    console.log(`✅ Cache listeners set up for ${role}: ${role === 'manager' ? '2 listeners' : '1 listener'}`);
+    console.log(`? Cache listeners set up for ${role}`);
   }, [fetchDataFromFirebase, fetchDocumentById, saveToLocalCache]);
 
   /**
@@ -1036,93 +1083,91 @@ export function CacheProvider({ children }) {
    * 
    * Flow:
    * 1. Load from local cache first
-   * 2. Check if username/role/companyName exists in local cache
+   * 2. Check if uid/role/companyId exists in local cache
    * 3. If not, try to get from cached profile or fetch from Firebase (first login)
    * 4. Setup snapshot listeners (they handle version sync automatically on connect)
    */
-  const initializeCache = useCallback(async (emailOrUsername) => {
-    console.log(`🚀 Initializing cache...`);
+  const initializeCache = useCallback(async (userId) => {
+    console.log(`?? Initializing cache...`);
     setIsLoading(true);
     
     try {
       // STEP 1: Load from local cache first
       const cachedData = loadFromLocalCache();
       
-      // STEP 2: Determine username, role, and companyName
-      let username = cachedData.username;
+      // STEP 2: Determine uid (UID), role, and companyId
+      let uid = cachedData.uid;
       let role = cachedData.role;
-      let companyName = cachedData.companyName;
+      let companyId = cachedData.companyId;
       let profileData = cachedData.profile;
       
       // If we have cached metadata, use it
-      if (username && role && companyName && profileData) {
-        console.log(`📦 Using cached credentials: ${username} (${role})`);
+      if (uid && role && companyId && profileData) {
+        console.log(`?? Using cached credentials: ${uid} (${role})`);
       } else {
         // Try to get from cached profile
         if (profileData && !role) {
           role = profileData.role;
-          companyName = profileData.companyName;
+          companyId = profileData.companyId;
         }
         
-        // Derive username from email if not cached
-        if (!username && emailOrUsername) {
-          username = emailOrUsername.includes('@') 
-            ? getUsernameFromEmail(emailOrUsername) 
-            : emailOrUsername;
+        // Use Firebase UID directly (no email-to-uid derivation)
+        if (!uid && userId) {
+          uid = userId;
         }
         
         // If still no profile, this is first login - fetch from Firebase
         if (!profileData) {
-          console.log('📭 No cached profile, fetching from Firebase (first login)...');
-          profileData = await fetchDataFromFirebase('profile', username, companyName, role);
+          console.log('?? No cached profile, fetching from Firebase (first login)...');
+          profileData = await fetchDataFromFirebase('profile', uid, companyId, role);
           
           if (!profileData) {
-            console.error('❌ Could not fetch profile from Firebase');
+            console.error('? Could not fetch profile from Firebase');
             setIsLoading(false);
             return null;
           }
           
           role = profileData.role;
-          companyName = profileData.companyName;
+          companyId = profileData.companyId;
           
           // Save profile to local cache
           saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
         }
         
         // Save metadata to local cache
-        if (username) mmkvHelpers.setString(CACHE_KEYS.USERNAME, username);
+        if (uid) mmkvHelpers.setString(CACHE_KEYS.UID, uid);
         if (role) mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, role);
-        if (companyName) mmkvHelpers.setString(CACHE_KEYS.COMPANY_NAME, companyName);
+        if (companyId) mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, companyId);
       }
       
-      console.log(`🔐 Cache init: ${username} (${role}) @ ${companyName}`);
+      console.log(`?? Cache init: ${uid} (${role}) @ ${companyId}`);
       
       // STEP 3: Check if this is first time (no local cache) or returning user
       if (!cachedData.hasCache) {
-        console.log('📭 No local cache found, performing full fresh fetch...');
-        await fetchAllFresh(username, role, companyName);
+        console.log('?? No local cache found, performing full fresh fetch...');
+        await fetchAllFresh(uid, role, companyId);
         // Check if business_info exists in Firestore (don't cache the data itself)
         const hasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO) === 'true';
-        return { username, role, companyName, hasBusinessInfo };
+        return { uid, role, companyId, hasBusinessInfo };
       }
       
       // STEP 4: Set up real-time snapshot listeners
       // The listeners will automatically sync versions and fetch any missing/outdated data
       // when they first connect (onSnapshot fires immediately with current state)
-      console.log('🔄 Setting up cache listeners (will sync versions automatically)...');
-      setupCacheListeners(username, role, companyName);
+      console.log('?? Setting up cache listeners (will sync versions automatically)...');
+      setupCacheListeners(uid, role, companyId);
       
       // STEP 5: Migration check - if HAS_BUSINESS_INFO flag is missing, check Firestore once
       // This handles users upgrading from old cache version (which stored full businessInfo object)
       const existingFlag = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO);
-      if (!existingFlag && role !== 'worker' && role !== 'dev' && companyName) {
-        console.log(`🔄 HAS_BUSINESS_INFO flag missing (migration), checking Firestore...`);
+      if (!existingFlag && role !== 'worker' && role !== 'dev' && companyId) {
+        console.log(`?? HAS_BUSINESS_INFO flag missing (migration), checking Firestore...`);
         try {
-          const bizRef = doc(db, 'companies', companyName, 'business_data', 'business_info');
+          const bizRef = doc(db, 'companies', companyId, 'business_data', 'business_info');
           const bizDoc = await getDoc(bizRef);
           const exists = bizDoc.exists();
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, exists ? 'true' : 'false');
-          console.log(`✅ Migration complete - business_info ${exists ? 'exists' : 'not found'}`);
+          console.log(`? Migration complete - business_info ${exists ? 'exists' : 'not found'}`);
         } catch (e) {
           console.warn('Migration check failed:', e.message);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, 'false');
@@ -1130,14 +1175,14 @@ export function CacheProvider({ children }) {
       }
       
       setIsInitialized(true);
-      console.log('✅ Cache initialized successfully');
+      console.log('? Cache initialized successfully');
       
       // Read the flag (either from cache or freshly migrated)
       const hasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO) === 'true';
-      return { username, role, companyName, hasBusinessInfo };
+      return { uid, role, companyId, hasBusinessInfo };
       
     } catch (error) {
-      console.error('❌ Cache initialization error:', error);
+      console.error('? Cache initialization error:', error);
       setIsLoading(false);
       return null;
     } finally {
@@ -1149,17 +1194,32 @@ export function CacheProvider({ children }) {
    * Fetch all data fresh from Firebase (first-time login)
    * Also fetches remote cache doc versions to store correct version numbers
    */
-  const fetchAllFresh = useCallback(async (username, role, companyName) => {
-    console.log('🔄 Fetching all data fresh from Firebase (first login)...');
+  const fetchAllFresh = useCallback(async (uid, role, companyId) => {
+    console.log('?? Fetching all data fresh from Firebase (first login)...');
     
     try {
       // Fetch profile for all roles
-      const profileData = await fetchDataFromFirebase('profile', username, companyName, role);
+      const profileData = await fetchDataFromFirebase('profile', uid, companyId, role);
       if (profileData) saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
+      
+      // Fetch subscription for all roles
+      if (companyId) {
+        try {
+          const subRef = doc(db, 'companies', companyId, 'business_data', 'subscription');
+          const subSnap = await getDoc(subRef);
+          if (subSnap.exists()) {
+            const subData = subSnap.data();
+            setSubscription(subData);
+            saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
+          }
+        } catch (e) {
+          console.warn('Could not fetch subscription:', e.message);
+        }
+      }
       
       // Fetch inventory for all roles EXCEPT basic and dev (they have no inventory)
       if (role !== 'basic' && role !== 'dev') {
-        const inventoryData = await fetchDataFromFirebase('inventory', username, companyName, role);
+        const inventoryData = await fetchDataFromFirebase('inventory', uid, companyId, role);
         if (inventoryData) saveToLocalCache(CACHE_KEYS.INVENTORY, inventoryData);
       } else {
         // Basic and dev roles: ensure inventory is empty
@@ -1168,18 +1228,18 @@ export function CacheProvider({ children }) {
       
       // Fetch role-specific standard fields
       if (role === 'manager') {
-        const workersData = await fetchDataFromFirebase('workers', username, companyName, role);
+        const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
         if (workersData) saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
       } else if (role === 'dev') {
         // Dev role doesn't need workers
-        console.log('👤 Dev role: skipping workers fetch');
+        console.log('?? Dev role: skipping workers fetch');
       }
       
       // Check if business_info exists in Firestore (for registration check)
       // Don't cache the data - Cloud Functions fetch it directly for security
-      if (role !== 'worker' && role !== 'dev' && companyName) {
+      if (role !== 'worker' && role !== 'dev' && companyId) {
         try {
-          const bizRef = doc(db, 'companies', companyName, 'business_data', 'business_info');
+          const bizRef = doc(db, 'companies', companyId, 'business_data', 'business_info');
           const bizDoc = await getDoc(bizRef);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, bizDoc.exists() ? 'true' : 'false');
         } catch (e) {
@@ -1189,8 +1249,8 @@ export function CacheProvider({ children }) {
       }
       
       // Fetch all recent jobs from Firebase
-      console.log('📥 Fetching all recent jobs for initial cache...');
-      const { pendingJobsData, finishedJobsData, certificationsData } = await fetchAllRecentJobs(username, companyName, role);
+      console.log('?? Fetching all recent jobs for initial cache...');
+      const { pendingJobsData, finishedJobsData, certificationsData } = await fetchAllRecentJobs(uid, companyId, role);
       
       // Save fetched jobs to local cache
       if (role === 'manager') {
@@ -1221,18 +1281,18 @@ export function CacheProvider({ children }) {
       }
       
       // Fetch clients for all roles (shared company collection)
-      if (companyName) {
-        console.log('📥 Fetching clients for initial cache...');
-        await fetchClients(companyName);
+      if (companyId) {
+        console.log('?? Fetching clients for initial cache...');
+        await fetchClients(companyId);
       }
       
       // IMPORTANT: Fetch remote cache docs to get correct version numbers
-      console.log('🔄 Fetching remote cache docs for version numbers...');
+      console.log('?? Fetching remote cache docs for version numbers...');
       const versions = {};
       const companyVersions = {};
       
       // Fetch user cache doc
-      const userCacheRef = doc(db, username, 'cache');
+      const userCacheRef = doc(db, uid, 'cache');
       const userCacheSnap = await getDoc(userCacheRef);
       if (userCacheSnap.exists()) {
         const userCacheData = userCacheSnap.data();
@@ -1241,12 +1301,12 @@ export function CacheProvider({ children }) {
             versions[key] = userCacheData[key];
           }
         });
-        console.log(`📥 User cache versions loaded: ${Object.keys(versions).length} fields`);
+        console.log(`?? User cache versions loaded: ${Object.keys(versions).length} fields`);
       }
       
       // Fetch company cache doc (for managers)
-      if (role === 'manager' && companyName) {
-        const companyCacheRef = doc(db, 'companies', companyName, 'business_data', 'cache');
+      if (role === 'manager' && companyId) {
+        const companyCacheRef = doc(db, 'companies', companyId, 'business_data', 'cache');
         const companyCacheSnap = await getDoc(companyCacheRef);
         if (companyCacheSnap.exists()) {
           const companyCacheData = companyCacheSnap.data();
@@ -1255,7 +1315,7 @@ export function CacheProvider({ children }) {
               companyVersions[key] = companyCacheData[key];
             }
           });
-          console.log(`📥 Company cache versions loaded: ${Object.keys(companyVersions).length} fields`);
+          console.log(`?? Company cache versions loaded: ${Object.keys(companyVersions).length} fields`);
         }
       }
       
@@ -1264,11 +1324,11 @@ export function CacheProvider({ children }) {
       saveToLocalCache(CACHE_KEYS.COMPANY_CACHE_VERSIONS, companyVersions);
       
       // Set up listeners
-      setupCacheListeners(username, role, companyName);
+      setupCacheListeners(uid, role, companyId);
       setIsInitialized(true);
       setIsLoading(false);
       
-      console.log('✅ Initial cache populated with', pendingJobsData.length, 'pending,', finishedJobsData.length, 'finished jobs');
+      console.log('? Initial cache populated with', pendingJobsData.length, 'pending,', finishedJobsData.length, 'finished jobs');
     } catch (error) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
@@ -1283,8 +1343,8 @@ export function CacheProvider({ children }) {
    * when snapshot listener fires (local version will already match remote)
    */
   const incrementCacheVersion = useCallback(async (fieldOrDocId, isCompanyCache = false) => {
-    const username = getUsername();
-    const companyName = getCompanyName();
+    const uid = getUid();
+    const companyId = getCompanyId();
     
     try {
       // STEP 1: Update local version FIRST (before Firebase write triggers snapshot)
@@ -1294,19 +1354,19 @@ export function CacheProvider({ children }) {
       localVersions[fieldOrDocId] = newVersion;
       saveToLocalCache(localVersionsKey, localVersions);
       
-      console.log(`📈 Pre-incremented local ${fieldOrDocId} version to ${newVersion} in ${isCompanyCache ? 'company' : 'user'} cache`);
+      console.log(`?? Pre-incremented local ${fieldOrDocId} version to ${newVersion} in ${isCompanyCache ? 'company' : 'user'} cache`);
       
       // STEP 2: Then update Firebase (snapshot listener will see local version already matches)
       const cacheRef = isCompanyCache 
-        ? doc(db, 'companies', companyName, 'business_data', 'cache')
-        : doc(db, username, 'cache');
+        ? doc(db, 'companies', companyId, 'business_data', 'cache')
+        : doc(db, uid, 'cache');
       
       await setDoc(cacheRef, {
         [fieldOrDocId]: FieldValue.increment(1),
         lastUpdated: new Date().toISOString(),
       }, { merge: true });
       
-      console.log(`✅ Firebase ${fieldOrDocId} version incremented`);
+      console.log(`? Firebase ${fieldOrDocId} version incremented`);
     } catch (error) {
       console.error(`Error incrementing ${fieldOrDocId} version:`, error);
       // Rollback local version on error
@@ -1315,15 +1375,15 @@ export function CacheProvider({ children }) {
       localVersions[fieldOrDocId] = Math.max(0, (localVersions[fieldOrDocId] || 1) - 1);
       saveToLocalCache(localVersionsKey, localVersions);
     }
-  }, [getUsername, getCompanyName, saveToLocalCache]);
+  }, [getUid, getCompanyId, saveToLocalCache]);
 
   /**
    * Delete a field from Firebase cache doc
    * Used when deleting jobs/certs or moving from pending to finished
    */
   const deleteCacheField = useCallback(async (fieldOrDocId, isCompanyCache = false) => {
-    const username = getUsername();
-    const companyName = getCompanyName();
+    const uid = getUid();
+    const companyId = getCompanyId();
     
     try {
       // Delete from local versions
@@ -1334,19 +1394,19 @@ export function CacheProvider({ children }) {
       
       // Delete from Firebase cache doc
       const cacheRef = isCompanyCache 
-        ? doc(db, 'companies', companyName, 'business_data', 'cache')
-        : doc(db, username, 'cache');
+        ? doc(db, 'companies', companyId, 'business_data', 'cache')
+        : doc(db, uid, 'cache');
       
       await updateDoc(cacheRef, {
         [fieldOrDocId]: FieldValue.delete(),
         lastUpdated: new Date().toISOString(),
       });
       
-      console.log(`🗑️ Deleted ${fieldOrDocId} from ${isCompanyCache ? 'company' : 'user'} cache`);
+      console.log(`??? Deleted ${fieldOrDocId} from ${isCompanyCache ? 'company' : 'user'} cache`);
     } catch (error) {
       console.error(`Error deleting ${fieldOrDocId} from cache:`, error);
     }
-  }, [getUsername, getCompanyName, saveToLocalCache]);
+  }, [getUid, getCompanyId, saveToLocalCache]);
 
   /**
    * Increment version for a specific document (job or certification)
@@ -1368,9 +1428,9 @@ export function CacheProvider({ children }) {
    * Update inventory cache
    */
   const updateInventory = useCallback(async (newInventory) => {
-    const username = getUsername();
-    if (!username) {
-      console.error('Cannot update inventory: no username');
+    const uid = getUid();
+    if (!uid) {
+      console.error('Cannot update inventory: no uid');
       return;
     }
     
@@ -1378,7 +1438,7 @@ export function CacheProvider({ children }) {
     saveToLocalCache(CACHE_KEYS.INVENTORY, newInventory);
     
     // 2. Save to Firebase
-    const inventoryRef = doc(db, username, 'inventory');
+    const inventoryRef = doc(db, uid, 'inventory');
     await setDoc(inventoryRef, {
       parts: newInventory,
       lastUpdated: new Date().toISOString()
@@ -1387,22 +1447,22 @@ export function CacheProvider({ children }) {
     // 3. Increment cache version (triggers other devices to refresh)
     await incrementCacheVersion('inventory', false);
     
-    console.log('✅ Inventory updated: cache, Firebase, and version incremented');
-  }, [saveToLocalCache, incrementCacheVersion, getUsername]);
+    console.log('? Inventory updated: cache, Firebase, and version incremented');
+  }, [saveToLocalCache, incrementCacheVersion, getUid]);
 
   /**
    * Update worker's cache when manager assigns a job
    * Increments the specific job version in worker's cache
    */
-  const updateWorkerCacheVersion = useCallback(async (workerUsername, jobId) => {
+  const updateWorkerCacheVersion = useCallback(async (workerId, jobId) => {
     try {
-      const workerCacheRef = doc(db, workerUsername, 'cache');
+      const workerCacheRef = doc(db, workerId, 'cache');
       await setDoc(workerCacheRef, {
         [jobId]: FieldValue.increment(1),
         lastUpdated: new Date().toISOString(),
       }, { merge: true });
       
-      console.log(`📝 Incremented job ${jobId} version in worker ${workerUsername}'s cache`);
+      console.log(`?? Incremented job ${jobId} version in worker ${workerId}'s cache`);
     } catch (error) {
       console.error('Error updating worker cache version:', error);
     }
@@ -1412,15 +1472,15 @@ export function CacheProvider({ children }) {
    * Delete field from worker's cache
    * Used when a job is moved from pending to finished
    */
-  const deleteWorkerCacheField = useCallback(async (workerUsername, fieldOrDocId) => {
+  const deleteWorkerCacheField = useCallback(async (workerId, fieldOrDocId) => {
     try {
-      const workerCacheRef = doc(db, workerUsername, 'cache');
+      const workerCacheRef = doc(db, workerId, 'cache');
       await updateDoc(workerCacheRef, {
         [fieldOrDocId]: FieldValue.delete(),
         lastUpdated: new Date().toISOString(),
       });
       
-      console.log(`🗑️ Deleted ${fieldOrDocId} from worker ${workerUsername}'s cache`);
+      console.log(`??? Deleted ${fieldOrDocId} from worker ${workerId}'s cache`);
     } catch (error) {
       console.error('Error deleting from worker cache:', error);
     }
@@ -1428,13 +1488,13 @@ export function CacheProvider({ children }) {
 
   /**
    * Add a job to cache (prevents duplicates)
-   * Manager adds job → Company cache, increment job version
-   * Worker updates job → Both worker cache + company cache, increment job version 
-   * User adds job → User cache, increment job version
+   * Manager adds job ? Company cache, increment job version
+   * Worker updates job ? Both worker cache + company cache, increment job version 
+   * User adds job ? User cache, increment job version
    */
-  const addJob = useCallback(async (job, isPending = true, workerUsername = null) => {
+  const addJob = useCallback(async (job, isPending = true, workerId = null) => {
     const role = getUserRole();
-    const username = getUsername();
+    const uid = getUid();
     
     if (!job.id) {
       console.error('Cannot add job without ID');
@@ -1447,7 +1507,7 @@ export function CacheProvider({ children }) {
       return [...filtered, newJob];
     };
     
-    console.log(`📝 addJob called: id=${job.id}, isPending=${isPending}, role=${role}`);
+    console.log(`?? addJob called: id=${job.id}, isPending=${isPending}, role=${role}`);
     
     if (role === 'manager') {
       // Manager adds job to company cache
@@ -1458,8 +1518,8 @@ export function CacheProvider({ children }) {
         await incrementDocumentVersion(job.id, true);
         
         // If job is assigned to a worker, also increment in worker's cache
-        if (workerUsername) {
-          await updateWorkerCacheVersion(workerUsername, job.id);
+        if (workerId) {
+          await updateWorkerCacheVersion(workerId, job.id);
         }
       } else {
         const currentJobs = addJobToArray(companyFinishedJobs, job);
@@ -1493,8 +1553,8 @@ export function CacheProvider({ children }) {
       }
     }
     
-    console.log(`✅ addJob completed for ${job.id}`);
-  }, [getUserRole, getUsername, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, saveToLocalCache, incrementDocumentVersion, updateWorkerCacheVersion]);
+    console.log(`? addJob completed for ${job.id}`);
+  }, [getUserRole, getUid, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, saveToLocalCache, incrementDocumentVersion, updateWorkerCacheVersion]);
 
   /**
    * Update a job in cache
@@ -1595,9 +1655,9 @@ export function CacheProvider({ children }) {
    * 
    * @param {string} pendingJobId - Original pending job ID (p_XXXXX)
    * @param {object} finishedJobData - The finished job data (should already have f_XXXXX id)
-   * @param {string} workerUsername - The worker's username for cache update
+   * @param {string} workerId - The worker's uid for cache update
    */
-  const moveJobToFinished = useCallback(async (pendingJobId, finishedJobData, workerUsername = null) => {
+  const moveJobToFinished = useCallback(async (pendingJobId, finishedJobData, workerId = null) => {
     const role = getUserRole();
     
     // Only managers can move jobs to finished
@@ -1614,9 +1674,9 @@ export function CacheProvider({ children }) {
     
     const finishedJob = finishedJobData || { ...job, status: 'finished', finishedAt: new Date().toISOString() };
     const finishedJobId = finishedJob.id || pendingJobId;
-    const worker = workerUsername || job?.completedBy;
+    const worker = workerId || job?.completedBy;
     
-    console.log(`📝 moveJobToFinished: ${pendingJobId} -> ${finishedJobId}`);
+    console.log(`?? moveJobToFinished: ${pendingJobId} -> ${finishedJobId}`);
     
     // 1. Remove from company pending jobs cache
     const newPending = companyPendingJobs.filter(j => j.id !== pendingJobId);
@@ -1640,7 +1700,7 @@ export function CacheProvider({ children }) {
     }
     
     
-    console.log(`✅ moveJobToFinished completed: ${pendingJobId} -> ${finishedJobId}`);
+    console.log(`? moveJobToFinished completed: ${pendingJobId} -> ${finishedJobId}`);
   }, [getUserRole, companyPendingJobs, companyFinishedJobs, saveToLocalCache, deleteCacheField, deleteWorkerCacheField, incrementDocumentVersion, updateWorkerCacheVersion]);
 
   /**
@@ -1656,24 +1716,24 @@ export function CacheProvider({ children }) {
    * 1. Local cache workers list
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker email (used as worker ID)
-   * @param {object} workerData - { email, password, name, phoneNumber }
+   * @param {string} workerId - Worker UID (Firebase Auth UID)
+   * @param {object} workerData - { email, name, phoneNumber, uid }
    */
   const addWorker = useCallback(async (workerId, workerData) => {
     const role = getUserRole();
-    const companyName = getCompanyName();
+    const companyId = getCompanyId();
     
     if (role !== 'manager') {
       console.error('Only managers can add workers');
       throw new Error('Only managers can add workers');
     }
     
-    if (!companyName) {
+    if (!companyId) {
       console.error('No company name found');
       throw new Error('No company name found');
     }
     
-    console.log(`📝 Adding worker ${workerId} to cache...`);
+    console.log(`?? Adding worker ${workerId} to cache...`);
     
     try {
       // 1. Update local cache
@@ -1683,9 +1743,10 @@ export function CacheProvider({ children }) {
           email: workerData.email,
           name: workerData.name,
           phoneNumber: workerData.phoneNumber,
-          password: workerData.password,
+          uid: workerId,
+          workerId: workerData.workerId || workerId,
           role: 'worker',
-          companyName: companyName
+          companyId: companyId
         }
       };
       saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
@@ -1693,37 +1754,37 @@ export function CacheProvider({ children }) {
       // 2. Increment cache version (triggers other devices to refresh)
       await incrementCacheVersion('workers', true);
       
-      console.log(`✅ Worker ${workerId} added to cache successfully`);
+      console.log(`? Worker ${workerId} added to cache successfully`);
       
     } catch (error) {
       console.error('Error adding worker to cache:', error);
       throw error;
     }
-  }, [workers, getUserRole, getCompanyName, saveToLocalCache, incrementCacheVersion]);
+  }, [workers, getUserRole, getCompanyId, saveToLocalCache, incrementCacheVersion]);
 
   /**
    * Edit worker details (called AFTER cloud function updates Firestore)
-   * Can update: name, phoneNumber, password
+   * Can update: name, phoneNumber
    * CANNOT update: email (immutable)
    * 
-   * @param {string} workerId - Worker email (used as worker ID)
-   * @param {object} updates - { name?, phoneNumber?, password? }
+   * @param {string} workerId - Worker UID (Firebase Auth UID)
+   * @param {object} updates - { name?, phoneNumber? }
    */
   const editWorker = useCallback(async (workerId, updates) => {
     const role = getUserRole();
-    const companyName = getCompanyName();
+    const companyId = getCompanyId();
     
     if (role !== 'manager') {
       console.error('Only managers can edit workers');
       throw new Error('Only managers can edit workers');
     }
     
-    if (!companyName) {
+    if (!companyId) {
       console.error('No company name found');
       throw new Error('No company name found');
     }
     
-    console.log(`📝 Editing worker ${workerId} in cache...`);
+    console.log(`?? Editing worker ${workerId} in cache...`);
     
     try {
       // 1. Update local cache
@@ -1731,10 +1792,11 @@ export function CacheProvider({ children }) {
       if (!currentWorker) {
         throw new Error('Worker not found in cache');
       }
+      const { password, ...safeUpdates } = updates || {};
       
       const updatedWorkerData = {
         ...currentWorker,
-        ...updates,
+        ...safeUpdates,
         email: currentWorker.email // Email is immutable
       };
       
@@ -1747,13 +1809,13 @@ export function CacheProvider({ children }) {
       // 2. Increment cache version
       await incrementCacheVersion('workers', true);
       
-      console.log(`✅ Worker ${workerId} updated in cache successfully`);
+      console.log(`? Worker ${workerId} updated in cache successfully`);
       
     } catch (error) {
       console.error('Error editing worker in cache:', error);
       throw error;
     }
-  }, [workers, getUserRole, getCompanyName, saveToLocalCache, incrementCacheVersion]);
+  }, [workers, getUserRole, getCompanyId, saveToLocalCache, incrementCacheVersion]);
 
   /**
    * Delete worker from cache (called AFTER cloud function deletes Auth user and Firestore docs)
@@ -1761,23 +1823,23 @@ export function CacheProvider({ children }) {
    * 1. Worker from local cache
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker email (used as worker ID)
+   * @param {string} workerId - Worker UID (Firebase Auth UID)
    */
   const deleteWorker = useCallback(async (workerId) => {
     const role = getUserRole();
-    const companyName = getCompanyName();
+    const companyId = getCompanyId();
     
     if (role !== 'manager') {
       console.error('Only managers can delete workers');
       throw new Error('Only managers can delete workers');
     }
     
-    if (!companyName) {
+    if (!companyId) {
       console.error('No company name found');
       throw new Error('No company name found');
     }
     
-    console.log(`🗑️ Deleting worker ${workerId} from cache...`);
+    console.log(`??? Deleting worker ${workerId} from cache...`);
     
     try {
       // 1. Remove from local cache
@@ -1787,17 +1849,17 @@ export function CacheProvider({ children }) {
       // 2. Increment cache version
       await incrementCacheVersion('workers', true);
       
-      console.log(`✅ Worker ${workerId} deleted from cache successfully`);
+      console.log(`? Worker ${workerId} deleted from cache successfully`);
       
     } catch (error) {
       console.error('Error deleting worker from cache:', error);
       throw error;
     }
-  }, [workers, getUserRole, getCompanyName, saveToLocalCache, incrementCacheVersion]);
+  }, [workers, getUserRole, getCompanyId, saveToLocalCache, incrementCacheVersion]);
 
   /**
    * Add certification
-   * Manager/User/Basic adds certification → Company cache, increment cert version
+   * Manager/User/Basic adds certification ? Company cache, increment cert version
    */
   const addCertification = useCallback(async (certification) => {
     if (!certification.id) {
@@ -1812,16 +1874,16 @@ export function CacheProvider({ children }) {
   }, [certifications, saveToLocalCache, incrementDocumentVersion]);
 
   /**
-   * Fetch all clients from companies/{companyName}/clients
+   * Fetch all clients from companies/{companyId}/clients
    */
-  const fetchClients = useCallback(async (companyName) => {
+  const fetchClients = useCallback(async (companyId) => {
     try {
-      const cName = companyName || getCompanyName();
+      const cName = companyId || getCompanyId();
       if (!cName) {
-        console.warn('⚠️ No company name for fetchClients');
+        console.warn('?? No company name for fetchClients');
         return [];
       }
-      console.log('🔥 [FIREBASE READ] Fetching clients from Firebase...');
+      console.log('?? [FIREBASE READ] Fetching clients from Firebase...');
       const clientsRef = collection(db, 'companies', cName, 'clients');
       const snapshot = await getDocs(clientsRef);
       const clientsList = [];
@@ -1832,37 +1894,37 @@ export function CacheProvider({ children }) {
       clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
       saveToLocalCache(CACHE_KEYS.CLIENTS, clientsList);
       setClients(clientsList); // Update state immediately
-      console.log(`✅ Fetched ${clientsList.length} clients`);
+      console.log(`? Fetched ${clientsList.length} clients`);
       return clientsList;
     } catch (error) {
       console.error('Error fetching clients:', error);
       return [];
     }
-  }, [getCompanyName, saveToLocalCache]);
+  }, [getCompanyId, saveToLocalCache]);
 
   /**
    * Add a new client using a Firestore transaction
-   * - Reads companies/{companyName} document for nextClientId field
+   * - Reads companies/{companyId} document for nextClientId field
    * - Increments nextClientId in company doc
-   * - Creates companies/{companyName}/clients/{nextId} with client data
+   * - Creates companies/{companyId}/clients/{nextId} with client data
    * - Updates local cache
    * 
    * @param {Object} clientData - { name, phone, email, address, city, vatNumber }
    * @returns {Object} - The created client with id
    */
   const addClient = useCallback(async (clientData) => {
-    const companyName = getCompanyName();
-    console.log('🏢 Adding client to company:', companyName);
+    const companyId = getCompanyId();
+    console.log('?? Adding client to company:', companyId);
     
-    if (!companyName) {
+    if (!companyId) {
       const error = new Error('Company name not found in cache');
-      console.error('❌', error);
+      console.error('?', error);
       throw error;
     }
 
     try {
-      const companyRef = doc(db, 'companies', companyName);
-      console.log('📍 Company doc path:', companyRef.path);
+      const companyRef = doc(db, 'companies', companyId);
+      console.log('?? Company doc path:', companyRef.path);
 
       const newClient = await runTransaction(db, async (transaction) => {
         const companySnap = await transaction.get(companyRef);
@@ -1871,7 +1933,7 @@ export function CacheProvider({ children }) {
         if (companySnap.exists() && companySnap.data().nextClientId) {
           nextId = companySnap.data().nextClientId;
         }
-        console.log('🔢 Next client ID:', nextId);
+        console.log('?? Next client ID:', nextId);
 
         // Update company doc with incremented counter
         transaction.set(companyRef, { nextClientId: nextId + 1 }, { merge: true });
@@ -1882,8 +1944,8 @@ export function CacheProvider({ children }) {
           ...clientData,
           createdAt: new Date().toISOString(),
         };
-        const clientRef = doc(db, 'companies', companyName, 'clients', clientId);
-        console.log('📍 Client path:', clientRef.path);
+        const clientRef = doc(db, 'companies', companyId, 'clients', clientId);
+        console.log('?? Client path:', clientRef.path);
         transaction.set(clientRef, clientDoc);
 
         return { id: clientId, ...clientDoc };
@@ -1899,25 +1961,25 @@ export function CacheProvider({ children }) {
       const isCompanyCache = role === 'manager';
       await incrementCacheVersion('clients', isCompanyCache);
 
-      console.log(`✅ Client created with ID: ${newClient.id}`);
+      console.log(`? Client created with ID: ${newClient.id}`);
       return newClient;
     } catch (error) {
-      console.error('❌ Error creating client:', error);
-      console.error('❌ Error code:', error.code);
-      console.error('❌ Error message:', error.message);
+      console.error('? Error creating client:', error);
+      console.error('? Error code:', error.code);
+      console.error('? Error message:', error.message);
       throw error;
     }
-  }, [getCompanyName, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
+  }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
 
   /**
    * Update an existing client
    */
   const updateClient = useCallback(async (clientId, updates) => {
-    const companyName = getCompanyName();
-    if (!companyName) throw new Error('Company name not found');
+    const companyId = getCompanyId();
+    if (!companyId) throw new Error('Company name not found');
 
     try {
-      const clientRef = doc(db, 'companies', companyName, 'clients', clientId);
+      const clientRef = doc(db, 'companies', companyId, 'clients', clientId);
       await updateDoc(clientRef, { ...updates, updatedAt: new Date().toISOString() });
 
       // Update local cache
@@ -1932,22 +1994,22 @@ export function CacheProvider({ children }) {
       const isCompanyCache = role === 'manager';
       await incrementCacheVersion('clients', isCompanyCache);
       
-      console.log(`✅ Client ${clientId} updated`);
+      console.log(`? Client ${clientId} updated`);
     } catch (error) {
       console.error('Error updating client:', error);
       throw error;
     }
-  }, [getCompanyName, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
+  }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
 
   /**
    * Delete a client from the company's clients collection
    */
   const deleteClient = useCallback(async (clientId) => {
-    const companyName = getCompanyName();
-    if (!companyName) throw new Error('Company name not found');
+    const companyId = getCompanyId();
+    if (!companyId) throw new Error('Company name not found');
 
     try {
-      const clientRef = doc(db, 'companies', companyName, 'clients', clientId);
+      const clientRef = doc(db, 'companies', companyId, 'clients', clientId);
       await deleteDoc(clientRef);
 
       // Update local cache
@@ -1960,18 +2022,18 @@ export function CacheProvider({ children }) {
       const isCompanyCache = role === 'manager';
       await incrementCacheVersion('clients', isCompanyCache);
       
-      console.log(`✅ Client ${clientId} deleted`);
+      console.log(`? Client ${clientId} deleted`);
     } catch (error) {
       console.error('Error deleting client:', error);
       throw error;
     }
-  }, [getCompanyName, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
+  }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
 
   /**
    * Clear all cache (on logout)
    */
   const clearCache = useCallback(() => {
-    console.log('🗑️ Clearing all cache...');
+    console.log('??? Clearing all cache...');
     
     // Unsubscribe from listeners
     if (unsubscribeRef.current) {
@@ -1996,42 +2058,49 @@ export function CacheProvider({ children }) {
     setCompanyFinishedJobs([]);
     setCertifications([]);
     setClients([]);
+    setSubscription(null);
     setCacheVersions({});
     setCompanyCacheVersions({});
     setIsInitialized(false);
     
-    console.log('✅ Cache cleared');
+    // Clean up subscription listener
+    if (subscriptionUnsubscribeRef.current) {
+      subscriptionUnsubscribeRef.current();
+      subscriptionUnsubscribeRef.current = null;
+    }
+    
+    console.log('? Cache cleared');
   }, []);
 
   /**
    * Download archived month data from Cloud Storage.
-   * Archives are stored as: companies/{companyName}/archives/{YYYY}-{M}-{suffix}.json
+   * Archives are stored as: companies/{companyId}/archives/{YYYY}-{M}-{suffix}.json
    * where suffix is 'j' for finishedJobs and 'c' for certifications.
    * 
    * Uses a local MMKV cache so repeated requests for the same archived month
    * don't re-download from Storage.
    * 
-   * @param {string} companyName
+   * @param {string} companyId
    * @param {number} year 
    * @param {number} month - 1-indexed
    * @param {string} dataType - 'finishedJobs' or 'certifications'
    * @returns {Array|null} - Parsed documents or null if archive doesn't exist
    */
-  const fetchFromArchive = useCallback(async (companyName, year, month, dataType) => {
+  const fetchFromArchive = useCallback(async (companyId, year, month, dataType) => {
     const suffix = dataType === 'finishedJobs' ? 'j' : 'c';
     const archiveKey = `${year}-${month}-${suffix}`;
-    const mmkvCacheKey = `archive_${companyName}_${archiveKey}`;
+    const mmkvCacheKey = `archive_${companyId}_${archiveKey}`;
     
     // Check local MMKV cache first (avoid re-downloading)
     const cached = mmkvHelpers.getObject(mmkvCacheKey);
     if (cached !== null) {
-      console.log(`📦 Archive ${archiveKey} loaded from local cache (${cached.length} docs)`);
+      console.log(`?? Archive ${archiveKey} loaded from local cache (${cached.length} docs)`);
       return cached;
     }
     
     // Download from Cloud Storage
-    const storagePath = `companies/${companyName}/archives/${archiveKey}.json`;
-    console.log(`☁️ Downloading archive from Storage: ${storagePath}`);
+    const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
+    console.log(`?? Downloading archive from Storage: ${storagePath}`);
     
     try {
       const ref = firebaseStorage().ref(storagePath);
@@ -2045,7 +2114,7 @@ export function CacheProvider({ children }) {
       const jsonText = await response.text();
       const documents = JSON.parse(jsonText);
       
-      console.log(`☁️ Downloaded archive ${archiveKey}: ${documents.length} docs (${(jsonText.length / 1024).toFixed(1)} KB)`);
+      console.log(`?? Downloaded archive ${archiveKey}: ${documents.length} docs (${(jsonText.length / 1024).toFixed(1)} KB)`);
       
       // Cache locally in MMKV (so we don't re-download)
       mmkvHelpers.setObject(mmkvCacheKey, documents);
@@ -2054,10 +2123,10 @@ export function CacheProvider({ children }) {
     } catch (error) {
       // storage/object-not-found means this month was never archived
       if (error.code === 'storage/object-not-found' || error.message?.includes('404')) {
-        console.log(`📭 No archive found for ${archiveKey} (not yet archived or no data)`);
+        console.log(`?? No archive found for ${archiveKey} (not yet archived or no data)`);
         return null;
       }
-      console.error(`❌ Error downloading archive ${archiveKey}:`, error);
+      console.error(`? Error downloading archive ${archiveKey}:`, error);
       return null;
     }
   }, []);
@@ -2071,9 +2140,9 @@ export function CacheProvider({ children }) {
    * 
    * Flow for months outside cache:
    *   1. Query Firestore first
-   *   2. If Firestore returns 0 docs AND month is > ~6 months old → try Storage archive
-   *   3. If Storage archive exists → return archived data
-   *   4. If nothing found anywhere → return empty array (no data for this month)
+   *   2. If Firestore returns 0 docs AND month is > ~6 months old ? try Storage archive
+   *   3. If Storage archive exists ? return archived data
+   *   4. If nothing found anywhere ? return empty array (no data for this month)
    * 
    * @param {Date} monthDate - Any date within the target month
    * @param {string} dataType - 'finishedJobs' or 'certifications'
@@ -2081,8 +2150,8 @@ export function CacheProvider({ children }) {
    */
   const getDataForMonth = useCallback(async (monthDate, dataType) => {
     const role = getUserRole();
-    const username = getUsername();
-    const companyName = getCompanyName();
+    const uid = getUid();
+    const companyId = getCompanyId();
     
     // Calculate month boundaries
     const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
@@ -2108,7 +2177,7 @@ export function CacheProvider({ children }) {
     
     // Case 1: Month is completely within cache range (0-90 days)
     if (monthStartMs >= cacheStartMs && monthEndMs <= nowMs) {
-      console.log(`📦 Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is fully within cache range`);
+      console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is fully within cache range`);
       
       const dateField = dataType === 'certifications' ? 'createdAt' : 'finishedAt';
       return cachedData.filter(item => {
@@ -2119,7 +2188,7 @@ export function CacheProvider({ children }) {
     
     // Case 2: Month is partially within cache range
     if (monthEndMs >= cacheStartMs && monthStartMs < cacheStartMs) {
-      console.log(`📦 Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is partially in cache, fetching missing data...`);
+      console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is partially in cache, fetching missing data...`);
       
       const dateField = dataType === 'certifications' ? 'createdAt' : 'finishedAt';
       
@@ -2134,12 +2203,12 @@ export function CacheProvider({ children }) {
         let q;
         
         if (dataType === 'finishedJobs') {
-          const finishedJobsRef = collection(db, 'companies', companyName, 'finishedJobs');
+          const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
           if (role !== 'manager') {
             q = query(finishedJobsRef,
               where('finishedAt', '>=', monthStart.toISOString()),
               where('finishedAt', '<', cacheStartDate.toISOString()),
-              where('completedBy', '==', username)
+              where('completedBy', '==', uid)
             );
           } else {
             q = query(finishedJobsRef,
@@ -2148,7 +2217,7 @@ export function CacheProvider({ children }) {
             );
           }
         } else if (dataType === 'certifications') {
-          const certificationsRef = collection(db, 'companies', companyName, 'certifications');
+          const certificationsRef = collection(db, 'companies', companyId, 'certifications');
           q = query(certificationsRef,
             where('createdAt', '>=', monthStart.toISOString()),
             where('createdAt', '<', cacheStartDate.toISOString())
@@ -2158,7 +2227,7 @@ export function CacheProvider({ children }) {
         const snapshot = await getDocs(q);
         const firebaseData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
-        console.log(`🔥 Fetched ${firebaseData.length} missing records from Firebase for month ${monthDate.getMonth() + 1}`);
+        console.log(`?? Fetched ${firebaseData.length} missing records from Firebase for month ${monthDate.getMonth() + 1}`);
         
         return [...cachedMonthData, ...firebaseData];
       } catch (error) {
@@ -2168,18 +2237,18 @@ export function CacheProvider({ children }) {
     }
     
     // Case 3: Month is completely outside cache range - try Firestore first, then Storage
-    console.log(`🔥 Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is outside cache range, querying Firestore...`);
+    console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is outside cache range, querying Firestore...`);
     
     try {
       let q;
       
       if (dataType === 'finishedJobs') {
-        const finishedJobsRef = collection(db, 'companies', companyName, 'finishedJobs');
+        const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
         if (role !== 'manager') {
           q = query(finishedJobsRef,
             where('finishedAt', '>=', monthStart.toISOString()),
             where('finishedAt', '<=', monthEnd.toISOString()),
-            where('completedBy', '==', username)
+            where('completedBy', '==', uid)
           );
         } else {
           q = query(finishedJobsRef,
@@ -2188,7 +2257,7 @@ export function CacheProvider({ children }) {
           );
         }
       } else if (dataType === 'certifications') {
-        const certificationsRef = collection(db, 'companies', companyName, 'certifications');
+        const certificationsRef = collection(db, 'companies', companyId, 'certifications');
         q = query(certificationsRef,
           where('createdAt', '>=', monthStart.toISOString()),
           where('createdAt', '<=', monthEnd.toISOString())
@@ -2200,7 +2269,7 @@ export function CacheProvider({ children }) {
       
       // If Firestore returned data, use it (data is still in Firestore, not yet archived)
       if (firebaseData.length > 0) {
-        console.log(`🔥 Fetched ${firebaseData.length} records from Firestore for month ${monthDate.getMonth() + 1}`);
+        console.log(`?? Fetched ${firebaseData.length} records from Firestore for month ${monthDate.getMonth() + 1}`);
         return firebaseData;
       }
       
@@ -2208,10 +2277,10 @@ export function CacheProvider({ children }) {
       // Only try Storage if the month is old enough to have been archived (~6+ months)
       const archiveBoundary = new Date(now.getTime() - ARCHIVE_BOUNDARY_MS);
       if (monthEndMs < archiveBoundary.getTime()) {
-        console.log(`☁️ Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} may be archived, checking Cloud Storage...`);
+        console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} may be archived, checking Cloud Storage...`);
         
         const archivedData = await fetchFromArchive(
-          companyName,
+          companyId,
           monthDate.getFullYear(),
           monthDate.getMonth() + 1,
           dataType
@@ -2220,30 +2289,30 @@ export function CacheProvider({ children }) {
         if (archivedData && archivedData.length > 0) {
           // For non-manager roles, filter by user
           if (dataType === 'finishedJobs' && role !== 'manager') {
-            const filtered = archivedData.filter(item => item.completedBy === username);
-            console.log(`☁️ Filtered archived data: ${filtered.length}/${archivedData.length} docs for user ${username}`);
+            const filtered = archivedData.filter(item => item.completedBy === uid);
+            console.log(`?? Filtered archived data: ${filtered.length}/${archivedData.length} docs for user ${uid}`);
             return filtered;
           }
           if (dataType === 'certifications' && role !== 'manager') {
-            const filtered = archivedData.filter(item => item.createdByUsername === username);
-            console.log(`☁️ Filtered archived data: ${filtered.length}/${archivedData.length} docs for user ${username}`);
+            const filtered = archivedData.filter(item => item.createdByUid === uid);
+            console.log(`?? Filtered archived data: ${filtered.length}/${archivedData.length} docs for user ${uid}`);
             return filtered;
           }
           
-          console.log(`☁️ Returning ${archivedData.length} archived records for month ${monthDate.getMonth() + 1}`);
+          console.log(`?? Returning ${archivedData.length} archived records for month ${monthDate.getMonth() + 1}`);
           return archivedData;
         }
       }
       
       // No data found anywhere
-      console.log(`📭 No data found for month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()}`);
+      console.log(`?? No data found for month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()}`);
       return [];
       
     } catch (error) {
       console.error('Error fetching month data:', error);
       return [];
     }
-  }, [getUserRole, getUsername, getCompanyName, finishedJobs, companyFinishedJobs, certifications, fetchFromArchive]);
+  }, [getUserRole, getUid, getCompanyId, finishedJobs, companyFinishedJobs, certifications, fetchFromArchive]);
 
   /**
    * Get data for a date range with smart caching
@@ -2251,8 +2320,8 @@ export function CacheProvider({ children }) {
    */
   const getDataForDateRange = useCallback(async (startDate, endDate, dataType) => {
     const role = getUserRole();
-    const username = getUsername();
-    const companyName = getCompanyName();
+    const uid = getUid();
+    const companyId = getCompanyId();
     
     const startMs = startDate.getTime();
     const endMs = endDate.getTime();
@@ -2273,7 +2342,7 @@ export function CacheProvider({ children }) {
     
     // If range is within cache, use cache only
     if (startMs >= cacheStartMs) {
-      console.log(`📦 Date range is within cache, using cached data`);
+      console.log(`?? Date range is within cache, using cached data`);
       return cachedData.filter(item => {
         const itemDate = item[dateField] ? new Date(item[dateField]).getTime() : 0;
         return itemDate >= startMs && itemDate <= endMs;
@@ -2281,7 +2350,7 @@ export function CacheProvider({ children }) {
     }
     
     // If range extends beyond cache, need to fetch from Firebase
-    console.log(`🔥 Date range extends beyond cache, querying Firebase...`);
+    console.log(`?? Date range extends beyond cache, querying Firebase...`);
     
     // Get cached portion
     const cachedPortion = cachedData.filter(item => {
@@ -2294,12 +2363,12 @@ export function CacheProvider({ children }) {
       let q;
       
       if (dataType === 'finishedJobs') {
-        const finishedJobsRef = collection(db, 'companies', companyName, 'finishedJobs');
+        const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
         if (role !== 'manager') {
           q = query(finishedJobsRef,
             where('finishedAt', '>=', startDate.toISOString()),
             where('finishedAt', '<', getCacheStartDate().toISOString()),
-            where('completedBy', '==', username)
+            where('completedBy', '==', uid)
           );
         } else {
           q = query(finishedJobsRef,
@@ -2308,18 +2377,18 @@ export function CacheProvider({ children }) {
           );
         }
       } else if (dataType === 'certifications') {
-        const certificationsRef = collection(db, 'companies', companyName, 'certifications');
+        const certificationsRef = collection(db, 'companies', companyId, 'certifications');
         q = query(certificationsRef,
           where('createdAt', '>=', startDate.toISOString()),
           where('createdAt', '<', getCacheStartDate().toISOString())
         );
       } else if (dataType === 'pendingJobs') {
-        const pendingJobsRef = collection(db, 'companies', companyName, 'PendingJobs');
+        const pendingJobsRef = collection(db, 'companies', companyId, 'PendingJobs');
         if (role !== 'manager') {
           q = query(pendingJobsRef,
             where('createdAt', '>=', startDate.toISOString()),
             where('createdAt', '<', getCacheStartDate().toISOString()),
-            where('completedBy', '==', username)
+            where('completedBy', '==', uid)
           );
         } else {
           q = query(pendingJobsRef,
@@ -2337,7 +2406,7 @@ export function CacheProvider({ children }) {
       if (firebaseData.length === 0 && dataType !== 'pendingJobs') {
         const archiveBoundary = new Date(Date.now() - ARCHIVE_BOUNDARY_MS);
         if (startMs < archiveBoundary.getTime()) {
-          console.log(`☁️ Date range extends past archive boundary, checking Storage for archived months...`);
+          console.log(`?? Date range extends past archive boundary, checking Storage for archived months...`);
           
           const archivedDocs = [];
           // Iterate over each full month in the range that's past the archive boundary
@@ -2347,7 +2416,7 @@ export function CacheProvider({ children }) {
           let cursor = new Date(archiveCheckStart.getFullYear(), archiveCheckStart.getMonth(), 1);
           while (cursor < archiveCheckEnd) {
             const archived = await fetchFromArchive(
-              companyName,
+              companyId,
               cursor.getFullYear(),
               cursor.getMonth() + 1,
               dataType
@@ -2363,8 +2432,8 @@ export function CacheProvider({ children }) {
               
               // Apply user filter for non-managers
               if (role !== 'manager') {
-                const userField = dataType === 'finishedJobs' ? 'completedBy' : 'createdByUsername';
-                const userFiltered = filtered.filter(item => item[userField] === username);
+                const userField = dataType === 'finishedJobs' ? 'completedBy' : 'createdByUid';
+                const userFiltered = filtered.filter(item => item[userField] === uid);
                 archivedDocs.push(...userFiltered);
               } else {
                 archivedDocs.push(...filtered);
@@ -2376,7 +2445,7 @@ export function CacheProvider({ children }) {
           }
           
           if (archivedDocs.length > 0) {
-            console.log(`☁️ Found ${archivedDocs.length} archived records for date range`);
+            console.log(`?? Found ${archivedDocs.length} archived records for date range`);
             return [...cachedPortion, ...archivedDocs];
           }
         }
@@ -2387,22 +2456,22 @@ export function CacheProvider({ children }) {
       console.error('Error fetching data for date range:', error);
       return cachedPortion;
     }
-  }, [getUserRole, getUsername, getCompanyName, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, certifications, fetchFromArchive]);
+  }, [getUserRole, getUid, getCompanyId, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, certifications, fetchFromArchive]);
 
   /**
    * Refresh specific cache data
    */
   const refreshCache = useCallback(async (field) => {
-    const username = getUsername();
+    const uid = getUid();
     const role = getUserRole();
-    const companyName = getCompanyName();
+    const companyId = getCompanyId();
     
-    const data = await fetchDataFromFirebase(field, username, companyName, role);
+    const data = await fetchDataFromFirebase(field, uid, companyId, role);
     if (data !== null) {
       const cacheKey = getCacheKeyForField(field);
       saveToLocalCache(cacheKey, data);
     }
-  }, [getUsername, getUserRole, getCompanyName, fetchDataFromFirebase, saveToLocalCache]);
+  }, [getUid, getUserRole, getCompanyId, fetchDataFromFirebase, saveToLocalCache]);
 
   // Context value
   const value = {
@@ -2418,10 +2487,14 @@ export function CacheProvider({ children }) {
     companyFinishedJobs,
     certifications,
     clients,
+    subscription,
     
-    // Getters
-    getUsername,
+    // Getters (primary)
+    getUid,
     getUserRole,
+    getCompanyId,
+    // Backward-compatible aliases
+    getUsername,
     getCompanyName,
     
     // Initialization
@@ -2440,6 +2513,7 @@ export function CacheProvider({ children }) {
     
     // Manager specific
     updateWorkers,
+    updateWorkersList: updateWorkers, // Backward compatibility for existing screens
     addWorker,
     editWorker,
     deleteWorker,

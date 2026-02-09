@@ -23,7 +23,7 @@ export default function UserHomepage() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { username } = useAuth();
+  const { uid } = useAuth();
   const [activeTab, setActiveTab] = useState('work');
   const colors = getColors(isDarkMode);
   const insets = useSafeAreaInsets();

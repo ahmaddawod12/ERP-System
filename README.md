@@ -1,15 +1,23 @@
-# Smart-Job — Cross-Platform Job & Document Management
+# Smart-Job ERP — Cross-Platform Business Management System
 
-A React Native Expo Router mobile app for HVAC/cooling technicians and managers. Runs on **iOS and Android**.
+A comprehensive **ERP (Enterprise Resource Planning)** mobile application built with React Native and Expo Router. Designed for **solo business owners** and **business owners with teams of workers** — primarily in HVAC/cooling, field services, and similar industries. Runs on **iOS and Android**.
+
+## Who Is This For?
+
+| Business Type | Roles | Description |
+|---|---|---|
+| **Solo business owner** | User / Basic | One person manages their own jobs, inventory, clients, and documents |
+| **Business with workers** | Manager + Workers | Owner (manager) assigns jobs to workers, monitors progress, manages team inventory and company resources |
 
 ## Key Features
 
 - **Role-based access** — Manager, Worker, User, Basic, Dev
 - **Job lifecycle** — Create, assign, fill, submit, approve/deny, finish
-- **Inventory tracking** — Personal + company-wide parts with low-stock alerts
+- **Inventory tracking** — Personal inventory (solo users) + company-wide parts with low-stock alerts (teams)
 - **Client book** — Shared company clients with auto-incrementing IDs
 - **Document generation** — Tax Invoice, Price Proposal, Refund, Return Certificate (server-side PDF via Cloud Run)
 - **Real-time sync** — Firestore `onSnapshot` listeners + MMKV version-based caching
+- **Subscription gating** — Module access controlled by `withGate` HOC based on subscription tier
 - **Multi-language** — English, Hebrew, Arabic
 - **Dark/Light theme** — Persisted via MMKV
 
@@ -19,37 +27,60 @@ A React Native Expo Router mobile app for HVAC/cooling technicians and managers.
 |---|---|
 | Framework | React Native + Expo SDK ~54 |
 | Navigation | Expo Router v6 (file-based) |
-| Backend | Firebase (Firestore, Auth, Storage, Cloud Functions) |
+| Backend | Firebase (Firestore, Auth, Storage, Cloud Functions v2) |
 | Cache | MMKV (`react-native-mmkv` v4) with version-based invalidation |
 | PDF | Cloud Run + Puppeteer |
 | State | React Context API |
+| Archiving | Cloud Run Job (Firestore → Cloud Storage monthly) |
 
 ## Project Structure
 
 ```
-app/             # Screens (Expo Router file-based routes)
-components/      # Reusable UI components
-contexts/        # React Context providers (Cache, Alert, Theme, Language, Header)
-hooks/           # Custom hooks (useDocumentTask, useAppStateListener, etc.)
-utils/           # Helpers and notification utilities
-functions/       # Firebase Cloud Functions
-cloudrun-pdf/    # Cloud Run PDF generation service
+app/                 # Route files (thin wrappers + withGate HOC)
+modules/             # Feature modules with actual screen implementations
+  ├── team/          # Team management (ManageJobs, CreateJob, WorkersMonitor, JobMonitor, WorkersUsers, Workerjob)
+  ├── solojob/       # Solo job screens (Userjob, FillJob, EditJob)
+  ├── documents/     # Document generation & history
+  ├── inventory/
+  │   ├── personal/  # UserInventory (solo owners — free-form parts)
+  │   ├── teaminventory/ # WorkerInventory (workers — picks from company parts)
+  │   └── company/   # CompanyInventory (manager — company-wide stock)
+  └── shared/gating/ # withGate HOC for subscription access control
+components/          # Reusable UI components
+contexts/            # React Context providers (Cache, Alert, Theme, Language, Header)
+hooks/               # Custom hooks (useDocumentTask, useAppStateListener, etc.)
+utils/               # Helpers and notification utilities
+functions/           # Firebase Cloud Functions
+cloudrun-pdf/        # Cloud Run PDF generation service
+cloudrun-archiver/   # Cloud Run archiver job (monthly Firestore → Storage)
 ```
+
+## Identity Model
+
+The app uses **Firebase Auth UID** as the primary user identifier throughout:
+
+| Concept | Firestore Key | Description |
+|---|---|---|
+| User identity | `uid` (Auth UID) | Used as document IDs and references everywhere |
+| Company identity | `companyId` | Company identifier linking users to their business |
+| Worker reference | `workerId` | Worker's UID, used in job assignments |
+
+> **No email-derived usernames.** All references use the raw Firebase Auth UID.
 
 ## Firestore Structure
 
 ```
-{username}/
-  ├── profile        — { role, email, companyName, name, phoneNumber }
+{uid}/
+  ├── profile        — { role, email, companyId, name, phoneNumber }
   ├── inventory      — { parts: { partName: { quantity, lowThreshold } } }
   └── cache          — version tracking (profile, inventory, clients, job IDs...)
 
-companies/{companyName}/
+companies/{companyId}/
   ├── clients/{id}           — { name, phone, email, address, city, vatNumber }
   ├── workers/{id}           — { email, name, phoneNumber, role }
-  ├── PendingJobs/{id}       — { title, status, assignedTo, completedBy, ... }
+  ├── PendingJobs/{id}       — { title, status, assignedTo, completedBy, workerId, ... }
   ├── finishedJobs/{id}      — { ...job data, finishedAt }
-  ├── certifications/{id}    — { type, documentNumber, downloadURL, ... }
+  ├── certifications/{id}    — { type, documentNumber, downloadURL, createdByUid, ... }
   └── business_data/
       ├── business_info      — { businessName, businessNumber, address, ... }
       ├── inventory          — { parts: { partName: { quantity, lowThreshold } } }
@@ -64,6 +95,8 @@ companies/{companyName}/
 - **Basic**: 1 listener — user cache (profile, clients, business_info, certs — no inventory, no jobs)
 
 Client cache versioning is **role-based**: manager → company cache, others → user cache.
+
+Access via `useCache()` hook — never use AsyncStorage for profile/inventory/job data.
 
 ## Getting Started
 
@@ -85,7 +118,10 @@ eas build --platform android
 2. **Never use AsyncStorage for profile data** — use `useCache()` hook
 3. **Always include `<GlobalHeader />`** on every screen (handles back nav + settings)
 4. **Always use numeric document types** — `DOC_TYPE.TAX_INVOICE` (305), not string `'taxInvoice'`
-5. **Import Firebase functions from `../firebase`** — never from `firebase/firestore` (Web SDK)
+5. **Import Firebase from `../firebase`** — uses `@react-native-firebase/*` chainable API, NOT Web SDK
+6. **Use `uid` not `username`** — all user references use Firebase Auth UID
+7. **Use `companyId` not `companyName`** — all company references use the company identifier
+8. **Screens live in `modules/`** — `app/` files are thin wrappers with `withGate` HOC
 
 
 

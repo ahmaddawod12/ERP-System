@@ -13,11 +13,11 @@
  * Schedule: Runs at the start of each month via Cloud Scheduler
  * 
  * Storage Structure:
- *   gs://{bucket}/companies/{companyName}/archives/{YYYY}-{M}-j.json  (finishedJobs)
- *   gs://{bucket}/companies/{companyName}/archives/{YYYY}-{M}-c.json  (certifications)
+ *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-j.json  (finishedJobs)
+ *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-c.json  (certifications)
  * 
  * Manifest (idempotency tracking):
- *   gs://{bucket}/companies/{companyName}/archives/manifest.json
+ *   gs://{bucket}/companies/{companyId}/archives/manifest.json
  * 
  * Safety:
  * - Idempotent: checks manifest before re-archiving a month
@@ -94,8 +94,8 @@ function getTargetMonth() {
  * 
  * Format: { "2026-1-j": { archivedAt, docCount }, "2026-1-c": { archivedAt, docCount } }
  */
-async function loadManifest(companyName) {
-  const manifestPath = `companies/${companyName}/archives/manifest.json`;
+async function loadManifest(companyId) {
+  const manifestPath = `companies/${companyId}/archives/manifest.json`;
   const file = bucket.file(manifestPath);
 
   try {
@@ -105,7 +105,7 @@ async function loadManifest(companyName) {
     const [content] = await file.download();
     return JSON.parse(content.toString('utf8'));
   } catch (error) {
-    console.warn(`⚠️ Could not load manifest for ${companyName}, starting fresh:`, error.message);
+    console.warn(`⚠️ Could not load manifest for ${companyId}, starting fresh:`, error.message);
     return {};
   }
 }
@@ -113,8 +113,8 @@ async function loadManifest(companyName) {
 /**
  * Save the manifest for a company.
  */
-async function saveManifest(companyName, manifest) {
-  const manifestPath = `companies/${companyName}/archives/manifest.json`;
+async function saveManifest(companyId, manifest) {
+  const manifestPath = `companies/${companyId}/archives/manifest.json`;
   const file = bucket.file(manifestPath);
 
   await file.save(JSON.stringify(manifest, null, 2), {
@@ -124,7 +124,7 @@ async function saveManifest(companyName, manifest) {
     },
   });
 
-  console.log(`📋 Manifest saved for ${companyName}`);
+  console.log(`📋 Manifest saved for ${companyId}`);
 }
 
 // ============================================================================
@@ -191,13 +191,13 @@ async function queryDocumentsByDateRange(collectionPath, dateField, startDate, e
 /**
  * Upload a JSON archive to Cloud Storage.
  * 
- * @param {string} companyName 
+ * @param {string} companyId 
  * @param {string} archiveKey - e.g., "2026-1-j" or "2026-1-c"
  * @param {Array} documents - The documents to archive
  * @returns {string} - Storage path of the uploaded file
  */
-async function uploadArchive(companyName, archiveKey, documents) {
-  const storagePath = `companies/${companyName}/archives/${archiveKey}.json`;
+async function uploadArchive(companyId, archiveKey, documents) {
+  const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
   const file = bucket.file(storagePath);
 
   const jsonContent = JSON.stringify(documents, null, 0); // Compact JSON for storage efficiency
@@ -209,7 +209,7 @@ async function uploadArchive(companyName, archiveKey, documents) {
       metadata: {
         docCount: String(documents.length),
         archiveKey: archiveKey,
-        companyName: companyName,
+        companyId: companyId,
         archivedAt: new Date().toISOString(),
       },
     },
@@ -222,8 +222,8 @@ async function uploadArchive(companyName, archiveKey, documents) {
 /**
  * Verify that an archive exists in Storage and matches expected doc count.
  */
-async function verifyArchive(companyName, archiveKey, expectedCount) {
-  const storagePath = `companies/${companyName}/archives/${archiveKey}.json`;
+async function verifyArchive(companyId, archiveKey, expectedCount) {
+  const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
   const file = bucket.file(storagePath);
 
   const [exists] = await file.exists();
@@ -298,14 +298,14 @@ async function deleteDocumentsByDateRange(collectionPath, dateField, startDate, 
 /**
  * Archive old data for a single company.
  * 
- * @param {string} companyName
+ * @param {string} companyId
  * @param {{ year: number, month: number, startDate: Date, endDate: Date }} target
  */
-async function processCompany(companyName, target) {
+async function processCompany(companyId, target) {
   const { year, month, startDate, endDate } = target;
-  console.log(`\n🏢 Processing company: ${companyName} | Target: ${year}-${month}`);
+  console.log(`\n🏢 Processing company: ${companyId} | Target: ${year}-${month}`);
 
-  const manifest = await loadManifest(companyName);
+  const manifest = await loadManifest(companyId);
   let manifestUpdated = false;
 
   // ---- FINISHED JOBS ----
@@ -313,7 +313,7 @@ async function processCompany(companyName, target) {
   if (manifest[finishedKey]) {
     console.log(`⏭️ ${finishedKey} already archived (${manifest[finishedKey].docCount} docs on ${manifest[finishedKey].archivedAt})`);
   } else {
-    const collectionPath = `companies/${companyName}/finishedJobs`;
+    const collectionPath = `companies/${companyId}/finishedJobs`;
     const docs = await queryDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate);
 
     if (docs.length === 0) {
@@ -325,10 +325,10 @@ async function processCompany(companyName, target) {
       console.log(`📊 Found ${docs.length} finishedJobs for ${year}-${month}`);
 
       // Step 1: Upload to Storage
-      await uploadArchive(companyName, finishedKey, docs);
+      await uploadArchive(companyId, finishedKey, docs);
 
       // Step 2: Verify upload
-      await verifyArchive(companyName, finishedKey, docs.length);
+      await verifyArchive(companyId, finishedKey, docs.length);
 
       // Step 3: Delete from Firestore (only after verified upload)
       const deleted = await deleteDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate);
@@ -350,7 +350,7 @@ async function processCompany(companyName, target) {
   if (manifest[certsKey]) {
     console.log(`⏭️ ${certsKey} already archived (${manifest[certsKey].docCount} docs on ${manifest[certsKey].archivedAt})`);
   } else {
-    const collectionPath = `companies/${companyName}/certifications`;
+    const collectionPath = `companies/${companyId}/certifications`;
     const docs = await queryDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
 
     if (docs.length === 0) {
@@ -361,10 +361,10 @@ async function processCompany(companyName, target) {
       console.log(`📊 Found ${docs.length} certifications for ${year}-${month}`);
 
       // Step 1: Upload to Storage
-      await uploadArchive(companyName, certsKey, docs);
+      await uploadArchive(companyId, certsKey, docs);
 
       // Step 2: Verify upload
-      await verifyArchive(companyName, certsKey, docs.length);
+      await verifyArchive(companyId, certsKey, docs.length);
 
       // Step 3: Delete from Firestore
       const deleted = await deleteDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
@@ -382,10 +382,10 @@ async function processCompany(companyName, target) {
 
   // Save manifest if anything changed
   if (manifestUpdated) {
-    await saveManifest(companyName, manifest);
+    await saveManifest(companyId, manifest);
   }
 
-  console.log(`✅ Company ${companyName} processing complete\n`);
+  console.log(`✅ Company ${companyId} processing complete\n`);
 }
 
 // ============================================================================
@@ -401,7 +401,7 @@ async function main() {
   console.log(`📅 Target month: ${target.year}-${target.month}`);
   console.log(`📅 Date range: ${target.startDate.toISOString()} → ${target.endDate.toISOString()}`);
   console.log(`📦 Storage bucket: ${BUCKET_NAME}`);
-  console.log(`📂 Archive path: companies/{companyName}/archives/`);
+  console.log(`📂 Archive path: companies/{companyId}/archives/`);
 
   // Discover all companies
   let companies = [];
@@ -424,14 +424,14 @@ async function main() {
   let failCount = 0;
   const errors = [];
 
-  for (const companyName of companies) {
+  for (const companyId of companies) {
     try {
-      await processCompany(companyName, target);
+      await processCompany(companyId, target);
       successCount++;
     } catch (error) {
       failCount++;
-      errors.push({ company: companyName, error: error.message });
-      console.error(`❌ Failed to process company ${companyName}:`, error);
+      errors.push({ company: companyId, error: error.message });
+      console.error(`❌ Failed to process company ${companyId}:`, error);
       // Continue with next company - partial failure is acceptable
     }
   }

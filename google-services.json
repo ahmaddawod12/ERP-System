@@ -1,26 +1,51 @@
 {
   "project_info": {
-    "project_number": "625201590447",
-    "project_id": "cooling-inventory-5be04",
-    "storage_bucket": "cooling-inventory-5be04.firebasestorage.app"
+    "project_number": "603811502451",
+    "project_id": "erp-system-551d8",
+    "storage_bucket": "erp-system-551d8.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:625201590447:android:ebcc193555186b2997a45a",
+        "mobilesdk_app_id": "1:603811502451:android:db01475cedcf7a7d02cd06",
         "android_client_info": {
-          "package_name": "com.coolinginventory.app"
+          "package_name": "erpsystem.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "603811502451-2ecqturqs4r04jp04ca4vv9mh1sfud7r.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "erpsystem.app",
+            "certificate_hash": "fa1ef1cf5061e2de6fd61f88bbd23921cdc60e0c"
+          }
+        },
+        {
+          "client_id": "603811502451-ejmkt6d1lkanmn6auhh4qn8f6gdm9593.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyCNlZzuofLLkFf36UeaSwfpMBxWjnkz2t0"
+          "current_key": "AIzaSyCZY8dIlT8JYSP9Q95gMH2yuBNwkGKRz14"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "603811502451-ejmkt6d1lkanmn6auhh4qn8f6gdm9593.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "603811502451-pde875a2baa3uqhemgmdsia1r837ov4e.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "erpsystem.app"
+              }
+            }
+          ]
         }
       }
     }

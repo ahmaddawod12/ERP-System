@@ -3,8 +3,6 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { auth, onAuthStateChanged } from '../firebase';
 import Login from '../app/Login';
-import { getColors } from '../theme';
-import { LoadingSpinner } from '../components';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -24,8 +22,7 @@ export default function App() {
   const [showSuccess, setShowSuccess] = useState(false);
   const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
-  const { initializeCache, clearCache } = useCache();
-  const colors = getColors(isDarkMode);
+  const { initializeCache } = useCache();
   
   // Animation states for loading dots
   const [dot1Anim] = useState(new Animated.Value(0.4));
@@ -38,31 +35,31 @@ export default function App() {
 
   // Animate loading dots
   useEffect(() => {
+    let loadingAnimation;
     if (isLoading) {
-      const animateDots = () => {
-        Animated.loop(
-          Animated.sequence([
-            Animated.parallel([
-              Animated.timing(dot1Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot2Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot3Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
-            ]),
-            Animated.parallel([
-              Animated.timing(dot1Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot2Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot3Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
-            ]),
-            Animated.parallel([
-              Animated.timing(dot1Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot2Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot3Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-            ]),
-          ])
-        ).start();
-      };
-      animateDots();
+      loadingAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.parallel([
+            Animated.timing(dot1Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot2Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot3Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.timing(dot1Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot2Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot3Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.timing(dot1Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot2Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot3Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+          ]),
+        ])
+      );
+      loadingAnimation.start();
     }
-  }, [isLoading]);
+    return () => loadingAnimation?.stop();
+  }, [isLoading, dot1Anim, dot2Anim, dot3Anim]);
 
   const t = language === 'en' ? {
     title: 'JobMate',
@@ -132,19 +129,19 @@ export default function App() {
      * All roles except worker and dev need business registration
      * Uses hasBusinessInfo flag from cache initialization
      */
-    const checkBusinessRegistration = (role, companyName, hasBusinessInfo) => {
+    const checkBusinessRegistration = (role, companyId, hasBusinessInfo) => {
       // Dev role doesn't need business registration
       if (role === 'dev') return false;
       
       // All non-worker roles need business registration: manager, user, basic
-      if (role !== 'worker' && companyName) {
+      if (role !== 'worker' && companyId) {
         // Check if business_info exists (flag from cache init)
         if (!hasBusinessInfo) {
           console.log('📝 No business info found, redirecting to registration');
           setIsLoading(false);
           router.replace({
             pathname: '/BusinessReg',
-            params: { companyName, userRole: role }
+            params: { companyId, userRole: role }
           });
           return true; // Business registration required
         }
@@ -172,8 +169,8 @@ export default function App() {
           if (user) {
             try {
               // Initialize cache - it handles profile loading from cache first, then Firebase if needed
-              // Returns { username, role, companyName } or null on failure
-              const cacheResult = await initializeCache(user.email);
+              // Returns { uid, role, companyId } or null on failure
+              const cacheResult = await initializeCache(user.uid);
               
               if (cacheResult) {
                 // Setup notification listeners ONCE per auth session
@@ -193,11 +190,11 @@ export default function App() {
                   );
                 }
                 
-                const { username, role, companyName, hasBusinessInfo } = cacheResult;
-                console.log(`🔐 User authenticated: ${username} (${role}) hasBusinessInfo: ${hasBusinessInfo}`);
+                const { uid, role, companyId, hasBusinessInfo } = cacheResult;
+                console.log(`🔐 User authenticated: ${uid} (${role}) hasBusinessInfo: ${hasBusinessInfo}`);
                 
                 // Register push token for notifications (always overwrite - handles token rotation)
-                registerPushTokenForUser(user.email).then((success) => {
+                registerPushTokenForUser(user.uid).then((success) => {
                   if (success) {
                     console.log('🔔 Push token registered successfully');
                   }
@@ -206,7 +203,7 @@ export default function App() {
                 });
                 
                 // Check if business registration is required (using hasBusinessInfo flag)
-                const needsBusinessReg = checkBusinessRegistration(role, companyName, hasBusinessInfo);
+                const needsBusinessReg = checkBusinessRegistration(role, companyId, hasBusinessInfo);
                 if (needsBusinessReg) return;
                 
                 // All checks passed - show success animation then navigate

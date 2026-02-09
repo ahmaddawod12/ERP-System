@@ -46,6 +46,7 @@ const MAX_ITEMS_PER_DOCUMENT = 100;
 const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_CONCURRENT_TABS = 2; // Shared between preview and generate
 const TAB_WAIT_TIMEOUT = 10000; // 10 seconds
+const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
 const DOC_TYPE = {
   PRICE_PROPOSAL: 10,
   DELIVERY_NOTE: 200,
@@ -54,6 +55,16 @@ const DOC_TYPE = {
   REFUND: 330,
   RECEIPT: 400
 };
+
+function toBaseDocumentId(documentId) {
+  const raw = String(documentId || '').trim();
+  return raw.startsWith('c_') ? raw.slice(2) : raw;
+}
+
+function toCertificationDocId(documentId) {
+  const baseId = toBaseDocumentId(documentId);
+  return baseId ? `c_${baseId}` : '';
+}
 // ============================================================================
 // SHARED BROWSER MANAGEMENT (Singleton)
 // ============================================================================
@@ -100,9 +111,7 @@ async function acquireTab(taskId, taskType) {
     const waitElapsed = Date.now() - waitStartTime;
     
     if (waitElapsed > TAB_WAIT_TIMEOUT) {
-      console.error(`[${taskType}:${taskId}] Timeout waiting for tab after ${waitElapsed}ms. Forcing reset.`);
-      activeTabs = 0;
-      break;
+      throw new Error(`Timeout waiting for available browser tab (${waitElapsed}ms)`);
     }
     
     console.log(`[${taskType}:${taskId}] Waiting for tab. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
@@ -128,16 +137,34 @@ function releaseTab(taskId, taskType) {
 // ============================================================================
 const generateDocumentHTML = require('./htmlTemplate');
 
+/**
+ * Optional request verification for Pub/Sub push endpoints.
+ * Configure the same secret in Pub/Sub push headers/query and this env var.
+ */
+function verifyPubSubRequest(req, res, next) {
+  if (!PUBSUB_VERIFICATION_TOKEN) {
+    return next();
+  }
+
+  const token = req.headers['x-pubsub-token'] || req.query.token;
+  if (token !== PUBSUB_VERIFICATION_TOKEN) {
+    console.warn('Rejected unauthenticated Pub/Sub request');
+    return res.status(401).send('Unauthorized');
+  }
+
+  return next();
+}
+
 // ============================================================================
 // PREVIEW TASK PROCESSOR
 // ============================================================================
 async function processPreviewTask(taskData) {
-  const { taskId, documentType, documentData, username, companyName } = taskData;
+  const { taskId, documentType, documentData, uid, companyId } = taskData;
   const startTime = Date.now();
   let page = null;
   let tabAcquired = false;
   
-  console.log(`[preview:${taskId}] Processing`, { documentType, username, companyName });
+  console.log(`[preview:${taskId}] Processing`, { documentType, uid, companyId });
   
   try {
     await acquireTab(taskId, 'preview');
@@ -152,10 +179,10 @@ async function processPreviewTask(taskData) {
     
     // Fetch logo from Firebase Storage
     let logoUrl = null;
-    if (companyName) {
+    if (companyId) {
       try {
         const bucket = storage.bucket();
-        const logoPath = `companies/${companyName}/logo.png`;
+        const logoPath = `companies/${companyId}/logo.png`;
         const logoFile = bucket.file(logoPath);
         const [exists] = await logoFile.exists();
         
@@ -221,7 +248,7 @@ async function processPreviewTask(taskData) {
     const timestamp = Date.now();
     const previewId = `preview_${documentType}_${timestamp}`;
     const fileName = `${previewId}.pdf`;
-    const filePath = `previews/${username}/${fileName}`;
+    const filePath = `previews/${uid}/${fileName}`;
     
     const bucket = storage.bucket();
     const file = bucket.file(filePath);
@@ -232,7 +259,7 @@ async function processPreviewTask(taskData) {
         contentType: 'application/pdf',
         metadata: {
           documentType,
-          createdBy: username,
+          createdBy: uid,
           createdAt: new Date().toISOString(),
           isPreview: 'true',
           taskId,
@@ -270,12 +297,16 @@ async function processPreviewTask(taskData) {
       releaseTab(taskId, 'preview');
     }
     
-    await db.collection('documentTasks').doc(taskId).update({
-      status: 'failed',
-      error: error.message,
-      completedAt: admin.firestore.FieldValue.serverTimestamp(),
-      processingTimeMs: Date.now() - startTime
-    });
+    try {
+      await db.collection('documentTasks').doc(taskId).update({
+        status: 'failed',
+        error: error.message,
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        processingTimeMs: Date.now() - startTime
+      });
+    } catch (updateError) {
+      console.error(`[preview:${taskId}] Failed to update task status:`, updateError.message);
+    }
     
     throw error;
   }
@@ -289,8 +320,8 @@ async function processGenerateTask(taskData) {
     taskId, 
     documentType, 
     documentData,
-    username, 
-    companyName, 
+    uid, 
+    companyId, 
     documentId,
     documentNumber,
     confirmationNumber, // Tax Authority confirmation number for tax invoices
@@ -304,7 +335,7 @@ async function processGenerateTask(taskData) {
   let page = null;
   let tabAcquired = false;
   
-  console.log(`[generate:${taskId}] Processing`, { documentType, username, companyName, documentId, confirmationNumber, userRole });
+  console.log(`[generate:${taskId}] Processing`, { documentType, uid, companyId, documentId, confirmationNumber, userRole });
   
   try {
     await acquireTab(taskId, 'generate');
@@ -312,6 +343,11 @@ async function processGenerateTask(taskData) {
     
     if (!documentId) {
       throw new Error('Document ID is required');
+    }
+    const normalizedDocumentId = toBaseDocumentId(documentId);
+    const certificationDocId = toCertificationDocId(documentId);
+    if (!normalizedDocumentId || !certificationDocId) {
+      throw new Error('Invalid document ID');
     }
     
     if (!documentData) {
@@ -347,10 +383,10 @@ async function processGenerateTask(taskData) {
     
     // Fetch logo from Firebase Storage
     let logoUrl = null;
-    if (companyName) {
+    if (companyId) {
       try {
         const bucket = storage.bucket();
-        const logoPath = `companies/${companyName}/logo.png`;
+        const logoPath = `companies/${companyId}/logo.png`;
         const logoFile = bucket.file(logoPath);
         const [exists] = await logoFile.exists();
         
@@ -376,7 +412,7 @@ async function processGenerateTask(taskData) {
       items,
       company,
       language: language || 'he',
-      documentNumber: documentNumber || documentId,
+      documentNumber: documentNumber || normalizedDocumentId,
       date,
       notes,
       logoUrl,
@@ -413,10 +449,10 @@ async function processGenerateTask(taskData) {
     const pdfSize = pdfBuffer.length;
     
     // Upload to Storage (permanent)
-    const fileName = `${documentId}.pdf`;
+    const fileName = `${normalizedDocumentId}.pdf`;
     const bucket = storage.bucket();
     const yearMonth = date ? date.slice(0, 7) : new Date().toISOString().slice(0, 7);
-    const filePath = `companies/${companyName}/${yearMonth}/${documentId}/${fileName}`;
+    const filePath = `companies/${companyId}/${yearMonth}/${normalizedDocumentId}/${fileName}`;
     const file = bucket.file(filePath);
     const downloadToken = uuidv4();
     
@@ -425,8 +461,8 @@ async function processGenerateTask(taskData) {
         contentType: 'application/pdf',
         metadata: {
           documentType,
-          documentId,
-          createdBy: username,
+          documentId: normalizedDocumentId,
+          createdBy: uid,
           generatedAt: new Date().toISOString(),
           pdfSize: pdfSize.toString(),
           firebaseStorageDownloadTokens: downloadToken
@@ -437,20 +473,20 @@ async function processGenerateTask(taskData) {
     const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
     
     // Determine cache path based on user role
-    // Manager: companies/{companyName}/business_data/cache
-    // User/Basic: {username}/cache
+    // Manager: companies/{companyId}/business_data/cache
+    // User/Basic: {uid}/cache
     const getCachePath = () => {
       if (userRole === 'manager') {
-        return `companies/${companyName}/business_data/cache`;
+        return `companies/${companyId}/business_data/cache`;
       } else {
-        return `${username}/cache`;
+        return `${uid}/cache`;
       }
     };
     const cachePath = getCachePath();
     console.log(`[generate:${taskId}] Using cache path: ${cachePath} for role: ${userRole}`);
     
     // Save/update certification data
-    const certificationRef = db.doc(`companies/${companyName}/certifications/c_${documentId}`);
+    const certificationRef = db.doc(`companies/${companyId}/certifications/${certificationDocId}`);
     const isNewDocument = documentType !== 305;
     
     if (isNewDocument) {
@@ -469,7 +505,7 @@ async function processGenerateTask(taskData) {
           id: item.partId || null,
         })),
         notes: notes || null,
-        createdBy: username,
+        createdBy: uid,
         createdAt: (new Date()).toISOString(),
         totalBeforeVat: Math.round(totalBeforeVat * 100) / 100,
         vatAmount: Math.round(vatAmount * 100) / 100,
@@ -495,11 +531,11 @@ async function processGenerateTask(taskData) {
           documentNumberField = 'document_numbers.deliveryNote';
           break;
         default:
-          documentNumber = 1;
+          documentNumberField = null;
       }
       if (documentNumberField) {
         // Update business_info document numbers (always in company path)
-        let businessInfoRef = admin.firestore().doc(`companies/${companyName}/business_data/business_info`);
+        let businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
         await businessInfoRef.update({
           [documentNumberField]: admin.firestore.FieldValue.increment(1),
           last_updated: new Date().toISOString()
@@ -516,7 +552,7 @@ async function processGenerateTask(taskData) {
     
     // Update certification cache version based on role
     await db.doc(cachePath).update({
-      [`c_${documentId}`]: 1
+      [certificationDocId]: 1
     });
     console.log(`[generate:${taskId}] Updated certification cache at ${cachePath}`);
 
@@ -531,7 +567,7 @@ async function processGenerateTask(taskData) {
     if (client.email && client.email.trim()) {
       try {
         const emailService = getEmailServiceInstance();
-        const documentTitle = getDocumentTitle(documentType, documentNumber || documentId, language || 'he');
+        const documentTitle = getDocumentTitle(documentType, documentNumber || normalizedDocumentId, language || 'he');
         
         console.log(`[generate:${taskId}] Sending email to client`, {
           to: client.email,
@@ -571,7 +607,7 @@ async function processGenerateTask(taskData) {
     // Ensure no undefined values are passed to Firestore
     await db.collection('documentTasks').doc(taskId).update({
       status: 'completed',
-      documentId,
+      documentId: normalizedDocumentId,
       downloadURL,
       storagePath: filePath,
       pdfSize,
@@ -585,8 +621,8 @@ async function processGenerateTask(taskData) {
       emailRecipient: client.email || null,
     });
     
-    console.log(`[generate:${taskId}] Completed`, { documentId, pdfSize, totalTime, emailSent });
-    return { success: true, taskId, documentId, downloadURL, pdfSize, emailSent };
+    console.log(`[generate:${taskId}] Completed`, { documentId: normalizedDocumentId, pdfSize, totalTime, emailSent });
+    return { success: true, taskId, documentId: normalizedDocumentId, downloadURL, pdfSize, emailSent };
     
   } catch (error) {
     console.error(`[generate:${taskId}] Failed:`, error.message);
@@ -598,12 +634,16 @@ async function processGenerateTask(taskData) {
       releaseTab(taskId, 'generate');
     }
     
-    await db.collection('documentTasks').doc(taskId).update({
-      status: 'failed',
-      error: error.message,
-      completedAt: (new Date()).toISOString(),
-      processingTimeMs: Date.now() - startTime
-    });
+    try {
+      await db.collection('documentTasks').doc(taskId).update({
+        status: 'failed',
+        error: error.message,
+        completedAt: (new Date()).toISOString(),
+        processingTimeMs: Date.now() - startTime
+      });
+    } catch (updateError) {
+      console.error(`[generate:${taskId}] Failed to update task status:`, updateError.message);
+    }
     
     throw error;
   }
@@ -616,15 +656,20 @@ async function processGenerateTask(taskData) {
 /**
  * POST /preview - Pub/Sub push endpoint for preview tasks
  */
-app.post('/preview', async (req, res) => {
+app.post('/preview', verifyPubSubRequest, async (req, res) => {
   try {
-    if (!req.body || !req.body.message) {
+    if (!req.body || !req.body.message || !req.body.message.data) {
       return res.status(400).send('Invalid Pub/Sub message format');
     }
-    
-    const messageData = JSON.parse(
-      Buffer.from(req.body.message.data, 'base64').toString()
-    );
+
+    let messageData;
+    try {
+      messageData = JSON.parse(
+        Buffer.from(req.body.message.data, 'base64').toString()
+      );
+    } catch (parseError) {
+      return res.status(400).send('Invalid Pub/Sub message payload');
+    }
     
     console.log('Received preview task:', messageData.taskId);
     await processPreviewTask(messageData);
@@ -639,15 +684,20 @@ app.post('/preview', async (req, res) => {
 /**
  * POST /generate - Pub/Sub push endpoint for generate tasks
  */
-app.post('/generate', async (req, res) => {
+app.post('/generate', verifyPubSubRequest, async (req, res) => {
   try {
-    if (!req.body || !req.body.message) {
+    if (!req.body || !req.body.message || !req.body.message.data) {
       return res.status(400).send('Invalid Pub/Sub message format');
     }
-    
-    const messageData = JSON.parse(
-      Buffer.from(req.body.message.data, 'base64').toString()
-    );
+
+    let messageData;
+    try {
+      messageData = JSON.parse(
+        Buffer.from(req.body.message.data, 'base64').toString()
+      );
+    } catch (parseError) {
+      return res.status(400).send('Invalid Pub/Sub message payload');
+    }
     
     console.log('Received generate task:', messageData.taskId);
     await processGenerateTask(messageData);

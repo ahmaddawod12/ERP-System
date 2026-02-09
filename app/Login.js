@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, TouchableOpacity, ActivityIndicator, Animated } from 'react-native';
-import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -9,11 +8,9 @@ import { getColors, gradients, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
-import { getUsernameFromEmail } from '../utils/helpers';
 import { Input, GlobalHeader, LoadingSpinner, ScrollableContainer } from '../components';
 
 export default function Login() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,31 +25,31 @@ export default function Login() {
 
   // Animate loading dots
   useEffect(() => {
+    let loadingAnimation;
     if (loading) {
-      const animateDots = () => {
-        Animated.loop(
-          Animated.sequence([
-            Animated.parallel([
-              Animated.timing(dot1Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot2Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot3Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
-            ]),
-            Animated.parallel([
-              Animated.timing(dot1Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot2Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot3Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
-            ]),
-            Animated.parallel([
-              Animated.timing(dot1Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot2Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
-              Animated.timing(dot3Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
-            ]),
-          ])
-        ).start();
-      };
-      animateDots();
+      loadingAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.parallel([
+            Animated.timing(dot1Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot2Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot3Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.timing(dot1Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot2Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot3Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.timing(dot1Anim, { toValue: 0.4, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot2Anim, { toValue: 0.7, duration: 400, useNativeDriver: true }),
+            Animated.timing(dot3Anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+          ]),
+        ])
+      );
+      loadingAnimation.start();
     }
-  }, [loading]);
+    return () => loadingAnimation?.stop();
+  }, [loading, dot1Anim, dot2Anim, dot3Anim]);
 
   const t = language === 'en' ? {
     title: 'JobMate',
@@ -97,10 +94,10 @@ export default function Login() {
       // Firebase Web SDK modular auth
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
-      const username = getUsernameFromEmail(user.email);
+      const uid = user.uid;
       
-      // Firebase Web SDK modular Firestore
-      const userDocRef = doc(db, username, 'profile');
+      // Use Firebase UID for Firestore document path
+      const userDocRef = doc(db, uid, 'profile');
       const userDoc = await getDoc(userDocRef);
       
       let userData;
@@ -114,9 +111,10 @@ export default function Login() {
         userData = {
           role: 'user',
           email: user.email,
+          uid: uid,
           createdAt: new Date().toISOString(),
         };
-        await setDoc(doc(db, username, 'profile'), userData);
+        await setDoc(doc(db, uid, 'profile'), userData);
         role = 'user';
       }
       

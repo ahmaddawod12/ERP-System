@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CreateDocument.js - Unified Document Creation Screen
  * 
  * This component handles creation of all document types:
@@ -33,17 +33,17 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../../components';
+import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
-import { useAuth, useDocumentTask } from '../../../hooks';
-import { middleEastFunctions, httpsCallable, db, doc, getDoc } from '../../../firebase';
+import { useAuth, useDocumentTask } from '../../hooks';
+import { middleEastFunctions, httpsCallable, db, doc, getDoc } from '../../firebase';
 
 /**
  * Document Type Codes (numeric)

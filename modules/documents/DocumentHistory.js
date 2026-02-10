@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,13 +17,13 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../../components';
-import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc } from '../../../firebase';
+import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
+import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc } from '../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 

@@ -1,3 +1,3 @@
-﻿import { withGate } from '../modules/shared/gating/withGate';
-import Screen from '../modules/solojob/screens/FillJob';
-export default withGate(Screen, { module: 'jobs', roles: ['user', 'manager'] });
+﻿import { withGate } from '../modules/shared/withGate';
+import Screen from '../modules/shared/FillJob';
+export default withGate(Screen, { module: 'solojob', roles: ['user', 'manager', 'worker'], roleModules: { worker: ['team'] } });

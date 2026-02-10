@@ -166,27 +166,57 @@ export const borderRadius = {
 };
 
 export const typography = {
-  // Font Sizes - refined scale
+  // Font Sizes - refined scale (nested for component compatibility)
+  sizes: {
+    xxs: 10,
+    xs: 12,
+    sm: 14,
+    base: 16,
+    md: 16, // alias for base
+    lg: 18,
+    xl: 20,
+    xxl: 24,
+    xxxl: 30,
+    display: 36,
+    hero: 48,
+  },
+  
+  // Font Weights (nested for component compatibility)
+  weights: {
+    light: '300',
+    regular: '400',
+    medium: '500',
+    semiBold: '600', // camelCase for component compatibility
+    semibold: '600', // lowercase for backward compatibility
+    bold: '700',
+    extrabold: '800',
+  },
+  
+  // Line Heights
+  lineHeights: {
+    tight: 1.2,
+    normal: 1.5,
+    relaxed: 1.75,
+  },
+  
+  // Flat properties for backward compatibility
   xxs: 10,
   xs: 12,
   sm: 14,
   base: 16,
+  md: 16,
   lg: 18,
   xl: 20,
   xxl: 24,
   xxxl: 30,
   display: 36,
   hero: 48,
-  
-  // Font Weights
   light: '300',
   regular: '400',
   medium: '500',
   semibold: '600',
   bold: '700',
   extrabold: '800',
-  
-  // Line Heights
   tight: 1.2,
   normal: 1.5,
   relaxed: 1.75,

@@ -14,15 +14,15 @@ This Cloud Run **Job** (not a Service) runs monthly to migrate old data from Fir
 
 ### What Gets Archived
 
-- **finishedJobs**: `companies/{companyName}/finishedJobs` → archived by `finishedAt`
-- **certifications**: `companies/{companyName}/certifications` → archived by `createdAt`
+- **finishedJobs**: `companies/{companyId}/finishedJobs` → archived by `finishedAt`
+- **certifications**: `companies/{companyId}/certifications` → archived by `createdAt`
 
 ### Storage Structure
 
 ```
 gs://cooling-inventory-5be04.firebasestorage.app/
 └── companies/
-    └── {companyName}/
+    └── {companyId}/
         └── archives/
             ├── manifest.json              # Tracks what's been archived (idempotency)
             ├── 2025-7-j.json             # finishedJobs for July 2025

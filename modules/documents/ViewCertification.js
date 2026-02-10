@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ViewCertification.js - View Document/Certification Details
  * 
  * Displays the full details of a saved certification/document
@@ -24,10 +24,10 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { GlobalHeader, ScrollableContainer } from '../../../components';
+import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { GlobalHeader, ScrollableContainer } from '../../components';
 
 /**
  * Document Type Codes (numeric)

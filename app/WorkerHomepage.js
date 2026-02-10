@@ -14,6 +14,8 @@ import { getColors, gradients, spacing, borderRadius, typography, shadows } from
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
+import { useCache } from '../contexts/CacheContext';
+import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
 import { useAuth } from '../hooks';
 import { GlobalHeader, ScrollableContainer } from '../components';
 
@@ -23,7 +25,13 @@ export default function WorkerHomepage() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { uid } = useAuth();
+  const { subscription } = useCache();
   const colors = getColors(isDarkMode);
+
+  // Module checks
+  const hasTeam = isModuleEnabled(subscription, 'team');
+  const hasInventory = isModuleEnabled(subscription, 'teaminventory');
+  const subActive = isSubscriptionActive(subscription);
 
   const t = language === 'en' ? {
     title: 'Worker Dashboard',
@@ -50,6 +58,25 @@ export default function WorkerHomepage() {
 
 
 
+  // Subscription expired — block the entire homepage
+  if (!subActive) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}> 
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+        <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
+          <Ionicons name="time-outline" size={72} color={colors.error} />
+          <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
+            {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
+          </Text>
+          <Text style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
+            {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
+          </Text>
+        </View>
+        <GlobalHeader />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -61,6 +88,7 @@ export default function WorkerHomepage() {
       >
         <View style={styles.cardsContainer}>
           {/* My Jobs Card */}
+          {hasTeam && (
           <TouchableOpacity onPress={() => router.push('/Workerjob')}>
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.cardHeader}>
@@ -73,8 +101,10 @@ export default function WorkerHomepage() {
               <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.myJobsDesc}</Text>
             </View>
           </TouchableOpacity>
+          )}
 
           {/* Inventory Card */}
+          {hasInventory && (
           <TouchableOpacity onPress={() => router.push('/inventory')}>
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.cardHeader}>
@@ -87,6 +117,7 @@ export default function WorkerHomepage() {
               <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</Text>
             </View>
           </TouchableOpacity>
+          )}
         </View>
       </ScrollableContainer>
 

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,15 +13,15 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, FieldValue, doc, setDoc, getDoc, updateDoc, deleteDoc } from '../../../firebase';
+import { auth, db, FieldValue, doc, setDoc, getDoc, updateDoc, deleteDoc } from '../../firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../../components';
-import { convertToFinishedJobId } from '../../../utils/helpers';
+import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../components';
+import { convertToFinishedJobId } from '../../utils/helpers';
 
 export default function ManageJobs() {
   const router = useRouter();

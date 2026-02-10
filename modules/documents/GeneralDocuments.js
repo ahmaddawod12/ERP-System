@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -14,11 +14,11 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { GlobalHeader, ScrollableContainer } from '../../../components';
+import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { GlobalHeader, ScrollableContainer } from '../../components';
 
 /**
  * Document Type Constants (numeric) - must match CreateDocument.js

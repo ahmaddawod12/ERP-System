@@ -1,3 +1,3 @@
-﻿import { withGate } from '../modules/shared/gating/withGate';
-import Screen from '../modules/documents/screens/GenerateTaxInvoice';
+﻿import { withGate } from '../modules/shared/withGate';
+import Screen from '../modules/documents/GenerateTaxInvoice';
 export default withGate(Screen, { module: 'documents', roles: ['user', 'basic', 'manager'] });

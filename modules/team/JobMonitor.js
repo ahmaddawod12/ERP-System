@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,13 +15,13 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { auth, db, doc, getDoc } from '../../../firebase';
-import { colors, gradients, spacing, borderRadius, typography, shadows, getColors } from '../../../theme';
-import { SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer } from '../../../components';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { auth, db, doc, getDoc } from '../../firebase';
+import { colors, gradients, spacing, borderRadius, typography, shadows, getColors } from '../../theme';
+import { SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer } from '../../components';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
 
 export default function JobMonitor() {
   const router = useRouter();

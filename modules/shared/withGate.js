@@ -6,15 +6,15 @@
  * If data is still loading, shows a loading indicator.
  *
  * Usage:
- *   import { withGate } from '../modules/shared/gating/withGate';
+ *   import { withGate } from '../modules/shared/withGate';
  *   import Screen from '../modules/documents/screens/GeneralDocuments';
  *   export default withGate(Screen, { module: 'documents', roles: ['user', 'basic', 'manager'] });
  */
 import React from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import { useCache } from '../../../contexts/CacheContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { getColors } from '../../../theme';
+import { useCache } from '../../contexts/CacheContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { getColors } from '../../theme';
 import { isSubscriptionActive, isModuleEnabled, hasRoleAccess } from './index';
 import NotAvailableScreen from './NotAvailableScreen';
 
@@ -30,12 +30,12 @@ export function withGate(ScreenComponent, options = {}) {
   const { module: moduleName, roles, roleModules } = options;
 
   return function GatedScreenWrapper(props) {
-    const { profile, subscription } = useCache();
+    const { profile, subscription, isLoading } = useCache();
     const { isDarkMode } = useThemeContext();
     const colors = getColors(isDarkMode);
 
-    // Still loading profile or subscription — show spinner
-    if (!profile) {
+    // Still loading profile — show spinner
+    if (!profile || isLoading) {
       return (
         <View style={[styles.loading, { backgroundColor: colors.background }]}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -45,18 +45,19 @@ export function withGate(ScreenComponent, options = {}) {
 
     const role = profile.role;
 
+    // Dev role bypasses all gating
+    if (role === 'dev') {
+      return <ScreenComponent {...props} />;
+    }
+
     // Role check
     if (roles && roles.length > 0 && !hasRoleAccess(role, roles)) {
       return <NotAvailableScreen reason="role" />;
     }
 
-    // Subscription still loading — brief spinner
-    if (subscription === undefined || subscription === null) {
-      return (
-        <View style={[styles.loading, { backgroundColor: colors.background }]}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      );
+    // If no subscription doc exists, treat as expired (don't spin forever)
+    if (!subscription) {
+      return <NotAvailableScreen reason="subscription" />;
     }
 
     // Subscription active check

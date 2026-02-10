@@ -24,7 +24,7 @@ export function isSubscriptionActive(subscription) {
 /**
  * Check if a specific module is enabled in the subscription
  * @param {object|null} subscription
- * @param {string} moduleName - e.g. 'jobs', 'documents', 'inventory', 'team', 'teaminventory'
+ * @param {string} moduleName - e.g. 'team', 'solojob', 'teaminventory', 'companyinventory', 'documents'
  * @returns {boolean}
  */
 export function isModuleEnabled(subscription, moduleName) {

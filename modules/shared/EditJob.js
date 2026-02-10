@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,13 +15,13 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, doc, getDoc, updateDoc } from '../../../firebase';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { GlobalHeader, ScrollableContainer } from '../../../components';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { db, doc, getDoc, updateDoc } from '../../firebase';
+import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { GlobalHeader, ScrollableContainer } from '../../components';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
 
 export default function EditJob() {
   const router = useRouter();

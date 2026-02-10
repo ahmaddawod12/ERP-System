@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,12 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { auth, db, collection, doc, getDocs, onSnapshot } from '../../../firebase';
-import { colors, spacing, borderRadius, typography, shadows, getColors } from '../../../theme';
-import { SearchInput, LoadingSpinner, GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../../components';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { auth, db, collection, doc, getDocs, onSnapshot } from '../../firebase';
+import { colors, spacing, borderRadius, typography, shadows, getColors } from '../../theme';
+import { SearchInput, LoadingSpinner, GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../components';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useCache } from '../../contexts/CacheContext';
 
 export default function WorkersMonitor() {
   const router = useRouter();

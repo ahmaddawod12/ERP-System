@@ -14,6 +14,8 @@ import { getColors, gradients, spacing, borderRadius, typography, shadows } from
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
+import { useCache } from '../contexts/CacheContext';
+import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
 import { useAuth } from '../hooks';
 import { GlobalHeader, ScrollableContainer } from '../components';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,9 +26,27 @@ export default function UserHomepage() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { uid } = useAuth();
+  const { subscription } = useCache();
   const [activeTab, setActiveTab] = useState('work');
   const colors = getColors(isDarkMode);
   const insets = useSafeAreaInsets();
+
+  // Module checks
+  const hasSoloJob = isModuleEnabled(subscription, 'solojob');
+  const hasDocs = isModuleEnabled(subscription, 'documents');
+  const subActive = isSubscriptionActive(subscription);
+
+  const availableTabs = [
+    ...(hasSoloJob ? ['work'] : []),
+    ...(hasDocs ? ['documents'] : []),
+  ];
+
+  // Auto-select first available tab if current is no longer available
+  React.useEffect(() => {
+    if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
+      setActiveTab(availableTabs[0]);
+    }
+  }, [hasSoloJob, hasDocs]);
 
   const t = language === 'en' ? {
     title: 'User Dashboard',
@@ -83,6 +103,25 @@ export default function UserHomepage() {
 
 
 
+  // Subscription expired — block the entire homepage
+  if (!subActive) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}> 
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+        <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
+          <Ionicons name="time-outline" size={72} color={colors.error} />
+          <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
+            {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
+          </Text>
+          <Text style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
+            {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
+          </Text>
+        </View>
+        <GlobalHeader />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -93,7 +132,7 @@ export default function UserHomepage() {
       >
         <View style={styles.cardsContainer}>
           {/* Work Tab Content */}
-          {activeTab === 'work' && (
+          {activeTab === 'work' && hasSoloJob && (
             <>
               {/* Create Job Card */}
               <TouchableOpacity onPress={() => router.push('/Userjob')}>
@@ -140,7 +179,7 @@ export default function UserHomepage() {
           )}
 
           {/* Documents Tab Content */}
-          {activeTab === 'documents' && (
+          {activeTab === 'documents' && hasDocs && (
             <>
               {/* General Documents Card */}
               <TouchableOpacity onPress={() => router.push('/GeneralDocuments')}>
@@ -189,6 +228,7 @@ export default function UserHomepage() {
       </ScrollableContainer>
       {/* Tab Navigation */}
       <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border, paddingBottom: insets.bottom }]}>
+        {hasSoloJob && (
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'work' && styles.activeTab]} 
           onPress={() => setActiveTab('work')}
@@ -206,7 +246,9 @@ export default function UserHomepage() {
           </Text>
           {activeTab === 'work' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
         </TouchableOpacity>
+        )}
 
+        {hasDocs && (
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'documents' && styles.activeTab]} 
           onPress={() => setActiveTab('documents')}
@@ -224,6 +266,7 @@ export default function UserHomepage() {
           </Text>
           {activeTab === 'documents' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
         </TouchableOpacity>
+        )}
       </View>
 
       {/* Fixed GlobalHeader */}

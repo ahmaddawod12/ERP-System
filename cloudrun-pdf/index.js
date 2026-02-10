@@ -513,26 +513,7 @@ async function processGenerateTask(taskData) {
         downloadURL,
         storagePath: filePath,
       });
-      let documentNumberField;
-      switch (documentType) {
-        case DOC_TYPE.PRICE_PROPOSAL:
-          documentNumberField = 'document_numbers.priceProposal';
-          break;
-        case DOC_TYPE.REFUND:
-          documentNumberField = 'document_numbers.refund';
-          break;
-        case DOC_TYPE.RETURN_CERTIFICATE:
-          documentNumberField = 'document_numbers.returnCertificate';
-          break;
-        case DOC_TYPE.RECEIPT:
-          documentNumberField = 'document_numbers.receipt';
-          break;
-        case DOC_TYPE.DELIVERY_NOTE:
-          documentNumberField = 'document_numbers.deliveryNote';
-          break;
-        default:
-          documentNumberField = null;
-      }
+      const documentNumberField = documentType ? `document_numbers.${documentType}` : null;
       if (documentNumberField) {
         // Update business_info document numbers (always in company path)
         let businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);

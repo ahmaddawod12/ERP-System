@@ -14,6 +14,7 @@ import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
+import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
 import { GlobalHeader, LoadingSpinner, ScrollableContainer } from '../components';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -22,10 +23,26 @@ export default function BasicHomepage() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { businessInfo } = useCache();
+  const { businessInfo, subscription } = useCache();
   const [activeTab, setActiveTab] = useState('business');
   const colors = getColors(isDarkMode);
   const insets = useSafeAreaInsets();
+
+  // Module checks
+  const hasDocs = isModuleEnabled(subscription, 'documents');
+  const subActive = isSubscriptionActive(subscription);
+
+  const availableTabs = [
+    'business',  // Always visible
+    ...(hasDocs ? ['documents'] : []),
+  ];
+
+  // Auto-select first available tab if current is no longer available
+  React.useEffect(() => {
+    if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
+      setActiveTab(availableTabs[0]);
+    }
+  }, [hasDocs]);
 
   const t = language === 'en' ? {
     title: 'Basic Dashboard',
@@ -203,7 +220,7 @@ export default function BasicHomepage() {
           )}
 
           {/* Documents Tab Content */}
-          {activeTab === 'documents' && (
+          {activeTab === 'documents' && hasDocs && (
             <>
               {/* General Documents Card - Navigate to GeneralDocuments (without tax invoice for basic role) */}
               <TouchableOpacity onPress={() => router.push('/GeneralDocuments')}>
@@ -271,6 +288,7 @@ export default function BasicHomepage() {
           {activeTab === 'business' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.primary }]} />}
         </TouchableOpacity>
 
+        {hasDocs && (
         <TouchableOpacity 
           style={[styles.tab, activeTab === 'documents' && styles.activeTab]} 
           onPress={() => setActiveTab('documents')}
@@ -288,6 +306,7 @@ export default function BasicHomepage() {
           </Text>
           {activeTab === 'documents' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
         </TouchableOpacity>
+        )}
       </View>
 
       {/* Fixed GlobalHeader */}

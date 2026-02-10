@@ -1,9 +1,9 @@
 ﻿import React from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { withGate } from '../modules/shared/gating/withGate';
+import { withGate } from '../modules/shared/withGate';
 import { useCache } from '../contexts/CacheContext';
-import WorkerInventory from '../modules/inventory/teaminventory/screens/inventory';
-import UserInventory from '../modules/inventory/personal/screens/UserInventory';
+import WorkerInventory from '../modules/inventory/WorkerInventory';
+import UserInventory from '../modules/inventory/UserInventory';
 
 /**
  * Inventory route — renders the correct screen based on role:
@@ -13,8 +13,8 @@ import UserInventory from '../modules/inventory/personal/screens/UserInventory';
  */
 function InventoryRouter() {
   const { workerId } = useLocalSearchParams();
-  const { getUserRole } = useCache();
-  const role = getUserRole();
+  const { profile } = useCache();
+  const role = profile?.role;
 
   if (workerId || role === 'worker' || role === 'manager') {
     return <WorkerInventory />;
@@ -23,6 +23,7 @@ function InventoryRouter() {
 }
 
 export default withGate(InventoryRouter, {
-  module: 'inventory',
+  module: 'teaminventory',
   roles: ['worker', 'manager', 'user', 'basic'],
+  roleModules: { user: [], basic: [] },
 });

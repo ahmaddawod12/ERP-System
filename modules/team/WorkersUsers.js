@@ -15,13 +15,13 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { auth, db, functions, collection, getDocs, httpsCallable } from '../../../firebase';
-import { colors, shadows, getColors } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { GlobalHeader, ScrollableContainer } from '../../../components';
+import { auth, db, functions, collection, getDocs, httpsCallable } from '../../firebase';
+import { colors, shadows, getColors } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { GlobalHeader, ScrollableContainer } from '../../components';
 
 export default function WorkersUsers() {
   const { language } = useLanguageContext();

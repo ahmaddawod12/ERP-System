@@ -1381,7 +1381,7 @@ exports.getInvoiceApproval = onCall({
     }
 
     // Generate next document number and build document ID using date-number-type format
-    const documentNumber = businessInfo.document_numbers.taxInvoice;
+    const documentNumber = businessInfo.document_numbers[305];
     const todayDate = new Date().toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD format
     const todayDate_2 = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     const paddedDocNumber = String(documentNumber).padStart(6, '0'); // e.g., "000001"
@@ -1946,7 +1946,7 @@ exports.getInvoiceApproval = onCall({
       try {
         const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
         await businessInfoRef.update({
-          'document_numbers.taxInvoice': admin.firestore.FieldValue.increment(1),
+          'document_numbers.305': admin.firestore.FieldValue.increment(1),
           last_updated: new Date().toISOString()
         });
         const businessCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
@@ -1956,7 +1956,7 @@ exports.getInvoiceApproval = onCall({
         });
         logger.info('Tax invoice counter incremented', {
           documentNumber,
-          newNumber: businessInfo.document_numbers.taxInvoice + 1
+          newNumber: businessInfo.document_numbers[305] + 1
         });
       } catch (counterError) {
         logger.error('Failed to increment invoice counter', { error: counterError.message });
@@ -2370,30 +2370,7 @@ exports.publishPreviewTask = onCall({
     // Convert documentType to number for consistency
     const numericDocType = typeof documentType === 'number' ? documentType : Number(documentType);
     const documentNumbers = businessInfo.document_numbers || {};
-    let previewDocumentNumber;
-
-    switch (numericDocType) {
-      case DOC_TYPE.TAX_INVOICE:
-        previewDocumentNumber = documentNumbers.taxInvoice || 1;
-        break;
-      case DOC_TYPE.PRICE_PROPOSAL:
-        previewDocumentNumber = documentNumbers.priceProposal || 1;
-        break;
-      case DOC_TYPE.REFUND:
-        previewDocumentNumber = documentNumbers.refund || 1;
-        break;
-      case DOC_TYPE.RETURN_CERTIFICATE:
-        previewDocumentNumber = documentNumbers.returnCertificate || 1;
-        break;
-      case DOC_TYPE.RECEIPT:
-        previewDocumentNumber = documentNumbers.receipt || 1;
-        break;
-      case DOC_TYPE.DELIVERY_NOTE:
-        previewDocumentNumber = documentNumbers.deliveryNote || 1;
-        break;
-      default:
-        previewDocumentNumber = 1;
-    }
+    const previewDocumentNumber = documentNumbers[numericDocType] || 1;
 
     // Calculate totals
     let totalBeforeVat = 0;
@@ -2629,32 +2606,8 @@ exports.publishGenerateTask = onCall({
       
       // Get and increment document number
       const documentNumbers = businessInfo.document_numbers || {};
-      let documentNumberField;
-      
-      switch (numericDocType) {
-        case DOC_TYPE.PRICE_PROPOSAL:
-          documentNumber = documentNumbers.priceProposal || 1;
-          documentNumberField = 'document_numbers.priceProposal';
-          break;
-        case DOC_TYPE.REFUND:
-          documentNumber = documentNumbers.refund || 1;
-          documentNumberField = 'document_numbers.refund';
-          break;
-        case DOC_TYPE.RETURN_CERTIFICATE:
-          documentNumber = documentNumbers.returnCertificate || 1;
-          documentNumberField = 'document_numbers.returnCertificate';
-          break;
-        case DOC_TYPE.RECEIPT:
-          documentNumber = documentNumbers.receipt || 1;
-          documentNumberField = 'document_numbers.receipt';
-          break;
-        case DOC_TYPE.DELIVERY_NOTE:
-          documentNumber = documentNumbers.deliveryNote || 1;
-          documentNumberField = 'document_numbers.deliveryNote';
-          break;
-        default:
-          documentNumber = 1;
-      }
+      documentNumber = documentNumbers[numericDocType] || 1;
+      const documentNumberField = `document_numbers.${numericDocType}`;
       
       // Generate document ID using YYYYMMDD format with suffix
       const todayDate = new Date().toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD

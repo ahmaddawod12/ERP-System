@@ -15,6 +15,8 @@ import { getColors, gradients, spacing, borderRadius, typography, shadows } from
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
+import { useCache } from '../contexts/CacheContext';
+import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
 import { useAuth } from '../hooks';
 import { GlobalHeader, ScrollableContainer } from '../components';
 
@@ -25,16 +27,37 @@ export default function ManagerHomepage() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { uid } = useAuth();
+  const { subscription } = useCache();
   const [activeTab, setActiveTab] = useState('management');
   const insets = useSafeAreaInsets();
   const colors = getColors(isDarkMode);
 
+  // Module checks
+  const hasTeam = isModuleEnabled(subscription, 'team');
+  const hasSoloJob = isModuleEnabled(subscription, 'solojob');
+  const hasDocs = isModuleEnabled(subscription, 'documents');
+  const subActive = isSubscriptionActive(subscription);
+
+  // Available tabs based on modules
+  const availableTabs = [
+    ...(hasTeam ? ['management', 'jobMonitor'] : []),
+    ...(hasSoloJob ? ['work'] : []),
+    ...(hasDocs ? ['documents'] : []),
+  ];
+
   // Set active tab from URL parameter
   useEffect(() => {
-    if (tab === 'work' || tab === 'management' || tab === 'jobMonitor' || tab === 'documents') {
+    if (tab && availableTabs.includes(tab)) {
       setActiveTab(tab);
     }
   }, [tab]);
+
+  // Auto-select first available tab if current is no longer available
+  useEffect(() => {
+    if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
+      setActiveTab(availableTabs[0]);
+    }
+  }, [hasTeam, hasSoloJob, hasDocs]);
 
   const t = language === 'en' ? {
     title: 'Manager Dashboard',
@@ -132,6 +155,25 @@ export default function ManagerHomepage() {
   };
 
 
+  // Subscription expired — block the entire homepage
+  if (!subActive) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}> 
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+        <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
+          <Ionicons name="time-outline" size={72} color={colors.error} />
+          <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
+            {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
+          </Text>
+          <Text style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
+            {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
+          </Text>
+        </View>
+        <GlobalHeader />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -142,7 +184,7 @@ export default function ManagerHomepage() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 50 + insets.bottom }]}
       >
         <View style={styles.cardsContainer}>
-          {activeTab === 'management' ? (
+          {activeTab === 'management' && hasTeam ? (
             <>
               {/* Workers Monitor Card */}
               <TouchableOpacity onPress={() => router.push('/WorkersMonitor')} style={[styles.simpleCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -180,7 +222,7 @@ export default function ManagerHomepage() {
                 <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.companyPartsDesc}</Text>
               </TouchableOpacity>
             </>
-          ) : activeTab === 'jobMonitor' ? (
+          ) : activeTab === 'jobMonitor' && hasTeam ? (
             <>
               {/* Job Monitor Card */}
               <TouchableOpacity onPress={() => router.push('/JobMonitor')} style={[styles.simpleCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -206,7 +248,7 @@ export default function ManagerHomepage() {
                 <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.manageJobsDesc}</Text>
               </TouchableOpacity>
             </>
-          ) : activeTab === 'documents' ? (
+          ) : activeTab === 'documents' && hasDocs ? (
             <>
               {/* Generate Tax Invoice Card */}
               <TouchableOpacity onPress={() => router.push('/GenerateTaxInvoice')} style={[styles.simpleCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -244,7 +286,7 @@ export default function ManagerHomepage() {
                 <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</Text>
               </TouchableOpacity>
             </>
-          ) : (
+          ) : activeTab === 'work' && hasSoloJob ? (
             <>
               {/* My Jobs Card */}
               <TouchableOpacity onPress={() => router.push('/Userjob')} style={[styles.simpleCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -282,7 +324,7 @@ export default function ManagerHomepage() {
                 <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</Text>
               </TouchableOpacity>
             </>
-          )}
+          ) : null}
         </View>
       </ScrollableContainer>
 
@@ -292,6 +334,7 @@ export default function ManagerHomepage() {
         backgroundColor: colors.surface,
         borderTopColor: colors.border,
       }]}>
+        {hasTeam && (
         <TouchableOpacity
           style={styles.bottomTab}
           onPress={() => setActiveTab('management')}
@@ -312,7 +355,9 @@ export default function ManagerHomepage() {
             {t.managementTab}
           </Text>
         </TouchableOpacity>
+        )}
         
+        {hasTeam && (
         <TouchableOpacity
           style={styles.bottomTab}
           onPress={() => setActiveTab('jobMonitor')}
@@ -333,7 +378,9 @@ export default function ManagerHomepage() {
             {t.jobMonitorTab}
           </Text>
         </TouchableOpacity>
+        )}
         
+        {hasSoloJob && (
         <TouchableOpacity
           style={styles.bottomTab}
           onPress={() => setActiveTab('work')}
@@ -354,7 +401,9 @@ export default function ManagerHomepage() {
             {t.workTab}
           </Text>
         </TouchableOpacity>
+        )}
         
+        {hasDocs && (
         <TouchableOpacity
           style={styles.bottomTab}
           onPress={() => setActiveTab('documents')}
@@ -375,6 +424,7 @@ export default function ManagerHomepage() {
             {t.documentsTab}
           </Text>
         </TouchableOpacity>
+        )}
       </View>
 
       {/* Fixed GlobalHeader */}

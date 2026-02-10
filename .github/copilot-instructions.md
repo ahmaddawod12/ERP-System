@@ -183,14 +183,14 @@ alert.info('Title', 'Message');
 The app uses a **module-based architecture** where:
 1. **`modules/`** contains all business logic and screen implementations, organized by feature
 2. **`app/`** contains **thin wrapper files** that import from modules and apply subscription gating via `withGate`
-3. **`modules/shared/gating/`** contains the gating infrastructure
+3. **`modules/shared/`** contains the gating infrastructure and shared screens
 
 ### The `withGate` HOC
 
 Every gated screen in `app/` follows this 3-line pattern:
 
 ```javascript
-import { withGate } from '../modules/shared/gating/withGate';
+import { withGate } from '../modules/shared/withGate';
 import Screen from '../modules/team/screens/ManageJobs';
 export default withGate(Screen, { module: 'team', roles: ['manager'] });
 ```
@@ -1400,7 +1400,7 @@ const t = language === 'en' ? {
 
 4. **Use `withGate` HOC for subscription gating**
    ```javascript
-   import { withGate } from '../modules/shared/gating/withGate';
+   import { withGate } from '../modules/shared/withGate';
    import Screen from '../modules/{feature}/screens/{ScreenName}';
    export default withGate(Screen, { module: '{moduleName}', roles: ['{role1}', '{role2}'] });
    ```

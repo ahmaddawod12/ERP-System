@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,14 +21,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, db, storage, FieldValue, doc, getDoc, setDoc, updateDoc } from '../../../firebase';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../../components';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { generateFinishedJobId } from '../../../utils/helpers';
+import { auth, db, storage, FieldValue, doc, getDoc, setDoc, updateDoc } from '../../firebase';
+import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
+import { TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { generateFinishedJobId } from '../../utils/helpers';
 
 
 

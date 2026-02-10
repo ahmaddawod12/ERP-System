@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,14 +22,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Sharing from 'expo-sharing';
 import { WebView } from 'react-native-webview';
-import { db, functions, middleEastFunctions, collection, doc, getDoc, getDocs, query, where, orderBy, httpsCallable } from '../../../firebase';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { useDocumentTask } from '../../../hooks';
-import { GlobalHeader, LoadingOverlay, ScrollableContainer, InventoryItemSearch } from '../../../components';
+import { db, functions, middleEastFunctions, collection, doc, getDoc, getDocs, query, where, orderBy, httpsCallable } from '../../firebase';
+import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { useDocumentTask } from '../../hooks';
+import { GlobalHeader, LoadingOverlay, ScrollableContainer, InventoryItemSearch } from '../../components';
 
 export default function GenerateReceipt() {
   const router = useRouter();

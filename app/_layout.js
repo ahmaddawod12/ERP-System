@@ -19,6 +19,7 @@ export default function RootLayout() {
                   <Stack screenOptions={{ headerShown: false }}>
               <Stack.Screen name="index" />
               <Stack.Screen name="Login" />
+              <Stack.Screen name="BusinessReg" />
               <Stack.Screen name="ManagerHomepage" />
               <Stack.Screen name="WorkerHomepage" />
               <Stack.Screen name="UserHomepage" />
@@ -32,7 +33,6 @@ export default function RootLayout() {
               <Stack.Screen name="Workerjob" />
               <Stack.Screen name="inventory" />
               <Stack.Screen name="CompanyInventory" />
-              <Stack.Screen name="PartsSelection" />
               <Stack.Screen name="GeneralDocuments" />
               <Stack.Screen name="CreateDocument" />
               <Stack.Screen name="GenerateTaxInvoice" />
@@ -40,6 +40,7 @@ export default function RootLayout() {
               <Stack.Screen name="ViewCertification" />
               <Stack.Screen name="Settings" />
               <Stack.Screen name="FillJob" />
+              <Stack.Screen name="EditJob" />
               <Stack.Screen name="Permission" />
               <Stack.Screen name="SupportChat" />
               <Stack.Screen name="DevInbox" />

@@ -3,13 +3,12 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingV
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { db, auth, doc, getDoc, setDoc } from '../firebase';
+import { db, auth, doc, getDoc, setDoc, updateDoc, FieldValue } from '../firebase';
 import { getColors, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { Input, GlobalHeader, LoadingSpinner, ScrollableContainer } from '../components';
-import { increment, updateDoc } from '@react-native-firebase/firestore';
 
 export default function BusinessReg() {
   const router = useRouter();
@@ -229,12 +228,12 @@ export default function BusinessReg() {
         
         // Serial numbers for different document types
         document_numbers: {
-          taxInvoice: parseInt(taxInvoiceNumber) || 1,
-          receipt: parseInt(receiptNumber) || 1,
-          refund: parseInt(refundNumber) || 1,
-          returnCertificate: parseInt(returnCertNumber) || 1,
-          priceProposal: parseInt(priceProposalNumber) || 1,
-          deliveryNote: parseInt(deliveryNoteNumber) || 1,
+          305: parseInt(taxInvoiceNumber) || 1,
+          400: parseInt(receiptNumber) || 1,
+          330: parseInt(refundNumber) || 1,
+          210: parseInt(returnCertNumber) || 1,
+          10: parseInt(priceProposalNumber) || 1,
+          200: parseInt(deliveryNoteNumber) || 1,
         },
         
         // Optional fields (only save if provided)
@@ -258,11 +257,11 @@ export default function BusinessReg() {
       try {
         if (userRole !== 'manager') {
           await updateDoc(doc(db, uid, 'cache'), {
-            business_info: increment(1),
+            business_info: FieldValue.increment(1),
           });
         } else {
           await updateDoc(doc(db, 'companies', companyId, 'business_data', 'cache'), {
-            business_info: increment(1),
+            business_info: FieldValue.increment(1),
           });
         }
       } catch (cacheError) {

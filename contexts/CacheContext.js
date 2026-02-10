@@ -85,6 +85,9 @@ const CACHE_KEYS = {
   // Clients
   CLIENTS: 'cache_clients',
   
+  // Subscription
+  SUBSCRIPTION: 'cache_subscription',
+  
   // Version tracking (maps documentId to version)
   CACHE_VERSIONS: 'cache_versions',
   COMPANY_CACHE_VERSIONS: 'cache_company_versions',
@@ -237,7 +240,6 @@ export function CacheProvider({ children }) {
   // Refs for cleanup
   const unsubscribeRef = useRef(null);
   const companyUnsubscribeRef = useRef(null);
-  const subscriptionUnsubscribeRef = useRef(null);
   const listenersActiveRef = useRef(false); // Track if listeners are currently active
   
   // Get current user info from cache (canonical names)
@@ -263,10 +265,6 @@ export function CacheProvider({ children }) {
     if (companyUnsubscribeRef.current) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
-    }
-    if (subscriptionUnsubscribeRef.current) {
-      subscriptionUnsubscribeRef.current();
-      subscriptionUnsubscribeRef.current = null;
     }
     
     listenersActiveRef.current = false;
@@ -471,6 +469,9 @@ export function CacheProvider({ children }) {
       case CACHE_KEYS.CLIENTS:
         setClients(data);
         break;
+      case CACHE_KEYS.SUBSCRIPTION:
+        setSubscription(data);
+        break;
       case CACHE_KEYS.CACHE_VERSIONS:
         setCacheVersions(data);
         break;
@@ -541,6 +542,13 @@ export function CacheProvider({ children }) {
           });
           clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
           return clientsList;
+        }
+        
+        case 'subscription': {
+          if (!companyId) return null;
+          const subRef = doc(db, 'companies', companyId, 'business_data', 'subscription');
+          const subSnap = await getDoc(subRef);
+          return subSnap.exists() ? subSnap.data() : null;
         }
         
         default:
@@ -735,6 +743,7 @@ export function CacheProvider({ children }) {
     const mapping = {
       'profile': CACHE_KEYS.PROFILE,
       'inventory': CACHE_KEYS.INVENTORY,
+      'subscription': CACHE_KEYS.SUBSCRIPTION,
       'pendingJobs': CACHE_KEYS.PENDING_JOBS,
       'finishedJobs': CACHE_KEYS.FINISHED_JOBS,
       'workers': CACHE_KEYS.WORKERS,
@@ -771,10 +780,6 @@ export function CacheProvider({ children }) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
     }
-    if (subscriptionUnsubscribeRef.current) {
-      subscriptionUnsubscribeRef.current();
-      subscriptionUnsubscribeRef.current = null;
-    }
     
     // =====================================================
     // USER CACHE LISTENER (for all roles)
@@ -787,10 +792,14 @@ export function CacheProvider({ children }) {
       const localVersions = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
       
       console.log('?? User cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
+      console.log('📋 Remote fields:', Object.keys(remoteVersions).join(', '));
+      console.log('💾 Local versions tracked:', Object.keys(localVersions).join(', '));
       
       // Define standard fields based on role for user cache
       // Basic role: only profile (no inventory, no business_info cached)
       let standardFields = role === 'basic' ? ['profile'] : ['profile', 'inventory'];
+      // All roles track subscription version in user cache
+      standardFields.push('subscription');
       // All non-manager roles track clients version in user cache
       if (role !== 'manager') {
         standardFields.push('clients');
@@ -803,12 +812,40 @@ export function CacheProvider({ children }) {
         
         if (remoteVersion > localVersion) {
           console.log(`?? Version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
-          const data = await fetchDataFromFirebase(field, uid, companyId, role);
-          if (data !== null) {
-            const cacheKey = getCacheKeyForField(field);
-            saveToLocalCache(cacheKey, data);
+          // subscription is fetched from company path, not user path
+          if (field === 'subscription') {
+            const subData = await fetchDataFromFirebase('subscription', uid, companyId, role);
+            saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
+          } else {
+            const data = await fetchDataFromFirebase(field, uid, companyId, role);
+            if (data !== null) {
+              const cacheKey = getCacheKeyForField(field);
+              saveToLocalCache(cacheKey, data);
+            }
           }
           localVersions[field] = remoteVersion;
+        }
+      }
+      
+      console.log('🔍 Starting deletion check for standardFields:', standardFields.join(', '));
+      
+      // Check for standard fields that exist locally but are missing from remote (deleted fields)
+      for (const field of standardFields) {
+        const hasRemoteField = remoteVersions.hasOwnProperty(field);
+        const remoteVersion = remoteVersions[field];
+        const localVersion = localVersions[field];
+        
+        console.log(`🔍 Checking deletion for ${field}: hasRemote=${hasRemoteField}, remoteVer=${remoteVersion}, localVer=${localVersion}`);
+        
+        if (localVersion && !hasRemoteField) {
+          console.log(`❌ Field ${field} exists locally but not in remote cache - deleting`);
+          const cacheKey = getCacheKeyForField(field);
+          mmkvHelpers.delete(cacheKey);
+          delete localVersions[field];
+          // Clear state if it's subscription
+          if (field === 'subscription') {
+            setSubscription(null);
+          }
         }
       }
       
@@ -816,7 +853,7 @@ export function CacheProvider({ children }) {
       // Basic role: only certifications (no pending/finished jobs)
       if (role === 'worker' || role === 'user' || role === 'basic') {
         const documentFields = Object.keys(remoteVersions).filter(key => 
-          !['profile', 'inventory', 'business_info', 'clients', 'lastUpdated'].includes(key)
+          !['profile', 'inventory', 'business_info', 'clients', 'subscription', 'lastUpdated'].includes(key)
         );
         // Basic role doesn't have jobs, only certifications
         let localPendingJobs = role === 'basic' ? [] : (mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS) || []);
@@ -949,9 +986,25 @@ export function CacheProvider({ children }) {
           }
         }
         
+        // Check for company fields that exist locally but are missing from remote (deleted fields)
+        for (const field of standardCompanyFields) {
+          const hasRemoteField = remoteVersions.hasOwnProperty(field);
+          const remoteVersion = remoteVersions[field];
+          const localVersion = localVersions[field];
+          
+          console.log(`🔍 Company checking deletion for ${field}: hasRemote=${hasRemoteField}, remoteVer=${remoteVersion}, localVer=${localVersion}`);
+          
+          if (localVersion && !hasRemoteField) {
+            console.log(`❌ Company field ${field} exists locally but not in remote cache - deleting`);
+            const cacheKey = getCacheKeyForField(field);
+            mmkvHelpers.delete(cacheKey);
+            delete localVersions[field];
+          }
+        }
+        
         // Check individual document versions
         const documentFields = Object.keys(remoteVersions).filter(key => 
-          !['workers', 'business_info', 'clients', 'lastUpdated'].includes(key)
+          !['workers', 'business_info', 'clients', 'subscription', 'lastUpdated'].includes(key)
         );
         
         let localCompanyPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_PENDING_JOBS) || [];
@@ -1043,31 +1096,6 @@ export function CacheProvider({ children }) {
         
       }, (error) => {
         console.error('Company cache listener error:', error);
-      });
-    }
-    
-    // =====================================================
-    // SUBSCRIPTION LISTENER (for all roles)
-    // =====================================================
-    if (companyId) {
-      if (subscriptionUnsubscribeRef.current) {
-        subscriptionUnsubscribeRef.current();
-        subscriptionUnsubscribeRef.current = null;
-      }
-      const subscriptionRef = doc(db, 'companies', companyId, 'business_data', 'subscription');
-      subscriptionUnsubscribeRef.current = onSnapshot(subscriptionRef, (snapshot) => {
-        if (!snapshot.exists()) {
-          console.log('?? No subscription document found');
-          setSubscription(null);
-          saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, null);
-          return;
-        }
-        const subData = snapshot.data();
-        console.log('?? Subscription snapshot received:', subData?.plan, subData?.status);
-        setSubscription(subData);
-        saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
-      }, (error) => {
-        console.error('Subscription listener error:', error);
       });
     }
     
@@ -2063,11 +2091,7 @@ export function CacheProvider({ children }) {
     setCompanyCacheVersions({});
     setIsInitialized(false);
     
-    // Clean up subscription listener
-    if (subscriptionUnsubscribeRef.current) {
-      subscriptionUnsubscribeRef.current();
-      subscriptionUnsubscribeRef.current = null;
-    }
+    listenersActiveRef.current = false;
     
     console.log('? Cache cleared');
   }, []);

@@ -9,10 +9,10 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { getColors, spacing, borderRadius, typography } from '../../../theme';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { GlobalHeader } from '../../../components';
+import { getColors, spacing, borderRadius, typography } from '../../theme';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { GlobalHeader } from '../../components';
 
 const translations = {
   en: {

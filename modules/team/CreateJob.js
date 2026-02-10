@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,14 +12,14 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth, db, collection, doc, getDocs, setDoc } from '../../../firebase';
-import { colors, spacing, borderRadius, typography, shadows, getColors, gradients } from '../../../theme';
-import { SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../../components';
-import { generatePendingJobId } from '../../../utils/helpers';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { auth, db, collection, doc, getDocs, setDoc } from '../../firebase';
+import { colors, spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
+import { SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../components';
+import { generatePendingJobId } from '../../utils/helpers';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
 
 export default function CreateJob() {
   const router = useRouter();

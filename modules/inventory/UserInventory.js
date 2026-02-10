@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,52 +7,38 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
-  Modal,
-  FlatList,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, doc, getDoc, onSnapshot, setDoc } from '../../../firebase';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { GlobalHeader, ScrollableContainer } from '../../../components';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { auth, db, doc, runTransaction } from '../../firebase';
+import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
+import { GlobalHeader, ScrollableContainer } from '../../components';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
 
-export default function WorkerInventory() {
+export default function UserInventory() {
   const router = useRouter();
-  const { workerId } = useLocalSearchParams();
   const [inventory, setInventory] = useState([]);
-  // Manager/Worker role: select from company parts
-  const [showCompanyPicker, setShowCompanyPicker] = useState(false);
-  const [companyParts, setCompanyParts] = useState([]);
-  const [companyPickerSearch, setCompanyPickerSearch] = useState('');
-  const [selectedCompanyPart, setSelectedCompanyPart] = useState(null);
-  const [addQuantity, setAddQuantity] = useState('');
-  const [addLowThreshold, setAddLowThreshold] = useState('');
+  const [showAddPart, setShowAddPart] = useState(false);
+  const [newPart, setNewPart] = useState({ name: '', quantity: '', lowThreshold: '' });
   // Common states
   const [showUsePart, setShowUsePart] = useState(null);
   const [useAmount, setUseAmount] = useState('');
   const [showAddQuantity, setShowAddQuantity] = useState(null);
   const [addAmount, setAddAmount] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [userRole, setUserRole] = useState('user');
   const [isLoadingInventory, setIsLoadingInventory] = useState(true);
-  const [isLoadingCompanyParts, setIsLoadingCompanyParts] = useState(false);
-  const unsubscribeRef = useRef(null);
 
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const {
     inventory: cachedInventory,
-    profile,
     getUid,
-    getUserRole: getCachedUserRole,
-    getCompanyId,
     updateInventory,
     isLoading: cacheLoading
   } = useCache();
@@ -61,10 +47,11 @@ export default function WorkerInventory() {
   const t = language === 'en' ? {
     title: 'Cooling Parts',
     subtitle: 'Inventory Manager',
-    addFromCompany: 'Add from Company Parts',
+    addNewPart: 'Add New Part',
     yourParts: 'Your Parts',
     noPartsYet: 'No parts yet.',
     addFirstPart: 'Add your first part!',
+    partName: 'Part Name',
     initialQuantity: 'Initial Quantity',
     lowStockAlert: 'Low Stock Alert',
     add: 'Add',
@@ -82,6 +69,8 @@ export default function WorkerInventory() {
     at: 'at',
     howMany: 'Enter quantity (e.g., 10)',
     alertAt: 'Enter alert threshold (e.g., 5)',
+    egParts: 'Enter part name (e.g., Valve, Cable)',
+    partNamePlaceholder: 'Part name...',
     quantityPlaceholder: 'Number...',
     alertPlaceholder: 'Minimum quantity...',
     beCareful: 'Be careful!',
@@ -102,19 +91,14 @@ export default function WorkerInventory() {
     amountMustBePositive: 'Amount must be greater than zero',
     confirmRemove: 'Confirm Removal',
     confirmRemoveMessage: 'This action cannot be undone.',
-    selectCompanyPart: 'Select Company Part',
-    searchCompanyParts: 'Search company parts...',
-    noCompanyParts: 'No company parts available',
-    noActiveCompanyParts: 'No active company parts found',
-    alreadyInInventory: 'This part is already in your inventory',
-    companyPartId: 'Company ID',
   } : language === 'he' ? {
     title: 'חלקי קירור',
     subtitle: 'מנהל מלאי',
-    addFromCompany: 'הוסף מחלקי החברה',
+    addNewPart: 'הוסף חלק חדש',
     yourParts: 'החלקים שלך',
     noPartsYet: 'אין חלקים עדיין.',
     addFirstPart: 'הוסף את החלק הראשון שלך!',
+    partName: 'שם החלק',
     initialQuantity: 'כמות התחלתית',
     lowStockAlert: 'התראת מלאי נמוך',
     add: 'הוסף',
@@ -132,6 +116,8 @@ export default function WorkerInventory() {
     at: 'ב',
     howMany: 'הזן כמות (לדוגמה: 10)',
     alertAt: 'הזן סף התראה (לדוגמה: 5)',
+    egParts: 'הזן שם חלק (לדוגמה: שסתום, כבל)',
+    partNamePlaceholder: 'שם החלק...',
     quantityPlaceholder: 'מספר...',
     alertPlaceholder: 'כמות מינימלית...',
     beCareful: 'היזהר!',
@@ -152,19 +138,14 @@ export default function WorkerInventory() {
     amountMustBePositive: 'הכמות חייבת להיות גדולה מאפס',
     confirmRemove: 'אישור הסרה',
     confirmRemoveMessage: 'פעולה זו לא ניתנת לביטול.',
-    selectCompanyPart: 'בחר חלק חברה',
-    searchCompanyParts: 'חיפוש חלקי חברה...',
-    noCompanyParts: 'אין חלקי חברה זמינים',
-    noActiveCompanyParts: 'לא נמצאו חלקי חברה פעילים',
-    alreadyInInventory: 'חלק זה כבר נמצא במלאי שלך',
-    companyPartId: 'מזהה חברה',
   } : {
     title: 'قطع التبريد',
     subtitle: 'مدير المخزون',
-    addFromCompany: 'إضافة من قطع الشركة',
+    addNewPart: 'إضافة قطعة جديدة',
     yourParts: 'قطعك',
     noPartsYet: 'لا توجد قطع بعد.',
     addFirstPart: 'أضف قطعتك الأولى!',
+    partName: 'اسم القطعة',
     initialQuantity: 'الكمية الأولية',
     lowStockAlert: 'تنبيه مخزون منخفض',
     add: 'إضافة',
@@ -182,6 +163,8 @@ export default function WorkerInventory() {
     at: 'عند',
     howMany: 'أدخل الكمية (مثال: 10)',
     alertAt: 'أدخل حد التنبيه (مثال: 5)',
+    egParts: 'أدخل اسم القطعة (مثال: صمام، كابل)',
+    partNamePlaceholder: 'اسم القطعة...',
     quantityPlaceholder: 'عدد...',
     alertPlaceholder: 'الحد الأدنى للكمية...',
     beCareful: 'كن حذرا!',
@@ -202,168 +185,75 @@ export default function WorkerInventory() {
     amountMustBePositive: 'يجب أن تكون الكمية أكبر من الصفر',
     confirmRemove: 'تأكيد الإزالة',
     confirmRemoveMessage: 'لا يمكن التراجع عن هذا الإجراء.',
-    selectCompanyPart: 'اختر قطعة شركة',
-    searchCompanyParts: 'بحث عن قطع الشركة...',
-    noCompanyParts: 'لا توجد قطع شركة متاحة',
-    noActiveCompanyParts: 'لم يتم العثور على قطع شركة مفعّلة',
-    alreadyInInventory: 'هذه القطعة موجودة بالفعل في مخزونك',
-    companyPartId: 'معرّف الشركة',
   };
 
-  // ─── Load inventory data ─────────────────────────────────────
+  // ─── Load inventory from cache ───────────────────────────────
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    const targetUid = workerId || getUid() || user.uid;
-
-    // Set user role from cache
-    const role = getCachedUserRole();
-    if (role) setUserRole(role);
-
-    // If viewing own inventory (not worker's), use cached data
-    if (!workerId) {
-      if (!cacheLoading) {
-        const partsArray = Array.isArray(cachedInventory) ? cachedInventory : [];
-        setInventory(partsArray);
-        setIsLoadingInventory(false);
-      }
-    } else {
-      // Viewing worker's inventory via WorkersMonitor → set up Firestore listener
-      const userDocRef = doc(db, targetUid, 'inventory');
-
-      const unsubscribe = onSnapshot(userDocRef, (docSnapshot) => {
-        if (docSnapshot.exists()) {
-          const data = docSnapshot.data();
-          const partsArray = Array.isArray(data.parts) ? data.parts : [];
-          setInventory(partsArray);
-        } else {
-          setInventory([]);
-        }
-        setIsLoadingInventory(false);
-      }, (error) => {
-        if (auth.currentUser && error.code !== 'permission-denied') {
-          console.log('Firestore listener error:', error.code);
-        }
-        setIsLoadingInventory(false);
-      });
-
-      unsubscribeRef.current = unsubscribe;
-    }
-
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-    };
-  }, [workerId]);
-
-  // Update inventory from cache when it changes
-  useEffect(() => {
-    if (!workerId && !cacheLoading) {
+    if (!cacheLoading) {
       const partsArray = Array.isArray(cachedInventory) ? cachedInventory : [];
       setInventory(partsArray);
       setIsLoadingInventory(false);
     }
-  }, [cachedInventory, cacheLoading, workerId]);
+  }, [cachedInventory, cacheLoading]);
 
-  // ─── Load company parts for manager/worker when picker opens ─
-  const loadCompanyParts = useCallback(async () => {
-    const companyId = getCompanyId();
-    if (!companyId) return;
-
-    setIsLoadingCompanyParts(true);
-    const companyInvRef = doc(db, 'companies', companyId, 'business_data', 'inventory');
-
-    try {
-      const docSnap = await getDoc(companyInvRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        const parts = Array.isArray(data.parts) ? data.parts : [];
-        setCompanyParts(parts);
-      } else {
-        setCompanyParts([]);
-      }
-    } catch (error) {
-      console.error('Error loading company parts:', error);
-    } finally {
-      setIsLoadingCompanyParts(false);
-    }
-  }, [getCompanyId]);
-
-  // ─── Save inventory to Firestore & cache ─────────────────────
+  // ─── Save inventory to cache ─────────────────────────────────
   const saveInventory = async (updatedInventory) => {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    const targetUid = workerId || getUid() || user.uid;
-
-    // 1. Update local cache first (if viewing own inventory)
-    if (!workerId) {
-      await updateInventory(updatedInventory);
-    } else {
-      // For worker inventory (manager viewing), write directly to Firestore
-      const userDocRef = doc(db, targetUid, 'inventory');
-      await setDoc(userDocRef, {
-        parts: updatedInventory,
-        lastUpdated: new Date().toISOString(),
-      }, { merge: true });
-    }
+    await updateInventory(updatedInventory);
   };
 
-  // ─── MANAGER/WORKER: Add part from company parts ─────────────
-  const handleOpenCompanyPicker = () => {
-    loadCompanyParts();
-    setShowCompanyPicker(true);
-    setCompanyPickerSearch('');
-    setSelectedCompanyPart(null);
-    setAddQuantity('');
-    setAddLowThreshold('');
-  };
-
-  const handleSelectCompanyPart = (companyPart) => {
-    // Check if already in inventory (no duplicate IDs allowed)
-    const exists = inventory.find(p => p.id === companyPart.id);
-    if (exists) {
-      alert.warning('Warning', t.alreadyInInventory);
-      return;
-    }
-    setSelectedCompanyPart(companyPart);
-  };
-
-  const handleAddCompanyPart = async () => {
-    if (!selectedCompanyPart || !addQuantity || !addLowThreshold) {
+  // ─── Add part with own sequential nextId ─────────────────────
+  const handleAddPartUser = async () => {
+    if (!newPart.name || !newPart.quantity || !newPart.lowThreshold) {
       alert.error('Error', t.fillAllFields);
       return;
     }
 
-    const qty = parseInt(addQuantity);
-    const lowThres = parseInt(addLowThreshold);
-    if (!qty || qty <= 0 || isNaN(lowThres) || lowThres < 0) {
-      alert.warning(t.invalidAmount, t.amountMustBePositive);
-      return;
-    }
-
     try {
-      const part = {
-        id: selectedCompanyPart.id, // Same ID as company part — source of truth
-        name: selectedCompanyPart.name,
-        quantity: qty,
-        lowThreshold: lowThres,
-        dateAdded: new Date().toISOString(),
-      };
+      const user = auth.currentUser;
+      const targetUid = getUid() || user.uid;
+      const userDocRef = doc(db, targetUid, 'inventory');
 
-      const updated = [...inventory, part];
-      await saveInventory(updated);
+      let updatedParts = [];
 
-      alert.success(t.partAddedSuccess, `${part.name} ${t.partAddedMessage}`);
-      setShowCompanyPicker(false);
-      setSelectedCompanyPart(null);
-      setAddQuantity('');
-      setAddLowThreshold('');
+      // Use Firestore transaction to safely get/increment nextId
+      await runTransaction(db, async (transaction) => {
+        const docSnap = await transaction.get(userDocRef);
+        let currentParts = [];
+        let nextId = 1;
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          currentParts = Array.isArray(data.parts) ? data.parts : [];
+          nextId = typeof data.nextId === 'number'
+            ? data.nextId
+            : (currentParts.length > 0 ? Math.max(...currentParts.map(p => p.id)) + 1 : 1);
+        }
+
+        const part = {
+          id: nextId,
+          name: newPart.name.trim(),
+          quantity: parseInt(newPart.quantity),
+          lowThreshold: parseInt(newPart.lowThreshold),
+          dateAdded: new Date().toISOString(),
+        };
+
+        updatedParts = [...currentParts, part];
+        transaction.set(userDocRef, {
+          parts: updatedParts,
+          nextId: nextId + 1,
+          lastUpdated: new Date().toISOString(),
+        });
+      });
+
+      // Update local state and sync cache
+      setInventory(updatedParts);
+      await updateInventory(updatedParts);
+
+      alert.success(t.partAddedSuccess, `${newPart.name} ${t.partAddedMessage}`);
+      setNewPart({ name: '', quantity: '', lowThreshold: '' });
+      setShowAddPart(false);
     } catch (error) {
-      console.error('Error adding company part:', error);
+      console.error('Error adding part:', error);
       alert.error('Error', 'Failed to add part. Please try again.');
     }
   };
@@ -417,8 +307,7 @@ export default function WorkerInventory() {
   };
 
   // ─── Common: Remove Part from inventory ──────────────────────
-  // NOTE: Removing does NOT recycle the ID. For user role, nextId stays unchanged.
-  // For manager/worker role, the company part ID stays in the company inventory.
+  // NOTE: Removing does NOT recycle the ID. nextId stays unchanged.
   const handleRemovePart = async (id) => {
     try {
       const part = inventory.find(p => p.id === id);
@@ -448,16 +337,6 @@ export default function WorkerInventory() {
     part.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Company parts filter (for picker — only active, not already in inventory)
-  const filteredCompanyParts = companyParts
-    .filter(p => p.active !== false)
-    .filter(p => !inventory.find(inv => inv.id === p.id))
-    .filter(p =>
-      companyPickerSearch
-        ? p.name.toLowerCase().includes(companyPickerSearch.toLowerCase()) ||
-          String(p.id).includes(companyPickerSearch)
-        : true
-    );
 
   // ─── Render a part card ──────────────────────────────────────
   const renderPartCard = (part, isLowStock) => (
@@ -613,12 +492,65 @@ export default function WorkerInventory() {
           </View>
         )}
 
-        {/* Add from Company Parts */}
-        <TouchableOpacity onPress={handleOpenCompanyPicker}>
+        {/* Add New Part Button */}
+        <TouchableOpacity onPress={() => setShowAddPart(!showAddPart)}>
           <LinearGradient colors={gradients.secondary} style={styles.addButton}>
-            <Text style={styles.addButtonText}>+ {t.addFromCompany}</Text>
+            <Text style={styles.addButtonText}>+ {t.addNewPart}</Text>
           </LinearGradient>
         </TouchableOpacity>
+
+        {showAddPart && (
+          <View style={[styles.formCard, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.formTitle, { color: colors.textPrimary }]}>{t.addNewPart}</Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.partName}</Text>
+              <TextInput
+                style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
+                value={newPart.name}
+                onChangeText={(text) => setNewPart({ ...newPart, name: text })}
+                placeholder={t.egParts}
+                placeholderTextColor={colors.textSecondary}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.initialQuantity}</Text>
+              <TextInput
+                style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
+                value={newPart.quantity}
+                onChangeText={(text) => setNewPart({ ...newPart, quantity: text })}
+                placeholder={t.howMany}
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.lowStockAlert}</Text>
+              <TextInput
+                style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
+                value={newPart.lowThreshold}
+                onChangeText={(text) => setNewPart({ ...newPart, lowThreshold: text })}
+                placeholder={t.alertAt}
+                placeholderTextColor={colors.textSecondary}
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.formButtonRow}>
+              <TouchableOpacity onPress={handleAddPartUser} style={[styles.formPrimaryButton, { backgroundColor: colors.secondary }]}>
+                <Text style={styles.formPrimaryButtonText}>{t.add}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowAddPart(false)}
+                style={[styles.formSecondaryButton, { backgroundColor: colors.background, borderColor: colors.border }]}
+              >
+                <Text style={[styles.formSecondaryButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Loading State */}
         {isLoadingInventory || cacheLoading ? (
@@ -661,128 +593,6 @@ export default function WorkerInventory() {
           </>
         )}
       </ScrollableContainer>
-
-      {/* ─── Company Parts Picker Modal (Manager/Worker) ─── */}
-      <Modal
-        visible={showCompanyPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => {
-          setShowCompanyPicker(false);
-        }}
-      >
-        <View style={[styles.pickerOverlay, { backgroundColor: colors.background }]}>
-          <View style={[styles.pickerHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>
-              {selectedCompanyPart ? selectedCompanyPart.name : t.selectCompanyPart}
-            </Text>
-            <TouchableOpacity
-              onPress={() => {
-                setShowCompanyPicker(false);
-                setSelectedCompanyPart(null);
-              }}
-              style={[styles.pickerCloseBtn, { backgroundColor: colors.surface }]}
-            >
-              <MaterialCommunityIcons name="close" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-
-          {selectedCompanyPart ? (
-            // Part selected → show quantity/threshold form
-            <View style={styles.pickerForm}>
-              <View style={[styles.selectedPartBanner, { backgroundColor: colors.secondary + '15' }]}>
-                <View style={[styles.idBadge, { backgroundColor: colors.secondary + '30' }]}>
-                  <Text style={[styles.idBadgeText, { color: colors.secondary }]}>#{selectedCompanyPart.id}</Text>
-                </View>
-                <Text style={[styles.selectedPartName, { color: colors.textPrimary }]}>{selectedCompanyPart.name}</Text>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.initialQuantity}</Text>
-                <TextInput
-                  style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
-                  value={addQuantity}
-                  onChangeText={setAddQuantity}
-                  placeholder={t.howMany}
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                  autoFocus
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.lowStockAlert}</Text>
-                <TextInput
-                  style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
-                  value={addLowThreshold}
-                  onChangeText={setAddLowThreshold}
-                  placeholder={t.alertAt}
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-              </View>
-
-              <View style={styles.formButtonRow}>
-                <TouchableOpacity onPress={handleAddCompanyPart} style={[styles.formPrimaryButton, { backgroundColor: colors.secondary }]}>
-                  <Text style={styles.formPrimaryButtonText}>{t.add}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setSelectedCompanyPart(null)}
-                  style={[styles.formSecondaryButton, { backgroundColor: colors.background, borderColor: colors.border }]}
-                >
-                  <Text style={[styles.formSecondaryButtonText, { color: colors.textPrimary }]}>{t.back}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            // No selection yet → show list of company parts
-            <>
-              <TextInput
-                style={[styles.pickerSearch, {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                  color: colors.textPrimary,
-                }]}
-                value={companyPickerSearch}
-                onChangeText={setCompanyPickerSearch}
-                placeholder={t.searchCompanyParts}
-                placeholderTextColor={colors.textSecondary}
-              />
-
-              {isLoadingCompanyParts ? (
-                <View style={styles.pickerEmpty}>
-                  <ActivityIndicator size="large" color={colors.secondary} />
-                </View>
-              ) : filteredCompanyParts.length === 0 ? (
-                <View style={styles.pickerEmpty}>
-                  <MaterialCommunityIcons name="package-variant" size={48} color={colors.textLight} />
-                  <Text style={[styles.pickerEmptyText, { color: colors.textSecondary }]}>
-                    {companyParts.length === 0 ? t.noCompanyParts : t.noActiveCompanyParts}
-                  </Text>
-                </View>
-              ) : (
-                <FlatList
-                  data={filteredCompanyParts}
-                  keyExtractor={(item) => String(item.id)}
-                  contentContainerStyle={styles.pickerList}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={[styles.pickerItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                      onPress={() => handleSelectCompanyPart(item)}
-                    >
-                      <View style={[styles.idBadge, { backgroundColor: colors.secondary + '20' }]}>
-                        <Text style={[styles.idBadgeText, { color: colors.secondary }]}>#{item.id}</Text>
-                      </View>
-                      <Text style={[styles.pickerItemName, { color: colors.textPrimary }]}>{item.name}</Text>
-                      <MaterialCommunityIcons name="plus-circle-outline" size={24} color={colors.secondary} />
-                    </TouchableOpacity>
-                  )}
-                />
-              )}
-            </>
-          )}
-        </View>
-      </Modal>
 
       <GlobalHeader />
     </View>
@@ -839,6 +649,18 @@ const styles = StyleSheet.create({
     fontSize: typography.base,
     fontWeight: typography.bold,
     letterSpacing: 0.3,
+  },
+  formCard: {
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    ...shadows.sm,
+  },
+  formTitle: {
+    fontSize: typography.xl,
+    fontWeight: typography.bold,
+    marginBottom: spacing.lg,
+    letterSpacing: -0.3,
   },
   formLabel: {
     fontSize: typography.sm,
@@ -1006,85 +828,5 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontWeight: typography.bold,
     letterSpacing: 0.3,
-  },
-  // ─── Company Parts Picker Modal ───
-  pickerOverlay: {
-    flex: 1,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-  },
-  pickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
-    borderBottomWidth: 1,
-  },
-  pickerTitle: {
-    fontSize: typography.xl,
-    fontWeight: typography.bold,
-    letterSpacing: -0.3,
-    flex: 1,
-  },
-  pickerCloseBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pickerSearch: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1.5,
-    fontSize: typography.base,
-  },
-  pickerList: {
-    padding: spacing.lg,
-  },
-  pickerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.lg,
-    borderRadius: borderRadius.lg,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    gap: spacing.sm,
-  },
-  pickerItemName: {
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-    flex: 1,
-    letterSpacing: -0.2,
-  },
-  pickerEmpty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.md,
-  },
-  pickerEmptyText: {
-    fontSize: typography.base,
-    fontWeight: typography.semibold,
-  },
-  pickerForm: {
-    padding: spacing.lg,
-  },
-  selectedPartBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.lg,
-    borderRadius: borderRadius.lg,
-    marginBottom: spacing.lg,
-    gap: spacing.sm,
-  },
-  selectedPartName: {
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-    flex: 1,
-    letterSpacing: -0.2,
   },
 });

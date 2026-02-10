@@ -302,7 +302,7 @@ export default function Userjob() {
                   await AsyncStorage.removeItem('userjobDraft');
                   // Navigate to FillJob with the draft data
                   router.push({
-                    pathname: '../shared/FillJob',
+                    pathname: '/FillJob',
                     params: {
                       mode: 'user',
                       draft: JSON.stringify(parsed),

@@ -360,7 +360,7 @@ export default function Workerjob() {
 
     // Navigate to FillJob — it handles the full form
     router.push({
-      pathname: '../shared/FillJob',
+      pathname: '/FillJob',
       params: {
         mode: 'worker',
         job: JSON.stringify({

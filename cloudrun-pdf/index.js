@@ -22,7 +22,6 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const puppeteer = require('puppeteer');
-const sanitizeHtml = require('sanitize-html');
 const { v4: uuidv4 } = require('uuid');
 
 // Email service for document delivery
@@ -47,14 +46,7 @@ const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_CONCURRENT_TABS = 2; // Shared between preview and generate
 const TAB_WAIT_TIMEOUT = 10000; // 10 seconds
 const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
+
 
 function toBaseDocumentId(documentId) {
   const raw = String(documentId || '').trim();

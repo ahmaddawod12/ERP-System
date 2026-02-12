@@ -694,7 +694,6 @@ export function CacheProvider({ children }) {
         const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
         const finishedQuery = query(
           finishedRef,
-          where('completedBy', '==', uid),
           where('finishedAt', '>=', ninetyDaysAgo)
         );
         const finishedSnapshot = await getDocs(finishedQuery);
@@ -705,7 +704,6 @@ export function CacheProvider({ children }) {
         const certsRef = collection(db, 'companies', companyId, 'certifications');
         const certsQuery = query(
           certsRef,
-          where('createdByUid', '==', uid),
           where('createdAt', '>=', ninetyDaysAgo)
         );
         const certsSnapshot = await getDocs(certsQuery);
@@ -716,7 +714,6 @@ export function CacheProvider({ children }) {
         const certsRef = collection(db, 'companies', companyId, 'certifications');
         const certsQuery = query(
           certsRef,
-          where('createdByUid', '==', uid),
           where('createdAt', '>=', ninetyDaysAgo)
         );
         const certsSnapshot = await getDocs(certsQuery);
@@ -827,15 +824,12 @@ export function CacheProvider({ children }) {
         }
       }
       
-      console.log('🔍 Starting deletion check for standardFields:', standardFields.join(', '));
-      
       // Check for standard fields that exist locally but are missing from remote (deleted fields)
       for (const field of standardFields) {
         const hasRemoteField = remoteVersions.hasOwnProperty(field);
         const remoteVersion = remoteVersions[field];
         const localVersion = localVersions[field];
         
-        console.log(`🔍 Checking deletion for ${field}: hasRemote=${hasRemoteField}, remoteVer=${remoteVersion}, localVer=${localVersion}`);
         
         if (localVersion && !hasRemoteField) {
           console.log(`❌ Field ${field} exists locally but not in remote cache - deleting`);
@@ -1744,7 +1738,7 @@ export function CacheProvider({ children }) {
    * 1. Local cache workers list
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker UID (Firebase Auth UID)
+   * @param {string} workerId - Worker ID 
    * @param {object} workerData - { email, name, phoneNumber, uid }
    */
   const addWorker = useCallback(async (workerId, workerData) => {
@@ -1771,8 +1765,8 @@ export function CacheProvider({ children }) {
           email: workerData.email,
           name: workerData.name,
           phoneNumber: workerData.phoneNumber,
-          uid: workerId,
-          workerId: workerData.workerId || workerId,
+          Uid: workerData.Uid,
+          Wid: workerId || workerData.Wid,
           role: 'worker',
           companyId: companyId
         }
@@ -1795,7 +1789,7 @@ export function CacheProvider({ children }) {
    * Can update: name, phoneNumber
    * CANNOT update: email (immutable)
    * 
-   * @param {string} workerId - Worker UID (Firebase Auth UID)
+   * @param {string} workerId - Worker ID to edit in cache  
    * @param {object} updates - { name?, phoneNumber? }
    */
   const editWorker = useCallback(async (workerId, updates) => {
@@ -1851,7 +1845,7 @@ export function CacheProvider({ children }) {
    * 1. Worker from local cache
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker UID (Firebase Auth UID)
+   * @param {string} workerId - Worker ID to delete from cache
    */
   const deleteWorker = useCallback(async (workerId) => {
     const role = getUserRole();
@@ -1958,13 +1952,16 @@ export function CacheProvider({ children }) {
         const companySnap = await transaction.get(companyRef);
         let nextId = 1;
         
-        if (companySnap.exists() && companySnap.data().nextClientId) {
-          nextId = companySnap.data().nextClientId;
+        if (companySnap.exists() && companySnap.data().cid) {
+          nextId = companySnap.data().cid;
+        }
+        else{ 
+           return null; 
         }
         console.log('?? Next client ID:', nextId);
 
         // Update company doc with incremented counter
-        transaction.set(companyRef, { nextClientId: nextId + 1 }, { merge: true });
+        transaction.set(companyRef, { cid: nextId + 1 }, { merge: true });
 
         // Create client doc with numeric string ID
         const clientId = String(nextId);
@@ -2228,7 +2225,7 @@ export function CacheProvider({ children }) {
         
         if (dataType === 'finishedJobs') {
           const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
-          if (role !== 'manager') {
+          if (role == 'worker') {
             q = query(finishedJobsRef,
               where('finishedAt', '>=', monthStart.toISOString()),
               where('finishedAt', '<', cacheStartDate.toISOString()),
@@ -2268,7 +2265,7 @@ export function CacheProvider({ children }) {
       
       if (dataType === 'finishedJobs') {
         const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
-        if (role !== 'manager') {
+        if (role == 'worker') {
           q = query(finishedJobsRef,
             where('finishedAt', '>=', monthStart.toISOString()),
             where('finishedAt', '<=', monthEnd.toISOString()),
@@ -2388,7 +2385,7 @@ export function CacheProvider({ children }) {
       
       if (dataType === 'finishedJobs') {
         const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
-        if (role !== 'manager') {
+        if (role == 'worker') {
           q = query(finishedJobsRef,
             where('finishedAt', '>=', startDate.toISOString()),
             where('finishedAt', '<', getCacheStartDate().toISOString()),

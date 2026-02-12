@@ -66,49 +66,49 @@ export default function WorkersUsers() {
     confirmDelete: 'Are you sure you want to delete this worker?',
     error: 'Error',
   } : language === 'he' ? {
-    title: '????? ??????',
-    subtitle: '?????, ????? ?????? ??????? ??????',
-    back: '????',
-    addWorker: '???? ????',
-    editWorker: '???? ????',
-    username: '?? ?????',
-    password: '?????',
-    email: '??????',
-    name: '?? ?????',
-    phoneNumber: '???? ????? (?????????)',
-    submit: '???',
-    cancel: '?????',
-    delete: '???',
-    edit: '????',
-    noWorkers: '??? ?????? ?????',
-    fillAllFields: '??? ??? ?? ?? ?????',
-    workerAdded: '????? ???? ??????',
-    workerUpdated: '????? ????? ??????',
-    workerDeleted: '????? ???? ??????',
-    confirmDelete: '??? ??? ???? ??????? ????? ???? ???',
-    error: '?????',
+    title: 'ניהול עובדים',
+    subtitle: 'יצירה, עריכה ומחיקת חשבונות עובדים',
+    back: 'חזרה',
+    addWorker: 'הוסף עובד',
+    editWorker: 'ערוך עובד',
+    username: 'שם משתמש',
+    password: 'סיסמה',
+    email: 'אימייל',
+    name: 'שם העובד',
+    phoneNumber: 'מספר טלפון (אופציונלי)',
+    submit: 'שלח',
+    cancel: 'ביטול',
+    delete: 'מחק',
+    edit: 'ערוך',
+    noWorkers: 'אין עובדים עדיין',
+    fillAllFields: 'אנא מלא את כל השדות',
+    workerAdded: 'העובד נוסף בהצלחה',
+    workerUpdated: 'העובד עודכן בהצלחה',
+    workerDeleted: 'העובד נמחק בהצלחה',
+    confirmDelete: 'האם אתה בטוח שברצונך למחוק עובד זה?',
+    error: 'שגיאה',
   } : {
-    title: '????? ??????',
-    subtitle: '????? ?????? ???? ?????? ??????',
-    back: '????',
-    addWorker: '????? ????',
-    editWorker: '????? ????',
-    username: '??? ????????',
-    password: '???? ??????',
-    email: '?????? ??????????',
-    name: '??? ??????',
-    phoneNumber: '??? ?????? (???????)',
-    submit: '?????',
-    cancel: '?????',
-    delete: '???',
-    edit: '?????',
-    noWorkers: '?? ???? ???? ???',
-    fillAllFields: '???? ??? ???? ??????',
-    workerAdded: '??? ????? ?????? ?????',
-    workerUpdated: '?? ????? ?????? ?????',
-    workerDeleted: '?? ??? ?????? ?????',
-    confirmDelete: '?? ??? ????? ?? ??? ??? ???????',
-    error: '???',
+    title: 'إدارة العمال',
+    subtitle: 'إنشاء وتعديل وحذف حسابات العمال',
+    back: 'رجوع',
+    addWorker: 'إضافة عامل',
+    editWorker: 'تعديل عامل',
+    username: 'اسم المستخدم',
+    password: 'كلمة المرور',
+    email: 'البريد الإلكتروني',
+    name: 'اسم العامل',
+    phoneNumber: 'رقم الهاتف (اختياري)',
+    submit: 'إرسال',
+    cancel: 'إلغاء',
+    delete: 'حذف',
+    edit: 'تعديل',
+    noWorkers: 'لا يوجد عمال بعد',
+    fillAllFields: 'يرجى ملء جميع الحقول',
+    workerAdded: 'تمت إضافة العامل بنجاح',
+    workerUpdated: 'تم تحديث العامل بنجاح',
+    workerDeleted: 'تم حذف العامل بنجاح',
+    confirmDelete: 'هل أنت متأكد من حذف هذا العامل؟',
+    error: 'خطأ',
   };
 
   const normalizeEmail = (value) => (value || '').trim().toLowerCase();
@@ -246,10 +246,7 @@ export default function WorkersUsers() {
       });
 
       console.log('Firebase Auth user created:', result.data);
-      
-      // Get the worker UID returned from Cloud Function
-      const workerUid = result.data.uid;
-      
+            
       // STEP 2: Add worker to cache and Firestore using cache function (keyed by UID)
       const workerData = {
         email: normalizedEmail,
@@ -257,11 +254,11 @@ export default function WorkersUsers() {
         phoneNumber: newWorker.phoneNumber || '',
         role: 'worker',
         companyId: companyId,
-        uid: workerUid,
-        workerId: workerUid
+        Uid: result.data.uid,
+        Wid: result.data.wid,
       };
       
-      await addWorker(workerUid, workerData);
+      await addWorker(result.data.wid, workerData);
       
       alert.success('Success', t.workerAdded);
       setShowAddWorker(false);
@@ -313,7 +310,9 @@ export default function WorkersUsers() {
         email: normalizedEmail,
         name: editingWorker.name?.trim(),
         phoneNumber: editingWorker.phoneNumber || '',
-        companyId: companyId
+        companyId: companyId,
+        workerUid: editingWorker.Uid,
+        workerId: editingWorker.Wid,
       };
       if (editingWorker.password) {
         editPayload.newPassword = editingWorker.password;
@@ -327,7 +326,7 @@ export default function WorkersUsers() {
         phoneNumber: editingWorker.phoneNumber || ''
       };
 
-      await editWorker(editingWorker.uid, updates);
+      await editWorker(editingWorker.Wid, updates);
       
       alert.success('Success', t.workerUpdated);
       setShowEditWorker(false);
@@ -382,13 +381,15 @@ export default function WorkersUsers() {
               await manageWorkerFunction({
                 action: 'delete',
                 email: normalizeEmail(worker.email),
-                companyId: companyId
+                companyId: companyId,
+                workerUid: worker.Uid,
+                workerId: worker.Wid,
               });
 
               console.log('Firebase Auth user deleted');
               
-              // STEP 2: Delete worker from cache and Firestore using worker UID
-              await deleteWorker(worker.uid);
+              // STEP 2: Delete worker from cache and Firestore using worker ID
+              await deleteWorker(worker.Wid);
               
               alert.success('Success', t.workerDeleted);
               await loadWorkers();

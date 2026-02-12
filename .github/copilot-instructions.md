@@ -18,7 +18,7 @@
 
 ### ⚠️ NEVER USE `username` OR `getUsernameFromEmail` — ALWAYS USE `uid`
 
-The app uses **Firebase Auth UID** (`auth().currentUser.uid`) as the primary user identifier. The old `username` model (derived from email prefix) has been **completely removed**.
+The app uses **Firebase Auth UID** (`auth.currentUser.uid`) as the primary user identifier. The old `username` model (derived from email prefix) has been **completely removed**.
 
 - **`uid`**: Firebase Auth UID — used for ALL Firestore document paths and field references
 - **`companyId`**: Company identifier — used for ALL company-related Firestore paths
@@ -41,14 +41,14 @@ db.collection('companies').doc(companyName)
 
 ### ✅ REQUIRED — ALWAYS DO THIS
 ```javascript
-// ✅ Get uid from Firebase Auth
-const uid = auth().currentUser.uid;
+// ✅ Get uid from Firebase Auth (modular API — no parentheses on auth)
+const uid = auth.currentUser.uid;
 
-// ✅ Use uid for all user document paths
-db.collection(uid).doc('profile')
+// ✅ Use uid for all user document paths (modular API)
+doc(db, uid, 'profile')
 
-// ✅ Use companyId for company paths
-db.collection('companies').doc(companyId)
+// ✅ Use companyId for company paths (modular API)
+doc(db, 'companies', companyId)
 
 // ✅ Use these field names
 { workerId: '...', companyId: '...', senderUid: '...' }
@@ -191,7 +191,7 @@ Every gated screen in `app/` follows this 3-line pattern:
 
 ```javascript
 import { withGate } from '../modules/shared/withGate';
-import Screen from '../modules/team/screens/ManageJobs';
+import Screen from '../modules/team/ManageJobs';
 export default withGate(Screen, { module: 'team', roles: ['manager'] });
 ```
 
@@ -212,49 +212,37 @@ export default withGate(Screen, { module: 'team', roles: ['manager'] });
 modules/
 ├── team/                        # Team management features (manager/worker)
 │   ├── index.js                 # Module barrel exports
-│   └── screens/
-│       ├── ManageJobs.js        # Manager: manage pending jobs, accept/deny
-│       ├── CreateJob.js         # Manager: assign jobs to workers
-│       ├── WorkersMonitor.js    # Manager: monitor worker inventory & jobs
-│       ├── JobMonitor.js        # Manager: real-time company job monitoring
-│       ├── WorkersUsers.js      # Manager: create/edit/delete worker accounts
-│       └── Workerjob.js         # Worker: view/complete assigned jobs
+│   ├── ManageJobs.js            # Manager: manage pending jobs, accept/deny
+│   ├── CreateJob.js             # Manager: assign jobs to workers
+│   ├── WorkersMonitor.js        # Manager: monitor worker inventory & jobs
+│   ├── JobMonitor.js            # Manager: real-time company job monitoring
+│   ├── WorkersUsers.js          # Manager: create/edit/delete worker accounts
+│   └── Workerjob.js             # Worker: view/complete assigned jobs
 │
 ├── solojob/                     # Solo job management (user/manager)
-│   ├── index.js
-│   └── screens/
-│       ├── Userjob.js           # User: job list and creation hub
-│       ├── FillJob.js           # User: fill out a new job
-│       └── EditJob.js           # User: edit existing job
+│   ├── index.js                 # Re-exports Userjob, FillJob, EditJob (FillJob & EditJob from ../shared/)
+│   └── Userjob.js               # User: job list and creation hub
 │
 ├── documents/                   # Document generation features
-│   ├── index.js
-│   └── screens/
-│       ├── GeneralDocuments.js  # Document hub / type selection
-│       ├── CreateDocument.js    # Create new documents (invoice, proposal, etc.)
-│       ├── GenerateTaxInvoice.js # Generate tax invoice from completed job
-│       ├── DocumentHistory.js   # View document history
-│       └── ViewCertification.js # View individual certification/document
+│   ├── index.js                 # Module barrel exports
+│   ├── GeneralDocuments.js      # Document hub / type selection
+│   ├── CreateDocument.js        # Create new documents (invoice, proposal, etc.)
+│   ├── GenerateTaxInvoice.js    # Generate tax invoice from completed job
+│   ├── DocumentHistory.js       # View document history
+│   └── ViewCertification.js     # View individual certification/document
 │
-├── inventory/                   # Inventory management (split by role)
-│   ├── personal/               # Solo user inventory (free-form parts)
-│   │   ├── index.js
-│   │   └── screens/
-│   │       └── UserInventory.js
-│   ├── teaminventory/          # Worker inventory (picks from company stock)
-│   │   ├── index.js
-│   │   └── screens/
-│   │       └── inventory.js     # WorkerInventory
-│   └── company/                # Manager company-wide stock management
-│       ├── index.js
-│       └── screens/
-│           └── CompanyInventory.js
+├── inventory/                   # Inventory management (flat — all roles in one directory)
+│   ├── index.js                 # Module barrel exports
+│   ├── UserInventory.js         # Solo user inventory (free-form parts)
+│   ├── WorkerInventory.js       # Worker inventory (picks from company stock)
+│   └── CompanyInventory.js      # Manager company-wide stock management
 │
-└── shared/                     # Shared infrastructure
-    └── gating/
-        ├── index.js            # isSubscriptionActive, isModuleEnabled, hasRoleAccess
-        ├── withGate.js         # HOC for subscription gating
-        └── NotAvailableScreen.js # Shown when access is denied
+└── shared/                      # Shared infrastructure + shared screens
+    ├── index.js                 # isSubscriptionActive, isModuleEnabled, hasRoleAccess
+    ├── withGate.js              # HOC for subscription gating
+    ├── NotAvailableScreen.js    # Shown when access is denied
+    ├── FillJob.js               # Shared: fill out a new job (used by user, manager, worker)
+    └── EditJob.js               # Shared: edit existing job (used by user, manager)
 ```
 
 ### App Wrapper Files
@@ -263,33 +251,34 @@ Each gated screen in `app/` is a thin 3-line wrapper:
 
 | App File | Module Screen | Gate Config |
 |----------|--------------|-------------|
-| `app/ManageJobs.js` | `modules/team/screens/ManageJobs` | `module: 'team', roles: ['manager']` |
-| `app/CreateJob.js` | `modules/team/screens/CreateJob` | `module: 'team', roles: ['manager']` |
-| `app/WorkersMonitor.js` | `modules/team/screens/WorkersMonitor` | `module: 'team', roles: ['manager']` |
-| `app/JobMonitor.js` | `modules/team/screens/JobMonitor` | `module: 'team', roles: ['manager']` |
-| `app/WorkersUsers.js` | `modules/team/screens/WorkersUsers` | `module: 'team', roles: ['manager']` |
-| `app/Workerjob.js` | `modules/team/screens/Workerjob` | `module: 'team', roles: ['worker']` |
-| `app/Userjob.js` | `modules/solojob/screens/Userjob` | `module: 'jobs', roles: ['user', 'manager']` |
-| `app/FillJob.js` | `modules/solojob/screens/FillJob` | `module: 'jobs', roles: ['user', 'manager']` |
-| `app/EditJob.js` | `modules/solojob/screens/EditJob` | `module: 'jobs', roles: ['user', 'manager']` |
-| `app/GeneralDocuments.js` | `modules/documents/screens/GeneralDocuments` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
-| `app/CreateDocument.js` | `modules/documents/screens/CreateDocument` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
-| `app/GenerateTaxInvoice.js` | `modules/documents/screens/GenerateTaxInvoice` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
-| `app/DocumentHistory.js` | `modules/documents/screens/DocumentHistory` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
-| `app/ViewCertification.js` | `modules/documents/screens/ViewCertification` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
-| `app/CompanyInventory.js` | `modules/inventory/company/screens/CompanyInventory` | `module: 'inventory', roles: ['manager', 'user']` |
+| `app/ManageJobs.js` | `modules/team/ManageJobs` | `module: 'team', roles: ['manager']` |
+| `app/CreateJob.js` | `modules/team/CreateJob` | `module: 'team', roles: ['manager']` |
+| `app/WorkersMonitor.js` | `modules/team/WorkersMonitor` | `module: 'team', roles: ['manager']` |
+| `app/JobMonitor.js` | `modules/team/JobMonitor` | `module: 'team', roles: ['manager']` |
+| `app/WorkersUsers.js` | `modules/team/WorkersUsers` | `module: 'team', roles: ['manager']` |
+| `app/Workerjob.js` | `modules/team/Workerjob` | `module: 'team', roles: ['worker']` |
+| `app/Userjob.js` | `modules/solojob/Userjob` | `module: 'solojob', roles: ['user', 'manager']` |
+| `app/FillJob.js` | `modules/shared/FillJob` | `module: 'solojob', roles: ['user', 'manager', 'worker'], roleModules: { worker: ['team'] }` |
+| `app/EditJob.js` | `modules/shared/EditJob` | `module: 'solojob', roles: ['user', 'manager']` |
+| `app/GeneralDocuments.js` | `modules/documents/GeneralDocuments` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/CreateDocument.js` | `modules/documents/CreateDocument` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/GenerateTaxInvoice.js` | `modules/documents/GenerateTaxInvoice` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/DocumentHistory.js` | `modules/documents/DocumentHistory` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/ViewCertification.js` | `modules/documents/ViewCertification` | `module: 'documents', roles: ['user', 'basic', 'manager']` |
+| `app/CompanyInventory.js` | `modules/inventory/CompanyInventory` | `module: 'companyinventory', roles: ['manager', 'user']` |
 
 ### Special: `app/inventory.js` (Role-Aware Router)
 
 `app/inventory.js` is **not** a simple 3-line wrapper. It's a role-aware router wrapped with `withGate`:
 
 ```javascript
-import WorkerInventory from '../modules/inventory/teaminventory/screens/inventory';
-import UserInventory from '../modules/inventory/personal/screens/UserInventory';
+import WorkerInventory from '../modules/inventory/WorkerInventory';
+import UserInventory from '../modules/inventory/UserInventory';
 
 function InventoryRouter() {
-  const { profile } = useCache();
-  const role = profile?.role;
+  const { getUserRole } = useCache();
+  const role = getUserRole();
+  // Also handles workerId search param for managers viewing a specific worker's inventory
   // worker / manager → WorkerInventory (company-linked parts)
   // user / basic     → UserInventory   (personal free-form parts)
   if (role === 'worker' || role === 'manager') return <WorkerInventory />;
@@ -297,9 +286,9 @@ function InventoryRouter() {
 }
 
 export default withGate(InventoryRouter, {
-  module: 'inventory',
-  roles: ['manager', 'worker', 'user', 'basic'],
-  roleModules: { worker: ['teaminventory', 'inventory'] }
+  module: 'teaminventory',
+  roles: ['worker', 'manager', 'user', 'basic'],
+  roleModules: { user: [], basic: [] }
 });
 ```
 
@@ -307,19 +296,19 @@ export default withGate(InventoryRouter, {
 
 These screens in `app/` are **NOT wrapped with `withGate`** (they are full implementations or special screens):
 
-- `app/_layout.js` — Root layout with providers
-- `app/index.js` — Auth gate / entry point
-- `app/Login.js` — Authentication screen
-- `app/ManagerHomepage.js` — Manager dashboard
-- `app/WorkerHomepage.js` — Worker dashboard
-- `app/UserHomepage.js` — User dashboard
-- `app/BasicHomepage.js` — Basic user dashboard
-- `app/Settings.js` — Settings screen
-- `app/BusinessReg.js` — Business registration
-- `app/ClientBook.js` — Client address book
-- `app/Permission.js` — Permission management
-- `app/DevInbox.js` — Developer inbox
-- `app/SupportChat.js` — Support chat
+- `app/_layout.js` — Root layout with providers (ErrorBoundary → SafeAreaProvider → ThemeProvider → LanguageProvider → CacheProvider → AlertProvider → Stack)
+- `app/index.js` — Auth gate / entry point (routes by role after login)
+- `app/Login.js` — Authentication screen (email/password)
+- `app/ManagerHomepage.js` — Manager dashboard (4 tabs: Management, Work, Job Monitor, Documents)
+- `app/WorkerHomepage.js` — Worker dashboard (My Jobs, My Inventory)
+- `app/UserHomepage.js` — User dashboard (Create & Fill Job, My Inventory, Documents)
+- `app/BasicHomepage.js` — Basic user dashboard (limited features)
+- `app/Settings.js` — Theme toggle, language selection, logout
+- `app/BusinessReg.js` — Business registration form (company profile setup)
+- `app/ClientBook.js` — Client address book with per-client data browsing (finished jobs, certifications, edit/remove)
+- `app/Permission.js` — Israeli Tax Authority OAuth permission management
+- `app/DevInbox.js` — Developer support inbox
+- `app/SupportChat.js` — User-to-developer support chat
 
 ---
 
@@ -349,22 +338,25 @@ These screens in `app/` are **NOT wrapped with `withGate`** (they are full imple
 
 #### `firebase.js`
 **Purpose**: React Native Firebase initialization for backend services (works identically on iOS and Android).
-- **Uses**: `@react-native-firebase/*` modules (v23.8.5) - NOT the Firebase Web SDK
+- **Uses**: `@react-native-firebase/*` modules (v23.8.5) — uses the **modular API** (v22+ style)
 - **Exports**:
   - `app`: Firebase app instance
-  - `db`: Firestore database instance (chainable API)
-  - `storage`: Firebase Storage for images/files
-  - `auth`: Firebase Authentication with native persistence
+  - `db`: Firestore database instance (modular API — use `doc(db, ...)`, `collection(db, ...)`)
+  - `storage`: Firebase Storage (chainable API — `storage.ref('path').put(blob)`)
+  - `auth`: Firebase Authentication instance (NOT callable — use `auth.currentUser`, NOT `auth()`)
   - `functions`: Cloud Functions instance (us-central1)
   - `middleEastFunctions`: Cloud Functions instance (me-west1)
-  - `Timestamp`: Firestore Timestamp class
-  - `FieldValue`: Firestore FieldValue (serverTimestamp, increment, delete, etc.)
-  - `GeoPoint`: Firestore GeoPoint class
+  - `messaging`: Firebase Cloud Messaging instance
+  - **Modular Firestore re-exports**: `collection`, `doc`, `getDoc`, `getDocs`, `setDoc`, `updateDoc`, `deleteDoc`, `addDoc`, `query`, `where`, `orderBy`, `limit`, `onSnapshot`, `writeBatch`, `runTransaction`, `Timestamp`, `FieldValue`, `GeoPoint`
+  - **Modular Auth re-exports**: `signInWithEmailAndPassword`, `signOut`, `onAuthStateChanged`, `createUserWithEmailAndPassword`
+  - **Modular Functions re-exports**: `httpsCallable`
+  - **Modular Messaging re-exports**: `getToken`, `onMessage`
 - **Key Feature**: Uses native Firebase SDKs with configuration from `GoogleService-Info.plist` (iOS) and `google-services.json` (Android)
-- **API Pattern**: Uses chainable API (NOT Web SDK modular imports)
-  - `db.collection('col').doc('id').get()` instead of `getDoc(doc(db, 'col', 'id'))`
-  - `storage.ref('path').put(blob)` instead of `uploadBytesResumable(ref(storage, 'path'), blob)`
-  - `functions.httpsCallable('name')` instead of `httpsCallable(functions, 'name')`
+- **API Pattern**: Uses **modular API** (NOT the old chainable API)
+  - `getDoc(doc(db, 'col', 'id'))` — NOT `db.collection('col').doc('id').get()`
+  - `httpsCallable(functions, 'name')` — NOT `functions.httpsCallable('name')`
+  - `auth.currentUser.uid` — NOT `auth().currentUser.uid`
+  - **Exception**: `storage` still uses chainable API: `storage.ref('path').put(blob)`
 
 ---
 
@@ -439,7 +431,7 @@ Files in `app/` fall into two categories:
 - **Authentication Flow**:
   1. Validates input fields
   2. Signs in with Firebase Authentication
-  3. Gets `uid` from `auth().currentUser.uid`
+  3. Gets `uid` from `auth.currentUser.uid`
   4. Fetches user profile from `{uid}/profile`
   5. Initializes cache via `initializeCache(uid)`
   6. Routes to appropriate homepage based on role
@@ -478,6 +470,48 @@ Files in `app/` fall into two categories:
 
 ---
 
+#### `app/ClientBook.js`
+**Purpose**: Client address book with per-client data browsing (finished jobs, certifications).
+- **Features**:
+  - Full client list with search
+  - Add/edit/delete clients (synced to `companies/{companyId}/clients` or `{uid}/clients`)
+  - **3-option modal** on client card press:
+    1. **Finished Jobs** — browse finished jobs filtered by this client
+    2. **Certifications** — browse certifications/documents filtered by this client
+    3. **Edit / Remove** — open edit form or delete the client
+  - **Data viewer** with monthly navigation (prev/next month buttons)
+  - Uses `getDataForMonth(monthDate, dataType)` from CacheContext for 3-tier data access
+  - Filters results by `clientId` (primary) or `clientName`/`customerName` (fallback)
+  - Role-aware: managers see company-wide data, users see personal data
+- **Firestore Paths**:
+  - Manager clients: `companies/{companyId}/clients/{clientId}`
+  - User/Basic clients: `{uid}/clients/{clientId}`
+
+---
+
+#### `app/BusinessReg.js`
+**Purpose**: Business registration form for setting up company profile.
+- **Features**: Business name, address, phone, email, business number, VAT details
+- **Firestore Path**: `companies/{companyId}/business_data/business_info`
+
+#### `app/Permission.js`
+**Purpose**: Israeli Tax Authority OAuth permission management.
+- **Features**: OAuth flow for tax invoice approval integration
+
+#### `app/Settings.js`
+**Purpose**: App settings screen.
+- **Features**: Theme toggle (light/dark), language selection (EN/HE/AR), logout
+
+#### `app/DevInbox.js`
+**Purpose**: Developer support inbox for internal use.
+- **Role**: Dev role only
+
+#### `app/SupportChat.js`
+**Purpose**: User-to-developer support chat.
+- **Features**: Real-time messaging, ticket-based support
+
+---
+
 #### Thin Wrapper Files in `app/`
 
 All other gated screen files (ManageJobs.js, CreateJob.js, Workerjob.js, Userjob.js, FillJob.js, EditJob.js, etc.) are **3-line wrappers** as documented in the Module Architecture section above.
@@ -486,12 +520,12 @@ All other gated screen files (ManageJobs.js, CreateJob.js, Workerjob.js, Userjob
 
 ### 🔷 Module Screens — Key Details
 
-#### `modules/solojob/screens/Userjob.js`
+#### `modules/solojob/Userjob.js`
 **Purpose**: Job list and creation hub for solo users.
 - **Firestore Path**: `{uid}/jobs/all/{jobId}`
 - **Features**: Job list view, create new job (navigates to FillJob), edit/delete jobs
 
-#### `modules/solojob/screens/FillJob.js`
+#### `modules/shared/FillJob.js`
 **Purpose**: Full job form for creating a new job.
 - **Features**:
   - Job title and description
@@ -507,11 +541,11 @@ All other gated screen files (ManageJobs.js, CreateJob.js, Workerjob.js, Userjob
   - Firebase Firestore: Job data in `{uid}/jobs/all/{jobId}`
   - AsyncStorage: Draft data persistence
 
-#### `modules/solojob/screens/EditJob.js`
+#### `modules/shared/EditJob.js`
 **Purpose**: Edit an existing job.
 - **Firestore Path**: `{uid}/jobs/all/{jobId}`
 
-#### `modules/team/screens/Workerjob.js`
+#### `modules/team/Workerjob.js`
 **Purpose**: Worker screen to view and complete assigned jobs.
 - **Firestore Path**: `companies/{companyId}/PendingJobs/{jobId}`
 - **Features**:
@@ -529,31 +563,31 @@ const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
 // Opens: https://wa.me/972XXXXXXXXX
 ```
 
-#### `modules/team/screens/ManageJobs.js`
+#### `modules/team/ManageJobs.js`
 **Purpose**: Manager screen for accepting/denying submitted jobs.
 - **Firestore Paths**:
   - Reads: `companies/{companyId}/PendingJobs`
   - Writes: `companies/{companyId}/finishedJobs` (on accept)
   - Updates worker inventory: `{workerId}/inventory/parts` (on accept)
 
-#### `modules/team/screens/CreateJob.js`
+#### `modules/team/CreateJob.js`
 **Purpose**: Manager tool to assign jobs to workers.
 - **Firestore Path**: `companies/{companyId}/PendingJobs/{jobId}`
 - **Job includes**: `assignedTo` (workerId), `assignedBy` (manager uid), `status: 'pending'`
 
-#### `modules/team/screens/JobMonitor.js`
+#### `modules/team/JobMonitor.js`
 **Purpose**: Real-time monitoring of all company jobs.
 - **Firestore Path**: `companies/{companyId}/PendingJobs` + `companies/{companyId}/finishedJobs`
 - **Features**: Status filters, date filters, approve/deny, photo gallery, signature display
 
-#### `modules/team/screens/WorkersMonitor.js`
+#### `modules/team/WorkersMonitor.js`
 **Purpose**: Monitor worker inventory and jobs.
 - **Firestore Paths**:
   - Worker list: `companies/{companyId}/workers/{workerId}`
   - Worker inventory: `{workerId}/inventory/parts`
   - Worker jobs: filtered from `companies/{companyId}/PendingJobs`
 
-#### `modules/team/screens/WorkersUsers.js`
+#### `modules/team/WorkersUsers.js`
 **Purpose**: Create, edit, delete worker accounts.
 - **Firestore Paths**:
   - `companies/{companyId}/workers/{workerId}`: Worker data
@@ -569,44 +603,44 @@ const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
   }
   ```
 
-#### `modules/documents/screens/GeneralDocuments.js`
+#### `modules/documents/GeneralDocuments.js`
 **Purpose**: Document hub for selecting document types.
 - **Document Types**: Tax Invoice, Price Proposal, Refund, Return Certificate
 
-#### `modules/documents/screens/CreateDocument.js`
+#### `modules/documents/CreateDocument.js`
 **Purpose**: Create new documents (all types except tax invoice from job).
 - **Features**: Customer details, line items, calculations, PDF generation via Cloud Function
 
-#### `modules/documents/screens/GenerateTaxInvoice.js`
+#### `modules/documents/GenerateTaxInvoice.js`
 **Purpose**: Generate tax invoices from completed jobs.
 - **Firestore Queries**:
   - Solo: `{uid}/jobs/all` where status = 'finished'
   - Manager: `companies/{companyId}/finishedJobs`
 
-#### `modules/documents/screens/DocumentHistory.js`
+#### `modules/documents/DocumentHistory.js`
 **Purpose**: View history of generated documents/certifications.
 
-#### `modules/documents/screens/ViewCertification.js`
+#### `modules/documents/ViewCertification.js`
 **Purpose**: View individual certification/document details.
 
 ---
 
 ### 🔷 Inventory System (Split by Role)
 
-#### `modules/inventory/personal/screens/UserInventory.js`
+#### `modules/inventory/UserInventory.js`
 **Purpose**: Inventory for solo users (User/Basic roles).
 - **Features**: Free-form add/edit/delete parts, no company link
 - **Firestore Path**: `{uid}/inventory/parts`
 - **Data**: `{ partName: { quantity, lowThreshold } }`
 
-#### `modules/inventory/teaminventory/screens/inventory.js` (WorkerInventory)
+#### `modules/inventory/WorkerInventory.js`
 **Purpose**: Inventory for workers — picks parts from company inventory.
 - **Features**: Select parts from company stock, track personal quantities
 - **Firestore Paths**:
   - Personal: `{uid}/inventory/parts`
   - Company stock: `companies/{companyId}/business_data/inventory`
 
-#### `modules/inventory/company/screens/CompanyInventory.js`
+#### `modules/inventory/CompanyInventory.js`
 **Purpose**: Manager screen for company-wide stock management.
 - **Features**: Add/edit/delete company parts, set thresholds, low-stock alerts
 - **Firestore Path**: `companies/{companyId}/business_data/inventory`
@@ -664,7 +698,7 @@ All components are **reusable, cross-platform UI elements** that work identicall
 
 #### `components/ClientSelector.js` / `components/ClientSelectorModal.js`
 **Purpose**: Client selection components for job forms and documents.
-- **Data Source**: `cachedClients` from CacheContext
+- **Data Source**: `clients` from CacheContext
 
 #### `components/InventoryItemSearch.js`
 **Purpose**: Searchable inventory item picker for job parts selection.
@@ -712,7 +746,7 @@ Global state management using React Context API (works identically on iOS and An
 #### `contexts/HeaderContext.js`
 **Purpose**: Global header state management for dynamic header content.
 
-#### `contexts/CacheContext.js` (~2500 lines) **CRITICAL**
+#### `contexts/CacheContext.js` (~2600 lines) **CRITICAL**
 **Purpose**: High-performance MMKV-based caching system to minimize Firebase reads and enable offline-first functionality.
 
 ⚠️ **CRITICAL: This is the primary data caching system. NEVER use AsyncStorage for user profile data. Always use the `useCache()` hook.**
@@ -740,11 +774,12 @@ Global state management using React Context API (works identically on iOS and An
   {
     profile: { role, email, companyId, name, phoneNumber },
     inventory: { partName: { quantity, lowThreshold } },
-    workersList: [{ email, name, phoneNumber }],
+    workers: [{ email, name, phoneNumber }],
     pendingJobs: [{ id, title, status, assignedTo, ... }],
+    companyPendingJobs: [{ ... }],
     finishedJobs: [{ id, title, finishedAt, ... }],
+    companyFinishedJobs: [{ ... }],
     certifications: [{ id, type, createdAt, ... }],
-    businessInfo: { businessName, businessNumber, ... },
     clients: [{ id, name, phone, email, address, city, vatNumber }]
   }
   ```
@@ -767,7 +802,6 @@ Global state management using React Context API (works identically on iOS and An
     inventory: { partName: { quantity, lowThreshold } },
     finishedJobs: [{ id, title, finishedAt, ... }],
     certifications: [{ id, type, createdAt, ... }],
-    businessInfo: { businessName, businessNumber, ... },
     clients: [{ id, name, phone, email, address, city, vatNumber }]
   }
   ```
@@ -776,17 +810,24 @@ Global state management using React Context API (works identically on iOS and An
   - `initializeCache(uid)`: Initialize cache for logged-in user (takes single `uid` param)
   - `clearCache()`: Clear all cached data (call on logout)
   - `getUid()`: Get cached user UID **(PRIMARY)**
+  - `getUserRole()`: Get cached user role **(PRIMARY)**
   - `getCompanyId()`: Get cached company ID **(PRIMARY)**
   - `getUsername()`: **Deprecated alias** → same as `getUid()`
   - `getCompanyName()`: **Deprecated alias** → same as `getCompanyId()`
-  - `profile`: Current user profile object (alias: `cachedProfile`)
+  - `profile`: Current user profile object
   - `subscription`: Current subscription state (used by `withGate`)
-  - `cachedInventory`, `cachedWorkersList`, `cachedPendingJobs`, `cachedFinishedJobs`
-  - `cachedCertifications`, `cachedBusinessInfo`, `cachedClients`
-  - `updateInventory()`, `updateWorkersList()`, `addJob()`, `updateJob()`
-  - `moveJobToFinished()`, `incrementCacheVersion(field)`
+  - `inventory`, `pendingJobs`, `finishedJobs`, `workers`
+  - `companyPendingJobs`, `companyFinishedJobs`, `certifications`, `clients`
+  - `updateProfile()`, `updateInventory()`, `updateWorkers()` (alias: `updateWorkersList`)
+  - `addWorker()`, `editWorker()`, `deleteWorker()`
+  - `addJob()`, `updateJob()`, `removeJob()`, `moveJobToFinished()`
+  - `addCertification()`
   - `fetchClients()`, `addClient()`, `updateClient()`, `deleteClient()`
-  - `fetchOlderJobs()`, `cleanupExpiredCache()`
+  - `getDataForMonth()`, `getDataForDateRange()`, `fetchFromArchive()`
+  - `isWithinCacheRange()`, `getCacheStartDate()`
+  - `refreshCache()`, `incrementCacheVersion()`, `incrementDocumentVersion()`
+  - `deleteCacheField()`, `updateWorkerCacheVersion()`, `deleteWorkerCacheField()`
+  - `storage`: Direct MMKV access for special cases
 
 - **Version-Based Invalidation**:
   Each cache field has a version in Firestore (e.g., `inventory: 3`):
@@ -809,20 +850,24 @@ Global state management using React Context API (works identically on iOS and An
     const {
       getCompanyId,    // PRIMARY — use this
       getUid,          // PRIMARY — use this
+      getUserRole,     // PRIMARY — use this
       profile,
-      cachedProfile,
-      cachedBusinessInfo,
-      cachedInventory,
-      cachedPendingJobs,
-      cachedClients,
+      inventory,
+      pendingJobs,
+      finishedJobs,
+      companyFinishedJobs,
+      certifications,
+      clients,
       updateInventory,
       addClient,
       incrementCacheVersion,
-      moveJobToFinished
+      moveJobToFinished,
+      getDataForMonth,
     } = useCache();
 
     const companyId = getCompanyId();
     const uid = getUid();
+    const role = getUserRole();
 
     const handleAcceptJob = async (job) => {
       await moveJobToFinished(job);
@@ -839,7 +884,7 @@ Global state management using React Context API (works identically on iOS and An
 - **3-Tier Data Access**:
   | Age | Storage Tier | Access Method |
   |-----|-------------|---------------|
-  | 0-90 days | MMKV cache | `cachedFinishedJobs`, `cachedCertifications` |
+  | 0-90 days | MMKV cache | `finishedJobs`, `certifications` |
   | 90-180 days | Firestore | `getDataForMonth()` queries Firestore |
   | 180+ days | Cloud Storage | `getDataForMonth()` falls back to `fetchFromArchive()` |
 
@@ -898,9 +943,9 @@ Custom React hooks for reusable logic (iOS and Android).
      - Returns: `{ language, setLanguage, t }`
   3. **useFirestoreDoc(...pathSegments)**: Real-time Firestore document
      - Returns: `{ data, loading, error, refresh }`
-  4. **useFirestoreCollection(...)**: Real-time Firestore collection
-     - Returns: `{ data, loading, error, refresh }`
-  5. **useDebouncedValue(value, delay)**: Debounced value for search
+  4. **useDebounce(value, delay)**: Debounced value for search
+  5. **useForm(initialValues)**: Form state management
+     - Returns: `{ values, handleChange, reset, setValues }`
   6. **useUserProfile(uid)**: Fetch user profile by UID
      - Param: `uid` (NOT username)
   7. **useCompanyData(companyId)**: Fetch company data
@@ -909,14 +954,18 @@ Custom React hooks for reusable logic (iOS and Android).
 #### `hooks/useDocumentTask.js` **CRITICAL FOR DOCUMENT GENERATION**
 **Purpose**: Custom hook for publishing document generation tasks to Cloud Functions via Pub/Sub.
 
-⚠️ **CRITICAL: This hook sends `cachedBusinessInfo`, `cachedProfile`, `uid`, and `companyId` to Cloud Functions.**
+⚠️ **CRITICAL: This hook sends `cachedProfile`, `uid`, and `companyId` to Cloud Functions.**
 
 - **Usage**:
   ```javascript
   import { useDocumentTask } from '../hooks/useDocumentTask';
 
   function DocumentScreen() {
-    const { publishPreview, publishGenerate, isPublishing, error } = useDocumentTask();
+    const { publishPreview, publishGenerate, isLoading, error, taskStatus, reset } = useDocumentTask({
+      onPreviewComplete: (data) => { /* handle preview */ },
+      onGenerateComplete: (data) => { /* handle generate */ },
+      onError: (err) => { /* handle error */ },
+    });
     
     const handlePreview = async () => {
       const result = await publishPreview({
@@ -943,12 +992,10 @@ Custom React hooks for reusable logic (iOS and Android).
   ```javascript
   {
     ...documentParams,
-    businessInfo: cachedBusinessInfo,
     userProfile: cachedProfile,
-    uid: getUid(),
-    companyId: getCompanyId()
   }
   ```
+  Note: `businessInfo` is fetched server-side by Cloud Functions for security. `uid` and `companyId` must be included by the caller in `documentParams`.
 
 #### `hooks/useAppStateListener.js`
 **Purpose**: Listens to app state changes (foreground/background) for cache sync.
@@ -980,7 +1027,7 @@ Utility helper functions (platform-agnostic).
   14. **debounce(func, wait)**: Debounce function calls
   15. **deepClone(obj)**: Deep clone an object
 
-⚠️ **`getUsernameFromEmail()` has been REMOVED** — it no longer exists. Always use `auth().currentUser.uid`.
+⚠️ **`getUsernameFromEmail()` has been REMOVED** — it no longer exists. Always use `auth.currentUser.uid`.
 
 #### `utils/notifications.js`
 **Purpose**: Push notification utilities for sending/handling notifications.
@@ -1011,7 +1058,9 @@ Firestore Root
 │
 └── companies (collection)
     └── {companyId} (document — keyed by company identifier)
-        │   └── { nextClientId: number }
+        │   └── { cid: number }   //Client ID (numeric, auto-incremented)
+        │   └── { wid: number }   //Worker ID (numeric, auto-incremented)
+        │   └── { mid: number }   //Manager ID (numeric, auto-incremented)
         │
         ├── workers (collection)
         │   └── {workerId} (document — workerId = worker's uid)
@@ -1316,7 +1365,7 @@ See `ARCHIVER_SETUP.md` for complete deployment instructions.
 
 ### Firebase Authentication
 - Email/Password authentication
-- `uid` = `auth().currentUser.uid` — used as primary identifier everywhere
+- `uid` = `auth.currentUser.uid` — used as primary identifier everywhere
 - Auto-logout on Firebase auth state change
 
 ### Subscription Gating
@@ -1386,7 +1435,7 @@ const t = language === 'en' ? {
 
 1. **NEVER use `username` or `getUsernameFromEmail`**
    - `getUsernameFromEmail` was completely removed from the codebase
-   - Always use `uid` from `auth().currentUser.uid` or `getUid()` from CacheContext
+   - Always use `uid` from `auth.currentUser.uid` or `getUid()` from CacheContext
    - All Firestore paths use `{uid}/` not `{username}/`
 
 2. **NEVER use `companyName` for Firestore paths**
@@ -1394,14 +1443,14 @@ const t = language === 'en' ? {
    - All company paths use `companies/{companyId}/`
 
 3. **Screens go in `modules/`, thin wrappers in `app/`**
-   - New screen logic goes in `modules/{feature}/screens/`
+   - New screen logic goes in `modules/{feature}/` (flat — no `screens/` subdirectory)
    - `app/` files are 3-line wrappers: import withGate, import Screen, export gated screen
    - Only homepages, login, settings, and special screens are full implementations in `app/`
 
 4. **Use `withGate` HOC for subscription gating**
    ```javascript
    import { withGate } from '../modules/shared/withGate';
-   import Screen from '../modules/{feature}/screens/{ScreenName}';
+   import Screen from '../modules/{feature}/{ScreenName}';
    export default withGate(Screen, { module: '{moduleName}', roles: ['{role1}', '{role2}'] });
    ```
 
@@ -1431,7 +1480,7 @@ const t = language === 'en' ? {
 
 10. **Firestore Operations**
     - Always check if user is authenticated
-    - Use `uid` from `auth().currentUser.uid` for user document paths
+    - Use `uid` from `auth.currentUser.uid` for user document paths
     - Use `companyId` from `getCompanyId()` for company paths
     - Use field names: `workerId`, `createdByUid`, `completedByUid`
     - Handle errors gracefully (user might be offline)

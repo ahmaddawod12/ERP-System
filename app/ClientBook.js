@@ -2,11 +2,14 @@
  * ClientBook.js - Client management screen
  * 
  * Allows users to view, search, add, edit, and delete clients.
- * All fields combined from job forms and document forms.
- * Available to all roles (Manager, Worker, User, Basic).
+ * When pressing a client card, shows 3 options:
+ *   1. Show Finished Jobs for this client (monthly filter)
+ *   2. Show Certifications for this client (monthly filter)
+ *   3. Edit or Remove this client
+ * Uses getDataForMonth from CacheContext for cache-first monthly data retrieval.
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -21,6 +24,7 @@ import {
   FlatList,
   ScrollView,
   TouchableWithoutFeedback,
+  Dimensions,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -31,6 +35,18 @@ import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
 import { GlobalHeader, ScrollableContainer } from '../components';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Document type codes (numeric)
+const DOC_TYPE = {
+  PRICE_PROPOSAL: 10,
+  DELIVERY_NOTE: 200,
+  RETURN_CERTIFICATE: 210,
+  TAX_INVOICE: 305,
+  REFUND: 330,
+  RECEIPT: 400,
+};
 
 export default function ClientBook() {
   const { language } = useLanguageContext();
@@ -44,11 +60,14 @@ export default function ClientBook() {
     updateClient,
     deleteClient,
     fetchClients,
+    getDataForMonth,
+    getUserRole,
   } = useCache();
 
+  // --- Existing state ---
   const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [editingClient, setEditingClient] = useState(null); // null = add new, object = editing
+  const [editingClient, setEditingClient] = useState(null);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -58,6 +77,17 @@ export default function ClientBook() {
     city: '',
     vatNumber: '',
   });
+
+  // --- New state for client options & data viewer ---
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [showDataModal, setShowDataModal] = useState(false);
+  const [dataViewType, setDataViewType] = useState('finishedJobs'); // 'finishedJobs' | 'certifications'
+  const [dataItems, setDataItems] = useState([]);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
+
+  const isRTL = language === 'he' || language === 'ar';
 
   const t = language === 'en' ? {
     title: 'Client Book',
@@ -85,6 +115,29 @@ export default function ClientBook() {
     clientDeleted: 'Client deleted successfully',
     required: 'Client name is required',
     totalClients: 'clients',
+    // New translations
+    clientOptions: 'Client Options',
+    finishedJobs: 'Finished Jobs',
+    certifications: 'Certifications',
+    editOrRemove: 'Edit / Remove',
+    noDataFound: 'No data found for this month',
+    jobsFor: 'Finished Jobs for',
+    certsFor: 'Certifications for',
+    jobTitle: 'Job Title',
+    completedOn: 'Completed',
+    status: 'Status',
+    docType: 'Type',
+    docNumber: 'Doc #',
+    amount: 'Amount',
+    createdOn: 'Created',
+    taxInvoice: 'Tax Invoice',
+    priceProposal: 'Price Proposal',
+    refund: 'Refund',
+    returnCertificate: 'Return Certificate',
+    receipt: 'Receipt',
+    deliveryNote: 'Delivery Note',
+    close: 'Close',
+    partsUsed: 'Parts Used',
   } : language === 'he' ? {
     title: 'ספר לקוחות',
     subtitle: 'ניהול הלקוחות שלך',
@@ -111,6 +164,29 @@ export default function ClientBook() {
     clientDeleted: 'הלקוח נמחק בהצלחה',
     required: 'שם לקוח נדרש',
     totalClients: 'לקוחות',
+    // New translations
+    clientOptions: 'אפשרויות לקוח',
+    finishedJobs: 'עבודות שהושלמו',
+    certifications: 'מסמכים',
+    editOrRemove: 'עריכה / מחיקה',
+    noDataFound: 'לא נמצאו נתונים לחודש זה',
+    jobsFor: 'עבודות שהושלמו עבור',
+    certsFor: 'מסמכים עבור',
+    jobTitle: 'כותרת עבודה',
+    completedOn: 'הושלם',
+    status: 'סטטוס',
+    docType: 'סוג',
+    docNumber: 'מס\' מסמך',
+    amount: 'סכום',
+    createdOn: 'נוצר',
+    taxInvoice: 'חשבונית מס',
+    priceProposal: 'הצעת מחיר',
+    refund: 'זיכוי',
+    returnCertificate: 'תעודת החזרה',
+    receipt: 'קבלה',
+    deliveryNote: 'תעודת משלוח',
+    close: 'סגור',
+    partsUsed: 'חלקים שנעשה בהם שימוש',
   } : {
     title: 'دفتر العملاء',
     subtitle: 'إدارة عملائك',
@@ -137,16 +213,106 @@ export default function ClientBook() {
     clientDeleted: 'تم حذف العميل بنجاح',
     required: 'اسم العميل مطلوب',
     totalClients: 'عملاء',
+    // New translations
+    clientOptions: 'خيارات العميل',
+    finishedJobs: 'الأعمال المكتملة',
+    certifications: 'المستندات',
+    editOrRemove: 'تعديل / حذف',
+    noDataFound: 'لا توجد بيانات لهذا الشهر',
+    jobsFor: 'الأعمال المكتملة لـ',
+    certsFor: 'المستندات لـ',
+    jobTitle: 'عنوان العمل',
+    completedOn: 'اكتمل',
+    status: 'الحالة',
+    docType: 'النوع',
+    docNumber: 'رقم المستند',
+    amount: 'المبلغ',
+    createdOn: 'تم الإنشاء',
+    taxInvoice: 'فاتورة ضريبية',
+    priceProposal: 'عرض سعر',
+    refund: 'استرداد',
+    returnCertificate: 'شهادة إرجاع',
+    receipt: 'إيصال',
+    deliveryNote: 'إشعار تسليم',
+    close: 'إغلاق',
+    partsUsed: 'الأجزاء المستخدمة',
   };
 
-  // Fetch clients on mount
+  // --- Helpers ---
+
+  /** Format a Date to month/year display string */
+  const formatMonth = useCallback((date) => {
+    const monthNames = language === 'en'
+      ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+      : language === 'he'
+        ? ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר']
+        : ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+    return `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+  }, [language]);
+
+  /** Format a date field (handles ISO strings and Firestore Timestamps) */
+  const formatDate = useCallback((dateInput) => {
+    if (!dateInput) return '—';
+    let d;
+    if (dateInput.toDate && typeof dateInput.toDate === 'function') {
+      d = dateInput.toDate();
+    } else {
+      d = new Date(dateInput);
+    }
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString(language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-SA' : 'en-US', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }, [language]);
+
+  /** Get document type label */
+  const getDocTypeLabel = useCallback((type) => {
+    const numType = typeof type === 'string' ? parseInt(type, 10) : type;
+    switch (numType) {
+      case DOC_TYPE.TAX_INVOICE: return t.taxInvoice;
+      case DOC_TYPE.PRICE_PROPOSAL: return t.priceProposal;
+      case DOC_TYPE.REFUND: return t.refund;
+      case DOC_TYPE.RETURN_CERTIFICATE: return t.returnCertificate;
+      case DOC_TYPE.RECEIPT: return t.receipt;
+      case DOC_TYPE.DELIVERY_NOTE: return t.deliveryNote;
+      default: return `${type}`;
+    }
+  }, [t]);
+
+  /** Get document type color */
+  const getDocTypeColor = useCallback((type) => {
+    const numType = typeof type === 'string' ? parseInt(type, 10) : type;
+    switch (numType) {
+      case DOC_TYPE.TAX_INVOICE: return '#10B981';
+      case DOC_TYPE.PRICE_PROPOSAL: return '#3B82F6';
+      case DOC_TYPE.REFUND: return '#F59E0B';
+      case DOC_TYPE.RETURN_CERTIFICATE: return '#8B5CF6';
+      case DOC_TYPE.RECEIPT: return '#06B6D4';
+      case DOC_TYPE.DELIVERY_NOTE: return '#8B5CF6';
+      default: return colors.textSecondary;
+    }
+  }, [colors]);
+
+  /** Calculate total from income/items array */
+  const calculateTotal = useCallback((income) => {
+    if (!income || !Array.isArray(income)) return 0;
+    return income.reduce((sum, item) => {
+      const price = parseFloat(item.price) || 0;
+      const quantity = parseFloat(item.quantity) || 1;
+      return sum + (price * quantity);
+    }, 0);
+  }, []);
+
+  // --- Fetch clients on mount ---
   useEffect(() => {
     if (cachedClients.length === 0) {
       fetchClients();
     }
   }, []);
 
-  // Filter clients by search
+  // --- Filter clients by search ---
   const filteredClients = useMemo(() => {
     if (!searchQuery.trim()) return cachedClients;
     const q = searchQuery.toLowerCase();
@@ -159,18 +325,16 @@ export default function ClientBook() {
       (client.vatNumber && client.vatNumber.toLowerCase().includes(q)) ||
       (client.id && client.id.toString().includes(q))
     );
-    
-    // Deduplicate by ID to prevent key conflicts
+    // Deduplicate by ID
     const seen = new Set();
     return filtered.filter(client => {
-      if (seen.has(client.id)) {
-        return false;
-      }
+      if (seen.has(client.id)) return false;
       seen.add(client.id);
       return true;
     });
   }, [cachedClients, searchQuery]);
 
+  // --- Form helpers ---
   const resetForm = () => {
     setFormData({ name: '', phone: '', email: '', address: '', city: '', vatNumber: '' });
     setEditingClient(null);
@@ -191,9 +355,81 @@ export default function ClientBook() {
       city: client.city || '',
       vatNumber: client.vatNumber || '',
     });
+    setShowOptionsModal(false);
     setShowModal(true);
   };
 
+  // --- New: Client options flow ---
+
+  /** Open options modal when pressing a client card */
+  const openClientOptions = (client) => {
+    setSelectedClient(client);
+    setShowOptionsModal(true);
+  };
+
+  /** Fetch finished jobs or certifications for the selected client & month */
+  const fetchClientData = useCallback(async (client, type, monthDate) => {
+    if (!client) return;
+    setDataLoading(true);
+    try {
+      const allData = await getDataForMonth(monthDate, type);
+
+      // Filter by client — match on clientId (primary) or clientName (fallback)
+      const clientId = client.id?.toString();
+      const clientName = client.name?.toLowerCase()?.trim();
+
+      const matched = (allData || []).filter(item => {
+        if (clientId && item.clientId?.toString() === clientId) return true;
+        if (clientName && item.clientName?.toLowerCase()?.trim() === clientName) return true;
+        // Also check customerName for jobs
+        if (clientName && item.customerName?.toLowerCase()?.trim() === clientName) return true;
+        return false;
+      });
+
+      // Sort by date descending
+      const dateField = type === 'certifications' ? 'createdAt' : 'finishedAt';
+      matched.sort((a, b) => {
+        const getTime = (d) => {
+          if (!d) return 0;
+          if (d.toDate && typeof d.toDate === 'function') return d.toDate().getTime();
+          return new Date(d).getTime();
+        };
+        return getTime(b[dateField]) - getTime(a[dateField]);
+      });
+
+      setDataItems(matched);
+    } catch (error) {
+      console.error('Error fetching client data:', error);
+      setDataItems([]);
+    } finally {
+      setDataLoading(false);
+    }
+  }, [getDataForMonth]);
+
+  /** Open data viewer modal (finished jobs or certifications) */
+  const openDataViewer = useCallback((type) => {
+    setDataViewType(type);
+    setSelectedMonth(new Date());
+    setDataItems([]);
+    setShowOptionsModal(false);
+    setShowDataModal(true);
+    // Fetch data for current month
+    fetchClientData(selectedClient, type, new Date());
+  }, [selectedClient, fetchClientData]);
+
+  /** Navigate to previous/next month */
+  const handleMonthChange = useCallback((direction) => {
+    setSelectedMonth(prev => {
+      const newMonth = new Date(prev.getFullYear(), prev.getMonth() + direction, 1);
+      // Don't go into the future
+      const now = new Date();
+      if (newMonth > new Date(now.getFullYear(), now.getMonth(), 1)) return prev;
+      fetchClientData(selectedClient, dataViewType, newMonth);
+      return newMonth;
+    });
+  }, [selectedClient, dataViewType, fetchClientData]);
+
+  // --- Save / Delete handlers ---
   const handleSave = async () => {
     if (!formData.name.trim()) {
       alert.warning(t.required, t.required);
@@ -257,10 +493,106 @@ export default function ClientBook() {
     );
   };
 
+  // --- Renderers ---
+
+  /** Render a single finished job card in the data viewer */
+  const renderJobItem = ({ item }) => (
+    <View style={[styles.dataCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.dataCardHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.dataCardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+            {item.title || item.jobTitle || item.description || '—'}
+          </Text>
+        </View>
+        {item.status && (
+          <View style={[styles.statusBadge, { backgroundColor: '#10B981' + '20' }]}>
+            <Text style={[styles.statusBadgeText, { color: '#10B981' }]}>
+              {item.status}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.dataCardDetails}>
+        <View style={styles.dataDetailRow}>
+          <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
+          <Text style={[styles.dataDetailText, { color: colors.textSecondary }]}>
+            {t.completedOn}: {formatDate(item.finishedAt || item.completedAt)}
+          </Text>
+        </View>
+        {item.location && (
+          <View style={styles.dataDetailRow}>
+            <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
+            <Text style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
+              {item.location}
+            </Text>
+          </View>
+        )}
+        {item.parts && Array.isArray(item.parts) && item.parts.length > 0 && (
+          <View style={styles.dataDetailRow}>
+            <Ionicons name="construct-outline" size={14} color={colors.textSecondary} />
+            <Text style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
+              {t.partsUsed}: {item.parts.map(p => p.partName || p.name).filter(Boolean).join(', ')}
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
+  /** Render a single certification card in the data viewer */
+  const renderCertItem = ({ item }) => {
+    const total = item.totals?.grandTotal ?? calculateTotal(item.income || item.items);
+    const typeColor = getDocTypeColor(item.type);
+    return (
+      <View style={[styles.dataCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.dataCardHeader}>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+              <View style={[styles.docTypeBadge, { backgroundColor: typeColor + '20' }]}>
+                <Text style={[styles.docTypeBadgeText, { color: typeColor }]}>
+                  {getDocTypeLabel(item.type)}
+                </Text>
+              </View>
+              {item.documentNumber && (
+                <Text style={[styles.docNumberText, { color: colors.textSecondary }]}>
+                  #{item.documentNumber}
+                </Text>
+              )}
+            </View>
+          </View>
+          {total > 0 && (
+            <Text style={[styles.amountText, { color: colors.primary }]}>
+              ₪{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </Text>
+          )}
+        </View>
+
+        <View style={styles.dataCardDetails}>
+          <View style={styles.dataDetailRow}>
+            <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
+            <Text style={[styles.dataDetailText, { color: colors.textSecondary }]}>
+              {t.createdOn}: {formatDate(item.createdAt)}
+            </Text>
+          </View>
+          {item.clientName && (
+            <View style={styles.dataDetailRow}>
+              <Ionicons name="person-outline" size={14} color={colors.textSecondary} />
+              <Text style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
+                {item.clientName}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  /** Render client card in main list */
   const renderClientCard = ({ item: client }) => (
     <TouchableOpacity
       style={[styles.clientCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-      onPress={() => openEditModal(client)}
+      onPress={() => openClientOptions(client)}
       activeOpacity={0.7}
     >
       <View style={styles.clientCardRow}>
@@ -309,7 +641,7 @@ export default function ClientBook() {
             </View>
           ) : null}
         </View>
-        <Feather name="chevron-right" size={20} color={colors.textLight} />
+        <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
       </View>
     </TouchableOpacity>
   );
@@ -329,6 +661,12 @@ export default function ClientBook() {
       </Text>
     </View>
   );
+
+  // Check if selected month is the current month (to disable forward nav)
+  const isCurrentMonth = useMemo(() => {
+    const now = new Date();
+    return selectedMonth.getMonth() === now.getMonth() && selectedMonth.getFullYear() === now.getFullYear();
+  }, [selectedMonth]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -383,7 +721,7 @@ export default function ClientBook() {
       <FlatList
         data={filteredClients}
         renderItem={renderClientCard}
-        keyExtractor={(item, index) => `client-${item.id}-${index}-${item.name?.substring(0,3) || 'x'}`}
+        keyExtractor={(item, index) => `client-${item.id}-${index}-${item.name?.substring(0, 3) || 'x'}`}
         contentContainerStyle={[
           styles.listContent,
           filteredClients.length === 0 && styles.listContentEmpty,
@@ -392,7 +730,189 @@ export default function ClientBook() {
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Add/Edit Modal */}
+      {/* ==================== MODAL 1: Client Options ==================== */}
+      <Modal
+        visible={showOptionsModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowOptionsModal(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowOptionsModal(false)}>
+          <View style={styles.optionsOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.optionsContainer, { backgroundColor: colors.surface }]}>
+                {/* Options Header */}
+                <View style={styles.optionsHeader}>
+                  <LinearGradient
+                    colors={gradients.secondary}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.optionsHeaderGradient}
+                  >
+                    <View style={styles.optionsHeaderContent}>
+                      <MaterialCommunityIcons name="account-circle" size={32} color="white" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.optionsHeaderTitle} numberOfLines={1}>
+                          {selectedClient?.name}
+                        </Text>
+                        <Text style={styles.optionsHeaderSubtitle}>
+                          {t.clientOptions}
+                        </Text>
+                      </View>
+                      <TouchableOpacity onPress={() => setShowOptionsModal(false)}>
+                        <Ionicons name="close-circle" size={28} color="rgba(255,255,255,0.8)" />
+                      </TouchableOpacity>
+                    </View>
+                  </LinearGradient>
+                </View>
+
+                {/* Option Buttons */}
+                <View style={styles.optionsButtonList}>
+                  {/* Option 1: Finished Jobs */}
+                  <TouchableOpacity
+                    style={[styles.optionButton, { borderColor: colors.border }]}
+                    onPress={() => openDataViewer('finishedJobs')}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.optionIconBox, { backgroundColor: '#10B981' + '15' }]}>
+                      <MaterialCommunityIcons name="briefcase-check" size={24} color="#10B981" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
+                        {t.finishedJobs}
+                      </Text>
+                    </View>
+                    <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
+                  </TouchableOpacity>
+
+                  {/* Option 2: Certifications */}
+                  <TouchableOpacity
+                    style={[styles.optionButton, { borderColor: colors.border }]}
+                    onPress={() => openDataViewer('certifications')}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.optionIconBox, { backgroundColor: '#3B82F6' + '15' }]}>
+                      <MaterialCommunityIcons name="file-certificate" size={24} color="#3B82F6" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
+                        {t.certifications}
+                      </Text>
+                    </View>
+                    <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
+                  </TouchableOpacity>
+
+                  {/* Option 3: Edit / Remove */}
+                  <TouchableOpacity
+                    style={[styles.optionButton, { borderColor: colors.border }]}
+                    onPress={() => openEditModal(selectedClient)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.optionIconBox, { backgroundColor: '#F59E0B' + '15' }]}>
+                      <MaterialCommunityIcons name="account-edit" size={24} color="#F59E0B" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
+                        {t.editOrRemove}
+                      </Text>
+                    </View>
+                    <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* ==================== MODAL 2: Data Viewer (Jobs / Certs) ==================== */}
+      <Modal
+        visible={showDataModal}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setShowDataModal(false)}
+      >
+        <View style={[styles.dataModalContainer, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+          {/* Data Modal Header */}
+          <LinearGradient
+            colors={dataViewType === 'finishedJobs' ? ['#10B981', '#059669'] : ['#3B82F6', '#2563EB']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.dataModalHeader}
+          >
+            <TouchableOpacity onPress={() => setShowDataModal(false)} style={styles.dataModalClose}>
+              <Ionicons name="arrow-back" size={24} color="white" />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.dataModalTitle} numberOfLines={1}>
+                {dataViewType === 'finishedJobs' ? t.jobsFor : t.certsFor}
+              </Text>
+              <Text style={styles.dataModalSubtitle} numberOfLines={1}>
+                {selectedClient?.name}
+              </Text>
+            </View>
+          </LinearGradient>
+
+          {/* Month Navigator */}
+          <View style={[styles.monthNav, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <TouchableOpacity
+              onPress={() => handleMonthChange(-1)}
+              style={styles.monthNavButton}
+            >
+              <Ionicons name={isRTL ? 'chevron-forward' : 'chevron-back'} size={24} color={colors.primary} />
+            </TouchableOpacity>
+            <View style={styles.monthNavCenter}>
+              <Ionicons name="calendar-outline" size={18} color={colors.primary} style={{ marginRight: spacing.xs }} />
+              <Text style={[styles.monthNavText, { color: colors.textPrimary }]}>
+                {formatMonth(selectedMonth)}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => handleMonthChange(1)}
+              style={styles.monthNavButton}
+              disabled={isCurrentMonth}
+            >
+              <Ionicons
+                name={isRTL ? 'chevron-back' : 'chevron-forward'}
+                size={24}
+                color={isCurrentMonth ? colors.textLight : colors.primary}
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Data List */}
+          {dataLoading ? (
+            <View style={styles.dataLoadingContainer}>
+              <ActivityIndicator size="large" color={dataViewType === 'finishedJobs' ? '#10B981' : '#3B82F6'} />
+            </View>
+          ) : (
+            <FlatList
+              data={dataItems}
+              renderItem={dataViewType === 'finishedJobs' ? renderJobItem : renderCertItem}
+              keyExtractor={(item, idx) => `data-${item.id || idx}`}
+              contentContainerStyle={[
+                styles.dataListContent,
+                dataItems.length === 0 && styles.dataListEmpty,
+              ]}
+              ListEmptyComponent={
+                <View style={styles.dataEmptyState}>
+                  <MaterialCommunityIcons
+                    name={dataViewType === 'finishedJobs' ? 'briefcase-off-outline' : 'file-document-remove-outline'}
+                    size={64}
+                    color={colors.textLight}
+                  />
+                  <Text style={[styles.dataEmptyText, { color: colors.textSecondary }]}>
+                    {t.noDataFound}
+                  </Text>
+                </View>
+              }
+              showsVerticalScrollIndicator={false}
+            />
+          )}
+        </View>
+      </Modal>
+
+      {/* ==================== MODAL 3: Add/Edit Client ==================== */}
       <Modal
         visible={showModal}
         animationType="slide"
@@ -428,182 +948,182 @@ export default function ClientBook() {
               </View>
 
               {/* Form */}
-              <ScrollView 
+              <ScrollView
                 style={styles.formScroll}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
               >
-              {/* Name */}
-              <View style={styles.formField}>
-                <View style={styles.fieldLabelRow}>
-                  <Ionicons name="person" size={16} color={colors.secondary} />
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    {t.name} *
-                  </Text>
+                {/* Name */}
+                <View style={styles.formField}>
+                  <View style={styles.fieldLabelRow}>
+                    <Ionicons name="person" size={16} color={colors.secondary} />
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                      {t.name} *
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[styles.formInput, {
+                      backgroundColor: colors.backgroundLight,
+                      borderColor: formData.name ? colors.secondary : colors.border,
+                      color: colors.textPrimary,
+                    }]}
+                    placeholder={t.name}
+                    placeholderTextColor={colors.textLight}
+                    value={formData.name}
+                    onChangeText={(text) => setFormData({ ...formData, name: text })}
+                    autoFocus={!editingClient}
+                  />
                 </View>
-                <TextInput
-                  style={[styles.formInput, {
-                    backgroundColor: colors.backgroundLight,
-                    borderColor: formData.name ? colors.secondary : colors.border,
-                    color: colors.textPrimary,
-                  }]}
-                  placeholder={t.name}
-                  placeholderTextColor={colors.textLight}
-                  value={formData.name}
-                  onChangeText={(text) => setFormData({ ...formData, name: text })}
-                  autoFocus={!editingClient}
-                />
-              </View>
 
-              {/* Phone */}
-              <View style={styles.formField}>
-                <View style={styles.fieldLabelRow}>
-                  <Ionicons name="call" size={16} color={colors.secondary} />
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    {t.phone}
-                  </Text>
+                {/* Phone */}
+                <View style={styles.formField}>
+                  <View style={styles.fieldLabelRow}>
+                    <Ionicons name="call" size={16} color={colors.secondary} />
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                      {t.phone}
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[styles.formInput, {
+                      backgroundColor: colors.backgroundLight,
+                      borderColor: formData.phone ? colors.secondary : colors.border,
+                      color: colors.textPrimary,
+                    }]}
+                    placeholder={t.phone}
+                    placeholderTextColor={colors.textLight}
+                    value={formData.phone}
+                    onChangeText={(text) => setFormData({ ...formData, phone: text })}
+                    keyboardType="phone-pad"
+                  />
                 </View>
-                <TextInput
-                  style={[styles.formInput, {
-                    backgroundColor: colors.backgroundLight,
-                    borderColor: formData.phone ? colors.secondary : colors.border,
-                    color: colors.textPrimary,
-                  }]}
-                  placeholder={t.phone}
-                  placeholderTextColor={colors.textLight}
-                  value={formData.phone}
-                  onChangeText={(text) => setFormData({ ...formData, phone: text })}
-                  keyboardType="phone-pad"
-                />
-              </View>
 
-              {/* Email */}
-              <View style={styles.formField}>
-                <View style={styles.fieldLabelRow}>
-                  <Ionicons name="mail" size={16} color={colors.secondary} />
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    {t.email}
-                  </Text>
+                {/* Email */}
+                <View style={styles.formField}>
+                  <View style={styles.fieldLabelRow}>
+                    <Ionicons name="mail" size={16} color={colors.secondary} />
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                      {t.email}
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[styles.formInput, {
+                      backgroundColor: colors.backgroundLight,
+                      borderColor: formData.email ? colors.secondary : colors.border,
+                      color: colors.textPrimary,
+                    }]}
+                    placeholder={t.email}
+                    placeholderTextColor={colors.textLight}
+                    value={formData.email}
+                    onChangeText={(text) => setFormData({ ...formData, email: text })}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
                 </View>
-                <TextInput
-                  style={[styles.formInput, {
-                    backgroundColor: colors.backgroundLight,
-                    borderColor: formData.email ? colors.secondary : colors.border,
-                    color: colors.textPrimary,
-                  }]}
-                  placeholder={t.email}
-                  placeholderTextColor={colors.textLight}
-                  value={formData.email}
-                  onChangeText={(text) => setFormData({ ...formData, email: text })}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-              </View>
 
-              {/* Address */}
-              <View style={styles.formField}>
-                <View style={styles.fieldLabelRow}>
-                  <Ionicons name="location" size={16} color={colors.secondary} />
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    {t.address}
-                  </Text>
+                {/* Address */}
+                <View style={styles.formField}>
+                  <View style={styles.fieldLabelRow}>
+                    <Ionicons name="location" size={16} color={colors.secondary} />
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                      {t.address}
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[styles.formInput, {
+                      backgroundColor: colors.backgroundLight,
+                      borderColor: formData.address ? colors.secondary : colors.border,
+                      color: colors.textPrimary,
+                    }]}
+                    placeholder={t.address}
+                    placeholderTextColor={colors.textLight}
+                    value={formData.address}
+                    onChangeText={(text) => setFormData({ ...formData, address: text })}
+                  />
                 </View>
-                <TextInput
-                  style={[styles.formInput, {
-                    backgroundColor: colors.backgroundLight,
-                    borderColor: formData.address ? colors.secondary : colors.border,
-                    color: colors.textPrimary,
-                  }]}
-                  placeholder={t.address}
-                  placeholderTextColor={colors.textLight}
-                  value={formData.address}
-                  onChangeText={(text) => setFormData({ ...formData, address: text })}
-                />
-              </View>
 
-              {/* City */}
-              <View style={styles.formField}>
-                <View style={styles.fieldLabelRow}>
-                  <MaterialCommunityIcons name="city" size={16} color={colors.secondary} />
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    {t.city}
-                  </Text>
+                {/* City */}
+                <View style={styles.formField}>
+                  <View style={styles.fieldLabelRow}>
+                    <MaterialCommunityIcons name="city" size={16} color={colors.secondary} />
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                      {t.city}
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[styles.formInput, {
+                      backgroundColor: colors.backgroundLight,
+                      borderColor: formData.city ? colors.secondary : colors.border,
+                      color: colors.textPrimary,
+                    }]}
+                    placeholder={t.city}
+                    placeholderTextColor={colors.textLight}
+                    value={formData.city}
+                    onChangeText={(text) => setFormData({ ...formData, city: text })}
+                  />
                 </View>
-                <TextInput
-                  style={[styles.formInput, {
-                    backgroundColor: colors.backgroundLight,
-                    borderColor: formData.city ? colors.secondary : colors.border,
-                    color: colors.textPrimary,
-                  }]}
-                  placeholder={t.city}
-                  placeholderTextColor={colors.textLight}
-                  value={formData.city}
-                  onChangeText={(text) => setFormData({ ...formData, city: text })}
-                />
-              </View>
 
-              {/* VAT Number */}
-              <View style={styles.formField}>
-                <View style={styles.fieldLabelRow}>
-                  <MaterialCommunityIcons name="file-document-outline" size={16} color={colors.secondary} />
-                  <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                    {t.vatNumber}
-                  </Text>
+                {/* VAT Number */}
+                <View style={styles.formField}>
+                  <View style={styles.fieldLabelRow}>
+                    <MaterialCommunityIcons name="file-document-outline" size={16} color={colors.secondary} />
+                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                      {t.vatNumber}
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[styles.formInput, {
+                      backgroundColor: colors.backgroundLight,
+                      borderColor: formData.vatNumber ? colors.secondary : colors.border,
+                      color: colors.textPrimary,
+                    }]}
+                    placeholder={t.vatNumber}
+                    placeholderTextColor={colors.textLight}
+                    value={formData.vatNumber}
+                    onChangeText={(text) => setFormData({ ...formData, vatNumber: text })}
+                    keyboardType="numeric"
+                  />
                 </View>
-                <TextInput
-                  style={[styles.formInput, {
-                    backgroundColor: colors.backgroundLight,
-                    borderColor: formData.vatNumber ? colors.secondary : colors.border,
-                    color: colors.textPrimary,
-                  }]}
-                  placeholder={t.vatNumber}
-                  placeholderTextColor={colors.textLight}
-                  value={formData.vatNumber}
-                  onChangeText={(text) => setFormData({ ...formData, vatNumber: text })}
-                  keyboardType="numeric"
-                />
-              </View>
-            </ScrollView>
+              </ScrollView>
 
-            {/* Action Buttons */}
-            <View style={styles.modalActions}>
-              {editingClient && (
+              {/* Action Buttons */}
+              <View style={styles.modalActions}>
+                {editingClient && (
+                  <TouchableOpacity
+                    style={[styles.deleteButton, { borderColor: colors.error }]}
+                    onPress={() => handleDelete(editingClient)}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={colors.error} />
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
-                  style={[styles.deleteButton, { borderColor: colors.error }]}
-                  onPress={() => handleDelete(editingClient)}
+                  style={[styles.cancelButton, { borderColor: colors.border, flex: 1 }]}
+                  onPress={() => {
+                    setShowModal(false);
+                    resetForm();
+                  }}
                 >
-                  <Ionicons name="trash-outline" size={20} color={colors.error} />
+                  <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
                 </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[styles.cancelButton, { borderColor: colors.border, flex: 1 }]}
-                onPress={() => {
-                  setShowModal(false);
-                  resetForm();
-                }}
-              >
-                <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveButtonWrapper, { flex: 1 }]}
-                onPress={handleSave}
-                disabled={loading}
-              >
-                <LinearGradient
-                  colors={editingClient ? gradients.secondary : gradients.primary}
-                  style={styles.saveButton}
+                <TouchableOpacity
+                  style={[styles.saveButtonWrapper, { flex: 1 }]}
+                  onPress={handleSave}
+                  disabled={loading}
                 >
-                  {loading ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark" size={20} color="white" />
-                      <Text style={styles.saveButtonText}>{t.save}</Text>
-                    </>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
+                  <LinearGradient
+                    colors={editingClient ? gradients.secondary : gradients.primary}
+                    style={styles.saveButton}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="white" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark" size={20} color="white" />
+                        <Text style={styles.saveButtonText}>{t.save}</Text>
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
             </View>
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
@@ -751,7 +1271,207 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: spacing.xxl,
   },
-  // Modal
+
+  // ====================== Options Modal ======================
+  optionsOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: spacing.lg,
+  },
+  optionsContainer: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: borderRadius.xl + 4,
+    overflow: 'hidden',
+    ...shadows.lg,
+  },
+  optionsHeader: {
+    overflow: 'hidden',
+  },
+  optionsHeaderGradient: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  optionsHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  optionsHeaderTitle: {
+    fontSize: typography.lg,
+    fontWeight: typography.bold,
+    color: 'white',
+  },
+  optionsHeaderSubtitle: {
+    fontSize: typography.xs,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 2,
+  },
+  optionsButtonList: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  optionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+    gap: spacing.md,
+  },
+  optionIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  optionButtonTitle: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+  },
+
+  // ====================== Data Modal ======================
+  dataModalContainer: {
+    flex: 1,
+  },
+  dataModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.lg,
+    gap: spacing.sm,
+  },
+  dataModalClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dataModalTitle: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: 'rgba(255,255,255,0.85)',
+  },
+  dataModalSubtitle: {
+    fontSize: typography.lg,
+    fontWeight: typography.bold,
+    color: 'white',
+  },
+  // Month Navigator
+  monthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: spacing.lg,
+    marginVertical: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    ...shadows.sm,
+  },
+  monthNavButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 20,
+  },
+  monthNavCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  monthNavText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+  },
+  // Data Cards
+  dataListContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
+    paddingTop: spacing.xs,
+  },
+  dataListEmpty: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  dataCard: {
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    ...shadows.sm,
+  },
+  dataCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  dataCardTitle: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+  },
+  statusBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
+  },
+  statusBadgeText: {
+    fontSize: typography.xs,
+    fontWeight: typography.bold,
+  },
+  docTypeBadge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
+  },
+  docTypeBadgeText: {
+    fontSize: typography.xs,
+    fontWeight: typography.bold,
+  },
+  docNumberText: {
+    fontSize: typography.xs,
+    fontWeight: typography.semibold,
+  },
+  amountText: {
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+  },
+  dataCardDetails: {
+    marginTop: spacing.sm,
+    gap: 4,
+  },
+  dataDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  dataDetailText: {
+    fontSize: typography.sm,
+    flex: 1,
+  },
+  dataLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dataEmptyState: {
+    alignItems: 'center',
+    paddingVertical: spacing.xxl * 2,
+    gap: spacing.md,
+  },
+  dataEmptyText: {
+    fontSize: typography.base,
+    textAlign: 'center',
+  },
+
+  // ====================== Add/Edit Modal ======================
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',

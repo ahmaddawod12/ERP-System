@@ -10,9 +10,6 @@ const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https")
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const logger = require("firebase-functions/logger");
-const puppeteer = require("puppeteer-core");
-const chromium = require("@sparticuz/chromium");
-const sanitizeHtml = require("sanitize-html");
 const axios = require("axios");
 const axiosRetry = require("axios-retry").default;
 const { PubSub } = require("@google-cloud/pubsub");
@@ -82,16 +79,6 @@ const DOC_SUFFIX = {
   [DOC_TYPE.RECEIPT]: 'RT'
 };
 
-// Module-level browser instance for reuse across invocations
-let browserInstance = null;
-let browserLastUsed = null;
-const BROWSER_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-
-// Document generation limits
-const MAX_ITEMS_PER_DOCUMENT = 100;
-const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
-const PREVIEW_URL_EXPIRATION = 60 * 60; // 1 hour in seconds for signed URLs
-const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // For cost control, set maximum concurrent instances
 setGlobalOptions({ 
@@ -99,22 +86,7 @@ setGlobalOptions({
   region: "us-central1" // Change to your preferred region
 });
 
-/**
- * Helper: Look up a user's Firebase UID from their email via Firebase Auth.
- * @param {string} email - The user's email address
- * @returns {Promise<string>} The user's Firebase UID
- */
-async function getUidFromEmail(email) {
-  const userRecord = await admin.auth().getUserByEmail(email);
-  return userRecord.uid;
-}
 
-/**
- * Normalize user-provided email input for consistent auth/doc keys.
- */
-function normalizeEmail(email) {
-  return String(email || '').trim().toLowerCase();
-}
 
 /**
  * Basic email shape validation.
@@ -357,17 +329,15 @@ exports.manageWorker = onCall(async (request) => {
   try {
     const {
       action,
-      email: rawEmail,
+      email,
       password,
       name,
       phoneNumber,
-      companyId: rawCompanyId,
-      newEmail: rawNewEmail,
+      companyId,
+      workerUid, // For delete/edit action (UID-based)
+      workerId, // For delete edit/action (path of the document)
       newPassword
     } = request.data;
-    const email = normalizeEmail(rawEmail);
-    const companyId = String(rawCompanyId || '').trim();
-    const newEmail = rawNewEmail ? normalizeEmail(rawNewEmail) : '';
 
     logger.info('manageWorker called', { 
       action,
@@ -399,17 +369,6 @@ exports.manageWorker = onCall(async (request) => {
       throw new HttpsError('invalid-argument', 'New password must be at least 8 characters');
     }
 
-    // Verify manager authentication
-    // For add, we don't have a worker UID yet; for edit/delete, look up worker UID from email
-    let workerUid = null;
-    if (action !== 'add') {
-      try {
-        const workerRecord = await admin.auth().getUserByEmail(email);
-        workerUid = workerRecord.uid;
-      } catch (authLookupError) {
-        throw new HttpsError('not-found', `Worker with email ${email} not found in authentication system`);
-      }
-    }
     await verifyManagerAuth(request.auth, workerUid, companyId);
 
     // ========== ADD WORKER ==========
@@ -417,12 +376,19 @@ exports.manageWorker = onCall(async (request) => {
       if (!password) {
         throw new HttpsError('invalid-argument', 'Password is required for adding a worker');
       }
-
+      let workerid = null; // For assigning workerId on add
+      const companyRef = doc(db, 'companies', companyId);
+      const companySnap = await transaction.get(companyRef);
+      if (companySnap.exists() && companySnap.data().wid) {
+        workerid = companySnap.data().wid;
+      }
+      else{ 
+        return { success: false, message: 'Worker id not found' }; 
+      }
       // Create Firebase Authentication user
       const userRecord = await admin.auth().createUser({
         email: email,
         password: password,
-        displayName: name || email.split('@')[0],
       });
       workerUid = userRecord.uid;
 
@@ -431,28 +397,28 @@ exports.manageWorker = onCall(async (request) => {
       // Create worker profile in Firestore (keyed by UID)
       const workerProfileRef = admin.firestore().doc(`${workerUid}/profile`);
       await workerProfileRef.set({
-        email: email,
         role: 'worker',
         companyId: companyId,
         name: name || '',
         phoneNumber: phoneNumber || '',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        uid: workerUid
+        workerId: workerid
       });
       const workerCacheRef = admin.firestore().doc(`${workerUid}/cache`);
       await workerCacheRef.set({
         profile : 1});
       logger.info(`Created Firestore profile for worker: ${email} (uid: ${workerUid})`);
 
-      // Add worker to company's worker list (keyed by UID)
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerUid}`);
+      // Add worker to company's worker list (keyed by workerId)
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
       await workerListRef.set({
         email: email,
         name: name || '',
         phoneNumber: phoneNumber || '',
-        uid: workerUid,
+        Uid: workerUid,
+        Wid: workerid,
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
+      companySnap.set(companyRef, { wid: workerid + 1 }, { merge: true });
 
       logger.info(`Added worker to company list: ${companyId}`);
       await saveAuditLog(companyId, 'addWorker', request.auth.token.email);
@@ -460,6 +426,7 @@ exports.manageWorker = onCall(async (request) => {
       return {
         success: true,
         uid: workerUid,
+        wid: workerid,
         message: 'Worker account created successfully'
       };
     }
@@ -483,7 +450,7 @@ exports.manageWorker = onCall(async (request) => {
       }
 
       // Remove worker from company's worker list (keyed by UID)
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerUid}`);
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
       await workerListRef.delete();
       logger.info(`Removed worker from company list: ${companyId}`);
 
@@ -548,8 +515,8 @@ exports.manageWorker = onCall(async (request) => {
         logger.info(`Updated Firestore profile for worker: ${email} (uid: ${workerUid})`);
       }
 
-      // Update company's worker list (keyed by UID)
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerUid}`);
+      // Update company's worker list (keyed by workerId)
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
       const updateData = {};
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
       if (name) {
@@ -1382,11 +1349,8 @@ exports.getInvoiceApproval = onCall({
 
     // Generate next document number and build document ID using date-number-type format
     const documentNumber = businessInfo.document_numbers[305];
-    const todayDate = new Date().toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD format
-    const todayDate_2 = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const paddedDocNumber = String(documentNumber).padStart(6, '0'); // e.g., "000001"
-    const documentId = `${todayDate}${paddedDocNumber}TI`; // e.g., "20260105000001TI"
-    const fileName = `${documentId}.pdf`; // e.g., "20260105000001TI.pdf"
+    const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const documentId = `TI${documentNumber}-${companyId}`; // e.g., "TI1-4" - using companyId for uniqueness across companies
 
     logger.info('Preparing Tax Authority submission', {
       documentId,
@@ -1572,7 +1536,7 @@ exports.getInvoiceApproval = onCall({
       vat_number: businessInfo.vat_number ,
       //user_id: 15, // REQUIRED: User ID in Tax Authority system (use fixed test value for sandbox)
       user_name: userData.name || userData.email || uid, // Use display name, fallback to email/UID
-      invoice_reference_number: paddedDocNumber,
+      invoice_reference_number: documentNumber,
     };
 
     // CRITICAL: Only add customer_vat_number and customer_name if customer is a business
@@ -1592,8 +1556,8 @@ exports.getInvoiceApproval = onCall({
     // For normal customers, customer_name and customer_vat_number are NOT included
 
     // Continue building in exact order
-    taxAuthorityData.invoice_date = todayDate_2;
-    taxAuthorityData.invoice_issuance_date = todayDate_2;
+    taxAuthorityData.invoice_date = todayDate;
+    taxAuthorityData.invoice_issuance_date = todayDate;
     taxAuthorityData.accounting_software_number = accountingSoftwareNumber; // REQUIRED: Integer from timestamp
     taxAuthorityData.client_software_key = clientSoftwareKey; // REQUIRED: Numeric string from timestamp
     taxAuthorityData.amount_before_discount = Math.round(totalBeforeVat * 100) / 100;
@@ -2607,14 +2571,12 @@ exports.publishGenerateTask = onCall({
       // Get and increment document number
       const documentNumbers = businessInfo.document_numbers || {};
       documentNumber = documentNumbers[numericDocType] || 1;
-      const documentNumberField = `document_numbers.${numericDocType}`;
       
       // Generate document ID using YYYYMMDD format with suffix
       const todayDate = new Date().toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD
-      const paddedDocNumber = String(documentNumber).padStart(6, '0');
       const typeSuffix = DOC_SUFFIX[numericDocType] || 'XX';
       
-      documentId = `${todayDate}${paddedDocNumber}${typeSuffix}`;
+      documentId = `${typeSuffix}${documentNumber}-${companyId}`;
       
       // Calculate totals
       let totalBeforeVat = 0;

@@ -1,0 +1,150 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userProfile(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)/profile/data);
+    }
+
+    function role(uid) {
+      return signedIn() && userProfile(uid).exists() ? userProfile(uid).data.role : null;
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        request.auth.token.admin == true ||
+        role(request.auth.uid) == "Dev"
+      );
+    }
+
+    function isManager(companyId) {
+      return signedIn() && (
+        get(/databases/$(database)/documents/companies/$(companyId)/workers/$(request.auth.uid)).data.role == "Manager" ||
+        get(/databases/$(database)/documents/companies/$(companyId)/workers/$(request.auth.uid)).data.role == "Dev"
+      );
+    }
+
+    function isWorker(companyId) {
+      return signedIn() &&
+        get(/databases/$(database)/documents/companies/$(companyId)/workers/$(request.auth.uid)).exists() &&
+        get(/databases/$(database)/documents/companies/$(companyId)/workers/$(request.auth.uid)).data.role == "Worker";
+    }
+
+    function isCompanyMember(companyId) {
+      return signedIn() &&
+        get(/databases/$(database)/documents/companies/$(companyId)/workers/$(request.auth.uid)).exists();
+    }
+
+    function isBasic(uid) {
+      return role(uid) == "Basic";
+    }
+
+    match /users/{uid}/profile/{profileId} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/subscription/{subscriptionId} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/jobs/{jobId} {
+      allow read, write: if signedIn() && request.auth.uid == uid && !isBasic(uid);
+    }
+
+    match /users/{uid}/personal_inventory/{itemId} {
+      allow read, write: if signedIn() && request.auth.uid == uid && !isBasic(uid);
+    }
+
+    match /users/{uid}/clients/{clientId} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /companies/{companyId} {
+      allow read: if isCompanyMember(companyId);
+      allow create: if signedIn();
+      allow update, delete: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/business_data/{docId} {
+      allow read: if isCompanyMember(companyId);
+      allow write: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/business_data/inventory/parts/{partId} {
+      allow read: if isCompanyMember(companyId);
+      allow write: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/workers/{workerId} {
+      allow read: if isCompanyMember(companyId);
+      allow create, update, delete: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/clients/{clientId} {
+      allow read: if isCompanyMember(companyId);
+      allow write: if isManager(companyId) || (
+        isCompanyMember(companyId) &&
+        role(request.auth.uid) in ["User", "Basic"]
+      );
+    }
+
+    match /companies/{companyId}/PendingJobs/{jobId} {
+      allow read: if isCompanyMember(companyId) && !isBasic(request.auth.uid);
+      allow create: if isManager(companyId) && !isBasic(request.auth.uid);
+      allow update, delete: if isManager(companyId) || (
+        isWorker(companyId) &&
+        resource.data.workerId == request.auth.uid &&
+        !isBasic(request.auth.uid)
+      );
+    }
+
+    match /companies/{companyId}/finishedJobs/{jobId} {
+      allow read: if isCompanyMember(companyId) && !isBasic(request.auth.uid);
+      allow create, update: if isManager(companyId) || (
+        isWorker(companyId) &&
+        request.resource.data.workerId == request.auth.uid &&
+        !isBasic(request.auth.uid)
+      );
+      allow delete: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/certifications/{docId} {
+      allow read: if isCompanyMember(companyId);
+      allow create: if isCompanyMember(companyId);
+      allow update, delete: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/invites/{inviteId} {
+      allow read: if isManager(companyId);
+      allow create: if isManager(companyId);
+      allow update: if isManager(companyId) || isWorker(companyId);
+      allow delete: if isManager(companyId);
+    }
+
+    match /companies/{companyId}/inventory_picks/{pickId} {
+      allow read: if isCompanyMember(companyId);
+      allow create: if isWorker(companyId) || isManager(companyId);
+      allow update, delete: if isManager(companyId);
+    }
+
+    match /upgrade_requests/{requestId} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    match /contact_requests/{id} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}
+
+// Notes:
+// 1) Strict numeric counters for company clients should be finalized by Cloud Functions
+//    to prevent races and enforce role checks server-side.
+// 2) Invite code creation/consumption should also be backed by Cloud Functions for one-time
+//    usage constraints and expiry policies in production.

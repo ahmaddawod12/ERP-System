@@ -1,0 +1,132 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { ProtectedRoute } from "@/components/auth/protected-route";
+import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { DataTable } from "@/components/ui/DataTable";
+import { LoadingState } from "@/components/states/loading-state";
+import { EmptyState } from "@/components/states/empty-state";
+import { useAppContext } from "@/hooks/use-app-context";
+import { useAppToast } from "@/hooks/use-toast";
+import { listWorkers, updateWorkerRole } from "@/lib/services/firestore-service";
+import type { Role, WorkerProfile } from "@/lib/types";
+
+export default function WorkersPage() {
+  const { uid, companyId } = useAppContext();
+  const { toast } = useAppToast();
+  const [workers, setWorkers] = useState<WorkerProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    setLoading(true);
+    const result = await listWorkers(companyId);
+    setWorkers(result);
+    setLoading(false);
+  }, [companyId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const createInvite = async () => {
+    if (!companyId || !uid) return;
+    const response = await fetch("/api/invites/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companyId, uid }),
+    });
+    const payload = (await response.json()) as { inviteCode?: string; message?: string };
+    if (!response.ok || !payload.inviteCode) {
+      toast({
+        title: "Invite creation failed",
+        description: payload.message ?? "Unknown error",
+        variant: "error",
+      });
+      return;
+    }
+    setInviteCode(payload.inviteCode);
+    toast({
+      title: "Invite created",
+      description: `Code: ${payload.inviteCode}`,
+      variant: "success",
+    });
+    await load();
+  };
+
+  const handleRoleChange = async (workerId: string, role: Role) => {
+    if (!companyId) return;
+    await updateWorkerRole(companyId, workerId, role);
+    await load();
+    toast({ title: "Worker role updated", variant: "success" });
+  };
+
+  return (
+    <ProtectedRoute section="workers">
+      <section className="grid gap-4">
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Workers</h1>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Invite and manage company worker roles.</p>
+            </div>
+            <Button onClick={() => void createInvite()}>Create invite code</Button>
+          </div>
+          {inviteCode ? (
+            <p className="mt-3 rounded-lg border border-emerald-300 bg-emerald-100 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-600/50 dark:bg-emerald-900/40 dark:text-emerald-100">
+              Latest invite code: <strong>{inviteCode}</strong>
+            </p>
+          ) : null}
+        </Card>
+
+        {loading ? <LoadingState /> : null}
+        {!loading && workers.length === 0 ? (
+          <EmptyState title="No workers yet" description="Use invite codes to onboard workers into your company." />
+        ) : null}
+
+        {!loading && workers.length > 0 ? (
+          <Card>
+            <DataTable
+              data={workers}
+              columns={[
+                {
+                  key: "name",
+                  header: "Name",
+                  render: (row) => (
+                    <div>
+                      <p className="font-medium">{row.name || "Unnamed"}</p>
+                      <p className="text-xs text-slate-500">{row.email}</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "workerId",
+                  header: "Worker ID",
+                  render: (row) => row.workerId,
+                },
+                {
+                  key: "role",
+                  header: "Role",
+                  render: (row) => (
+                    <select
+                      defaultValue={row.role}
+                      onChange={(event) => void handleRoleChange(row.workerId, event.target.value as Role)}
+                      className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      <option value="Manager">Manager</option>
+                      <option value="Worker">Worker</option>
+                      <option value="User">User</option>
+                      <option value="Basic">Basic</option>
+                    </select>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        ) : null}
+      </section>
+    </ProtectedRoute>
+  );
+}

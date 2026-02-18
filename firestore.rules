@@ -80,9 +80,10 @@ service cloud.firestore {
       allow create: if isAuthenticated() && 
                        (isManager() || isUser() || isWorker());
       
-      // Allow updating nextClientId field for client counter (managers, users, workers)
-      allow update: if ownsCompany(companyId) && 
-                       (isManager() || isUser() || isWorker());
+      // Allow updating only client counter on company root document (managers/users only)
+      allow update: if ownsCompany(companyId) &&
+                       (isManager() || isUser()) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cid']);
       
       // Workers collection - only managers can write
       match /workers/{document=**} {
@@ -189,8 +190,11 @@ service cloud.firestore {
       // Includes company cache document for version tracking
       // Allow initial setup for new users - business_info can be written by any authenticated user
       match /business_data/{document} {
+        // Token document is highly sensitive - manager only
+        allow read, write: if document == 'token' && ownsCompany(companyId) && isManager();
+
         // Read requires ownership
-        allow read: if isAuthenticated() && 
+        allow read: if document != 'token' && isAuthenticated() &&
                        (ownsCompany(companyId) || 
                         (exists(/databases/$(database)/documents/$(getUid())/profile) && 
                          get(/databases/$(database)/documents/$(getUid())/profile).data.companyId == companyId));
@@ -208,10 +212,13 @@ service cloud.firestore {
                          (isManager() || isUser() || isBasic()) &&
                          !exists(/databases/$(database)/documents/companies/$(companyId)/business_data/business_info);
         // Other documents require ownership and correct role
-        allow write: if document != 'business_info' && document != 'inventory' && ownsCompany(companyId) && (isManager() || isUser() || isBasic());
+        allow write: if document != 'business_info' && document != 'inventory' && document != 'token' &&
+                        ownsCompany(companyId) && (isManager() || isUser() || isBasic());
         
         // Workers can ONLY update the cache document (to increment job versions when submitting)
-        allow update: if ownsCompany(companyId) && isWorker() && document == 'cache';
+        allow update: if ownsCompany(companyId) && isWorker() && document == 'cache' &&
+                        !request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['workers', 'business_info', 'clients', 'subscription', 'token', 'cid', 'wid']);
       }
       
       // Document locks (for Pub/Sub busy flags)
@@ -248,11 +255,21 @@ service cloud.firestore {
                        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'companyId']));
       // Only allow profile creation with proper initial data
       allow create: if isAuthenticated() && getUid() == uid &&
-                       request.resource.data.keys().hasAll(['role', 'email']);
+                       request.resource.data.keys().hasAll(['role', 'email']) &&
+                       request.resource.data.role in ['user', 'basic'] &&
+                       (!('uid' in request.resource.data) || request.resource.data.uid == uid);
       // Managers can read profiles of workers in their company
       allow read: if isManager() && isWorkerInManagerCompany(uid);
-      // Managers can create/update worker profiles in their company
-      allow write: if isManager() && isWorkerInManagerCompany(uid);
+      // Managers can create worker profiles in their company
+      allow create: if isManager() &&
+                       !exists(/databases/$(database)/documents/$(uid)/profile) &&
+                       request.resource.data.role == 'worker' &&
+                       request.resource.data.companyId == getUserCompany();
+      // Managers can update worker profiles in their company without changing role/company
+      allow update: if isManager() && isWorkerInManagerCompany(uid) &&
+                       resource.data.role == 'worker' &&
+                       request.resource.data.role == 'worker' &&
+                       request.resource.data.companyId == resource.data.companyId;
     }
     
     // User cache rules - stores version numbers and cached data

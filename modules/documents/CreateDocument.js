@@ -917,8 +917,6 @@ export default function CreateDocument() {
         language: language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en',
         date: formData.documentDate,
         notes: formData.notes || '',
-        // Send cached profile to reduce Firestore reads
-        userProfile: profile || undefined,
       };
 
       // Call getInvoiceApproval to submit to Tax Authority

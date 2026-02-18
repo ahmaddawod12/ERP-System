@@ -130,15 +130,16 @@ function releaseTab(taskId, taskType) {
 const generateDocumentHTML = require('./htmlTemplate');
 
 /**
- * Optional request verification for Pub/Sub push endpoints.
- * Configure the same secret in Pub/Sub push headers/query and this env var.
+ * Request verification for Pub/Sub push endpoints.
+ * Requires PUBSUB_VERIFICATION_TOKEN to be configured on the service.
  */
 function verifyPubSubRequest(req, res, next) {
   if (!PUBSUB_VERIFICATION_TOKEN) {
-    return next();
+    console.error('PUBSUB_VERIFICATION_TOKEN is missing - refusing requests');
+    return res.status(503).send('Service misconfigured');
   }
 
-  const token = req.headers['x-pubsub-token'] || req.query.token;
+  const token = String(req.headers['x-pubsub-token'] || req.query.token || '').trim();
   if (token !== PUBSUB_VERIFICATION_TOKEN) {
     console.warn('Rejected unauthenticated Pub/Sub request');
     return res.status(401).send('Unauthorized');
@@ -317,19 +318,44 @@ async function processGenerateTask(taskData) {
     documentId,
     documentNumber,
     confirmationNumber, // Tax Authority confirmation number for tax invoices
-    userProfile, // User profile for role-based cache path determination
+    userRole: claimedUserRole, // Untrusted role from message (for diagnostics only)
   } = taskData;
-  
-  // Determine user role for cache path
-  const userRole = userProfile?.role || 'manager'; // Default to manager if not provided
-  
+
   const startTime = Date.now();
   let page = null;
   let tabAcquired = false;
-  
-  console.log(`[generate:${taskId}] Processing`, { documentType, uid, companyId, documentId, confirmationNumber, userRole });
+  let userRole = null;
   
   try {
+    if (!uid || !companyId) {
+      throw new Error('Missing required task identity fields (uid/companyId)');
+    }
+
+    // Resolve requester role/company from Firestore, never from Pub/Sub payload.
+    const requesterProfileSnap = await db.doc(`${uid}/profile`).get();
+    if (!requesterProfileSnap.exists) {
+      throw new Error(`Requester profile not found for uid: ${uid}`);
+    }
+    const requesterProfile = requesterProfileSnap.data() || {};
+    userRole = requesterProfile.role;
+
+    if (!['manager', 'user', 'basic'].includes(userRole)) {
+      throw new Error(`Role not authorized for document generation: ${userRole || 'unknown'}`);
+    }
+    if (!requesterProfile.companyId || requesterProfile.companyId !== companyId) {
+      throw new Error('Requester company mismatch');
+    }
+
+    console.log(`[generate:${taskId}] Processing`, {
+      documentType,
+      uid,
+      companyId,
+      documentId,
+      confirmationNumber,
+      userRole,
+      claimedUserRole: claimedUserRole || null,
+    });
+
     await acquireTab(taskId, 'generate');
     tabAcquired = true;
     
@@ -524,9 +550,10 @@ async function processGenerateTask(taskData) {
     }
     
     // Update certification cache version based on role
-    await db.doc(cachePath).update({
-      [certificationDocId]: 1
-    });
+    await db.doc(cachePath).set({
+      [certificationDocId]: 1,
+      lastUpdated: new Date().toISOString(),
+    }, { merge: true });
     console.log(`[generate:${taskId}] Updated certification cache at ${cachePath}`);
 
     // ========================================================================

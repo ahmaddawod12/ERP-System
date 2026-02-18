@@ -32,7 +32,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { functions, db, doc, onSnapshot, httpsCallable } from '../firebase';
-import { useCache } from '../contexts/CacheContext';
 
 const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -44,7 +43,6 @@ const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
  */
 export function useDocumentTask(options = {}) {
   const { onPreviewComplete, onGenerateComplete, onError } = options;
-  const { profile: cachedProfile } = useCache();
   
   const [taskId, setTaskId] = useState(null);
   const [taskStatus, setTaskStatus] = useState(null);
@@ -216,16 +214,9 @@ export function useDocumentTask(options = {}) {
       setIsLoading(true);
       setError(null);
       
-      // Add cached profile to reduce Firestore reads
-      // businessInfo is NOT sent - Cloud Functions fetch it directly from Firestore for security
-      const requestParams = {
-        ...params,
-        userProfile: cachedProfile || undefined, // Include cached profile for role detection
-      };
-      
       // React Native Firebase functions - modular API
       const publishPreviewTask = httpsCallable(functions, 'publishPreviewTask');
-      const result = await publishPreviewTask(requestParams);
+      const result = await publishPreviewTask(params);
       
       if (result.data.success && result.data.taskId) {
         listenToTask(result.data.taskId, 'preview');
@@ -245,7 +236,7 @@ export function useDocumentTask(options = {}) {
       
       throw err;
     }
-  }, [listenToTask,  cachedProfile]);
+  }, [listenToTask]);
 
   /**
    * Publish a generate task
@@ -262,16 +253,9 @@ export function useDocumentTask(options = {}) {
       setIsLoading(true);
       setError(null);
       
-      // Add cached profile to reduce Firestore reads
-      // businessInfo is NOT sent - Cloud Functions fetch it directly from Firestore for security
-      const requestParams = {
-        ...params,
-        userProfile: cachedProfile || undefined, // Include cached profile for role detection
-      };
-      
       // React Native Firebase functions - modular API
       const publishGenerateTask = httpsCallable(functions, 'publishGenerateTask');
-      const result = await publishGenerateTask(requestParams);
+      const result = await publishGenerateTask(params);
       
       if (result.data.success && result.data.taskId) {
         listenToTask(result.data.taskId, 'generate');
@@ -291,7 +275,7 @@ export function useDocumentTask(options = {}) {
       
       throw err;
     }
-  }, [listenToTask, cachedProfile]);
+  }, [listenToTask]);
 
   /**
    * Reset the hook state

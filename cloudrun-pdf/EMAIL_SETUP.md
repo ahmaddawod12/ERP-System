@@ -75,14 +75,14 @@ Add these environment variables to your Cloud Run service:
 
 ```bash
 AWS_REGION=eu-west-1
-AWS_ACCESS_KEY_ID=AKIA3FRJYFUST2MH5JUT
-AWS_SECRET_ACCESS_KEY=qU4sQuvULfSirzvkdjATfBWavUdDvPbm9+kgnw
+AWS_ACCESS_KEY_ID=YOUR_AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_ACCESS_KEY
 ```
 
 **Deployment Command:**
 ```bash
 gcloud run deploy smartjob-pdf-service \
-  --set-env-vars="AWS_REGION=eu-west-1,AWS_ACCESS_KEY_ID=AKIA3FRJYFUST2MH5JUT,AWS_SECRET_ACCESS_KEY=qU4sQuvULfSirzvkdjATfBWavUdDvPbm9+kgnw" \
+  --set-env-vars="AWS_REGION=eu-west-1,AWS_ACCESS_KEY_ID=YOUR_AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY=YOUR_AWS_SECRET_ACCESS_KEY" \
   --region=europe-west1
 ```
 

@@ -42,17 +42,14 @@ export function GlobalHeader() {
 
   const t = language === 'en' ? {
     settings: 'Settings',
-    permission: 'Permission',
     support: 'Support & Feedback',
     menu: 'Menu',
   } : language === 'he' ? {
     settings: 'הגדרות',
-    permission: 'הרשאות',
     support: 'תמיכה ומשוב',
     menu: 'תפריט',
   } : {
     settings: 'الإعدادات',
-    permission: 'الأذونات',
     support: 'الدعم والملاحظات',
     menu: 'القائمة',
   };
@@ -130,17 +127,6 @@ export function GlobalHeader() {
               <Ionicons name="settings-outline" size={20} color={colors.primary} />
               <Text style={[styles.menuItemText, { color: colors.textPrimary }]}>
                 {t.settings}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Permission Option */}
-            <TouchableOpacity
-              style={[styles.menuItem, { borderBottomColor: colors.border }]}
-              onPress={() => handleMenuItemPress(() => router.push('/Permission'))}
-            >
-              <MaterialCommunityIcons name="shield-check-outline" size={20} color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.textPrimary }]}>
-                {t.permission}
               </Text>
             </TouchableOpacity>
 

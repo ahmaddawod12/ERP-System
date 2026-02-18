@@ -41,7 +41,6 @@ export default function RootLayout() {
               <Stack.Screen name="Settings" />
               <Stack.Screen name="FillJob" />
               <Stack.Screen name="EditJob" />
-              <Stack.Screen name="Permission" />
               <Stack.Screen name="SupportChat" />
               <Stack.Screen name="DevInbox" />
               <Stack.Screen name="ClientBook" />

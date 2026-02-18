@@ -13,6 +13,7 @@ const logger = require("firebase-functions/logger");
 const axios = require("axios");
 const axiosRetry = require("axios-retry").default;
 const { PubSub } = require("@google-cloud/pubsub");
+const crypto = require("crypto");
 
 // Pub/Sub topics for document generation
 const PREVIEW_TOPIC = 'document-preview';
@@ -78,6 +79,8 @@ const DOC_SUFFIX = {
   [DOC_TYPE.DELIVERY_NOTE]: 'DN',
   [DOC_TYPE.RECEIPT]: 'RT'
 };
+
+const GENERATE_DOCUMENT_ALLOWED_ROLES = ['manager', 'user', 'basic'];
 
 
 // For cost control, set maximum concurrent instances
@@ -275,6 +278,51 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
 }
 
 /**
+ * Resolve and validate the authenticated user's profile from Firestore.
+ * Never trust role/company data from request payloads.
+ */
+async function getAuthenticatedUserProfile(auth, options = {}) {
+  const {
+    allowedRoles = null,
+    requireCompany = false,
+    companyId = null,
+  } = options;
+
+  if (!auth) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  const uid = auth.uid;
+  const userProfileRef = admin.firestore().doc(`${uid}/profile`);
+  const userProfileDoc = await userProfileRef.get();
+
+  if (!userProfileDoc.exists) {
+    throw new HttpsError('not-found', 'User profile not found');
+  }
+
+  const userData = userProfileDoc.data() || {};
+  const role = userData.role;
+
+  if (!role) {
+    throw new HttpsError('failed-precondition', 'User role is missing from profile');
+  }
+
+  if (allowedRoles && !allowedRoles.includes(role)) {
+    throw new HttpsError('permission-denied', 'User role is not allowed for this action');
+  }
+
+  if (requireCompany && !userData.companyId) {
+    throw new HttpsError('failed-precondition', 'User has no company assigned');
+  }
+
+  if (companyId && userData.companyId !== companyId) {
+    throw new HttpsError('permission-denied', 'Company name mismatch');
+  }
+
+  return { uid, userData, role };
+}
+
+/**
  * Helper function to save audit logs
  */
 async function saveAuditLog(companyId, action, performedBy, documentId, documentType) {
@@ -334,14 +382,15 @@ exports.manageWorker = onCall(async (request) => {
       name,
       phoneNumber,
       companyId,
-      workerUid, // For delete/edit action (UID-based)
-      workerId, // For delete edit/action (path of the document)
+      workerUid: providedWorkerUid, // For delete/edit action (UID-based)
+      workerId: providedWorkerId, // For delete/edit action (company worker doc ID)
       newPassword
-    } = request.data;
+    } = request.data || {};
+    const normalizedEmail = String(email || '').trim().toLowerCase();
 
     logger.info('manageWorker called', { 
       action,
-      email,
+      email: normalizedEmail,
       companyId,
       hasAuth: !!request.auth,
       authEmail: request.auth?.token?.email
@@ -353,14 +402,11 @@ exports.manageWorker = onCall(async (request) => {
     }
 
     // Validate required parameters
-    if (!email || !companyId) {
+    if (!normalizedEmail || !companyId) {
       throw new HttpsError('invalid-argument', 'Email and company name are required');
     }
-    if (!isValidEmail(email)) {
+    if (!isValidEmail(normalizedEmail)) {
       throw new HttpsError('invalid-argument', 'Invalid worker email format');
-    }
-    if (newEmail && !isValidEmail(newEmail)) {
-      throw new HttpsError('invalid-argument', 'Invalid new email format');
     }
     if (password && password.length < 8) {
       throw new HttpsError('invalid-argument', 'Password must be at least 8 characters');
@@ -369,56 +415,63 @@ exports.manageWorker = onCall(async (request) => {
       throw new HttpsError('invalid-argument', 'New password must be at least 8 characters');
     }
 
-    await verifyManagerAuth(request.auth, workerUid, companyId);
-
     // ========== ADD WORKER ==========
     if (action === 'add') {
       if (!password) {
         throw new HttpsError('invalid-argument', 'Password is required for adding a worker');
       }
-      let workerid = null; // For assigning workerId on add
-      const companyRef = doc(db, 'companies', companyId);
-      const companySnap = await transaction.get(companyRef);
-      if (companySnap.exists() && companySnap.data().wid) {
-        workerid = companySnap.data().wid;
-      }
-      else{ 
-        return { success: false, message: 'Worker id not found' }; 
-      }
+      await verifyManagerAuth(request.auth, null, companyId);
+
+      const companyRef = admin.firestore().doc(`companies/${companyId}`);
+      const workerid = await admin.firestore().runTransaction(async (tx) => {
+        const companySnap = await tx.get(companyRef);
+        const currentWorkerId = Number(companySnap.data()?.wid || 1);
+        tx.set(companyRef, { wid: currentWorkerId + 1 }, { merge: true });
+        return currentWorkerId;
+      });
+
       // Create Firebase Authentication user
       const userRecord = await admin.auth().createUser({
-        email: email,
+        email: normalizedEmail,
         password: password,
+        ...(name ? { displayName: String(name).trim() } : {}),
       });
-      workerUid = userRecord.uid;
+      const workerUid = userRecord.uid;
 
-      logger.info(`Created Authentication user for worker: ${email}`, { uid: workerUid });
+      logger.info(`Created Authentication user for worker: ${normalizedEmail}`, { uid: workerUid });
 
       // Create worker profile in Firestore (keyed by UID)
       const workerProfileRef = admin.firestore().doc(`${workerUid}/profile`);
-      await workerProfileRef.set({
-        role: 'worker',
-        companyId: companyId,
-        name: name || '',
-        phoneNumber: phoneNumber || '',
-        workerId: workerid
-      });
       const workerCacheRef = admin.firestore().doc(`${workerUid}/cache`);
-      await workerCacheRef.set({
-        profile : 1});
-      logger.info(`Created Firestore profile for worker: ${email} (uid: ${workerUid})`);
+      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerid}`);
 
-      // Add worker to company's worker list (keyed by workerId)
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
-      await workerListRef.set({
-        email: email,
-        name: name || '',
-        phoneNumber: phoneNumber || '',
+      const batch = admin.firestore().batch();
+      batch.set(workerProfileRef, {
+        role: 'worker',
+        email: normalizedEmail,
+        companyId: companyId,
+        name: String(name || '').trim(),
+        phoneNumber: String(phoneNumber || ''),
+        workerId: workerid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      batch.set(workerCacheRef, {
+        profile: 1,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      batch.set(workerListRef, {
+        email: normalizedEmail,
+        name: String(name || '').trim(),
+        phoneNumber: String(phoneNumber || ''),
         Uid: workerUid,
         Wid: workerid,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      companySnap.set(companyRef, { wid: workerid + 1 }, { merge: true });
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      await batch.commit();
+
+      logger.info(`Created Firestore profile for worker: ${normalizedEmail} (uid: ${workerUid})`);
 
       logger.info(`Added worker to company list: ${companyId}`);
       await saveAuditLog(companyId, 'addWorker', request.auth.token.email);
@@ -431,13 +484,49 @@ exports.manageWorker = onCall(async (request) => {
       };
     }
 
+    let workerUid = providedWorkerUid || null;
+    let workerId = providedWorkerId || null;
+
+    if (!workerUid) {
+      try {
+        const userRecord = await admin.auth().getUserByEmail(normalizedEmail);
+        workerUid = userRecord.uid;
+      } catch (authError) {
+        if (authError.code === 'auth/user-not-found') {
+          throw new HttpsError('not-found', 'Worker account not found');
+        }
+        throw authError;
+      }
+    }
+
+    await verifyManagerAuth(request.auth, workerUid, companyId);
+
+    if (!workerId) {
+      const workersColRef = admin.firestore().collection(`companies/${companyId}/workers`);
+      let workerDocSnap = await workersColRef.where('Uid', '==', workerUid).limit(1).get();
+      if (workerDocSnap.empty) {
+        workerDocSnap = await workersColRef.where('email', '==', normalizedEmail).limit(1).get();
+      }
+      if (!workerDocSnap.empty) {
+        workerId = workerDocSnap.docs[0].id;
+      }
+    }
+
+    if (!workerId) {
+      throw new HttpsError('not-found', 'Worker record not found in company workers list');
+    }
+
     // ========== DELETE WORKER ==========
     if (action === 'delete') {
-      // workerUid already obtained above via admin.auth().getUserByEmail()
-
       // Delete Authentication user
-      await admin.auth().deleteUser(workerUid);
-      logger.info(`Deleted Authentication user for worker: ${email} (uid: ${workerUid})`);
+      try {
+        await admin.auth().deleteUser(workerUid);
+      } catch (deleteAuthError) {
+        if (deleteAuthError.code !== 'auth/user-not-found') {
+          throw deleteAuthError;
+        }
+      }
+      logger.info(`Deleted Authentication user for worker: ${normalizedEmail} (uid: ${workerUid})`);
 
       // Delete ALL worker data recursively (using UID-based path)
       logger.info(`Starting recursive delete for worker folder: ${workerUid}`);
@@ -464,14 +553,8 @@ exports.manageWorker = onCall(async (request) => {
 
     // ========== EDIT WORKER ==========
     if (action === 'edit') {
-      if (!newEmail && !newPassword && name === undefined && phoneNumber === undefined) {
+      if (!newPassword && name === undefined && phoneNumber === undefined) {
         throw new HttpsError('invalid-argument', 'At least one field must be provided for update');
-      }
-      if (newEmail) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Changing worker email is not currently supported. Create a new worker account instead.'
-        );
       }
 
       // Read worker profile (using UID-based path)
@@ -487,48 +570,53 @@ exports.manageWorker = onCall(async (request) => {
       if (newPassword) {
         authUpdates.password = newPassword;
       }
-      if (name) {
-        authUpdates.displayName = name;
+      if (name !== undefined) {
+        authUpdates.displayName = String(name || '').trim();
       }
 
       // Update Firebase Authentication
       if (Object.keys(authUpdates).length > 0) {
         await admin.auth().updateUser(workerUid, authUpdates);
-        logger.info(`Updated Authentication for worker: ${email}`, {
+        logger.info(`Updated Authentication for worker: ${normalizedEmail}`, {
           updatedFields: Object.keys(authUpdates),
         });
       }
 
       // Prepare Firestore updates
       const firestoreUpdates = {};
-      if (name) {
-        firestoreUpdates.name = name;
+      if (name !== undefined) {
+        firestoreUpdates.name = String(name || '').trim();
       }
       if (phoneNumber !== undefined) {
-        firestoreUpdates.phoneNumber = phoneNumber;
+        firestoreUpdates.phoneNumber = String(phoneNumber || '');
       }
+      firestoreUpdates.email = normalizedEmail;
+      firestoreUpdates.workerId = Number(workerId);
       firestoreUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       // Update worker profile in Firestore
       if (Object.keys(firestoreUpdates).length > 0) {
-        await workerProfileRef.update(firestoreUpdates);
-        logger.info(`Updated Firestore profile for worker: ${email} (uid: ${workerUid})`);
+        await workerProfileRef.set(firestoreUpdates, { merge: true });
+        logger.info(`Updated Firestore profile for worker: ${normalizedEmail} (uid: ${workerUid})`);
       }
 
       // Update company's worker list (keyed by workerId)
       const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
       const updateData = {};
+      updateData.email = normalizedEmail;
+      updateData.Uid = workerUid;
+      updateData.Wid = Number(workerId);
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
-      if (name) {
-        updateData.name = name;
+      if (name !== undefined) {
+        updateData.name = String(name || '').trim();
       }
       if (phoneNumber !== undefined) {
-        updateData.phoneNumber = phoneNumber;
+        updateData.phoneNumber = String(phoneNumber || '');
       }
       updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       if (Object.keys(updateData).length > 0) {
-        await workerListRef.update(updateData);
+        await workerListRef.set(updateData, { merge: true });
         logger.info(`Updated worker in company list: ${companyId}`);
       }
 
@@ -541,7 +629,8 @@ exports.manageWorker = onCall(async (request) => {
     }
 
   } catch (error) {
-    logger.error(`Error managing worker (${request.data.action}):`, error);
+    const requestedAction = request?.data?.action || 'unknown';
+    logger.error(`Error managing worker (${requestedAction}):`, error);
     
     if (error instanceof HttpsError) {
       throw error;
@@ -557,7 +646,7 @@ exports.manageWorker = onCall(async (request) => {
       throw new HttpsError('invalid-argument', 'Password is too weak');
     }
     
-    throw new HttpsError('internal', `Failed to ${request.data.action} worker: ` + error.message);
+    throw new HttpsError('internal', `Failed to ${requestedAction} worker: ` + error.message);
   }
 });
 
@@ -851,16 +940,94 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
 // =============================================================================
 
 // OAuth2 Configuration for Israeli Tax Authority
-// IMPORTANT: Replace these with your actual credentials
 const TAX_AUTHORITY_CONFIG = {
   authUrl: 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/authorize',
   tokenUrl: 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/token',
-  // Your application's OAuth credentials - set these in Firebase environment config for production
-  clientId: process.env.TAX_CLIENT_ID || '2d588624cd0ddea4f75f9dd318028b12',
-  clientSecret: process.env.TAX_CLIENT_SECRET || '0bdb57bc605c755dee6736d9ccaa89ed',
-  scope: 'scope',
-  // The callback URL will be the Cloud Function URL
+  clientId: process.env.TAX_CLIENT_ID || '',
+  clientSecret: process.env.TAX_CLIENT_SECRET || '',
+  scope: process.env.TAX_SCOPE || 'scope',
+  callbackUrl: process.env.TAX_CALLBACK_URL || '',
+  appScheme: process.env.APP_SCHEME || 'erpsystem',
 };
+
+function encodeBase64Url(input) {
+  return Buffer.from(String(input), 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function decodeBase64Url(input) {
+  const normalized = String(input || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padLength = (4 - (normalized.length % 4)) % 4;
+  const padded = normalized + '='.repeat(padLength);
+  return Buffer.from(padded, 'base64').toString('utf8');
+}
+
+function escapeHtml(input) {
+  return String(input || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildAuthCallbackDeepLink(params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      query.set(key, String(value));
+    }
+  });
+  return `${TAX_AUTHORITY_CONFIG.appScheme}://auth-callback?${query.toString()}`;
+}
+
+function generateSuccessHTML(deepLink, tokenExchangeSuccess, tokenExchangeError) {
+  const safeDeepLink = escapeHtml(deepLink);
+  const safeError = escapeHtml(tokenExchangeError || '');
+  const statusText = tokenExchangeSuccess ? 'Authorization completed' : 'Authorization completed with warnings';
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Authorization Complete</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+      .wrap { max-width: 640px; margin: 0 auto; }
+      .ok { color: #166534; font-weight: 700; }
+      .warn { color: #b45309; font-weight: 700; }
+      a { color: #1d4ed8; }
+      code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h2>${tokenExchangeSuccess ? '<span class="ok">Success</span>' : '<span class="warn">Completed</span>'}</h2>
+      <p>${escapeHtml(statusText)}</p>
+      ${safeError ? `<p><strong>Details:</strong> ${safeError}</p>` : ''}
+      <p><a href="${safeDeepLink}">Return to app</a></p>
+      <p>If the app does not open automatically, use this link:</p>
+      <p><code>${safeDeepLink}</code></p>
+      <script>
+        setTimeout(function () { window.location.href = ${JSON.stringify(deepLink)}; }, 300);
+      </script>
+    </div>
+  </body>
+</html>`;
+}
+
+function ensureTaxAuthorityConfigForCallable() {
+  if (!TAX_AUTHORITY_CONFIG.clientId || !TAX_AUTHORITY_CONFIG.clientSecret || !TAX_AUTHORITY_CONFIG.callbackUrl) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Tax Authority OAuth is not configured on the server.'
+    );
+  }
+}
 
 /**
  * Cloud Function: Start Tax Authority Authorization
@@ -873,6 +1040,8 @@ exports.startTaxAuthorityAuth = onCall({
   region: "us-central1",
 }, async (request) => {
   try {
+    ensureTaxAuthorityConfigForCallable();
+
     if (!request.auth) {
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
@@ -898,19 +1067,19 @@ exports.startTaxAuthorityAuth = onCall({
       throw new HttpsError('failed-precondition', 'User has no company assigned');
     }
 
-    // Fixed callback URL (must be registered in Tax Authority settings)
-    const callbackUrl = 'https://taxauthoritycallback-5zymz2qeza-zf.a.run.app';
-
     // Store pending authorization in Firestore to track which company initiated the flow
-    // The callback will look up this record to get the companyId
     const pendingAuthRef = admin.firestore().collection('taxAuthPending').doc();
     const authId = pendingAuthRef.id;
+    const stateNonce = crypto.randomBytes(16).toString('hex');
+    const oauthState = encodeBase64Url(`${authId}.${stateNonce}`);
     
     await pendingAuthRef.set({
       authId: authId,
       companyId: companyId,
       uid: uid,
       email: request.auth.token.email,
+      state: oauthState,
+      stateNonce: stateNonce,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtMillis: Date.now(),
       status: 'pending',
@@ -921,15 +1090,15 @@ exports.startTaxAuthorityAuth = onCall({
       authId: authId,
       companyId: companyId,
       uid: uid,
-      callbackUrl: callbackUrl,
+      callbackUrl: TAX_AUTHORITY_CONFIG.callbackUrl,
     });
 
-    // Build authorization URL (fixed callback URL, no query params)
     const authParams = new URLSearchParams({
       response_type: 'code',
       client_id: TAX_AUTHORITY_CONFIG.clientId,
       scope: TAX_AUTHORITY_CONFIG.scope,
-      redirect_uri: callbackUrl,
+      redirect_uri: TAX_AUTHORITY_CONFIG.callbackUrl,
+      state: oauthState,
     });
 
     const authorizationUrl = `${TAX_AUTHORITY_CONFIG.authUrl}?${authParams.toString()}`;
@@ -938,7 +1107,7 @@ exports.startTaxAuthorityAuth = onCall({
       authId: authId,
       uid, 
       companyId,
-      callbackUrl
+      callbackUrl: TAX_AUTHORITY_CONFIG.callbackUrl
     });
 
     return {
@@ -971,139 +1140,115 @@ exports.taxAuthorityCallback = onRequest({
   res.set('Cache-Control', 'private, max-age=0');
   
   try {
-    logger.info('taxAuthorityCallback received', { 
-      method: req.method,
-      fullUrl: req.url,
-      originalUrl: req.originalUrl,
-      protocol: req.protocol,
-      host: req.get('host'),
-      completeUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-      query: req.query,
-      queryString: req.url.split('?')[1] || '',
-      hasCode: !!req.query.code,
-      headers: {
-        'user-agent': req.get('user-agent'),
-        'referer': req.get('referer'),
-        'origin': req.get('origin')
-      }
-    });
+    if (!TAX_AUTHORITY_CONFIG.clientId || !TAX_AUTHORITY_CONFIG.clientSecret || !TAX_AUTHORITY_CONFIG.callbackUrl) {
+      const notConfiguredLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Tax Authority OAuth is not configured on server.'
+      });
+      return res.send(generateSuccessHTML(notConfiguredLink, false, 'Server OAuth configuration missing'));
+    }
 
-    const { code, error, error_description } = req.query;
+    const { code, error, error_description, state } = req.query;
 
     // Handle OAuth errors from Tax Authority
     if (error) {
-      logger.error('OAuth error from Tax Authority', { error, error_description });
-      return res.redirect(`coolinginventory://auth-callback?success=false&error=${encodeURIComponent(error_description || error)}`);
-    }
-
-    if (!code) {
-      logger.error('No authorization code received');
-      return res.redirect('coolinginventory://auth-callback?success=false&error=No%20authorization%20code%20received');
-    }
-
-    // Log the raw code for debugging
-    logger.info('Authorization code details', {
-      codeLength: code.length,
-      codePreview: code.substring(0, 20) + '...',
-      codeSuffix: code.substring(code.length - 10),
-      hasSpecialChars: /[^a-zA-Z0-9]/.test(code),
-      timestamp: Date.now()
-    });
-
-    // Check if this code was already processed (prevent duplicates from browser retries)
-    const existingCallbacksQuery = admin.firestore().collection('taxAuthCallbacks')
-      .where('code', '==', code)
-      .limit(1);
-    const existingCallbacks = await existingCallbacksQuery.get();
-
-    if (!existingCallbacks.empty) {
-      const existingCallback = existingCallbacks.docs[0];
-      const existingData = existingCallback.data();
-      logger.info('Code already processed, using existing callback', { 
-        callbackId: existingCallback.id,
-        tokenExchangeSuccess: existingData.tokenExchangeSuccess 
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: error_description || error,
       });
-      
-      // Return existing result
-      const deepLink = `coolinginventory://auth-callback?success=true&callbackId=${existingCallback.id}&tokenExchanged=${existingData.tokenExchangeSuccess || false}`;
-      // Skip to HTML response with existing data
-      const tokenExchangeSuccess = existingData.tokenExchangeSuccess || false;
-      const tokenExchangeError = existingData.tokenExchangeError || null;
-      const companyId = existingData.companyId || null;
-      
-      // Generate HTML with existing data and return
-      return res.send(generateSuccessHTML(deepLink, tokenExchangeSuccess, tokenExchangeError));
+      return res.send(generateSuccessHTML(deepLink, false, error_description || error));
     }
 
-    // Save the authorization code to Firestore (code is already URL-decoded by Express)
-    const callbackRecordRef = admin.firestore().collection('taxAuthCallbacks').doc();
+    if (!code || !state) {
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Missing authorization code or state'
+      });
+      return res.send(generateSuccessHTML(deepLink, false, 'Missing authorization code or state'));
+    }
+
+    let authId;
+    try {
+      const decodedState = decodeBase64Url(state);
+      authId = String(decodedState || '').split('.')[0];
+      if (!authId || !/^[A-Za-z0-9_-]{10,}$/.test(authId)) {
+        throw new Error('Invalid auth session id');
+      }
+    } catch (decodeError) {
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Invalid authorization state'
+      });
+      return res.send(generateSuccessHTML(deepLink, false, 'Invalid authorization state'));
+    }
+
+    const pendingAuthRef = admin.firestore().doc(`taxAuthPending/${authId}`);
+    const pendingAuthSnap = await pendingAuthRef.get();
+    if (!pendingAuthSnap.exists) {
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Authorization session not found or expired'
+      });
+      return res.send(generateSuccessHTML(deepLink, false, 'Authorization session not found or expired'));
+    }
+
+    const pendingAuthData = pendingAuthSnap.data() || {};
+    if (pendingAuthData.state !== state) {
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Authorization state mismatch'
+      });
+      return res.send(generateSuccessHTML(deepLink, false, 'Authorization state mismatch'));
+    }
+    if (pendingAuthData.status !== 'pending') {
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Authorization session already used'
+      });
+      return res.send(generateSuccessHTML(deepLink, false, 'Authorization session already used'));
+    }
+    if (pendingAuthData.expiresAt && Date.now() > pendingAuthData.expiresAt) {
+      const deepLink = buildAuthCallbackDeepLink({
+        success: false,
+        error: 'Authorization session expired'
+      });
+      return res.send(generateSuccessHTML(deepLink, false, 'Authorization session expired'));
+    }
+
+    const callbackRecordRef = admin.firestore().doc(`taxAuthCallbacks/${authId}`);
+    const existingCallback = await callbackRecordRef.get();
+    if (existingCallback.exists && existingCallback.data()?.used) {
+      const existingData = existingCallback.data();
+      const deepLink = buildAuthCallbackDeepLink({
+        success: true,
+        callbackId: callbackRecordRef.id,
+        tokenExchanged: existingData.tokenExchangeSuccess || false
+      });
+      return res.send(generateSuccessHTML(deepLink, existingData.tokenExchangeSuccess || false, existingData.tokenExchangeError || null));
+    }
+
     const receivedAtMillis = Date.now();
     await callbackRecordRef.set({
+      authId,
+      companyId: pendingAuthData.companyId || null,
+      uid: pendingAuthData.uid || null,
+      state,
       code: code,
       receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-      receivedAtMillis: receivedAtMillis,
+      receivedAtMillis,
       used: false,
       codeLength: code.length,
-    });
-    
-    logger.info('Authorization code saved to Firestore', { 
-      callbackId: callbackRecordRef.id,
-      code: code.substring(0, 20) + '...',
-      receivedAtMillis: receivedAtMillis
-    });
+    }, { merge: true });
 
     // IMMEDIATELY exchange the code for tokens while it's fresh
-    logger.info('Attempting to exchange authorization code immediately...');
-    
     let tokenExchangeSuccess = false;
     let tokenExchangeError = null;
-    let companyId = null;
+    const companyId = pendingAuthData.companyId || null;
 
     try {
-      // Look up the pending authorization from Firestore (most recent within last 10 minutes)
-      const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
-      const pendingAuthQuery = admin.firestore().collection('taxAuthPending')
-        .where('status', '==', 'pending')
-        .where('createdAtMillis', '>', tenMinutesAgo)
-        .orderBy('createdAtMillis', 'desc')
-        .limit(1);
-      
-      const pendingAuthSnapshot = await pendingAuthQuery.get();
-      
-      let companyIdFromAuth = null;
-      let pendingAuthDoc = null;
-      
-      if (!pendingAuthSnapshot.empty) {
-        pendingAuthDoc = pendingAuthSnapshot.docs[0];
-        const pendingAuthData = pendingAuthDoc.data();
-        companyIdFromAuth = pendingAuthData.companyId;
-        
-        logger.info('Found pending authorization', {
-          authId: pendingAuthDoc.id,
-          companyId: companyIdFromAuth,
-          uid: pendingAuthData.uid,
-          age: Date.now() - pendingAuthData.createdAtMillis
-        });
-        
-        // Mark as used
-        await pendingAuthDoc.ref.update({
-          status: 'used',
-          usedAt: admin.firestore.FieldValue.serverTimestamp(),
-          code: code.substring(0, 20) + '...', // Store truncated code for reference
-        });
-      } else {
-        logger.warn('No pending authorization found - tokens will be saved without company link');
-      }
-      
-      // Fixed callback URL (must match what's registered in Tax Authority settings)
-      const callbackUrl = 'https://taxauthoritycallback-5zymz2qeza-zf.a.run.app';
-
-      logger.info('Exchanging token with Tax Authority', {
-        tokenUrl: TAX_AUTHORITY_CONFIG.tokenUrl,
-        callbackUrl: callbackUrl,
-        codeLength: code.length,
-        clientId: TAX_AUTHORITY_CONFIG.clientId,
-        companyId: companyIdFromAuth
+      await pendingAuthRef.update({
+        status: 'used',
+        usedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       // Exchange authorization code for tokens (axios-retry handles retries automatically)
@@ -1112,7 +1257,7 @@ exports.taxAuthorityCallback = onRequest({
         new URLSearchParams({
           grant_type: 'authorization_code',
           code: code,
-          redirect_uri: callbackUrl,
+          redirect_uri: TAX_AUTHORITY_CONFIG.callbackUrl,
           scope: TAX_AUTHORITY_CONFIG.scope,
         }).toString(),
         {
@@ -1127,12 +1272,6 @@ exports.taxAuthorityCallback = onRequest({
       );
 
       const tokenData = tokenResponse.data;
-      logger.info('Token exchange successful in callback', { 
-        hasAccessToken: !!tokenData.access_token,
-        hasRefreshToken: !!tokenData.refresh_token,
-        expiresIn: tokenData.expires_in,
-        refreshTokenExpiresIn: tokenData.refresh_token_expires_in
-      });
 
       // Calculate token expiration timestamps using actual API response values
       const now = Date.now();
@@ -1141,13 +1280,6 @@ exports.taxAuthorityCallback = onRequest({
       const refreshTokenExpiresAt = tokenData.refresh_token_expires_in 
         ? now + (tokenData.refresh_token_expires_in * 1000)
         : now + (90 * 24 * 60 * 60 * 1000); // Fallback to 90 days if not provided
-
-      // Use company name from pending authorization record
-      companyId = companyIdFromAuth;
-
-      if (!companyId) {
-        logger.warn('No companyId from pending auth - tokens saved but not linked to company');
-      }
 
       // Save tokens directly to company settings in Firebase (if company known)
       if (companyId) {
@@ -1161,37 +1293,23 @@ exports.taxAuthorityCallback = onRequest({
           callbackId: callbackRecordRef.id,
         }, { merge: true });
 
-        logger.info('Tokens saved directly to company settings', { companyId });
-
         // Save audit log
         await saveAuditLog(companyId, 'taxAuthorityAuthorized', 'system_callback');
       }
 
-      // Update the callback record with tokens (backup/reference)
       await callbackRecordRef.update({
         used: true,
         usedAt: admin.firestore.FieldValue.serverTimestamp(),
         tokenExchangeSuccess: true,
-        companyId: companyId,
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
+        companyId,
         expiresIn: tokenData.expires_in,
         accessTokenExpiresAt: accessTokenExpiresAt,
         refreshTokenExpiresAt: refreshTokenExpiresAt,
       });
 
       tokenExchangeSuccess = true;
-      logger.info('Tokens saved to callback record', { callbackId: callbackRecordRef.id });
 
     } catch (exchangeError) {
-      logger.error('Token exchange failed in callback', {
-        message: exchangeError.message,
-        response: exchangeError.response?.data,
-        responseText: exchangeError.response?.data ? JSON.stringify(exchangeError.response.data) : null,
-        status: exchangeError.response?.status,
-        headers: exchangeError.response?.headers,
-      });
-      
       tokenExchangeError = exchangeError.response?.data?.error_description || 
                           exchangeError.response?.data?.error || 
                           exchangeError.message;
@@ -1205,7 +1323,11 @@ exports.taxAuthorityCallback = onRequest({
     }
 
     // Return success HTML page with deep link and instructions
-    const deepLink = `coolinginventory://auth-callback?success=true&callbackId=${callbackRecordRef.id}&tokenExchanged=${tokenExchangeSuccess}`;
+    const deepLink = buildAuthCallbackDeepLink({
+      success: true,
+      callbackId: callbackRecordRef.id,
+      tokenExchanged: tokenExchangeSuccess
+    });
     
     return res.send(generateSuccessHTML(deepLink, tokenExchangeSuccess, tokenExchangeError));
 
@@ -1217,7 +1339,10 @@ exports.taxAuthorityCallback = onRequest({
     
     // Return error HTML page
     const errorMessage = error.message || 'Failed to process authorization';
-    const deepLink = `coolinginventory://auth-callback?success=false&error=${encodeURIComponent(errorMessage)}`;
+    const deepLink = buildAuthCallbackDeepLink({
+      success: false,
+      error: errorMessage
+    });
     
     return res.send(generateSuccessHTML(deepLink, false, errorMessage));
   }
@@ -1264,7 +1389,6 @@ exports.getInvoiceApproval = onCall({
     logger.info('getInvoiceApproval called', {
       hasAuth: !!request.auth,
       authUid: request.auth?.uid,
-      authEmail: request.auth?.token?.email,
       timestamp: new Date().toISOString()
     });
 
@@ -1275,40 +1399,27 @@ exports.getInvoiceApproval = onCall({
       });
       throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
+    ensureTaxAuthorityConfigForCallable();
 
     const uid = request.auth.uid;
     logger.info('Processing invoice for user', { uid });
 
-    // Get user profile to check role (accept from frontend or fetch)
-    let userData;
-    if (request.data.userProfile) {
-      // Use cached profile from frontend (optimization)
-      userData = request.data.userProfile;
-      logger.info('Using cached user profile from frontend');
-    } else {
-      // Fallback: fetch from Firestore (backwards compatibility)
-      const userProfileRef = admin.firestore().doc(`${uid}/profile`);
-      const userProfile = await userProfileRef.get();
-        if (!userProfile.exists) {
-        throw new HttpsError('not-found', 'User profile not found');
-      }
-      userData = userProfile.data();
-    }
-    
-    const role = userData.role;
-
-    // Only managers and users can submit invoices to Tax Authority
-    if (role !== 'manager' && role !== 'user') {
-      throw new HttpsError('permission-denied', 'Only managers and users can submit invoices to Tax Authority');
-    }
-
-    logger.info('User authorized', { uid, role });
-
-    // Extract document data from request
     const {
       type, client, items, company, companyId,
       language, date, notes, jobData, jobsData, priceProposalId
-    } = request.data;
+    } = request.data || {};
+
+    if (!companyId) {
+      throw new HttpsError('invalid-argument', 'Company ID is required for Firestore');
+    }
+
+    const { userData, role } = await getAuthenticatedUserProfile(request.auth, {
+      allowedRoles: ['manager', 'user'],
+      requireCompany: true,
+      companyId,
+    });
+
+    logger.info('User authorized for invoice approval', { uid, role, companyId });
 
     // Validate required fields for document
     // Accept both numeric type (305) or string 'taxInvoice' for backwards compatibility
@@ -1325,9 +1436,6 @@ exports.getInvoiceApproval = onCall({
     if (!company || !company.name) {
       throw new HttpsError('invalid-argument', 'Company ID is required');
     }
-    if (!companyId) {
-      throw new HttpsError('invalid-argument', 'Company ID is required for Firestore');
-    }
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
@@ -1342,8 +1450,8 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('invalid-argument', 'Missing VAT number in business registration. Please complete your business registration.');
     }
 
-    // Verify companyId matches user's company
-    if (userData.companyId && userData.companyId !== companyId) {
+    // Verify companyId strictly matches user's company
+    if (!userData.companyId || userData.companyId !== companyId) {
       throw new HttpsError('permission-denied', 'Company name mismatch');
     }
 
@@ -1618,8 +1726,7 @@ exports.getInvoiceApproval = onCall({
       documentId,
       invoiceId: taxAuthorityData.invoice_id,
       itemCount: taxAuthorityData.items.length,
-      totalAmount: taxAuthorityData.payment_amount_including_vat,
-      fullRequestBody: taxAuthorityData // Log the entire request for debugging
+      totalAmount: taxAuthorityData.payment_amount_including_vat
     });
 
     // Make the API request to Tax Authority (axios-retry handles retries automatically)
@@ -1686,7 +1793,6 @@ exports.getInvoiceApproval = onCall({
         status: response.status,
         errorMessage,
         responseData: response.data,
-        requestBody: taxAuthorityData,
         invoiceId: documentId
       });
       
@@ -1696,7 +1802,6 @@ exports.getInvoiceApproval = onCall({
         {
           status: response.status,
           responseData: response.data,
-          requestBody: taxAuthorityData,
           invoice_id: documentId
         }
       );
@@ -2001,7 +2106,7 @@ exports.getInvoiceApproval = onCall({
         uid: uid,
         companyId: companyId,
         createdByUid: request.auth.uid,
-        userProfile: userData, // Pass user profile for role-based cache path
+        userRole: role,
       });
 
       pdfTaskPublished = true;
@@ -2159,7 +2264,7 @@ async function acquireCompanyBusyFlag(companyId, documentType, uid, taskId) {
  * @param {string} params.uid - uid
  * @param {string} params.companyId - Company name
  * @param {string} params.createdByUid - User's Firebase UID
- * @param {Object} [params.userProfile] - User profile with role for cache path determination
+ * @param {string} [params.userRole] - Role for cache path determination
  * 
  * @returns {Object} { taskId, messageId, published: true }
  */
@@ -2172,7 +2277,7 @@ async function publishGenerateTaskHelper({
   uid,
   companyId,
   createdByUid,
-  userProfile
+  userRole
 }) {
   const lockType = `generate_${documentType}`;
   const taskId = `generate_${documentType}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -2210,7 +2315,7 @@ async function publishGenerateTaskHelper({
       uid: uid,
       companyId: companyId,
       certificationData: certificationData,  // Existing cert data for taxInvoice
-      userProfile: userProfile || null, // User profile for role-based cache path
+      userRole: userRole || null,
       // Pass confirmation number at top level for easy access in Cloud Run
       confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
     };
@@ -2275,7 +2380,7 @@ exports.publishPreviewTask = onCall({
     const uid = request.auth.uid;
     logger.info('Publishing preview task', { uid });
 
-    const { documentType, documentData, companyId } = request.data;
+    const { documentType, documentData, companyId } = request.data || {};
     companyIdForUnlock = companyId;
     lockType = `preview_${documentType}`;
 
@@ -2298,19 +2403,12 @@ exports.publishPreviewTask = onCall({
       throw new HttpsError('invalid-argument', 'At least one item is required');
     }
 
-    // Get user profile (accept from frontend or fetch)
-    let userProfile;
-    if (request.data.userProfile) {
-      userProfile = request.data.userProfile;
-      logger.info('Using cached user profile from frontend', { role: userProfile.role });
-    } else {
-      // Fallback: fetch from Firestore
-      const userProfileRef = admin.firestore().doc(`${uid}/profile`);
-      const userProfileDoc = await userProfileRef.get();
-      if (userProfileDoc.exists) {
-        userProfile = userProfileDoc.data();
-      }
-    }
+    const { role } = await getAuthenticatedUserProfile(request.auth, {
+      allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
+      requireCompany: true,
+      companyId,
+    });
+    logger.info('User authorized for preview task', { uid, role, companyId, documentType });
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
@@ -2460,7 +2558,7 @@ exports.publishGenerateTask = onCall({
     const uid = request.auth.uid;
     logger.info('Publishing generate task', { uid });
 
-    const { documentType, documentData, companyId, documentId: providedDocId } = request.data;
+    const { documentType, documentData, companyId, documentId: providedDocId } = request.data || {};
 
     // Validate required fields
     if (!documentType) {
@@ -2490,18 +2588,15 @@ exports.publishGenerateTask = onCall({
       }
     }
 
-    // Get user profile (accept from frontend or fetch)
-    let userProfile;
-    if (request.data.userProfile) {
-      userProfile = request.data.userProfile;
-      logger.info('Using cached user profile from frontend', { role: userProfile.role });
-    } else {
-      // Fallback: fetch from Firestore
-      const userProfileRef = admin.firestore().doc(`${uid}/profile`);
-      const userProfileDoc = await userProfileRef.get();
-      if (userProfileDoc.exists) {
-        userProfile = userProfileDoc.data();
-      }
+    const { role } = await getAuthenticatedUserProfile(request.auth, {
+      allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
+      requireCompany: true,
+      companyId,
+    });
+    logger.info('User authorized for generate task', { uid, role, companyId, documentType: numericDocType });
+
+    if (numericDocType === DOC_TYPE.TAX_INVOICE && role !== 'manager' && role !== 'user') {
+      throw new HttpsError('permission-denied', 'Only managers and users can generate tax invoices');
     }
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
@@ -2612,7 +2707,7 @@ exports.publishGenerateTask = onCall({
       uid,
       companyId,
       createdByUid: request.auth.uid,
-      userProfile: userProfile, // Pass user profile for role-based cache path
+      userRole: role,
     });
 
     return {

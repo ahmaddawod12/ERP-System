@@ -11,6 +11,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className, label, error, id, ...props }, ref) => {
     const resolvedId = id ?? props.name;
+    const errorId = error && resolvedId ? `${resolvedId}-error` : undefined;
     return (
       <label className="flex w-full flex-col gap-1.5" htmlFor={resolvedId}>
         {label ? <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{label}</span> : null}
@@ -23,13 +24,17 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             className,
           )}
           aria-invalid={Boolean(error)}
+          aria-describedby={errorId}
           {...props}
         />
-        {error ? <span className="text-xs text-red-600">{error}</span> : null}
+        {error ? (
+          <span id={errorId} className="text-xs text-red-600">
+            {error}
+          </span>
+        ) : null}
       </label>
     );
   },
 );
 
 Input.displayName = "Input";
-

@@ -5,11 +5,17 @@ import type { ServiceAccount } from "firebase-admin";
 
 function resolveServiceAccount(): ServiceAccount | null {
   if (process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON) {
-    const raw = JSON.parse(process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON) as ServiceAccount;
-    if (raw.privateKey) {
-      raw.privateKey = raw.privateKey.replace(/\\n/g, "\n");
+    try {
+      const raw = JSON.parse(
+        process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON,
+      ) as ServiceAccount;
+      if (raw.privateKey) {
+        raw.privateKey = raw.privateKey.replace(/\\n/g, "\n");
+      }
+      return raw;
+    } catch {
+      throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON is not valid JSON");
     }
-    return raw;
   }
 
   if (
@@ -28,7 +34,21 @@ function resolveServiceAccount(): ServiceAccount | null {
 }
 
 function resolveProjectId() {
-  return process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_ADMIN_PROJECT_ID || "demo-smart-job";
+  const projectId =
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+    process.env.FIREBASE_ADMIN_PROJECT_ID;
+
+  if (projectId) {
+    return projectId;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Missing Firebase project id. Set NEXT_PUBLIC_FIREBASE_PROJECT_ID or FIREBASE_ADMIN_PROJECT_ID.",
+    );
+  }
+
+  return "demo-smart-job";
 }
 
 function initAdminApp() {
@@ -64,4 +84,3 @@ export function adminDb() {
 export function adminAuth() {
   return getAuth(initAdminApp());
 }
-

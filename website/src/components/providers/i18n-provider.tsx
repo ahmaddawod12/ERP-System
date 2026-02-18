@@ -26,8 +26,14 @@ function resolvePath(locale: Locale, path: string) {
   return typeof cursor === "string" ? cursor : path;
 }
 
-export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
+export function I18nProvider({
+  children,
+  initialLocale = "en",
+}: {
+  children: React.ReactNode;
+  initialLocale?: Locale;
+}) {
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(STORAGE_KEY);
@@ -40,7 +46,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     const rtl = rtlLocales.includes(locale);
     document.documentElement.lang = locale;
     document.documentElement.dir = rtl ? "rtl" : "ltr";
-    document.cookie = `sj_locale=${locale}; path=/; max-age=31536000`;
+    document.cookie = `sj_locale=${locale}; path=/; max-age=31536000; samesite=lax`;
     window.localStorage.setItem(STORAGE_KEY, locale);
   }, [locale]);
 
@@ -65,4 +71,3 @@ export function useI18n() {
   }
   return ctx;
 }
-

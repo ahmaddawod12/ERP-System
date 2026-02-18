@@ -3,11 +3,11 @@
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { addDoc, collection } from "firebase/firestore";
-import { db } from "@/lib/firebase/client";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useAppToast } from "@/hooks/use-toast";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
 
 const schema = z.object({
   name: z.string().min(2, "Name is required"),
@@ -30,17 +30,34 @@ export function ContactForm() {
   });
 
   const onSubmit = async (values: ContactFormValues) => {
-    await addDoc(collection(db, "contact_requests"), {
-      ...values,
-      createdAt: new Date().toISOString(),
-      status: "new",
-    });
-    toast({
-      title: "Message sent",
-      description: "We received your request and will get back to you shortly.",
-      variant: "success",
-    });
-    reset();
+    try {
+      const response = await fetch("/api/contact/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{ requestId: string }>;
+      if (!response.ok || !payload.ok) {
+        toast({
+          title: "Message failed",
+          description: getClientApiErrorMessage(payload, "Please try again later."),
+          variant: "error",
+        });
+        return;
+      }
+      toast({
+        title: "Message sent",
+        description: "We received your request and will get back to you shortly.",
+        variant: "success",
+      });
+      reset();
+    } catch (error) {
+      toast({
+        title: "Message failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
+      });
+    }
   };
 
   return (
@@ -64,4 +81,3 @@ export function ContactForm() {
     </form>
   );
 }
-

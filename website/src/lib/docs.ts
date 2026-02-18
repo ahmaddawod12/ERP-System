@@ -57,6 +57,7 @@ export const docs: DocEntry[] = [
     summary: "Generate certifications with API tasks and optional Cloud Run forwarding.",
     body: [
       "Use /api/documents/generate to queue a certification task.",
+      "Production API requests must include Authorization: Bearer <Firebase ID token>.",
       "The API writes into companies/{companyId}/certifications.",
       "If CLOUDRUN_PDF_URL is set, requests are forwarded to Cloud Run for advanced generation.",
       "Document history is visible in /app/documents.",
@@ -68,7 +69,7 @@ export const docs: DocEntry[] = [
     summary: "Web UI favors optimistic updates while Firestore remains source of truth.",
     body: [
       "Client actions update UI quickly and then re-fetch latest Firestore snapshots.",
-      "Server-side APIs handle sensitive operations: invites, counters, and upgrade requests.",
+      "Server-side APIs handle sensitive operations: invites, counters, onboarding joins, and upgrade requests.",
       "Use Firebase emulator suite locally for safe integration testing.",
       "Production deploys should monitor logs for API and function retries.",
     ],
@@ -76,4 +77,3 @@ export const docs: DocEntry[] = [
 ];
 
 export const docsBySlug = Object.fromEntries(docs.map((item) => [item.slug, item])) as Record<string, DocEntry>;
-

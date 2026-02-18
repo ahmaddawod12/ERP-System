@@ -10,6 +10,9 @@ import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { listWorkers, updateWorkerRole } from "@/lib/services/firestore-service";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
+import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
 import type { Role, WorkerProfile } from "@/lib/types";
 
 export default function WorkersPage() {
@@ -33,27 +36,42 @@ export default function WorkersPage() {
 
   const createInvite = async () => {
     if (!companyId || !uid) return;
-    const response = await fetch("/api/invites/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ companyId, uid }),
-    });
-    const payload = (await response.json()) as { inviteCode?: string; message?: string };
-    if (!response.ok || !payload.inviteCode) {
+    try {
+      const response = await fetch("/api/invites/create", {
+        method: "POST",
+        headers: await buildAuthedJsonHeaders(),
+        body: JSON.stringify(withDevUidFallback({ companyId }, uid)),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{
+        inviteId: string;
+        inviteCode: string;
+        expiresAt: string;
+        targetRole: "Worker" | "User" | "Basic";
+      }>;
+
+      if (!response.ok || !payload.ok) {
+        toast({
+          title: "Invite creation failed",
+          description: getClientApiErrorMessage(payload, "Request failed"),
+          variant: "error",
+        });
+        return;
+      }
+
+      setInviteCode(payload.data.inviteCode);
+      toast({
+        title: "Invite created",
+        description: `Code: ${payload.data.inviteCode}`,
+        variant: "success",
+      });
+      await load();
+    } catch (error) {
       toast({
         title: "Invite creation failed",
-        description: payload.message ?? "Unknown error",
+        description: error instanceof Error ? error.message : "Unexpected error",
         variant: "error",
       });
-      return;
     }
-    setInviteCode(payload.inviteCode);
-    toast({
-      title: "Invite created",
-      description: `Code: ${payload.inviteCode}`,
-      variant: "success",
-    });
-    await load();
   };
 
   const handleRoleChange = async (workerId: string, role: Role) => {

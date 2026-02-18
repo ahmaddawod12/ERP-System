@@ -2,13 +2,22 @@
 
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { I18nProvider } from "@/components/providers/i18n-provider";
-import { ThemeProvider } from "@/components/providers/theme-provider";
+import { ThemeProvider, type Theme } from "@/components/providers/theme-provider";
 import { ToastProvider } from "@/components/providers/toast-provider";
+import type { Locale } from "@/lib/i18n/translations";
 
-export function AppProviders({ children }: { children: React.ReactNode }) {
+export function AppProviders({
+  children,
+  initialLocale,
+  initialTheme,
+}: {
+  children: React.ReactNode;
+  initialLocale: Locale;
+  initialTheme: Theme;
+}) {
   return (
-    <ThemeProvider>
-      <I18nProvider>
+    <ThemeProvider initialTheme={initialTheme}>
+      <I18nProvider initialLocale={initialLocale}>
         <ToastProvider>
           <AuthProvider>{children}</AuthProvider>
         </ToastProvider>
@@ -16,4 +25,3 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     </ThemeProvider>
   );
 }
-

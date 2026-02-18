@@ -1,82 +1,84 @@
-import { NextResponse } from "next/server";
+import type { Role } from "@/lib/types";
 import { adminDb } from "@/lib/firebase/admin";
-import { resolveUidFromRequest } from "@/lib/firebase/request-auth";
+import { assertCompanyAccess } from "@/lib/firebase/server-access";
+import { resolveRequestAuth } from "@/lib/firebase/request-auth";
+import { parseRequestBody } from "@/lib/api/request";
+import { apiOk, handleRouteError } from "@/lib/api/response";
+import { createClientSchema } from "@/lib/validation/schemas";
 
-interface Body {
-  uid?: string;
-  companyId?: string;
-  name?: string;
-  email?: string;
-  phone?: string;
-  address?: string;
-  notes?: string;
-}
+export const runtime = "nodejs";
+
+const CLIENT_WRITER_ROLES: Role[] = ["Manager", "User", "Basic", "Dev"];
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Body;
-    const uid = await resolveUidFromRequest(request, body.uid);
+    const body = await parseRequestBody(request, createClientSchema);
+    const auth = await resolveRequestAuth(request, body.uid);
 
-    if (!uid) {
-      return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
-    }
-    if (!body.companyId || !body.name) {
-      return NextResponse.json({ ok: false, message: "companyId and name are required" }, { status: 400 });
-    }
+    await assertCompanyAccess({
+      uid: auth.uid,
+      companyId: body.companyId,
+      allowedRoles: CLIENT_WRITER_ROLES,
+    });
 
-    const workerRef = adminDb()
-      .collection("companies")
-      .doc(body.companyId)
-      .collection("workers")
-      .doc(uid);
-    const workerSnap = await workerRef.get();
-    const role = workerSnap.data()?.role as string | undefined;
-    if (!workerSnap.exists || role === "Worker") {
-      return NextResponse.json({ ok: false, message: "Insufficient permissions" }, { status: 403 });
-    }
+    const db = adminDb();
+    const companyRef = db.collection("companies").doc(body.companyId);
+    const counterRef = companyRef.collection("counters").doc("clients");
+    const requestRef = companyRef.collection("client_create_requests").doc(body.requestId);
+    const clientsCollection = companyRef.collection("clients");
 
-    const counterRef = adminDb()
-      .collection("companies")
-      .doc(body.companyId)
-      .collection("counters")
-      .doc("clients");
+    const result = await db.runTransaction(async (tx) => {
+      const existingRequest = await tx.get(requestRef);
+      if (existingRequest.exists) {
+        const data = existingRequest.data() as { clientId: string; numericId: number };
+        return {
+          clientId: data.clientId,
+          numericId: data.numericId,
+          idempotent: true,
+        };
+      }
 
-    const clientsCollection = adminDb()
-      .collection("companies")
-      .doc(body.companyId)
-      .collection("clients");
-
-    const result = await adminDb().runTransaction(async (tx) => {
       const counterSnap = await tx.get(counterRef);
-      const lastNumber = counterSnap.exists ? (counterSnap.data()?.lastNumber as number) : 0;
-      const nextNumber = lastNumber + 1;
-      tx.set(counterRef, { lastNumber: nextNumber }, { merge: true });
-
+      const lastNumber = Number(counterSnap.data()?.lastNumber ?? 0);
+      const safeLastNumber = Number.isFinite(lastNumber) && lastNumber >= 0 ? lastNumber : 0;
+      const nextNumber = safeLastNumber + 1;
       const clientRef = clientsCollection.doc();
+      const nowIso = new Date().toISOString();
+
+      tx.set(
+        counterRef,
+        {
+          lastNumber: nextNumber,
+          updatedAt: nowIso,
+        },
+        { merge: true },
+      );
+
       tx.set(clientRef, {
         numericId: nextNumber,
         name: body.name,
-        email: body.email ?? "",
-        phone: body.phone ?? "",
-        address: body.address ?? "",
-        notes: body.notes ?? "",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        createdBy: uid,
+        email: body.email,
+        phone: body.phone,
+        address: body.address,
+        notes: body.notes,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        createdBy: auth.uid,
       });
 
-      return { clientId: clientRef.id, numericId: nextNumber };
+      tx.set(requestRef, {
+        requestId: body.requestId,
+        clientId: clientRef.id,
+        numericId: nextNumber,
+        createdBy: auth.uid,
+        createdAt: nowIso,
+      });
+
+      return { clientId: clientRef.id, numericId: nextNumber, idempotent: false };
     });
 
-    return NextResponse.json({ ok: true, ...result });
+    return apiOk(result, 201);
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unexpected error",
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error);
   }
 }
-

@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
@@ -33,7 +33,7 @@ export default function PricingPage() {
       <section className="page-shell py-12">
         <h1 className="text-4xl font-bold text-slate-900 dark:text-white">Pricing (No Checkout Yet)</h1>
         <p className="mt-3 max-w-2xl text-slate-600 dark:text-slate-300">
-          Tiers are managed manually today. Use “Request upgrade” inside the app or contact the team.
+          Tiers are managed manually today. Use &quot;Request upgrade&quot; inside the app or contact the team.
         </p>
         <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {tiers.map((tier) => (
@@ -62,4 +62,5 @@ export default function PricingPage() {
     </PublicLayout>
   );
 }
+
 

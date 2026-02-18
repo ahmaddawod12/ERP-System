@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -22,6 +22,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useAppToast();
   const {
     register,
@@ -32,6 +33,11 @@ export default function LoginPage() {
   const onSubmit = async (values: FormValues) => {
     try {
       await signInWithEmailAndPassword(auth, values.email, values.password);
+      const redirect = searchParams.get("redirect");
+      if (redirect && redirect.startsWith("/")) {
+        router.push(redirect);
+        return;
+      }
       router.push("/app");
     } catch (error) {
       toast({

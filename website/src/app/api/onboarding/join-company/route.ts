@@ -1,30 +1,19 @@
-import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
-import { resolveUidFromRequest } from "@/lib/firebase/request-auth";
+import { resolveRequestAuth } from "@/lib/firebase/request-auth";
+import { ApiRouteError } from "@/lib/api/errors";
+import { parseRequestBody } from "@/lib/api/request";
+import { apiOk, handleRouteError } from "@/lib/api/response";
+import { joinCompanySchema } from "@/lib/validation/schemas";
 
-interface Body {
-  uid?: string;
-  email?: string;
-  role?: "Worker" | "User" | "Basic";
-  name?: string;
-  phoneNumber?: string;
-  companyId?: string;
-  inviteCode?: string;
-}
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Body;
-    const uid = await resolveUidFromRequest(request, body.uid);
+    const body = await parseRequestBody(request, joinCompanySchema);
+    const auth = await resolveRequestAuth(request, body.uid);
 
-    if (!uid) {
-      return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
-    }
-    if (!body.companyId || !body.inviteCode || !body.email) {
-      return NextResponse.json(
-        { ok: false, message: "companyId, inviteCode, and email are required" },
-        { status: 400 },
-      );
+    if (auth.token?.email && auth.token.email.toLowerCase() !== body.email.toLowerCase()) {
+      throw new ApiRouteError(403, "email_mismatch", "Email does not match authenticated user");
     }
 
     const invitesRef = adminDb()
@@ -34,54 +23,106 @@ export async function POST(request: Request) {
 
     const inviteSnap = await invitesRef.where("code", "==", body.inviteCode).limit(1).get();
     if (inviteSnap.empty) {
-      return NextResponse.json({ ok: false, message: "Invalid invite code" }, { status: 400 });
+      throw new ApiRouteError(400, "invalid_invite", "Invalid invite code");
     }
 
     const inviteDoc = inviteSnap.docs[0];
-    const inviteData = inviteDoc.data();
-    if (inviteData.usedBy) {
-      return NextResponse.json({ ok: false, message: "Invite code already used" }, { status: 400 });
-    }
-
-    await inviteDoc.ref.set(
-      {
-        usedBy: uid,
-        usedAt: new Date().toISOString(),
-      },
-      { merge: true },
-    );
-
     const workerRef = adminDb()
       .collection("companies")
       .doc(body.companyId)
       .collection("workers")
-      .doc(uid);
+      .doc(auth.uid);
+    const profileRef = adminDb().collection("users").doc(auth.uid).collection("profile").doc("data");
 
-    await workerRef.set(
-      {
-        workerId: uid,
-        email: body.email,
-        role: body.role ?? "Worker",
-        name: body.name ?? "",
-        phoneNumber: body.phoneNumber ?? "",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true },
-    );
+    const result = await adminDb().runTransaction(async (tx) => {
+      const [inviteDocSnap, workerSnap, profileSnap] = await Promise.all([
+        tx.get(inviteDoc.ref),
+        tx.get(workerRef),
+        tx.get(profileRef),
+      ]);
 
-    return NextResponse.json({
-      ok: true,
-      companyId: body.companyId,
+      if (!inviteDocSnap.exists) {
+        throw new ApiRouteError(400, "invalid_invite", "Invite code no longer exists");
+      }
+
+      const inviteData = inviteDocSnap.data() as {
+        usedBy?: string | null;
+        status?: string;
+        targetRole?: "Worker" | "User" | "Basic";
+        expiresAt?: string;
+      };
+
+      const now = Date.now();
+      if (inviteData.expiresAt && Date.parse(inviteData.expiresAt) < now) {
+        throw new ApiRouteError(400, "invite_expired", "Invite code has expired");
+      }
+
+      if (inviteData.status && inviteData.status !== "active" && inviteData.usedBy !== auth.uid) {
+        throw new ApiRouteError(400, "invite_unavailable", "Invite code is not active");
+      }
+
+      if (inviteData.usedBy && inviteData.usedBy !== auth.uid) {
+        throw new ApiRouteError(400, "invite_used", "Invite code was already used");
+      }
+
+      const resolvedRole = workerSnap.exists
+        ? ((workerSnap.data()?.role as "Worker" | "User" | "Basic") ?? "Worker")
+        : inviteData.targetRole ?? body.role ?? "Worker";
+
+      const nowIso = new Date(now).toISOString();
+
+      tx.set(
+        inviteDoc.ref,
+        {
+          usedBy: auth.uid,
+          usedAt: nowIso,
+          status: "used",
+        },
+        { merge: true },
+      );
+
+      tx.set(
+        workerRef,
+        {
+          workerId: auth.uid,
+          email: body.email,
+          role: resolvedRole,
+          name: body.name,
+          phoneNumber: body.phoneNumber,
+          createdAt: workerSnap.exists
+            ? (workerSnap.data()?.createdAt as string | undefined) ?? nowIso
+            : nowIso,
+          updatedAt: nowIso,
+        },
+        { merge: true },
+      );
+
+      tx.set(
+        profileRef,
+        {
+          uid: auth.uid,
+          email: body.email,
+          role: resolvedRole,
+          companyId: body.companyId,
+          accountType: "business",
+          name: body.name,
+          phoneNumber: body.phoneNumber,
+          createdAt: profileSnap.exists
+            ? (profileSnap.data()?.createdAt as string | undefined) ?? nowIso
+            : nowIso,
+          updatedAt: nowIso,
+        },
+        { merge: true },
+      );
+
+      return {
+        companyId: body.companyId,
+        role: resolvedRole,
+      };
     });
+
+    return apiOk(result);
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unexpected error",
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error);
   }
 }
-

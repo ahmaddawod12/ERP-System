@@ -54,24 +54,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSubscription(null);
       return;
     }
-    const result = await loadUserProfile(auth.currentUser.uid);
-    setProfile(result.profile);
-    setSubscription(result.subscription);
+    try {
+      const result = await loadUserProfile(auth.currentUser.uid);
+      setProfile(result.profile);
+      setSubscription(result.subscription);
+    } catch {
+      setProfile(null);
+      setSubscription(null);
+    }
   }, []);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextUser) => {
-      setLoading(true);
-      setUser(nextUser);
-      if (nextUser) {
-        const result = await loadUserProfile(nextUser.uid);
-        setProfile(result.profile);
-        setSubscription(result.subscription);
-      } else {
+      try {
+        setLoading(true);
+        setUser(nextUser);
+        if (nextUser) {
+          const result = await loadUserProfile(nextUser.uid);
+          setProfile(result.profile);
+          setSubscription(result.subscription);
+        } else {
+          setProfile(null);
+          setSubscription(null);
+        }
+      } catch {
         setProfile(null);
         setSubscription(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
   }, []);
 
@@ -101,4 +112,3 @@ export function useAuthContext() {
   }
   return ctx;
 }
-

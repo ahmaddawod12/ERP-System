@@ -16,6 +16,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
 import { useTheme } from "@/components/providers/theme-provider";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
+import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
 
 const schema = z
   .object({
@@ -37,6 +40,14 @@ const schema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Solo accounts use User role.",
+        path: ["role"],
+      });
+    }
+
+    if (value.accountType === "business" && value.role !== "Manager" && value.role !== "Worker") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Business accounts must use Manager or Worker role.",
         path: ["role"],
       });
     }
@@ -99,8 +110,12 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (accountType === "solo") {
       setValue("role", "User");
+      return;
     }
-  }, [accountType, setValue]);
+    if (role !== "Manager" && role !== "Worker") {
+      setValue("role", "Manager");
+    }
+  }, [accountType, role, setValue]);
 
   const showCompanySetup = useMemo(() => accountType === "business", [accountType]);
 
@@ -141,6 +156,7 @@ export default function OnboardingPage() {
 
     try {
       let companyId: string | null = null;
+      let joinedRole: Role | null = null;
 
       if (values.accountType === "business" && values.role === "Manager") {
         companyId = await createCompanyForManager({
@@ -160,25 +176,33 @@ export default function OnboardingPage() {
       if (values.accountType === "business" && values.role === "Worker") {
         const response = await fetch("/api/onboarding/join-company", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            uid: user.uid,
-            email: user.email,
-            role: "Worker",
-            name: values.name,
-            phoneNumber: values.phoneNumber,
-            companyId: values.joinCompanyId,
-            inviteCode: values.inviteCode,
-          }),
+          headers: await buildAuthedJsonHeaders(),
+          body: JSON.stringify(
+            withDevUidFallback(
+              {
+                email: user.email,
+                role: "Worker",
+                name: values.name,
+                phoneNumber: values.phoneNumber,
+                companyId: values.joinCompanyId,
+                inviteCode: values.inviteCode,
+              },
+              user.uid,
+            ),
+          ),
         });
-        const data = (await response.json()) as { ok?: boolean; companyId?: string; message?: string };
-        if (!response.ok || !data.ok || !data.companyId) {
-          throw new Error(data.message ?? "Invite validation failed");
+        const data = (await response.json()) as ClientApiResponse<{
+          companyId: string;
+          role: "Worker" | "User" | "Basic";
+        }>;
+        if (!response.ok || !data.ok || !data.data.companyId) {
+          throw new Error(getClientApiErrorMessage(data, "Invite validation failed"));
         }
-        companyId = data.companyId;
+        companyId = data.data.companyId;
+        joinedRole = data.data.role;
       }
 
-      const resolvedRole = values.accountType === "solo" ? "User" : values.role;
+      const resolvedRole = values.accountType === "solo" ? "User" : joinedRole ?? values.role;
 
       await writeUserProfile(user.uid, {
         role: resolvedRole as Role,
@@ -263,10 +287,14 @@ export default function OnboardingPage() {
                       disabled={accountType === "solo"}
                       className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:disabled:bg-slate-800"
                     >
-                      <option value="Manager">Manager</option>
-                      <option value="Worker">Worker</option>
-                      <option value="User">User</option>
-                      <option value="Basic">Basic</option>
+                      {accountType === "solo" ? (
+                        <option value="User">User</option>
+                      ) : (
+                        <>
+                          <option value="Manager">Manager</option>
+                          <option value="Worker">Worker</option>
+                        </>
+                      )}
                     </select>
                     {accountType === "solo" ? <p className="text-xs text-slate-500 dark:text-slate-400">Solo account defaults to User role.</p> : null}
                     {errors.role?.message ? <p className="text-xs text-red-600">{errors.role.message}</p> : null}
@@ -347,4 +375,3 @@ export default function OnboardingPage() {
     </PublicLayout>
   );
 }
-

@@ -20,6 +20,16 @@ export function DataTable<T>({
   emptyMessage = "No data yet.",
   className,
 }: DataTableProps<T>) {
+  const resolveRowKey = (row: T, rowIndex: number) => {
+    if (typeof row === "object" && row !== null && "id" in row) {
+      const id = (row as { id?: unknown }).id;
+      if (typeof id === "string" || typeof id === "number") {
+        return String(id);
+      }
+    }
+    return `row-${rowIndex}`;
+  };
+
   if (!data.length) {
     return (
       <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
@@ -42,7 +52,7 @@ export function DataTable<T>({
         </thead>
         <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-950/40">
           {data.map((row, rowIndex) => (
-            <tr key={rowIndex}>
+            <tr key={resolveRowKey(row, rowIndex)}>
               {columns.map((column) => (
                 <td key={column.key} className={cn("px-4 py-3 align-top", column.className)}>
                   {column.render(row)}
@@ -55,4 +65,3 @@ export function DataTable<T>({
     </div>
   );
 }
-

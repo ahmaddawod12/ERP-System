@@ -17,10 +17,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db, storage, doc, getDoc, setDoc, deleteDoc } from '../../firebase';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
-import { useLanguageContext } from '../../contexts/LanguageContext';
-import { useThemeContext } from '../../contexts/ThemeContext';
-import { useAlert } from '../../contexts/AlertContext';
-import { useCache } from '../../contexts/CacheContext';
+import { useLanguageContext } from '../../../contexts/LanguageContext';
+import { useThemeContext } from '../../../contexts/ThemeContext';
+import { useAlert } from '../../../contexts/AlertContext';
+import { useCache } from '../../../contexts/CacheContext';
 import { generateFinishedJobId } from '../../utils/helpers';
 
 export default function Userjob() {

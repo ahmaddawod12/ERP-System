@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
+import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
 
 const schema = z.object({
   requestedTier: z.enum(["Solo", "Team", "Enterprise"]),
@@ -39,31 +42,43 @@ export default function UpgradePage() {
 
   const onSubmit = async (values: FormValues) => {
     if (!uid) return;
-    const response = await fetch("/api/upgrades/request", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        uid,
-        currentTier: subscription?.tier ?? "Basic",
-        requestedTier: values.requestedTier,
-        message: values.message,
-      }),
-    });
-    const payload = (await response.json()) as { ok?: boolean; message?: string };
-    if (!response.ok || !payload.ok) {
+    try {
+      const response = await fetch("/api/upgrades/request", {
+        method: "POST",
+        headers: await buildAuthedJsonHeaders(),
+        body: JSON.stringify(
+          withDevUidFallback(
+            {
+              currentTier: subscription?.tier ?? "Basic",
+              requestedTier: values.requestedTier,
+              message: values.message,
+            },
+            uid,
+          ),
+        ),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{ requestId: string }>;
+      if (!response.ok || !payload.ok) {
+        toast({
+          title: "Upgrade request failed",
+          description: getClientApiErrorMessage(payload, "Request failed"),
+          variant: "error",
+        });
+        return;
+      }
+      toast({
+        title: "Upgrade request sent",
+        description: "Your request was saved and will be reviewed manually.",
+        variant: "success",
+      });
+      reset();
+    } catch (error) {
       toast({
         title: "Upgrade request failed",
-        description: payload.message ?? "Unknown error",
+        description: error instanceof Error ? error.message : "Unexpected error",
         variant: "error",
       });
-      return;
     }
-    toast({
-      title: "Upgrade request sent",
-      description: "Your request was saved and will be reviewed manually.",
-      variant: "success",
-    });
-    reset();
   };
 
   return (
@@ -124,4 +139,3 @@ export default function UpgradePage() {
     </ProtectedRoute>
   );
 }
-

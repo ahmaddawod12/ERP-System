@@ -12,6 +12,9 @@ import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { listCertifications } from "@/lib/services/firestore-service";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
+import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
 import type { CertificationRecord } from "@/lib/types";
 
 const documentTypes = ["Work Certification", "Service Completion", "Compliance Checklist"];
@@ -39,23 +42,53 @@ export default function DocumentsPage() {
 
   const generate = async (type: string) => {
     if (!companyScopeId || !uid) return;
-    const response = await fetch("/api/documents/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        uid,
-        companyId: companyScopeId,
-        type,
-        jobId: jobId || "manual",
-      }),
-    });
-    const payload = (await response.json()) as { ok?: boolean; message?: string };
-    if (!response.ok || !payload.ok) {
-      toast({ title: "Document request failed", description: payload.message, variant: "error" });
-      return;
+    try {
+      const response = await fetch("/api/documents/generate", {
+        method: "POST",
+        headers: await buildAuthedJsonHeaders(),
+        body: JSON.stringify(
+          withDevUidFallback(
+            {
+              companyId: companyScopeId,
+              type,
+              jobId: jobId || "manual",
+            },
+            uid,
+          ),
+        ),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{
+        id: string;
+        downloadUrl: string;
+        status: "queued" | "generated" | "failed";
+      }>;
+
+      if (!response.ok || !payload.ok) {
+        toast({
+          title: "Document request failed",
+          description: getClientApiErrorMessage(payload, "Request failed"),
+          variant: "error",
+        });
+        return;
+      }
+
+      if (payload.data.status === "failed") {
+        toast({
+          title: "Document request failed",
+          description: "Generation request was saved but cloud processing failed.",
+          variant: "error",
+        });
+      } else {
+        toast({ title: "Document queued", variant: "success" });
+      }
+      await load();
+    } catch (error) {
+      toast({
+        title: "Document request failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
+      });
     }
-    toast({ title: "Document queued", variant: "success" });
-    await load();
   };
 
   return (

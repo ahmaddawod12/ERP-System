@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +13,8 @@ interface ModalProps {
 }
 
 export function Modal({ open, title, onClose, children, className }: ModalProps) {
+  const titleId = useId();
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -27,10 +29,22 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div className={cn("w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900", className)}>
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{title}</h3>
+          <h3 id={titleId} className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {title}
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -45,4 +59,3 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
     </div>
   );
 }
-

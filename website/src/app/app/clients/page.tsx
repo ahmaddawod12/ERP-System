@@ -13,6 +13,9 @@ import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase/client";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
+import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
 import { deleteClient, listClients, updateClient } from "@/lib/services/firestore-service";
 import type { ClientRecord } from "@/lib/types";
 
@@ -62,61 +65,98 @@ export default function ClientsPage() {
 
   const createClient = async () => {
     if (!uid || !form.name) return;
-
-    if (companyId) {
-      const response = await fetch("/api/clients/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          uid,
-          companyId,
+    try {
+      if (companyId) {
+        const requestId = crypto.randomUUID();
+        const response = await fetch("/api/clients/create", {
+          method: "POST",
+          headers: await buildAuthedJsonHeaders(),
+          body: JSON.stringify(
+            withDevUidFallback(
+              {
+                companyId,
+                requestId,
+                ...form,
+              },
+              uid,
+            ),
+          ),
+        });
+        const payload = (await response.json()) as ClientApiResponse<{
+          clientId: string;
+          numericId: number;
+          idempotent: boolean;
+        }>;
+        if (!response.ok || !payload.ok) {
+          toast({
+            title: "Client creation failed",
+            description: getClientApiErrorMessage(payload, "Request failed"),
+            variant: "error",
+          });
+          return;
+        }
+      } else {
+        const nextId = (clients[clients.length - 1]?.numericId ?? 0) + 1;
+        await addDoc(collection(db, "users", uid, "clients"), {
+          numericId: nextId,
           ...form,
-        }),
-      });
-      const payload = (await response.json()) as { ok?: boolean; message?: string };
-      if (!response.ok || !payload.ok) {
-        toast({ title: "Client creation failed", description: payload.message, variant: "error" });
-        return;
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
       }
-    } else {
-      const nextId = (clients[clients.length - 1]?.numericId ?? 0) + 1;
-      await addDoc(collection(db, "users", uid, "clients"), {
-        numericId: nextId,
-        ...form,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+
+      setForm(initialForm);
+      await load();
+      toast({ title: "Client created", variant: "success" });
+    } catch (error) {
+      toast({
+        title: "Client creation failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
       });
     }
-
-    setForm(initialForm);
-    await load();
-    toast({ title: "Client created", variant: "success" });
   };
 
   const saveEdit = async () => {
     if (!editing || !uid) return;
-    if (companyId) {
-      await updateClient(companyId, editing.id, editing);
-    } else {
-      await updateDoc(doc(db, "users", uid, "clients", editing.id), {
-        ...editing,
-        updatedAt: new Date().toISOString(),
+    try {
+      if (companyId) {
+        await updateClient(companyId, editing.id, editing);
+      } else {
+        await updateDoc(doc(db, "users", uid, "clients", editing.id), {
+          ...editing,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      setEditing(null);
+      await load();
+      toast({ title: "Client updated", variant: "success" });
+    } catch (error) {
+      toast({
+        title: "Client update failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
       });
     }
-    setEditing(null);
-    await load();
-    toast({ title: "Client updated", variant: "success" });
   };
 
   const removeClient = async (clientId: string) => {
     if (!uid) return;
-    if (companyId) {
-      await deleteClient(companyId, clientId);
-    } else {
-      await deleteDoc(doc(db, "users", uid, "clients", clientId));
+    try {
+      if (companyId) {
+        await deleteClient(companyId, clientId);
+      } else {
+        await deleteDoc(doc(db, "users", uid, "clients", clientId));
+      }
+      await load();
+      toast({ title: "Client deleted", variant: "info" });
+    } catch (error) {
+      toast({
+        title: "Client delete failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
+      });
     }
-    await load();
-    toast({ title: "Client deleted", variant: "info" });
   };
 
   return (

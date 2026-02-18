@@ -85,15 +85,6 @@ export async function createCompanyForManager(params: {
     createdAt: new Date().toISOString(),
   });
 
-  await setDoc(
-    companyBusinessInfoRef(companyId),
-    {
-      ...params.businessInfo,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true },
-  );
-
   await setDoc(doc(db, "companies", companyId, "workers", params.uid), {
     workerId: params.uid,
     role: "Manager",
@@ -103,6 +94,15 @@ export async function createCompanyForManager(params: {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
+
+  await setDoc(
+    companyBusinessInfoRef(companyId),
+    {
+      ...params.businessInfo,
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true },
+  );
 
   await setDoc(doc(db, "companies", companyId, "counters", "clients"), { lastNumber: 0 }, { merge: true });
 

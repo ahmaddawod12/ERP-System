@@ -15,7 +15,7 @@ import {
   Boxes,
   Shield,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { canAccessSection, type AppSection } from "@/lib/access";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/Button";
@@ -99,12 +99,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return navItemsByRole(profile.role).filter((item) => canAccessSection(profile.role, tier, item.section));
   }, [profile, tier]);
 
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      const redirect = pathname ? `?redirect=${encodeURIComponent(pathname)}` : "";
+      router.replace(`/login${redirect}`);
+      return;
+    }
+    if (!profile) {
+      router.replace("/onboarding");
+    }
+  }, [loading, pathname, profile, router, user]);
+
   if (loading) {
     return <LoadingState label="Preparing dashboard..." />;
   }
 
   if (!user || !profile) {
-    router.replace("/login");
     return <LoadingState label="Redirecting..." />;
   }
 

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { collection, getDocs, orderBy, query, updateDoc, doc } from "firebase/firestore";
@@ -67,7 +67,7 @@ export default function AdminPage() {
                   header: "Tier change",
                   render: (row) => (
                     <div className="text-sm">
-                      <span>{row.currentTier}</span> → <span>{row.requestedTier}</span>
+                      <span>{row.currentTier}</span>{" -> "}<span>{row.requestedTier}</span>
                     </div>
                   ),
                 },
@@ -107,4 +107,5 @@ export default function AdminPage() {
     </ProtectedRoute>
   );
 }
+
 

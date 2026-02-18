@@ -18,6 +18,14 @@ body {
   font-family: var(--font-sans), sans-serif;
 }
 
+html:lang(he) body {
+  font-family: var(--font-hebrew), var(--font-sans), sans-serif;
+}
+
+html:lang(ar) body {
+  font-family: var(--font-arabic), var(--font-sans), sans-serif;
+}
+
 code,
 pre {
   font-family: var(--font-mono), monospace;
@@ -29,4 +37,8 @@ pre {
 
 .glass-panel {
   @apply rounded-2xl border border-slate-200/80 bg-white/70 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/50;
+}
+
+[dir="rtl"] table {
+  text-align: right;
 }

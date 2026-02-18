@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
         <div className="mx-auto max-w-md">
           <Card>
             <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Forgot password</h1>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">We’ll email you a reset link.</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">We&apos;ll email you a reset link.</p>
             <form className="mt-5 grid gap-3" onSubmit={handleSubmit(onSubmit)}>
               <Input label="Email" type="email" {...register("email")} error={errors.email?.message} />
               <Button type="submit" disabled={isSubmitting}>
@@ -63,4 +63,3 @@ export default function ForgotPasswordPage() {
     </PublicLayout>
   );
 }
-

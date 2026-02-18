@@ -1,360 +1,298 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper function to check if user is authenticated
-    function isAuthenticated() {
+    function signedIn() {
       return request.auth != null;
     }
-    
-    // Helper function to get the authenticated user's identifier (Firebase UID)
-    function getUid() {
-      return request.auth.uid;
-    }
-    
-    // Helper function to get user's company ID from their profile
-    function getUserCompany() {
-      return get(/databases/$(database)/documents/$(getUid())/profile).data.companyId;
-    }
-    
-    // Helper function to check if user belongs to a company
-    function hasCompany() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/$(getUid())/profile) &&
-             'companyId' in get(/databases/$(database)/documents/$(getUid())/profile).data;
-    }
-    
-    // Helper function to check if user is a manager
-    function isManager() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/$(getUid())/profile) &&
-             get(/databases/$(database)/documents/$(getUid())/profile).data.role == 'manager';
-    }
-    
-    // Helper function to check if user is a worker
-    function isWorker() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/$(getUid())/profile) &&
-             get(/databases/$(database)/documents/$(getUid())/profile).data.role == 'worker';
-    }
-    
-    // Helper function to check if user is a standard user (not manager or worker)
-    function isUser() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/$(getUid())/profile) &&
-             get(/databases/$(database)/documents/$(getUid())/profile).data.role == 'user';
-    }
-    
-    // Helper function to check if user has 'basic' role
-    function isBasic() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/$(getUid())/profile) &&
-             get(/databases/$(database)/documents/$(getUid())/profile).data.role == 'basic';
-    }
-    
-    // Helper function to check if user is a dev
-    function isDev() {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/$(getUid())/profile) &&
-             get(/databases/$(database)/documents/$(getUid())/profile).data.role == 'dev';
-    }
-    
-    // Helper function to check if authenticated user owns the company
-    function ownsCompany(companyId) {
-      return hasCompany() && getUserCompany() == companyId;
-    }
-    
-    // Helper function to check if a worker belongs to manager's company
-    function isWorkerInManagerCompany(workerId) {
-      return isManager() && hasCompany() &&
-             exists(/databases/$(database)/documents/$(workerId)/profile) &&
-             get(/databases/$(database)/documents/$(workerId)/profile).data.companyId == getUserCompany();
-    }
-    
-    // Company data rules - Managers, Users, and Basic can manage their company, Workers can read
-    match /companies/{companyId} {
-      // Allow reading company metadata
-      allow read: if ownsCompany(companyId) && (isManager() || isUser() || isWorker() || isBasic());
-      
-      // Allow creating company document (for initial setup)
-      allow create: if isAuthenticated() && 
-                       (isManager() || isUser() || isWorker());
-      
-      // Allow updating only client counter on company root document (managers/users only)
-      allow update: if ownsCompany(companyId) &&
-                       (isManager() || isUser()) &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cid']);
-      
-      // Workers collection - only managers can write
-      match /workers/{document=**} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser());
-        // Never allow plaintext password storage in worker documents
-        allow create, update: if ownsCompany(companyId) && isManager() &&
-                                 !('password' in request.resource.data);
-        allow delete: if ownsCompany(companyId) && isManager();
-      }
-      
-      // Jobs collection - managers can write, workers can update their assigned jobs
-      match /jobs/{jobId} {
-        allow read: if ownsCompany(companyId) && (isManager() || isWorker() || isUser());
-        allow create: if ownsCompany(companyId) && isManager();
-        allow update: if ownsCompany(companyId) && 
-                         (isManager() || 
-                          (isWorker() && resource.data.assignedTo == getUid()));
-        allow delete: if ownsCompany(companyId) && isManager();
-      }
-      
-      // PendingJobs collection - workers can read/write only their own jobs
-      match /PendingJobs/{jobId} {
-        // Managers can read all pending jobs in their company
-        allow read: if ownsCompany(companyId) && isManager();
-        // Workers can read only jobs where completedBy matches their UID
-        allow read: if ownsCompany(companyId) && isWorker() && 
-                       resource.data.completedBy == getUid();
-        // Users can read only jobs where completedBy matches their UID
-        allow read: if ownsCompany(companyId) && isUser() && 
-                       resource.data.completedBy == getUid();
-        
-        // Managers can create/update/delete any pending job
-        allow write, delete: if ownsCompany(companyId) && isManager();
-        
-        // Workers can CREATE and UPDATE only their own pending jobs (completedBy matches)
-        allow create: if ownsCompany(companyId) && isWorker() && 
-                         request.resource.data.completedBy == getUid();
-        allow update: if ownsCompany(companyId) && isWorker() && 
-                         resource.data.completedBy == getUid() &&
-                         request.resource.data.completedBy == getUid();
-        
-        // Users can CREATE and UPDATE only their own pending jobs (completedBy matches)
-        allow create: if ownsCompany(companyId) && isUser() && 
-                         request.resource.data.completedBy == getUid();
-        allow update: if ownsCompany(companyId) && isUser() && 
-                         resource.data.completedBy == getUid() &&
-                         request.resource.data.completedBy == getUid();
-      }
-      
-      // FinishedJobs collection - workers can read only their own finished jobs
-      match /FinishedJobs/{jobId} {
-        // Managers can read all finished jobs in their company
-        allow read: if ownsCompany(companyId) && isManager();
-        // Workers can read only finished jobs where completedBy matches their UID
-        allow read: if ownsCompany(companyId) && isWorker() && 
-                       resource.data.completedBy == getUid();
-        // Users can read only finished jobs where completedBy matches their UID
-        allow read: if ownsCompany(companyId) && isUser() && 
-                       resource.data.completedBy == getUid();
-        
-        // Managers can write any finished job
-        allow write, delete: if ownsCompany(companyId) && isManager();
-        
-        // Workers can CREATE finished jobs they completed
-        allow create: if ownsCompany(companyId) && isWorker() && 
-                         request.resource.data.completedBy == getUid();
-        
-        // Users can CREATE finished jobs they created
-        allow create: if ownsCompany(companyId) && isUser() && 
-                         request.resource.data.completedBy == getUid();
-      }
-      
-      // Finished jobs collection (legacy) - managers and users can write their own, workers can read
-      match /finishedJobs/{jobId} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser() || isWorker());
-        // Managers can write any finished job
-        allow write: if ownsCompany(companyId) && isManager();
-        // Users can write finished jobs they created
-        allow write: if ownsCompany(companyId) && isUser() && 
-                        (request.resource.data.completedBy == getUid() || 
-                         request.resource.data.assignedBy == getUid());
-        allow delete: if ownsCompany(companyId) && 
-                         (isManager() || 
-                          (isUser() && resource.data.completedBy == getUid()));
-      }
-      
-      // Documents collection (for generated PDFs metadata if stored in Firestore)
-      match /documents/{document=**} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser());
-        allow write, delete: if ownsCompany(companyId) && (isManager() || isUser());
-      }
-      
-      // Invoice submissions to Tax Authority
-      match /invoiceSubmissions/{submissionId} {
-        // Managers and Users can read all invoice submissions in their company
-        allow read: if ownsCompany(companyId) && (isManager() || isUser());
-        // Managers and Users can create/update invoice submissions
-        allow create, update: if ownsCompany(companyId) && (isManager() || isUser());
-        // Only managers can delete invoice submissions
-        allow delete: if ownsCompany(companyId) && isManager();
-      }
-      
-      // Business data at company level (business_info, token, inventory, etc.)
-      // Includes company cache document for version tracking
-      // Allow initial setup for new users - business_info can be written by any authenticated user
-      match /business_data/{document} {
-        // Token document is highly sensitive - manager only
-        allow read, write: if document == 'token' && ownsCompany(companyId) && isManager();
 
-        // Read requires ownership
-        allow read: if document != 'token' && isAuthenticated() &&
-                       (ownsCompany(companyId) || 
-                        (exists(/databases/$(database)/documents/$(getUid())/profile) && 
-                         get(/databases/$(database)/documents/$(getUid())/profile).data.companyId == companyId));
-        
-        // ─── Inventory document: workers can read only, managers can read/write/update (no delete) ───
-        // Workers can READ the inventory document (to pick company parts)
-        allow read: if document == 'inventory' && ownsCompany(companyId) && isWorker();
-        // Managers can create and update the inventory document but NOT delete
-        allow create, update: if document == 'inventory' && ownsCompany(companyId) && isManager();
-        
-        // Write business_info - only allow initial creation (no updates/deletes from client)
-        // Cloud Functions (Admin SDK) handle all updates to business_info (document counters, etc.)
-        allow create: if document == 'business_info' &&
-                         ownsCompany(companyId) &&
-                         (isManager() || isUser() || isBasic()) &&
-                         !exists(/databases/$(database)/documents/companies/$(companyId)/business_data/business_info);
-        // Other documents require ownership and correct role
-        allow write: if document != 'business_info' && document != 'inventory' && document != 'token' &&
-                        ownsCompany(companyId) && (isManager() || isUser() || isBasic());
-        
-        // Workers can ONLY update the cache document (to increment job versions when submitting)
-        allow update: if ownsCompany(companyId) && isWorker() && document == 'cache' &&
-                        !request.resource.data.diff(resource.data).affectedKeys()
-                          .hasAny(['workers', 'business_info', 'clients', 'subscription', 'token', 'cid', 'wid']);
-      }
-      
-      // Document locks (for Pub/Sub busy flags)
-      match /documentLocks/{document=**} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser());
-        allow write: if ownsCompany(companyId) && (isManager() || isUser());
-      }
-      
-      // Certifications (generated documents metadata)
-      match /certifications/{document=**} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser() || isWorker() || isBasic());
-        allow write: if ownsCompany(companyId) && (isManager() || isUser() || isBasic());
-      }
-      
-      // Clients collection - shared client directory for the company
-      match /clients/{clientId} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser() || isWorker());
-        allow write: if ownsCompany(companyId) && (isManager() || isUser() || isWorker());
-      }
-      
-      // Any other company subcollections - restrict to managers only
-      match /{document=**} {
-        allow read: if ownsCompany(companyId) && (isManager() || isUser());
-        allow write, delete: if ownsCompany(companyId) && isManager();
-      }
+    function userProfilePath(userId) {
+      return /databases/$(database)/documents/users/$(userId)/profile/data;
     }
-    
-    // User profile rules (includes manager, user, worker, basic)
-    match /{uid}/profile {
-      // Users can read their own profile
-      allow read: if isAuthenticated() && getUid() == uid;
-      // Users can update their own profile but NOT change role or companyId
-      allow update: if isAuthenticated() && getUid() == uid &&
-                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'companyId']));
-      // Only allow profile creation with proper initial data
-      allow create: if isAuthenticated() && getUid() == uid &&
-                       request.resource.data.keys().hasAll(['role', 'email']) &&
-                       request.resource.data.role in ['user', 'basic'] &&
-                       (!('uid' in request.resource.data) || request.resource.data.uid == uid);
-      // Managers can read profiles of workers in their company
-      allow read: if isManager() && isWorkerInManagerCompany(uid);
-      // Managers can create worker profiles in their company
-      allow create: if isManager() &&
-                       !exists(/databases/$(database)/documents/$(uid)/profile) &&
-                       request.resource.data.role == 'worker' &&
-                       request.resource.data.companyId == getUserCompany();
-      // Managers can update worker profiles in their company without changing role/company
-      allow update: if isManager() && isWorkerInManagerCompany(uid) &&
-                       resource.data.role == 'worker' &&
-                       request.resource.data.role == 'worker' &&
-                       request.resource.data.companyId == resource.data.companyId;
+
+    function userProfileExists(userId) {
+      return exists(userProfilePath(userId));
     }
-    
-    // User cache rules - stores version numbers and cached data
-    // Basic role: only caches profile, business_info, certifications (NO inventory, NO jobs)
-    match /{uid}/cache {
-      // Users (including basic) can read/write their own cache
-      allow read, write: if isAuthenticated() && getUid() == uid;
-      // Managers can read/write cache of workers in their company (for sync purposes and version updates)
-      allow read, write: if isManager() && isWorkerInManagerCompany(uid);
+
+    function userProfile(userId) {
+      return get(userProfilePath(userId)).data;
     }
-    
-    // User inventory rules
-    // NOTE: Basic role does NOT have inventory access
-    match /{uid}/inventory {
-      // Users (excluding basic) can read/write their own inventory
-      allow read, write: if isAuthenticated() && getUid() == uid && !isBasic();
-      // Managers can read/write inventory of workers in their company
-      allow read, write: if isManager() && isWorkerInManagerCompany(uid);
+
+    function currentProfileExists() {
+      return signedIn() && userProfileExists(request.auth.uid);
     }
-    
-    // User jobs rules
-    // NOTE: Basic role does NOT have jobs access
-    match /{uid}/jobs/{document=**} {
-      // Users (excluding basic) can read/write their own jobs
-      allow read, write: if isAuthenticated() && getUid() == uid && !isBasic();
-      // Managers can read/write jobs of workers in their company
-      allow read, write: if isManager() && isWorkerInManagerCompany(uid);
+
+    function currentRole() {
+      return currentProfileExists() ? userProfile(request.auth.uid).role : null;
     }
-    
-    // Document tasks collection (for Pub/Sub PDF generation tracking)
-    match /documentTasks/{taskId} {
-      // Users can read their own tasks (created by them)
-      allow read: if isAuthenticated() && 
-                     resource.data.createdBy == request.auth.uid;
-      // Users can read tasks for their company
-      allow read: if isAuthenticated() && 
-                     hasCompany() && 
-                     resource.data.companyId == getUserCompany();
-      // Allow authenticated users to create tasks
-      allow create: if isAuthenticated() && 
-                       request.resource.data.createdBy == request.auth.uid;
-      // Only Cloud Functions should update/delete (uses Admin SDK, bypasses rules)
-      allow update: if false;
-      allow delete: if false;
+
+    function currentCompanyId() {
+      return currentProfileExists() ? userProfile(request.auth.uid).companyId : null;
     }
-    
-    // Support conversations collection
-    match /conversations/{conversationId} {
-      // Dev users can read/write all conversations
-      allow read, write: if isDev();
-      
-      // Normal users can read their own conversations (userId matches their UID)
-      allow read: if isAuthenticated() && 
-                     resource.data.userId == getUid();
-      
-      // Normal users can create new conversations with their own userId (UID)
-      allow create: if isAuthenticated() && 
-                       request.resource.data.userId == getUid();
-      
-      // Normal users can update their own conversations
-      // Allow if: 1) conversation is open, OR 2) closed but updating unreadForUser to 0 (marking as read)
-      allow update: if isAuthenticated() && 
-                       resource.data.userId == getUid() &&
-                       request.resource.data.userId == getUid() &&
-                       (resource.data.status == 'open' || 
-                        (resource.data.status == 'closed' && request.resource.data.unreadForUser == 0));
-      
-      // Normal users can delete their own conversations
-      allow delete: if isAuthenticated() && 
-                       resource.data.userId == getUid();
-      
-      // Messages subcollection
-      match /messages/{messageId} {
-        // Dev users can read/write all messages
-        allow read, write: if isDev();
-        
-        // Normal users can read messages from their own conversations
-        allow read: if isAuthenticated() && 
-                       get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == getUid();
-        
-        // Normal users can create messages in their own conversations (senderRole must be 'user')
-        allow create: if isAuthenticated() && 
-                         get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == getUid() &&
-                         request.resource.data.senderRole == 'user';
-      }
+
+    function currentAccountType() {
+      return currentProfileExists() ? userProfile(request.auth.uid).accountType : null;
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        request.auth.token.admin == true ||
+        currentRole() == "Dev"
+      );
+    }
+
+    function workerPath(companyId, userId) {
+      return /databases/$(database)/documents/companies/$(companyId)/workers/$(userId);
+    }
+
+    function workerExists(companyId, userId) {
+      return exists(workerPath(companyId, userId));
+    }
+
+    function workerRole(companyId, userId) {
+      return workerExists(companyId, userId) ? get(workerPath(companyId, userId)).data.role : null;
+    }
+
+    function companyRole(companyId) {
+      return signedIn() ? workerRole(companyId, request.auth.uid) : null;
+    }
+
+    function isSoloScope(companyId) {
+      return currentProfileExists() &&
+        currentAccountType() == "solo" &&
+        request.auth.uid == companyId;
+    }
+
+    function isCompanyWorker(companyId) {
+      return signedIn() && workerExists(companyId, request.auth.uid);
+    }
+
+    function isCompanyMember(companyId) {
+      return signedIn() && (
+        (currentCompanyId() == companyId && isCompanyWorker(companyId)) ||
+        isSoloScope(companyId)
+      );
+    }
+
+    function canReadCompany(companyId) {
+      return isAdmin() || isCompanyMember(companyId);
+    }
+
+    function canManageCompany(companyId) {
+      return isAdmin() || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Manager", "Dev"]
+      );
+    }
+
+    function canWriteCompanyClients(companyId) {
+      return isAdmin() || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Manager", "User", "Basic", "Dev"]
+      );
+    }
+
+    function canReadCompanyJobs(companyId) {
+      return isAdmin() || (
+        isCompanyWorker(companyId) &&
+        !(companyRole(companyId) in ["Basic"])
+      );
+    }
+
+    function canMutateAssignedJob(companyId) {
+      return isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Worker", "User"] &&
+        resource.data.workerId == request.auth.uid &&
+        request.resource.data.workerId == resource.data.workerId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]);
+    }
+
+    function canDeleteAssignedCompletedJob(companyId) {
+      return isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Worker", "User"] &&
+        resource.data.workerId == request.auth.uid &&
+        resource.data.status == "completed";
+    }
+
+    function canWorkerConsumeInventory(companyId) {
+      return isCompanyWorker(companyId) &&
+        companyRole(companyId) == "Worker" &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["quantity", "updatedAt"]) &&
+        request.resource.data.quantity is int &&
+        resource.data.quantity is int &&
+        request.resource.data.quantity >= 0 &&
+        request.resource.data.quantity <= resource.data.quantity;
+    }
+
+    function canCreateCertification(companyId) {
+      return isAdmin() || isSoloScope(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Manager", "Worker", "User", "Basic", "Dev"]
+      );
+    }
+
+    function isCompanyBootstrapManagerWrite(companyId, workerId) {
+      return signedIn() &&
+        request.auth.uid == workerId &&
+        request.resource.data.role in ["Manager", "Dev"] &&
+        exists(/databases/$(database)/documents/companies/$(companyId)) &&
+        get(/databases/$(database)/documents/companies/$(companyId)).data.createdBy == request.auth.uid;
+    }
+
+    match /users/{uid}/profile/data {
+      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
+
+      allow create: if signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.uid == uid &&
+        request.resource.data.email is string &&
+        request.resource.data.role in ["Manager", "Worker", "User", "Basic", "Dev"] &&
+        request.resource.data.accountType in ["solo", "business"];
+
+      allow update: if isAdmin() || (
+        signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.companyId == resource.data.companyId &&
+        request.resource.data.accountType == resource.data.accountType
+      );
+    }
+
+    match /users/{uid}/subscription/data {
+      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
+
+      allow create: if signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.tier in ["Basic", "Solo", "Team", "Enterprise"] &&
+        request.resource.data.status in ["active", "inactive", "pending"];
+
+      allow update: if isAdmin() || (
+        signedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.tier == resource.data.tier &&
+        request.resource.data.status == resource.data.status
+      );
+    }
+
+    match /users/{uid}/jobs/{jobId} {
+      allow read, write: if isAdmin() || (
+        signedIn() &&
+        request.auth.uid == uid &&
+        currentRole() != "Basic"
+      );
+    }
+
+    match /users/{uid}/personal_inventory/{itemId} {
+      allow read, write: if isAdmin() || (
+        signedIn() &&
+        request.auth.uid == uid &&
+        currentRole() != "Basic"
+      );
+    }
+
+    match /users/{uid}/clients/{clientId} {
+      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == uid);
+    }
+
+    match /companies/{companyId} {
+      allow read: if canReadCompany(companyId);
+      allow create: if isAdmin() || (
+        signedIn() &&
+        request.resource.data.createdBy == request.auth.uid
+      );
+      allow update, delete: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/business_data/business_info {
+      allow read: if canReadCompany(companyId);
+      allow write: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/business_data/inventory/parts/{partId} {
+      allow read: if canReadCompany(companyId);
+      allow create, delete: if canManageCompany(companyId);
+      allow update: if canManageCompany(companyId) || canWorkerConsumeInventory(companyId);
+    }
+
+    match /companies/{companyId}/workers/{workerId} {
+      allow read: if canReadCompany(companyId);
+      allow create: if canManageCompany(companyId) || isCompanyBootstrapManagerWrite(companyId, workerId);
+      allow update, delete: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/clients/{clientId} {
+      allow read: if canReadCompany(companyId);
+      allow write: if canWriteCompanyClients(companyId);
+    }
+
+    match /companies/{companyId}/counters/{counterId} {
+      allow read: if canReadCompany(companyId);
+      allow write: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/client_create_requests/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /companies/{companyId}/PendingJobs/{jobId} {
+      allow read: if canReadCompanyJobs(companyId);
+      allow create: if canManageCompany(companyId);
+      allow update: if canManageCompany(companyId) || canMutateAssignedJob(companyId);
+      allow delete: if canManageCompany(companyId) || canDeleteAssignedCompletedJob(companyId);
+    }
+
+    match /companies/{companyId}/finishedJobs/{jobId} {
+      allow read: if canReadCompanyJobs(companyId);
+
+      allow create: if canManageCompany(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Worker", "User"] &&
+        request.resource.data.workerId == request.auth.uid
+      );
+
+      allow update: if canManageCompany(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Worker", "User"] &&
+        resource.data.workerId == request.auth.uid &&
+        request.resource.data.workerId == resource.data.workerId
+      );
+
+      allow delete: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/certifications/{id} {
+      allow read: if canReadCompany(companyId);
+      allow create: if canCreateCertification(companyId);
+      allow update, delete: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/invites/{inviteId} {
+      allow read, create, update, delete: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/inventory_picks/{pickId} {
+      allow read: if canReadCompany(companyId);
+      allow create: if canManageCompany(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) in ["Worker", "User"] &&
+        request.resource.data.workerId == request.auth.uid
+      );
+      allow update, delete: if canManageCompany(companyId);
+    }
+
+    match /upgrade_requests/{requestId} {
+      allow create: if signedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.requestedTier in ["Solo", "Team", "Enterprise"];
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+
+    match /contact_requests/{requestId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if false;
     }
   }
 }
+

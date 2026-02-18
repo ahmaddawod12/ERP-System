@@ -9,7 +9,24 @@ export function nowIso() {
 }
 
 export function generateInviteCode() {
-  return Math.random().toString(36).slice(2, 10).toUpperCase();
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const length = 10;
+  const bytes = new Uint8Array(length);
+
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  let code = "";
+  for (let index = 0; index < length; index += 1) {
+    code += alphabet[bytes[index] % alphabet.length];
+  }
+
+  return code;
 }
 
 export function generateCompanySlug(name: string) {
@@ -25,4 +42,3 @@ export function generateCompanySlug(name: string) {
 export function isRtlLocale(locale: string) {
   return locale === "he" || locale === "ar";
 }
-

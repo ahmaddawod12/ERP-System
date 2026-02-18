@@ -1,36 +1,27 @@
-import { NextResponse } from "next/server";
+import type { Role } from "@/lib/types";
 import { adminDb } from "@/lib/firebase/admin";
-import { resolveUidFromRequest } from "@/lib/firebase/request-auth";
+import { assertCompanyAccess } from "@/lib/firebase/server-access";
+import { resolveRequestAuth } from "@/lib/firebase/request-auth";
+import { parseRequestBody } from "@/lib/api/request";
+import { apiOk, handleRouteError } from "@/lib/api/response";
+import { createInviteSchema } from "@/lib/validation/schemas";
 import { generateInviteCode } from "@/lib/utils";
 
-interface Body {
-  companyId?: string;
-  uid?: string;
-}
+export const runtime = "nodejs";
+
+const INVITE_CREATORS: Role[] = ["Manager", "Dev"];
+const INVITE_EXPIRY_DAYS = 7;
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Body;
-    const uid = await resolveUidFromRequest(request, body.uid);
+    const body = await parseRequestBody(request, createInviteSchema);
+    const auth = await resolveRequestAuth(request, body.uid);
 
-    if (!uid) {
-      return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
-    }
-    if (!body.companyId) {
-      return NextResponse.json({ ok: false, message: "companyId is required" }, { status: 400 });
-    }
-
-    const workerRef = adminDb()
-      .collection("companies")
-      .doc(body.companyId)
-      .collection("workers")
-      .doc(uid);
-
-    const workerSnap = await workerRef.get();
-    const role = workerSnap.data()?.role as string | undefined;
-    if (!workerSnap.exists || (role !== "Manager" && role !== "Dev")) {
-      return NextResponse.json({ ok: false, message: "Insufficient permissions" }, { status: 403 });
-    }
+    await assertCompanyAccess({
+      uid: auth.uid,
+      companyId: body.companyId,
+      allowedRoles: INVITE_CREATORS,
+    });
 
     const inviteCode = generateInviteCode();
     const inviteRef = adminDb()
@@ -39,22 +30,27 @@ export async function POST(request: Request) {
       .collection("invites")
       .doc();
 
+    const now = Date.now();
     await inviteRef.set({
       inviteId: inviteRef.id,
       code: inviteCode,
-      createdBy: uid,
-      createdAt: new Date().toISOString(),
+      companyId: body.companyId,
+      targetRole: body.targetRole,
+      status: "active",
+      createdBy: auth.uid,
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+      usedBy: null,
+      usedAt: null,
     });
 
-    return NextResponse.json({ ok: true, inviteId: inviteRef.id, inviteCode });
+    return apiOk({
+      inviteId: inviteRef.id,
+      inviteCode,
+      expiresAt: new Date(now + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+      targetRole: body.targetRole,
+    });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unexpected error",
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error);
   }
 }
-

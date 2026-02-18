@@ -1,25 +1,26 @@
-import { NextResponse } from "next/server";
+import type { Role } from "@/lib/types";
 import { adminDb } from "@/lib/firebase/admin";
-import { resolveUidFromRequest } from "@/lib/firebase/request-auth";
+import { assertCompanyAccess } from "@/lib/firebase/server-access";
+import { resolveRequestAuth } from "@/lib/firebase/request-auth";
+import { parseRequestBody } from "@/lib/api/request";
+import { apiOk, handleRouteError } from "@/lib/api/response";
+import { documentGenerateSchema } from "@/lib/validation/schemas";
 
-interface Body {
-  uid?: string;
-  companyId?: string;
-  type?: string;
-  jobId?: string;
-}
+export const runtime = "nodejs";
+
+const ALLOWED_ROLES: Role[] = ["Manager", "Worker", "User", "Basic", "Dev"];
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Body;
-    const uid = await resolveUidFromRequest(request, body.uid);
+    const body = await parseRequestBody(request, documentGenerateSchema);
+    const auth = await resolveRequestAuth(request, body.uid);
 
-    if (!uid) {
-      return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
-    }
-    if (!body.companyId || !body.type) {
-      return NextResponse.json({ ok: false, message: "companyId and type are required" }, { status: 400 });
-    }
+    await assertCompanyAccess({
+      uid: auth.uid,
+      companyId: body.companyId,
+      allowedRoles: ALLOWED_ROLES,
+      allowSoloScope: true,
+    });
 
     const certificationsRef = adminDb()
       .collection("companies")
@@ -28,18 +29,22 @@ export async function POST(request: Request) {
 
     const taskRef = certificationsRef.doc();
     const placeholderUrl = `/downloads/${taskRef.id}.pdf`;
+    const nowIso = new Date().toISOString();
 
     await taskRef.set({
       id: taskRef.id,
       type: body.type,
       jobId: body.jobId ?? "manual",
       status: "queued",
-      createdAt: new Date().toISOString(),
-      createdBy: uid,
+      createdAt: nowIso,
+      createdBy: auth.uid,
       downloadUrl: placeholderUrl,
     });
 
     const cloudRunUrl = process.env.CLOUDRUN_PDF_URL;
+    let status: "queued" | "generated" | "failed" = "queued";
+    let resolvedDownloadUrl = placeholderUrl;
+
     if (cloudRunUrl) {
       try {
         const cloudRunResponse = await fetch(cloudRunUrl, {
@@ -47,7 +52,7 @@ export async function POST(request: Request) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             requestId: taskRef.id,
-            uid,
+            uid: auth.uid,
             companyId: body.companyId,
             type: body.type,
             jobId: body.jobId ?? "manual",
@@ -56,27 +61,31 @@ export async function POST(request: Request) {
 
         if (cloudRunResponse.ok) {
           const cloudPayload = (await cloudRunResponse.json()) as { downloadUrl?: string };
+          resolvedDownloadUrl = cloudPayload.downloadUrl ?? placeholderUrl;
+          status = "generated";
           await taskRef.set(
             {
-              status: "generated",
-              downloadUrl: cloudPayload.downloadUrl ?? placeholderUrl,
+              status,
+              downloadUrl: resolvedDownloadUrl,
               updatedAt: new Date().toISOString(),
             },
             { merge: true },
           );
         } else {
+          status = "failed";
           await taskRef.set(
             {
-              status: "failed",
+              status,
               updatedAt: new Date().toISOString(),
             },
             { merge: true },
           );
         }
       } catch {
+        status = "failed";
         await taskRef.set(
           {
-            status: "failed",
+            status,
             updatedAt: new Date().toISOString(),
           },
           { merge: true },
@@ -84,19 +93,12 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      ok: true,
+    return apiOk({
       id: taskRef.id,
-      downloadUrl: placeholderUrl,
+      downloadUrl: resolvedDownloadUrl,
+      status,
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : "Unexpected error",
-      },
-      { status: 500 },
-    );
+    return handleRouteError(error);
   }
 }
-

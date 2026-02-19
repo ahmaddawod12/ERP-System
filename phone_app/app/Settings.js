@@ -31,7 +31,7 @@ export default function Settings() {
 
   // Get user role from cache instead of Firebase
   useEffect(() => {
-    const role = getUserRole() || profile?.role;
+    const role = getUserRole() || String(profile?.role || '').toLowerCase();
     if (role) {
       setUserRole(role);
     }

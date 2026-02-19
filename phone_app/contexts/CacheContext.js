@@ -48,6 +48,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, runTransaction, FieldValue } from '../firebase';
 import { getDocTypeFromId } from '../utils/helpers';
+import { callHttpFunction } from '../utils/httpFunctions';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
@@ -220,6 +221,16 @@ const getDocumentType = (docData) => {
   return 'unknown';
 };
 
+const normalizeRole = (role) => {
+  const raw = String(role || '').trim().toLowerCase();
+  if (raw === 'manager') return 'manager';
+  if (raw === 'worker') return 'worker';
+  if (raw === 'user') return 'user';
+  if (raw === 'basic') return 'basic';
+  if (raw === 'dev') return 'dev';
+  return '';
+};
+
 export function CacheProvider({ children }) {
   // State
   const [isInitialized, setIsInitialized] = useState(false);
@@ -244,7 +255,7 @@ export function CacheProvider({ children }) {
   
   // Get current user info from cache (canonical names)
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
-  const getUserRole = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_ROLE), []);
+  const getUserRole = useCallback(() => normalizeRole(mmkvHelpers.getString(CACHE_KEYS.USER_ROLE)), []);
   const getCompanyId = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID), []);
   // Backward-compatible aliases (deprecated � use getUid/getCompanyId)
   const getUsername = getUid;
@@ -393,9 +404,21 @@ export function CacheProvider({ children }) {
     console.log('?? [CACHE READ] Loading from local MMKV cache...');
     
     const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
-    const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
+    const cachedRole = normalizeRole(mmkvHelpers.getString(CACHE_KEYS.USER_ROLE));
     const cachedCompanyId = mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID);
-    const cachedProfile = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
+    const cachedProfileRaw = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
+    const normalizedProfileRole = normalizeRole(cachedProfileRaw?.role);
+    const cachedProfile = cachedProfileRaw
+      ? {
+          ...cachedProfileRaw,
+          ...(normalizedProfileRole ? { role: normalizedProfileRole } : {}),
+        }
+      : null;
+    const resolvedCachedRole = cachedRole || normalizedProfileRole || '';
+    if (!cachedRole && resolvedCachedRole) {
+      mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, resolvedCachedRole);
+    }
+
     const cachedInventory = mmkvHelpers.getObject(CACHE_KEYS.INVENTORY);
     const cachedPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS);
     const cachedFinishedJobs = mmkvHelpers.getObject(CACHE_KEYS.FINISHED_JOBS);
@@ -425,7 +448,7 @@ export function CacheProvider({ children }) {
     return {
       hasCache: !!cachedProfile,
       uid: cachedUid,
-      role: cachedRole,
+      role: resolvedCachedRole,
       companyId: cachedCompanyId,
       profile: cachedProfile,
       hasBusinessInfo: cachedHasBusinessInfo === 'true',
@@ -438,45 +461,65 @@ export function CacheProvider({ children }) {
    * Save data to local cache
    */
   const saveToLocalCache = useCallback((key, data) => {
-    mmkvHelpers.setObject(key, data);
+    const dataToStore =
+      key === CACHE_KEYS.PROFILE && data && typeof data === 'object'
+        ? {
+            ...data,
+            ...(normalizeRole(data.role) ? { role: normalizeRole(data.role) } : {}),
+          }
+        : data;
+
+    mmkvHelpers.setObject(key, dataToStore);
     
     // Update state based on key
     switch (key) {
       case CACHE_KEYS.PROFILE:
-        setProfile(data);
+        if (dataToStore && typeof dataToStore === 'object') {
+          const normalizedRole = normalizeRole(dataToStore.role);
+          const normalizedProfile = {
+            ...dataToStore,
+            ...(normalizedRole ? { role: normalizedRole } : {}),
+          };
+          setProfile(normalizedProfile);
+          if (normalizedRole) {
+            mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, normalizedRole);
+          }
+        } else {
+          setProfile(data);
+        }
         break;
       case CACHE_KEYS.INVENTORY:
-        setInventory(data);
+        setInventory(dataToStore);
         break;
       case CACHE_KEYS.PENDING_JOBS:
-        setPendingJobs(data);
+        setPendingJobs(dataToStore);
         break;
       case CACHE_KEYS.FINISHED_JOBS:
-        setFinishedJobs(data);
+        setFinishedJobs(dataToStore);
         break;
       case CACHE_KEYS.WORKERS:
-        setWorkers(data);
+        setWorkers(dataToStore);
         break;
       case CACHE_KEYS.COMPANY_PENDING_JOBS:
-        setCompanyPendingJobs(data);
+        setCompanyPendingJobs(dataToStore);
         break;
       case CACHE_KEYS.COMPANY_FINISHED_JOBS:
-        setCompanyFinishedJobs(data);
+        setCompanyFinishedJobs(dataToStore);
         break;
       case CACHE_KEYS.CERTIFICATIONS:
-        setCertifications(data);
+        setCertifications(dataToStore);
         break;
       case CACHE_KEYS.CLIENTS:
-        setClients(data);
+        setClients(dataToStore);
         break;
       case CACHE_KEYS.SUBSCRIPTION:
-        setSubscription(data);
+        setSubscription(dataToStore);
         break;
       case CACHE_KEYS.CACHE_VERSIONS:
-        setCacheVersions(data);
+        setCacheVersions(dataToStore);
         break;
       case CACHE_KEYS.COMPANY_CACHE_VERSIONS:
-        setCompanyCacheVersions(data);
+        setCompanyCacheVersions(dataToStore);
         break;
     }
   }, []);
@@ -493,7 +536,13 @@ export function CacheProvider({ children }) {
         case 'profile': {
           const profileRef = doc(db, 'users', uid, 'data', 'profile');
           const profileDoc = await getDoc(profileRef);
-          return profileDoc.exists() ? profileDoc.data() : null;
+          if (!profileDoc.exists()) return null;
+          const profileData = profileDoc.data() || {};
+          const normalizedRole = normalizeRole(profileData.role);
+          return {
+            ...profileData,
+            ...(normalizedRole ? { role: normalizedRole } : {}),
+          };
         }
         
         case 'inventory': {
@@ -519,6 +568,7 @@ export function CacheProvider({ children }) {
                 ...workerDoc,
                 uid: workerUid,
                 workerId: workerDoc.workerId || workerUid,
+                wid: workerDoc.wid ?? workerDoc.Wid ?? null,
               };
             });
             return workersData;
@@ -540,7 +590,11 @@ export function CacheProvider({ children }) {
           snapshot.forEach(d => {
             clientsList.push({ id: d.id, ...d.data() });
           });
-          clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
+          clientsList.sort((a, b) => {
+            const aNumber = Number(a.numericId || a.id || 0);
+            const bNumber = Number(b.numericId || b.id || 0);
+            return aNumber - bNumber;
+          });
           return clientsList;
         }
         
@@ -1119,7 +1173,7 @@ export function CacheProvider({ children }) {
       
       // STEP 2: Determine uid (UID), role, and companyId
       let uid = cachedData.uid;
-      let role = cachedData.role;
+      let role = normalizeRole(cachedData.role);
       let companyId = cachedData.companyId;
       let profileData = cachedData.profile;
       
@@ -1129,7 +1183,7 @@ export function CacheProvider({ children }) {
       } else {
         // Try to get from cached profile
         if (profileData && !role) {
-          role = profileData.role;
+          role = normalizeRole(profileData.role);
           companyId = profileData.companyId;
         }
         
@@ -1149,8 +1203,15 @@ export function CacheProvider({ children }) {
             return null;
           }
           
-          role = profileData.role;
+          role = normalizeRole(profileData.role);
           companyId = profileData.companyId;
+
+          if (role && profileData.role !== role) {
+            profileData = {
+              ...profileData,
+              role,
+            };
+          }
           
           // Save profile to local cache
           saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
@@ -1738,10 +1799,10 @@ export function CacheProvider({ children }) {
    * 1. Local cache workers list
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker ID 
-   * @param {object} workerData - { email, name, phoneNumber, uid }
+   * @param {string} workerUid - Worker UID
+   * @param {object} workerData - { email, name, phoneNumber, uid, workerId?, wid? }
    */
-  const addWorker = useCallback(async (workerId, workerData) => {
+  const addWorker = useCallback(async (workerUid, workerData) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1755,19 +1816,22 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`?? Adding worker ${workerId} to cache...`);
+    console.log(`?? Adding worker ${workerUid} to cache...`);
     
     try {
       // 1. Update local cache
       const updatedWorkers = {
         ...workers,
-        [workerId]: {
+        [workerUid]: {
+          uid: workerUid,
+          workerId: workerData.workerId || workerUid,
+          wid: workerData.wid ?? workerData.Wid ?? null,
           email: workerData.email,
           name: workerData.name,
           phoneNumber: workerData.phoneNumber,
-          Uid: workerData.Uid,
-          Wid: workerId || workerData.Wid,
-          role: 'worker',
+          Uid: workerUid, // legacy compatibility
+          Wid: workerData.wid ?? workerData.Wid ?? null, // legacy compatibility
+          role: normalizeRole(workerData.role) || 'worker',
           companyId: companyId
         }
       };
@@ -1776,7 +1840,7 @@ export function CacheProvider({ children }) {
       // 2. Increment cache version (triggers other devices to refresh)
       await incrementCacheVersion('workers', true);
       
-      console.log(`? Worker ${workerId} added to cache successfully`);
+      console.log(`? Worker ${workerUid} added to cache successfully`);
       
     } catch (error) {
       console.error('Error adding worker to cache:', error);
@@ -1789,10 +1853,10 @@ export function CacheProvider({ children }) {
    * Can update: name, phoneNumber
    * CANNOT update: email (immutable)
    * 
-   * @param {string} workerId - Worker ID to edit in cache  
+   * @param {string} workerUid - Worker UID to edit in cache
    * @param {object} updates - { name?, phoneNumber? }
    */
-  const editWorker = useCallback(async (workerId, updates) => {
+  const editWorker = useCallback(async (workerUid, updates) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1806,11 +1870,11 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`?? Editing worker ${workerId} in cache...`);
+    console.log(`?? Editing worker ${workerUid} in cache...`);
     
     try {
       // 1. Update local cache
-      const currentWorker = workers[workerId];
+      const currentWorker = workers[workerUid];
       if (!currentWorker) {
         throw new Error('Worker not found in cache');
       }
@@ -1824,14 +1888,14 @@ export function CacheProvider({ children }) {
       
       const updatedWorkers = {
         ...workers,
-        [workerId]: updatedWorkerData
+        [workerUid]: updatedWorkerData
       };
       saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
       
       // 2. Increment cache version
       await incrementCacheVersion('workers', true);
       
-      console.log(`? Worker ${workerId} updated in cache successfully`);
+      console.log(`? Worker ${workerUid} updated in cache successfully`);
       
     } catch (error) {
       console.error('Error editing worker in cache:', error);
@@ -1845,9 +1909,9 @@ export function CacheProvider({ children }) {
    * 1. Worker from local cache
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker ID to delete from cache
+   * @param {string} workerUid - Worker UID to delete from cache
    */
-  const deleteWorker = useCallback(async (workerId) => {
+  const deleteWorker = useCallback(async (workerUid) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1861,17 +1925,17 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`??? Deleting worker ${workerId} from cache...`);
+    console.log(`??? Deleting worker ${workerUid} from cache...`);
     
     try {
       // 1. Remove from local cache
-      const { [workerId]: deletedWorker, ...remainingWorkers } = workers;
+      const { [workerUid]: deletedWorker, ...remainingWorkers } = workers;
       saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
       
       // 2. Increment cache version
       await incrementCacheVersion('workers', true);
       
-      console.log(`? Worker ${workerId} deleted from cache successfully`);
+      console.log(`? Worker ${workerUid} deleted from cache successfully`);
       
     } catch (error) {
       console.error('Error deleting worker from cache:', error);
@@ -1912,8 +1976,12 @@ export function CacheProvider({ children }) {
       snapshot.forEach(d => {
         clientsList.push({ id: d.id, ...d.data() });
       });
-      // Sort by numeric ID so newest clients appear last
-      clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
+      // Sort by numericId (fallback to doc ID for legacy clients)
+      clientsList.sort((a, b) => {
+        const aNumber = Number(a.numericId || a.id || 0);
+        const bNumber = Number(b.numericId || b.id || 0);
+        return aNumber - bNumber;
+      });
       saveToLocalCache(CACHE_KEYS.CLIENTS, clientsList);
       setClients(clientsList); // Update state immediately
       console.log(`? Fetched ${clientsList.length} clients`);
@@ -1925,14 +1993,8 @@ export function CacheProvider({ children }) {
   }, [getCompanyId, saveToLocalCache]);
 
   /**
-   * Add a new client using a Firestore transaction
-   * - Reads companies/{companyId} document for nextClientId field
-   * - Increments nextClientId in company doc
-   * - Creates companies/{companyId}/clients/{nextId} with client data
-   * - Updates local cache
-   * 
-   * @param {Object} clientData - { name, phone, email, address, city, vatNumber }
-   * @returns {Object} - The created client with id
+   * Add a new client via Cloud Function (canonical privileged path).
+   * Backend handles counters + idempotency and returns { clientId, numericId }.
    */
   const addClient = useCallback(async (clientData) => {
     const companyId = getCompanyId();
@@ -1945,39 +2007,46 @@ export function CacheProvider({ children }) {
     }
 
     try {
-      const companyRef = doc(db, 'companies', companyId);
-      console.log('?? Company doc path:', companyRef.path);
+      const requestId = `mobile_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      const clientPayload = {
+        companyId,
+        requestId,
+        name: String(clientData?.name || '').trim(),
+        email: String(clientData?.email || '').trim(),
+        phone: String(clientData?.phone || '').trim(),
+        address: String(clientData?.address || '').trim(),
+        notes: String(clientData?.notes || '').trim(),
+        city: String(clientData?.city || '').trim(),
+        vatNumber: String(clientData?.vatNumber || '').trim(),
+      };
 
-      const newClient = await runTransaction(db, async (transaction) => {
-        const companySnap = await transaction.get(companyRef);
-        let nextId = 1;
-        
-        if (companySnap.exists() && companySnap.data().cid) {
-          nextId = companySnap.data().cid;
-        }
-        else{ 
-           return null; 
-        }
-        console.log('?? Next client ID:', nextId);
+      if (!clientPayload.name) {
+        throw new Error('Client name is required');
+      }
 
-        // Update company doc with incremented counter
-        transaction.set(companyRef, { cid: nextId + 1 }, { merge: true });
+      const created = await callHttpFunction('createClientV1', clientPayload, { requireAuth: true });
+      const nowIso = new Date().toISOString();
+      const newClient = {
+        id: created.clientId,
+        numericId: Number(created.numericId || 0),
+        name: clientPayload.name,
+        email: clientPayload.email,
+        phone: clientPayload.phone,
+        address: clientPayload.address,
+        notes: clientPayload.notes,
+        city: clientPayload.city,
+        vatNumber: clientPayload.vatNumber,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
 
-        // Create client doc with numeric string ID
-        const clientId = String(nextId);
-        const clientDoc = {
-          ...clientData,
-          createdAt: new Date().toISOString(),
-        };
-        const clientRef = doc(db, 'companies', companyId, 'clients', clientId);
-        console.log('?? Client path:', clientRef.path);
-        transaction.set(clientRef, clientDoc);
-
-        return { id: clientId, ...clientDoc };
+      // Update local cache (dedupe by ID for idempotent retries)
+      const withoutExisting = clients.filter(c => c.id !== newClient.id);
+      const updatedClients = [...withoutExisting, newClient].sort((a, b) => {
+        const aNumber = Number(a.numericId || a.id || 0);
+        const bNumber = Number(b.numericId || b.id || 0);
+        return aNumber - bNumber;
       });
-
-      // Update local cache
-      const updatedClients = [...clients, newClient];
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
       setClients(updatedClients); // Update state immediately
 
@@ -1990,8 +2059,6 @@ export function CacheProvider({ children }) {
       return newClient;
     } catch (error) {
       console.error('? Error creating client:', error);
-      console.error('? Error code:', error.code);
-      console.error('? Error message:', error.message);
       throw error;
     }
   }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);

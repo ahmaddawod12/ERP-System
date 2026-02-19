@@ -70,21 +70,27 @@ The app uses **Firebase Auth UID** as the primary user identifier throughout:
 ## Firestore Structure
 
 ```
-{uid}/
-  ├── profile        — { role, email, companyId, name, phoneNumber }
-  ├── inventory      — { parts: { partName: { quantity, lowThreshold } } }
-  └── cache          — version tracking (profile, inventory, clients, job IDs...)
+users/{uid}/
+  data/profile            � { uid, role, email, companyId, accountType, name, phoneNumber, ... }
+  data/cache              � user cache version tracking
+  data/inventory          � user inventory { parts: [...] }
+  inventory/{id}          � solo personal parts
 
 companies/{companyId}/
-  ├── clients/{id}           — { name, phone, email, address, city, vatNumber }
-  ├── workers/{id}           — { email, name, phoneNumber, role }
-  ├── PendingJobs/{id}       — { title, status, assignedTo, completedBy, workerId, ... }
-  ├── finishedJobs/{id}      — { ...job data, finishedAt }
-  ├── certifications/{id}    — { type, documentNumber, downloadURL, createdByUid, ... }
-  └── business_data/
-      ├── business_info      — { businessName, businessNumber, address, ... }
-      ├── inventory          — { parts: { partName: { quantity, lowThreshold } } }
-      └── cache              — version tracking (workers, business_info, clients, job/cert IDs)
+  workers/{uid}                         � company membership + role
+  clients/{clientId}                    � shared company clients
+  counters/clients                      � auto-increment counter for clients
+  PendingJobs/{jobId}                   � active jobs
+  finishedJobs/{jobId}                  � completed jobs
+  certifications/{id}                   � generated docs/certificates
+  invites/{inviteId}                    � onboarding invite codes
+  business_data/business_info           � business profile
+  business_data/subscription            � tier/status
+  business_data/cache                   � company cache version tracking
+  business_data/inventory/              � canonical company parts catalog
+
+upgrade_requests/{id}                   � manual upgrade requests
+contact_requests/{id}                   � public contact submissions
 ```
 
 ## Cache System (MMKV)
@@ -122,6 +128,7 @@ eas build --platform android
 6. **Use `uid` not `username`** — all user references use Firebase Auth UID
 7. **Use `companyId` not `companyName`** — all company references use the company identifier
 8. **Screens live in `modules/`** — `app/` files are thin wrappers with `withGate` HOC
+
 
 
 

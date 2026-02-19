@@ -64,6 +64,8 @@ export const createClientSchema = z
     phone: optionalText(40),
     address: optionalText(240),
     notes: optionalText(2000),
+    city: optionalText(120),
+    vatNumber: optionalText(64),
   })
   .strict();
 
@@ -93,4 +95,3 @@ export const contactRequestSchema = z
     message: requiredText(8, 2000, "message"),
   })
   .strict();
-

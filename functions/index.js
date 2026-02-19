@@ -81,6 +81,9 @@ const DOC_SUFFIX = {
 };
 
 const GENERATE_DOCUMENT_ALLOWED_ROLES = ['manager', 'user', 'basic'];
+const HTTP_COMPANY_CLIENT_ROLES = ['manager', 'user', 'basic', 'dev'];
+const HTTP_COMPANY_MANAGER_ROLES = ['manager', 'dev'];
+const HTTP_ALL_APP_ROLES = ['manager', 'worker', 'user', 'basic', 'dev'];
 
 
 // For cost control, set maximum concurrent instances
@@ -96,6 +99,235 @@ setGlobalOptions({
  */
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function generateInviteCode(length = 8) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < length; i += 1) {
+    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return code;
+}
+
+function normalizeRole(role) {
+  const raw = String(role || '').trim().toLowerCase();
+  if (raw === 'manager') return 'manager';
+  if (raw === 'worker') return 'worker';
+  if (raw === 'user') return 'user';
+  if (raw === 'basic') return 'basic';
+  if (raw === 'dev') return 'dev';
+  return '';
+}
+
+function toProfileRole(role) {
+  const normalized = normalizeRole(role);
+  if (normalized === 'manager') return 'Manager';
+  if (normalized === 'worker') return 'Worker';
+  if (normalized === 'user') return 'User';
+  if (normalized === 'basic') return 'Basic';
+  if (normalized === 'dev') return 'Dev';
+  return role;
+}
+
+function normalizeAccountType(accountType) {
+  const raw = String(accountType || '').trim().toLowerCase();
+  if (raw === 'solo') return 'solo';
+  if (raw === 'business') return 'business';
+  return '';
+}
+
+function userDataDocPath(uid, docId) {
+  return `users/${uid}/data/${docId}`;
+}
+
+function userProfileDocPath(uid) {
+  return userDataDocPath(uid, 'profile');
+}
+
+function userCacheDocPath(uid) {
+  return userDataDocPath(uid, 'cache');
+}
+
+function companyWorkerDocPath(companyId, uid) {
+  return `companies/${companyId}/workers/${uid}`;
+}
+
+function isFunctionsEmulator() {
+  return process.env.FUNCTIONS_EMULATOR === 'true' || !!process.env.FIRESTORE_EMULATOR_HOST;
+}
+
+function parseBearerToken(value) {
+  const header = String(value || '');
+  if (!header.startsWith('Bearer ')) return '';
+  return header.slice('Bearer '.length).trim();
+}
+
+async function resolveHttpAuth(req, body = {}) {
+  const token = parseBearerToken(req.get('authorization') || req.headers?.authorization || '');
+  if (token) {
+    try {
+      const decoded = await admin.auth().verifyIdToken(token);
+      return {
+        uid: decoded.uid,
+        token: decoded,
+        source: 'token',
+      };
+    } catch (error) {
+      throw new HttpsError('unauthenticated', 'Invalid or expired auth token');
+    }
+  }
+
+  if (isFunctionsEmulator()) {
+    const fallbackUid = String(body.uid || '').trim();
+    if (fallbackUid) {
+      return {
+        uid: fallbackUid,
+        token: null,
+        source: 'dev_fallback',
+      };
+    }
+  }
+
+  throw new HttpsError('unauthenticated', 'Missing Authorization bearer token');
+}
+
+function sendHttpOk(res, data, status = 200) {
+  res.status(status).json({ ok: true, data });
+}
+
+function sendHttpError(res, status, code, message, details = undefined) {
+  const payload = {
+    ok: false,
+    error: {
+      code,
+      message,
+    },
+  };
+  if (details !== undefined) {
+    payload.error.details = details;
+  }
+  res.status(status).json(payload);
+}
+
+function parseJsonBody(req) {
+  if (!req.body) {
+    throw new HttpsError('invalid-argument', 'Request body is required');
+  }
+  return req.body;
+}
+
+function httpStatusFromHttpsErrorCode(code) {
+  if (code === 'invalid-argument') return 400;
+  if (code === 'unauthenticated') return 401;
+  if (code === 'permission-denied') return 403;
+  if (code === 'not-found') return 404;
+  if (code === 'already-exists') return 409;
+  if (code === 'failed-precondition') return 412;
+  if (code === 'resource-exhausted') return 429;
+  if (code === 'unavailable') return 503;
+  return 500;
+}
+
+function sendCaughtHttpError(res, error) {
+  if (error instanceof HttpsError) {
+    return sendHttpError(
+      res,
+      httpStatusFromHttpsErrorCode(error.code),
+      error.code,
+      error.message,
+      error.details
+    );
+  }
+
+  logger.error('Unhandled HTTP function error', {
+    message: error?.message || String(error),
+    stack: error?.stack || null,
+  });
+
+  return sendHttpError(res, 500, 'internal', 'Unexpected server error');
+}
+
+function requireNonEmptyString(value, fieldName, min = 1, max = 2000) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    throw new HttpsError('invalid-argument', `${fieldName} is required`);
+  }
+  if (trimmed.length < min) {
+    throw new HttpsError('invalid-argument', `${fieldName} is too short`);
+  }
+  if (trimmed.length > max) {
+    throw new HttpsError('invalid-argument', `${fieldName} is too long`);
+  }
+  return trimmed;
+}
+
+function optionalTrimmedString(value, max = 2000) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.length > max) {
+    throw new HttpsError('invalid-argument', `Field is too long`);
+  }
+  return trimmed;
+}
+
+async function getUserProfileOrThrow(uid) {
+  const ref = admin.firestore().doc(userProfileDocPath(uid));
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError('not-found', 'User profile not found');
+  }
+  return snap.data() || {};
+}
+
+async function assertHttpCompanyAccess(params) {
+  const {
+    uid,
+    companyId,
+    allowedRoles = [],
+    allowSoloScope = false,
+  } = params;
+
+  const profile = await getUserProfileOrThrow(uid);
+  const profileRole = normalizeRole(profile.role);
+  if (!profileRole) {
+    throw new HttpsError('failed-precondition', 'User role is missing from profile');
+  }
+
+  const profileAccountType = normalizeAccountType(profile.accountType);
+  const profileCompanyId = String(profile.companyId || '');
+  const isSoloScope = allowSoloScope && profileAccountType === 'solo' && uid === companyId;
+
+  let resolvedRole = profileRole;
+  let workerSnap = null;
+
+  if (!isSoloScope) {
+    if (profileCompanyId !== companyId && profileRole !== 'dev') {
+      throw new HttpsError('permission-denied', 'Company mismatch');
+    }
+
+    workerSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, uid)).get();
+    if (!workerSnap.exists && profileRole !== 'dev') {
+      throw new HttpsError('permission-denied', 'Company membership record not found');
+    }
+    if (workerSnap.exists) {
+      const workerRole = normalizeRole(workerSnap.data()?.role);
+      if (workerRole) {
+        resolvedRole = workerRole;
+      }
+    }
+  }
+
+  if (Array.isArray(allowedRoles) && allowedRoles.length > 0 && !allowedRoles.includes(resolvedRole)) {
+    throw new HttpsError('permission-denied', 'Role is not allowed for this action');
+  }
+
+  return {
+    profile,
+    resolvedRole,
+    isSoloScope,
+    workerSnap,
+  };
 }
 
 /**
@@ -206,7 +438,7 @@ async function sendPushNotification(pushToken, title, body, data = {}, userId = 
       
       if (userId) {
         try {
-          await admin.firestore().doc(`${userId}/profile`).update({
+          await admin.firestore().doc(userProfileDocPath(userId)).update({
             pushToken: admin.firestore.FieldValue.delete(),
             pushTokenType: admin.firestore.FieldValue.delete(),
           });
@@ -238,7 +470,7 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
 
   const managerUid = auth.uid;
 
-  const managerProfileRef = admin.firestore().doc(`${managerUid}/profile`);
+  const managerProfileRef = admin.firestore().doc(userProfileDocPath(managerUid));
   const managerProfile = await managerProfileRef.get();
 
   if (!managerProfile.exists) {
@@ -246,8 +478,9 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
   }
 
   const managerData = managerProfile.data();
+  const managerRole = normalizeRole(managerData.role);
 
-  if (managerData.role !== 'manager') {
+  if (managerRole !== 'manager') {
     throw new HttpsError('permission-denied', 'Only managers can perform this action');
   }
 
@@ -256,7 +489,7 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
   }
 
   if (targetWorkerUid) {
-    const workerProfileRef = admin.firestore().doc(`${targetWorkerUid}/profile`);
+    const workerProfileRef = admin.firestore().doc(userProfileDocPath(targetWorkerUid));
     const workerProfile = await workerProfileRef.get();
 
     if (!workerProfile.exists) {
@@ -264,8 +497,9 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
     }
 
     const workerData = workerProfile.data();
+    const workerRole = normalizeRole(workerData.role);
 
-    if (workerData.role !== 'worker') {
+    if (workerRole !== 'worker') {
       throw new HttpsError('permission-denied', 'Target user is not a worker');
     }
 
@@ -293,7 +527,7 @@ async function getAuthenticatedUserProfile(auth, options = {}) {
   }
 
   const uid = auth.uid;
-  const userProfileRef = admin.firestore().doc(`${uid}/profile`);
+  const userProfileRef = admin.firestore().doc(userProfileDocPath(uid));
   const userProfileDoc = await userProfileRef.get();
 
   if (!userProfileDoc.exists) {
@@ -301,7 +535,7 @@ async function getAuthenticatedUserProfile(auth, options = {}) {
   }
 
   const userData = userProfileDoc.data() || {};
-  const role = userData.role;
+  const role = normalizeRole(userData.role);
 
   if (!role) {
     throw new HttpsError('failed-precondition', 'User role is missing from profile');
@@ -356,6 +590,23 @@ async function recursiveDelete(path) {
     }
     
     await docRef.delete();
+  }
+}
+
+async function deleteUserData(uid) {
+  const collectionPaths = [
+    `users/${uid}/data`,
+    `users/${uid}/jobs`,
+    `users/${uid}/personal_inventory`,
+    uid, // legacy top-level uid collection path
+  ];
+
+  for (const path of collectionPaths) {
+    try {
+      await recursiveDelete(path);
+    } catch (error) {
+      logger.warn('deleteUserData skipped path', { uid, path, error: error.message });
+    }
   }
 }
 
@@ -423,7 +674,7 @@ exports.manageWorker = onCall(async (request) => {
       await verifyManagerAuth(request.auth, null, companyId);
 
       const companyRef = admin.firestore().doc(`companies/${companyId}`);
-      const workerid = await admin.firestore().runTransaction(async (tx) => {
+      const workerSerial = await admin.firestore().runTransaction(async (tx) => {
         const companySnap = await tx.get(companyRef);
         const currentWorkerId = Number(companySnap.data()?.wid || 1);
         tx.set(companyRef, { wid: currentWorkerId + 1 }, { merge: true });
@@ -440,19 +691,22 @@ exports.manageWorker = onCall(async (request) => {
 
       logger.info(`Created Authentication user for worker: ${normalizedEmail}`, { uid: workerUid });
 
-      // Create worker profile in Firestore (keyed by UID)
-      const workerProfileRef = admin.firestore().doc(`${workerUid}/profile`);
-      const workerCacheRef = admin.firestore().doc(`${workerUid}/cache`);
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerid}`);
+      // Canonical worker paths (UID-keyed)
+      const workerProfileRef = admin.firestore().doc(userProfileDocPath(workerUid));
+      const workerCacheRef = admin.firestore().doc(userCacheDocPath(workerUid));
+      const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, workerUid));
 
       const batch = admin.firestore().batch();
       batch.set(workerProfileRef, {
-        role: 'worker',
+        uid: workerUid,
+        role: 'Worker',
         email: normalizedEmail,
         companyId: companyId,
         name: String(name || '').trim(),
         phoneNumber: String(phoneNumber || ''),
-        workerId: workerid,
+        workerId: workerUid,
+        wid: workerSerial,
+        accountType: 'business',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -461,11 +715,15 @@ exports.manageWorker = onCall(async (request) => {
         lastUpdated: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
       batch.set(workerListRef, {
+        workerId: workerUid,
+        uid: workerUid,
         email: normalizedEmail,
         name: String(name || '').trim(),
         phoneNumber: String(phoneNumber || ''),
         Uid: workerUid,
-        Wid: workerid,
+        Wid: workerSerial,
+        wid: workerSerial,
+        role: 'Worker',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -479,7 +737,8 @@ exports.manageWorker = onCall(async (request) => {
       return {
         success: true,
         uid: workerUid,
-        wid: workerid,
+        workerId: workerUid,
+        wid: workerSerial,
         message: 'Worker account created successfully'
       };
     }
@@ -501,9 +760,21 @@ exports.manageWorker = onCall(async (request) => {
 
     await verifyManagerAuth(request.auth, workerUid, companyId);
 
+    const canonicalWorkerRef = admin.firestore().doc(companyWorkerDocPath(companyId, workerUid));
+    const canonicalWorkerSnap = await canonicalWorkerRef.get();
+    if (canonicalWorkerSnap.exists) {
+      workerId = workerUid;
+    }
+
     if (!workerId) {
       const workersColRef = admin.firestore().collection(`companies/${companyId}/workers`);
       let workerDocSnap = await workersColRef.where('Uid', '==', workerUid).limit(1).get();
+      if (workerDocSnap.empty) {
+        workerDocSnap = await workersColRef.where('uid', '==', workerUid).limit(1).get();
+      }
+      if (workerDocSnap.empty && providedWorkerId) {
+        workerDocSnap = await workersColRef.where('Wid', '==', Number(providedWorkerId)).limit(1).get();
+      }
       if (workerDocSnap.empty) {
         workerDocSnap = await workersColRef.where('email', '==', normalizedEmail).limit(1).get();
       }
@@ -528,19 +799,15 @@ exports.manageWorker = onCall(async (request) => {
       }
       logger.info(`Deleted Authentication user for worker: ${normalizedEmail} (uid: ${workerUid})`);
 
-      // Delete ALL worker data recursively (using UID-based path)
-      logger.info(`Starting recursive delete for worker folder: ${workerUid}`);
-      
-      try {
-        await recursiveDelete(workerUid);
-        logger.info(`Deleted entire Firestore folder for worker uid: ${workerUid}`);
-      } catch (deleteError) {
-        logger.error(`Error during recursive delete for ${workerUid}:`, deleteError);
-      }
+      logger.info(`Starting user data delete for worker uid: ${workerUid}`);
+      await deleteUserData(workerUid);
 
-      // Remove worker from company's worker list (keyed by UID)
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
-      await workerListRef.delete();
+      const workerBatch = admin.firestore().batch();
+      workerBatch.delete(admin.firestore().doc(companyWorkerDocPath(companyId, workerUid)));
+      if (workerId && workerId !== workerUid) {
+        workerBatch.delete(admin.firestore().doc(`companies/${companyId}/workers/${workerId}`));
+      }
+      await workerBatch.commit();
       logger.info(`Removed worker from company list: ${companyId}`);
 
       await saveAuditLog(companyId, 'deleteWorker', request.auth.token.email);
@@ -558,7 +825,7 @@ exports.manageWorker = onCall(async (request) => {
       }
 
       // Read worker profile (using UID-based path)
-      const workerProfileRef = admin.firestore().doc(`${workerUid}/profile`);
+      const workerProfileRef = admin.firestore().doc(userProfileDocPath(workerUid));
       const workerProfile = await workerProfileRef.get();
 
       if (!workerProfile.exists) {
@@ -591,7 +858,11 @@ exports.manageWorker = onCall(async (request) => {
         firestoreUpdates.phoneNumber = String(phoneNumber || '');
       }
       firestoreUpdates.email = normalizedEmail;
-      firestoreUpdates.workerId = Number(workerId);
+      firestoreUpdates.workerId = workerUid;
+      const numericWorkerId = Number(workerId);
+      if (Number.isFinite(numericWorkerId)) {
+        firestoreUpdates.wid = numericWorkerId;
+      }
       firestoreUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       // Update worker profile in Firestore
@@ -600,12 +871,18 @@ exports.manageWorker = onCall(async (request) => {
         logger.info(`Updated Firestore profile for worker: ${normalizedEmail} (uid: ${workerUid})`);
       }
 
-      // Update company's worker list (keyed by workerId)
-      const workerListRef = admin.firestore().doc(`companies/${companyId}/workers/${workerId}`);
+      // Update company's worker list (canonical UID key)
+      const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, workerUid));
       const updateData = {};
+      updateData.workerId = workerUid;
+      updateData.uid = workerUid;
       updateData.email = normalizedEmail;
       updateData.Uid = workerUid;
-      updateData.Wid = Number(workerId);
+      if (Number.isFinite(numericWorkerId)) {
+        updateData.Wid = numericWorkerId;
+        updateData.wid = numericWorkerId;
+      }
+      updateData.role = 'Worker';
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
       if (name !== undefined) {
         updateData.name = String(name || '').trim();
@@ -616,7 +893,12 @@ exports.manageWorker = onCall(async (request) => {
       updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       if (Object.keys(updateData).length > 0) {
-        await workerListRef.set(updateData, { merge: true });
+        const workerBatch = admin.firestore().batch();
+        workerBatch.set(workerListRef, updateData, { merge: true });
+        if (workerId && workerId !== workerUid) {
+          workerBatch.delete(admin.firestore().doc(`companies/${companyId}/workers/${workerId}`));
+        }
+        await workerBatch.commit();
         logger.info(`Updated worker in company list: ${companyId}`);
       }
 
@@ -647,6 +929,486 @@ exports.manageWorker = onCall(async (request) => {
     }
     
     throw new HttpsError('internal', `Failed to ${requestedAction} worker: ` + error.message);
+  }
+});
+
+/**
+ * HTTP Function: createClientV1
+ * Canonical privileged endpoint for client creation with idempotency + company counter.
+ */
+exports.createClientV1 = onRequest({
+  region: "us-central1",
+  cors: true,
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  try {
+    const body = parseJsonBody(req);
+    const auth = await resolveHttpAuth(req, body);
+
+    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const requestId = requireNonEmptyString(body.requestId, 'requestId', 8, 120);
+    const name = requireNonEmptyString(body.name, 'name', 2, 140);
+    const email = optionalTrimmedString(body.email, 320);
+    const phone = optionalTrimmedString(body.phone, 40);
+    const address = optionalTrimmedString(body.address, 240);
+    const notes = optionalTrimmedString(body.notes, 2000);
+    const city = optionalTrimmedString(body.city, 120);
+    const vatNumber = optionalTrimmedString(body.vatNumber, 64);
+
+    if (email && !isValidEmail(email)) {
+      throw new HttpsError('invalid-argument', 'Invalid email format');
+    }
+
+    await assertHttpCompanyAccess({
+      uid: auth.uid,
+      companyId,
+      allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+      allowSoloScope: true,
+    });
+
+    const db = admin.firestore();
+    const companyRef = db.collection('companies').doc(companyId);
+    const counterRef = companyRef.collection('counters').doc('clients');
+    const requestRef = companyRef.collection('client_create_requests').doc(requestId);
+    const clientsCollection = companyRef.collection('clients');
+
+    const result = await db.runTransaction(async (tx) => {
+      const existingRequest = await tx.get(requestRef);
+      if (existingRequest.exists) {
+        const existingData = existingRequest.data() || {};
+        return {
+          clientId: String(existingData.clientId || ''),
+          numericId: Number(existingData.numericId || 0),
+          idempotent: true,
+        };
+      }
+
+      const counterSnap = await tx.get(counterRef);
+      const currentLastNumber = Number(counterSnap.data()?.lastNumber || 0);
+      const safeLastNumber = Number.isFinite(currentLastNumber) && currentLastNumber >= 0 ? currentLastNumber : 0;
+      const nextNumber = safeLastNumber + 1;
+      const clientRef = clientsCollection.doc();
+      const nowIso = new Date().toISOString();
+
+      tx.set(counterRef, {
+        lastNumber: nextNumber,
+        updatedAt: nowIso,
+      }, { merge: true });
+
+      tx.set(clientRef, {
+        numericId: nextNumber,
+        name,
+        email,
+        phone,
+        address,
+        notes,
+        city,
+        vatNumber,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        createdBy: auth.uid,
+      });
+
+      tx.set(requestRef, {
+        requestId,
+        clientId: clientRef.id,
+        numericId: nextNumber,
+        createdBy: auth.uid,
+        createdAt: nowIso,
+      });
+
+      return {
+        clientId: clientRef.id,
+        numericId: nextNumber,
+        idempotent: false,
+      };
+    });
+
+    return sendHttpOk(res, result, 201);
+  } catch (error) {
+    return sendCaughtHttpError(res, error);
+  }
+});
+
+/**
+ * HTTP Function: createInviteV1
+ * Canonical privileged endpoint for invite creation.
+ */
+exports.createInviteV1 = onRequest({
+  region: "us-central1",
+  cors: true,
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  try {
+    const body = parseJsonBody(req);
+    const auth = await resolveHttpAuth(req, body);
+
+    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const rawTargetRole = String(body.targetRole || 'Worker').trim();
+    const targetRole = toProfileRole(rawTargetRole);
+    if (!['Worker', 'User', 'Basic'].includes(targetRole)) {
+      throw new HttpsError('invalid-argument', 'targetRole must be Worker, User, or Basic');
+    }
+
+    await assertHttpCompanyAccess({
+      uid: auth.uid,
+      companyId,
+      allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
+      allowSoloScope: false,
+    });
+
+    const inviteCode = generateInviteCode();
+    const inviteRef = admin.firestore()
+      .collection('companies')
+      .doc(companyId)
+      .collection('invites')
+      .doc();
+
+    const now = Date.now();
+    const expiresAt = new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await inviteRef.set({
+      inviteId: inviteRef.id,
+      code: inviteCode,
+      companyId,
+      targetRole,
+      status: 'active',
+      createdBy: auth.uid,
+      createdAt: new Date(now).toISOString(),
+      expiresAt,
+      usedBy: null,
+      usedAt: null,
+    });
+
+    return sendHttpOk(res, {
+      inviteId: inviteRef.id,
+      inviteCode,
+      expiresAt,
+      targetRole,
+    });
+  } catch (error) {
+    return sendCaughtHttpError(res, error);
+  }
+});
+
+/**
+ * HTTP Function: joinCompanyV1
+ * Canonical privileged endpoint for company onboarding via invite.
+ */
+exports.joinCompanyV1 = onRequest({
+  region: "us-central1",
+  cors: true,
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  try {
+    const body = parseJsonBody(req);
+    const auth = await resolveHttpAuth(req, body);
+
+    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const inviteCode = requireNonEmptyString(body.inviteCode, 'inviteCode', 4, 80).toUpperCase();
+    const email = requireNonEmptyString(body.email, 'email', 3, 320).toLowerCase();
+    const name = optionalTrimmedString(body.name, 120);
+    const phoneNumber = optionalTrimmedString(body.phoneNumber, 40);
+    const requestedRole = body.role ? toProfileRole(String(body.role || '').trim()) : '';
+
+    if (!isValidEmail(email)) {
+      throw new HttpsError('invalid-argument', 'Invalid email format');
+    }
+    if (requestedRole && !['Worker', 'User', 'Basic'].includes(requestedRole)) {
+      throw new HttpsError('invalid-argument', 'role must be Worker, User, or Basic');
+    }
+    if (auth.token?.email && String(auth.token.email).toLowerCase() !== email) {
+      throw new HttpsError('permission-denied', 'Email does not match authenticated user');
+    }
+
+    const invitesRef = admin.firestore()
+      .collection('companies')
+      .doc(companyId)
+      .collection('invites');
+    const inviteQuery = await invitesRef.where('code', '==', inviteCode).limit(1).get();
+    if (inviteQuery.empty) {
+      throw new HttpsError('invalid-argument', 'Invalid invite code');
+    }
+
+    const inviteDocRef = inviteQuery.docs[0].ref;
+    const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, auth.uid));
+    const profileRef = admin.firestore().doc(userProfileDocPath(auth.uid));
+    const companyCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
+
+    const result = await admin.firestore().runTransaction(async (tx) => {
+      const [inviteSnap, workerSnap, profileSnap] = await Promise.all([
+        tx.get(inviteDocRef),
+        tx.get(workerRef),
+        tx.get(profileRef),
+      ]);
+
+      if (!inviteSnap.exists) {
+        throw new HttpsError('invalid-argument', 'Invite code no longer exists');
+      }
+
+      const inviteData = inviteSnap.data() || {};
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
+      const inviteExpiresAt = inviteData.expiresAt ? Date.parse(inviteData.expiresAt) : NaN;
+      if (Number.isFinite(inviteExpiresAt) && inviteExpiresAt < now) {
+        throw new HttpsError('failed-precondition', 'Invite code has expired');
+      }
+
+      const inviteUsedBy = String(inviteData.usedBy || '');
+      const inviteStatus = String(inviteData.status || 'active');
+      if (inviteStatus !== 'active' && inviteUsedBy !== auth.uid) {
+        throw new HttpsError('failed-precondition', 'Invite code is not active');
+      }
+      if (inviteUsedBy && inviteUsedBy !== auth.uid) {
+        throw new HttpsError('already-exists', 'Invite code was already used');
+      }
+
+      const resolvedRole = toProfileRole(
+        workerSnap.exists
+          ? workerSnap.data()?.role
+          : (inviteData.targetRole || requestedRole || 'Worker')
+      );
+      if (!['Worker', 'User', 'Basic'].includes(resolvedRole)) {
+        throw new HttpsError('failed-precondition', 'Invite target role is invalid');
+      }
+
+      const isNewMembership = !workerSnap.exists;
+
+      tx.set(inviteDocRef, {
+        usedBy: auth.uid,
+        usedAt: nowIso,
+        status: 'used',
+      }, { merge: true });
+
+      tx.set(workerRef, {
+        workerId: auth.uid,
+        uid: auth.uid,
+        email,
+        role: resolvedRole,
+        name,
+        phoneNumber,
+        Uid: auth.uid,
+        createdAt: workerSnap.exists ? (workerSnap.data()?.createdAt || nowIso) : nowIso,
+        updatedAt: nowIso,
+      }, { merge: true });
+
+      tx.set(profileRef, {
+        uid: auth.uid,
+        email,
+        role: resolvedRole,
+        companyId,
+        accountType: 'business',
+        name,
+        phoneNumber,
+        createdAt: profileSnap.exists ? (profileSnap.data()?.createdAt || nowIso) : nowIso,
+        updatedAt: nowIso,
+      }, { merge: true });
+
+      if (isNewMembership) {
+        tx.set(companyCacheRef, {
+          workers: admin.firestore.FieldValue.increment(1),
+          lastUpdated: nowIso,
+        }, { merge: true });
+      } else {
+        tx.set(companyCacheRef, {
+          lastUpdated: nowIso,
+        }, { merge: true });
+      }
+
+      return { companyId, role: resolvedRole };
+    });
+
+    return sendHttpOk(res, result);
+  } catch (error) {
+    return sendCaughtHttpError(res, error);
+  }
+});
+
+/**
+ * HTTP Function: requestUpgradeV1
+ * Canonical privileged endpoint for upgrade request submission.
+ */
+exports.requestUpgradeV1 = onRequest({
+  region: "us-central1",
+  cors: true,
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  try {
+    const body = parseJsonBody(req);
+    const auth = await resolveHttpAuth(req, body);
+
+    const requestedTier = requireNonEmptyString(body.requestedTier, 'requestedTier', 2, 32);
+    const message = requireNonEmptyString(body.message, 'message', 10, 2000);
+    const currentTier = optionalTrimmedString(body.currentTier, 32) || 'Basic';
+    if (!['Solo', 'Team', 'Enterprise'].includes(requestedTier)) {
+      throw new HttpsError('invalid-argument', 'requestedTier is invalid');
+    }
+    if (currentTier === requestedTier) {
+      throw new HttpsError('invalid-argument', 'Requested tier must differ from current tier');
+    }
+
+    const profile = await getUserProfileOrThrow(auth.uid);
+    const requestRef = admin.firestore().collection('upgrade_requests').doc();
+    const nowIso = new Date().toISOString();
+    await requestRef.set({
+      uid: auth.uid,
+      email: profile.email || auth.token?.email || null,
+      companyId: profile.companyId || null,
+      role: toProfileRole(profile.role || ''),
+      currentTier,
+      requestedTier,
+      message,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      status: 'new',
+    });
+
+    return sendHttpOk(res, { requestId: requestRef.id }, 201);
+  } catch (error) {
+    return sendCaughtHttpError(res, error);
+  }
+});
+
+/**
+ * HTTP Function: generateDocumentV1
+ * Canonical privileged endpoint for queueing website document generation.
+ */
+exports.generateDocumentV1 = onRequest({
+  region: "us-central1",
+  cors: true,
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  try {
+    const body = parseJsonBody(req);
+    const auth = await resolveHttpAuth(req, body);
+
+    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const type = requireNonEmptyString(body.type, 'type', 2, 100);
+    const jobId = optionalTrimmedString(body.jobId, 120) || 'manual';
+
+    await assertHttpCompanyAccess({
+      uid: auth.uid,
+      companyId,
+      allowedRoles: HTTP_ALL_APP_ROLES,
+      allowSoloScope: true,
+    });
+
+    const certificationsRef = admin.firestore()
+      .collection('companies')
+      .doc(companyId)
+      .collection('certifications');
+    const taskRef = certificationsRef.doc();
+    const nowIso = new Date().toISOString();
+    const placeholderUrl = `/downloads/${taskRef.id}.pdf`;
+
+    await taskRef.set({
+      id: taskRef.id,
+      type,
+      jobId,
+      status: 'queued',
+      createdAt: nowIso,
+      createdBy: auth.uid,
+      downloadUrl: placeholderUrl,
+    });
+
+    const cloudRunUrl = process.env.CLOUDRUN_PDF_URL;
+    let status = 'queued';
+    let resolvedDownloadUrl = placeholderUrl;
+
+    if (cloudRunUrl) {
+      try {
+        const cloudRunResponse = await fetch(cloudRunUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestId: taskRef.id,
+            uid: auth.uid,
+            companyId,
+            type,
+            jobId,
+          }),
+        });
+
+        if (cloudRunResponse.ok) {
+          const cloudPayload = await cloudRunResponse.json();
+          resolvedDownloadUrl = cloudPayload?.downloadUrl || placeholderUrl;
+          status = 'generated';
+        } else {
+          status = 'failed';
+        }
+      } catch (error) {
+        status = 'failed';
+      }
+
+      await taskRef.set({
+        status,
+        downloadUrl: resolvedDownloadUrl,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    return sendHttpOk(res, {
+      id: taskRef.id,
+      downloadUrl: resolvedDownloadUrl,
+      status,
+    });
+  } catch (error) {
+    return sendCaughtHttpError(res, error);
+  }
+});
+
+/**
+ * HTTP Function: contactRequestV1
+ * Canonical endpoint for public contact submissions.
+ */
+exports.contactRequestV1 = onRequest({
+  region: "us-central1",
+  cors: true,
+}, async (req, res) => {
+  if (req.method !== 'POST') {
+    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  try {
+    const body = parseJsonBody(req);
+    const name = requireNonEmptyString(body.name, 'name', 2, 120);
+    const email = requireNonEmptyString(body.email, 'email', 5, 320).toLowerCase();
+    const company = requireNonEmptyString(body.company, 'company', 2, 140);
+    const message = requireNonEmptyString(body.message, 'message', 8, 2000);
+
+    if (!isValidEmail(email)) {
+      throw new HttpsError('invalid-argument', 'Invalid email format');
+    }
+
+    const ref = admin.firestore().collection('contact_requests').doc();
+    const nowIso = new Date().toISOString();
+    await ref.set({
+      name,
+      email,
+      company,
+      message,
+      status: 'new',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+
+    return sendHttpOk(res, { requestId: ref.id }, 201);
+  } catch (error) {
+    return sendCaughtHttpError(res, error);
   }
 });
 
@@ -709,7 +1471,7 @@ exports.onJobAssignTrigger = onDocumentCreated({
     }
 
     // Get worker profile for email and push token (using UID-based path)
-    const workerProfileRef = admin.firestore().doc(`${workerUserId}/profile`);
+    const workerProfileRef = admin.firestore().doc(userProfileDocPath(workerUserId));
     const workerProfile = await workerProfileRef.get();
 
     if (!workerProfile.exists) {
@@ -854,7 +1616,7 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
     }
 
     // Get manager profile for email and push token (using UID-based path)
-    const managerProfileRef = admin.firestore().doc(`${managerUserId}/profile`);
+    const managerProfileRef = admin.firestore().doc(userProfileDocPath(managerUserId));
     const managerProfile = await managerProfileRef.get();
 
     if (!managerProfile.exists) {
@@ -1050,7 +1812,7 @@ exports.startTaxAuthorityAuth = onCall({
     logger.info('startTaxAuthorityAuth called', { uid });
 
     // Verify user is a manager
-    const userProfileRef = admin.firestore().doc(`${uid}/profile`);
+    const userProfileRef = admin.firestore().doc(userProfileDocPath(uid));
     const userProfile = await userProfileRef.get();
 
     if (!userProfile.exists) {
@@ -1058,7 +1820,7 @@ exports.startTaxAuthorityAuth = onCall({
     }
 
     const userData = userProfile.data();
-    if (userData.role !== 'manager') {
+    if (normalizeRole(userData.role) !== 'manager') {
       throw new HttpsError('permission-denied', 'Only managers can authorize Tax Authority access');
     }
 
@@ -1976,7 +2738,7 @@ exports.getInvoiceApproval = onCall({
         
         // Determine cache path based on user role
         const isManager = role === 'manager';
-        const cachePath = isManager? `companies/${companyId}/business_data/cache`: `${uid}/cache`;
+        const cachePath = isManager ? `companies/${companyId}/business_data/cache` : userCacheDocPath(uid);
         const cacheRef = admin.firestore().doc(cachePath);
         batch.update(cacheRef, {
           ...cacheUpdates,

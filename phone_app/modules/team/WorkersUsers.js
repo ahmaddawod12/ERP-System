@@ -147,6 +147,8 @@ export default function WorkersUsers() {
           const workerData = cachedWorkersList[workerUid] || {};
           return {
             uid: workerUid,
+            workerId: workerData.workerId || workerUid,
+            wid: workerData.wid ?? workerData.Wid ?? null,
             email: workerData.email || '',
             phoneNumber: workerData?.phoneNumber || '',
             name: workerData?.name || '',
@@ -175,9 +177,13 @@ export default function WorkersUsers() {
             phoneNumber: workerData.phoneNumber || '',
             name: workerData.name || '',
             uid: workerUid,
+            workerId: workerData.workerId || workerUid,
+            wid: workerData.wid ?? workerData.Wid ?? null,
           };
           return {
             uid: workerUid,
+            workerId: workerData.workerId || workerUid,
+            wid: workerData.wid ?? workerData.Wid ?? null,
             email,
             phoneNumber: workerData.phoneNumber || '',
             name: workerData.name || '',
@@ -246,19 +252,24 @@ export default function WorkersUsers() {
       });
 
       console.log('Firebase Auth user created:', result.data);
+      const workerUid = result?.data?.uid || result?.data?.workerId;
+      if (!workerUid) {
+        throw new Error('Worker UID was not returned from backend');
+      }
             
       // STEP 2: Add worker to cache and Firestore using cache function (keyed by UID)
       const workerData = {
+        uid: workerUid,
+        workerId: workerUid,
+        wid: result.data.wid ?? null,
         email: normalizedEmail,
         name: newWorker.name.trim(),
         phoneNumber: newWorker.phoneNumber || '',
         role: 'worker',
         companyId: companyId,
-        Uid: result.data.uid,
-        Wid: result.data.wid,
       };
       
-      await addWorker(result.data.wid, workerData);
+      await addWorker(workerUid, workerData);
       
       alert.success('Success', t.workerAdded);
       setShowAddWorker(false);
@@ -311,8 +322,8 @@ export default function WorkersUsers() {
         name: editingWorker.name?.trim(),
         phoneNumber: editingWorker.phoneNumber || '',
         companyId: companyId,
-        workerUid: editingWorker.Uid,
-        workerId: editingWorker.Wid,
+        workerUid: editingWorker.uid,
+        workerId: editingWorker.workerId || editingWorker.uid,
       };
       if (editingWorker.password) {
         editPayload.newPassword = editingWorker.password;
@@ -326,7 +337,7 @@ export default function WorkersUsers() {
         phoneNumber: editingWorker.phoneNumber || ''
       };
 
-      await editWorker(editingWorker.Wid, updates);
+      await editWorker(editingWorker.uid, updates);
       
       alert.success('Success', t.workerUpdated);
       setShowEditWorker(false);
@@ -382,14 +393,14 @@ export default function WorkersUsers() {
                 action: 'delete',
                 email: normalizeEmail(worker.email),
                 companyId: companyId,
-                workerUid: worker.Uid,
-                workerId: worker.Wid,
+                workerUid: worker.uid,
+                workerId: worker.workerId || worker.uid,
               });
 
               console.log('Firebase Auth user deleted');
               
               // STEP 2: Delete worker from cache and Firestore using worker ID
-              await deleteWorker(worker.Wid);
+              await deleteWorker(worker.uid);
               
               alert.success('Success', t.workerDeleted);
               await loadWorkers();

@@ -109,6 +109,19 @@ This copies data from:
 - `users/{uid}/subscription/data` -> `companies/{companyId}/business_data/subscription`
 - legacy top-level `{uid}/{profile|cache|inventory}` -> `users/{uid}/data/{profile|cache|inventory}`
 
+To migrate legacy company inventory/worker layouts into canonical paths, run:
+
+```bash
+npm run migrate:company-schema -- --dry-run
+npm run migrate:company-schema
+```
+
+Optional cleanup pass (after verification):
+
+```bash
+npm run migrate:company-schema -- --cleanup-legacy
+```
+
 ## Deployment (Vercel)
 
 1. Set project root to `website/`.

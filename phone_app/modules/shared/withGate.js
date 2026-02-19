@@ -43,7 +43,7 @@ export function withGate(ScreenComponent, options = {}) {
       );
     }
 
-    const role = profile.role;
+    const role = String(profile.role || '').toLowerCase();
 
     // Dev role bypasses all gating
     if (role === 'dev') {

@@ -68,6 +68,8 @@ export interface ClientRecord {
   phone: string;
   address: string;
   notes: string;
+  city?: string;
+  vatNumber?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -4,7 +4,7 @@ export type Role = (typeof ROLES)[number];
 export const TIERS = ["Basic", "Solo", "Team", "Enterprise"] as const;
 export type Tier = (typeof TIERS)[number];
 
-export type SubscriptionStatus = "active" | "inactive" | "pending";
+export type SubscriptionStatus = "active" | "inactive" | "pending" | "trial";
 export type AccountType = "solo" | "business";
 
 export interface UserProfile {
@@ -16,48 +16,127 @@ export interface UserProfile {
   phoneNumber: string;
   accountType: AccountType;
   createdAt: string;
+  updatedAt?: string;
+  pushToken?: string;
+  pushTokenUpdatedAt?: string;
+  pushTokenPlatform?: string;
+  pushTokenType?: string;
 }
 
+/** Matches phone app subscription at companies/{id}/business_data/subscription */
 export interface UserSubscription {
   tier: Tier;
   status: SubscriptionStatus;
+  expiresAt?: string;
+  enabledModules: EnabledModules;
   updatedAt: string;
 }
 
+export interface EnabledModules {
+  team: boolean;
+  solojob: boolean;
+  documents: boolean;
+  teaminventory: boolean;
+  companyinventory: boolean;
+  inventory: boolean;
+}
+
+/** Matches phone app business_info at companies/{id}/business_data/business_info */
 export interface BusinessInfo {
-  name: string;
-  number: string;
+  he_name: string;
+  en_name: string;
+  city: string;
   address: string;
-  phone: string;
+  vat_number: string;
+  business_type: string;
+  document_numbers: Record<string, number>;
+  business_email?: string;
+  business_phone?: string;
+  business_fax?: string;
+  accountant_name?: string;
+  accountant_email?: string;
+  accountant_phone?: string;
+  registered_at?: string;
+  registered_by?: string;
+  registered_by_role?: string;
+  last_updated?: string;
 }
 
 export interface WorkerProfile {
   workerId: string;
+  uid?: string;
   email: string;
   role: Role;
   name: string;
   phoneNumber: string;
+  wid?: number | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
+/**
+ * Matches phone app job structure.
+ * PendingJobs: status = pending | waiting | denied
+ * finishedJobs: status = finished
+ */
 export interface JobRecord {
   id: string;
   title: string;
-  clientName: string;
   description: string;
-  status: "pending" | "in_progress" | "completed";
+  location?: string;
+  clientName: string;
+  clientPhone?: string;
+  clientEmail?: string;
+  clientAddress?: string;
+  clientId?: string;
+  status: "pending" | "waiting" | "denied" | "finished";
   workerId: string | null;
+  name?: string;
+  MName?: string;
+  MUser?: string;
+  completedBy?: string;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
+  /** Worker-submitted fields */
+  timeFrom?: string;
+  timeTo?: string;
+  signingPerson?: string;
+  photos?: string[];
+  signature?: string;
+  partsUsed?: Array<{ id: number; name: string; quantity: number }>;
+  travelDistance?: number | null;
+  finishedAt?: string;
+  deniedAt?: string;
+  deniedBy?: string;
+  approvedBy?: string;
+  isCert?: boolean;
 }
 
-export interface InventoryItem {
-  id: string;
+/**
+ * Single inventory part — stored inside the `parts` array of the
+ * inventory document (NOT as a separate Firestore document).
+ * Matches phone app pattern:
+ *   Company parts: { id, name, active, dateAdded }
+ *   User parts:    { id, name, quantity, lowThreshold, dateAdded }
+ */
+export interface InventoryPart {
+  id: number;
   name: string;
-  sku: string;
-  quantity: number;
-  lowThreshold: number;
-  updatedAt: string;
+  active?: boolean;
+  quantity?: number;
+  lowThreshold?: number;
+  dateAdded: string;
+}
+
+/**
+ * The inventory document stored at:
+ *   companies/{companyId}/business_data/inventory  (company inventory)
+ *   users/{uid}/data/inventory                     (personal inventory)
+ */
+export interface InventoryDoc {
+  parts: InventoryPart[];
+  nextId: number;
+  lastUpdated: string;
 }
 
 export interface ClientRecord {
@@ -74,11 +153,30 @@ export interface ClientRecord {
   updatedAt: string;
 }
 
+/**
+ * Matches phone app certification at companies/{id}/certifications/{certId}
+ */
 export interface CertificationRecord {
   id: string;
   type: string;
-  jobId: string;
-  status: "queued" | "generated" | "failed";
+  documentNumber?: number;
+  clientName?: string;
+  clientId?: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientAddress?: string;
   createdAt: string;
-  downloadUrl: string;
+  downloadURL?: string;
+  url?: { origin?: string; he?: string; en?: string };
+  notes?: string;
+  confirmationNumber?: string;
+  items?: Array<{ description: string; price: number; quantity: number; partId?: number }>;
+  totalBeforeVat?: number;
+  vatAmount?: number;
+  totalWithVat?: number;
+  documentData?: Record<string, unknown>;
+  paymentMethod?: string;
+  paymentInfo?: Record<string, unknown>;
+  createdByUid?: string;
+  status?: "queued" | "generated" | "failed";
 }

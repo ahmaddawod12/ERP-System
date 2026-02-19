@@ -12,14 +12,12 @@ import { LoadingState } from "@/components/states/loading-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import {
-  addUserJob,
   createJob,
-  deleteUserJob,
+  deleteJob,
   listJobs,
-  listUserJobs,
   listWorkers,
+  resolveCompanyScope,
   updateJob,
-  updateUserJob,
 } from "@/lib/services/firestore-service";
 import type { JobRecord, WorkerProfile } from "@/lib/types";
 
@@ -46,6 +44,7 @@ export default function JobsPage() {
   const [workers, setWorkers] = useState<WorkerProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
   const canManageCompanyJobs = role === "Manager" || role === "Dev";
 
   const workerNameMap = useMemo(
@@ -53,63 +52,38 @@ export default function JobsPage() {
     [workers],
   );
 
-  const loadTeamJobs = useCallback(async () => {
-    if (!companyId) return;
+  const loadJobs = useCallback(async () => {
+    if (!scopeId) return;
     setLoading(true);
     const [jobsResult, workersResult] = await Promise.all([
-      listJobs(companyId, { role: role ?? undefined, uid: uid ?? undefined }),
-      listWorkers(companyId),
+      listJobs(scopeId, { role: role ?? undefined, uid: uid ?? undefined }),
+      companyId ? listWorkers(companyId) : Promise.resolve([]),
     ]);
     setPendingJobs(jobsResult.pending);
     setFinishedJobs(jobsResult.finished);
     setWorkers(workersResult);
     setLoading(false);
-  }, [companyId, role, uid]);
-
-  const loadSoloJobs = useCallback(async () => {
-    if (!uid) return;
-    setLoading(true);
-    const jobs = await listUserJobs(uid);
-    setPendingJobs(jobs.filter((job) => job.status !== "completed"));
-    setFinishedJobs(jobs.filter((job) => job.status === "completed"));
-    setLoading(false);
-  }, [uid]);
+  }, [scopeId, companyId, role, uid]);
 
   useEffect(() => {
-    if (!uid) return;
-    if (companyId) {
-      void loadTeamJobs();
-    } else {
-      void loadSoloJobs();
-    }
-  }, [companyId, loadSoloJobs, loadTeamJobs, uid]);
+    void loadJobs();
+  }, [loadJobs]);
 
   const createNewJob = async () => {
-    if (!form.title || !form.clientName || !uid) {
+    if (!form.title || !form.clientName || !uid || !scopeId) {
       toast({ title: "Missing fields", description: "Title and client are required.", variant: "error" });
       return;
     }
 
     try {
-      if (companyId) {
-        await createJob(companyId, {
-          title: form.title,
-          clientName: form.clientName,
-          description: form.description,
-          status: "pending",
-          workerId: form.workerId || null,
-        });
-        await loadTeamJobs();
-      } else {
-        await addUserJob(uid, {
-          title: form.title,
-          clientName: form.clientName,
-          description: form.description,
-          status: "pending",
-          workerId: uid,
-        });
-        await loadSoloJobs();
-      }
+      await createJob(scopeId, {
+        title: form.title,
+        clientName: form.clientName,
+        description: form.description,
+        status: "pending",
+        workerId: form.workerId || uid,
+      });
+      await loadJobs();
       setForm(initialState);
       toast({ title: "Job created", variant: "success" });
     } catch (error) {
@@ -125,14 +99,10 @@ export default function JobsPage() {
     jobId: string,
     payload: Partial<JobRecord>,
   ) => {
+    if (!scopeId) return;
     try {
-      if (companyId) {
-        await updateJob(companyId, jobId, payload);
-        await loadTeamJobs();
-      } else if (uid) {
-        await updateUserJob(uid, jobId, payload);
-        await loadSoloJobs();
-      }
+      await updateJob(scopeId, jobId, payload);
+      await loadJobs();
       toast({ title: "Job updated", variant: "success" });
     } catch (error) {
       toast({
@@ -143,10 +113,10 @@ export default function JobsPage() {
     }
   };
 
-  const removeSoloJob = async (jobId: string) => {
-    if (!uid) return;
-    await deleteUserJob(uid, jobId);
-    await loadSoloJobs();
+  const removeJob = async (jobId: string) => {
+    if (!scopeId) return;
+    await deleteJob(scopeId, jobId);
+    await loadJobs();
     toast({ title: "Job removed", variant: "info" });
   };
 
@@ -160,7 +130,7 @@ export default function JobsPage() {
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
             {companyId
               ? "Manage pending and completed jobs, worker assignments, and status updates."
-              : "Create and manage your personal job workflow."}
+              : "Create and manage your job workflow."}
           </p>
 
           {(companyId ? canManageCompanyJobs : true) ? (
@@ -281,11 +251,12 @@ export default function JobsPage() {
                           className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                         >
                           <option value="pending">pending</option>
-                          <option value="in_progress">in_progress</option>
-                          <option value="completed">completed</option>
+                          <option value="waiting">waiting</option>
+                          <option value="finished">finished</option>
+                          <option value="denied">denied</option>
                         </select>
                         {!companyId ? (
-                          <Button size="sm" variant="danger" onClick={() => void removeSoloJob(row.id)}>
+                          <Button size="sm" variant="danger" onClick={() => void removeJob(row.id)}>
                             Delete
                           </Button>
                         ) : null}
@@ -323,7 +294,9 @@ export default function JobsPage() {
                   {
                     key: "status",
                     header: "Status",
-                    render: (row) => <Badge variant="success">{row.status}</Badge>,
+                    render: (row) => (
+                      <Badge variant={row.status === "denied" ? "error" : "success"}>{row.status}</Badge>
+                    ),
                   },
                 ]}
               />

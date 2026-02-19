@@ -568,7 +568,7 @@ const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
 - **Firestore Paths**:
   - Reads: `companies/{companyId}/PendingJobs`
   - Writes: `companies/{companyId}/finishedJobs` (on accept)
-  - Updates worker inventory: `{workerId}/inventory/parts` (on accept)
+  - Updates worker inventory: `users/{workerId}/data/inventory` (on accept)
 
 #### `modules/team/CreateJob.js`
 **Purpose**: Manager tool to assign jobs to workers.
@@ -584,14 +584,14 @@ const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
 **Purpose**: Monitor worker inventory and jobs.
 - **Firestore Paths**:
   - Worker list: `companies/{companyId}/workers/{workerId}`
-  - Worker inventory: `{workerId}/inventory/parts`
+  - Worker inventory: `users/{workerId}/data/inventory`
   - Worker jobs: filtered from `companies/{companyId}/PendingJobs`
 
 #### `modules/team/WorkersUsers.js`
 **Purpose**: Create, edit, delete worker accounts.
 - **Firestore Paths**:
   - `companies/{companyId}/workers/{workerId}`: Worker data
-  - `{workerId}/profile`: Worker profile with `role: 'worker'`, `companyId`
+  - `users/{workerId}/data/profile`: Worker profile with `role: 'worker'`, `companyId`
 - **Worker Profile**:
   ```javascript
   {
@@ -614,7 +614,7 @@ const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
 #### `modules/documents/GenerateTaxInvoice.js`
 **Purpose**: Generate tax invoices from completed jobs.
 - **Firestore Queries**:
-  - Solo: `{uid}/jobs/all` where status = 'finished'
+  - Solo: `companies/{uid}/finishedJobs` where status = 'finished'
   - Manager: `companies/{companyId}/finishedJobs`
 
 #### `modules/documents/DocumentHistory.js`
@@ -630,15 +630,15 @@ const israeliMobileRegex = /^(?:\+?972|0)(5[0-9])([0-9]{7})$/;
 #### `modules/inventory/UserInventory.js`
 **Purpose**: Inventory for solo users (User/Basic roles).
 - **Features**: Free-form add/edit/delete parts, no company link
-- **Firestore Path**: `{uid}/inventory/parts`
-- **Data**: `{ partName: { quantity, lowThreshold } }`
+- **Firestore Path**: `users/{uid}/data/inventory` (single doc with `parts` array)
+- **Data**: `{ parts: [{ id, name, quantity, lowThreshold, dateAdded }], nextId, lastUpdated }`
 
 #### `modules/inventory/WorkerInventory.js`
 **Purpose**: Inventory for workers — picks parts from company inventory.
 - **Features**: Select parts from company stock, track personal quantities
 - **Firestore Paths**:
-  - Personal: `{uid}/inventory/parts`
-  - Company stock: `companies/{companyId}/business_data/inventory`
+  - Personal: `users/{uid}/data/inventory` (single doc)
+  - Company stock: `companies/{companyId}/business_data/inventory` (single doc)
 
 #### `modules/inventory/CompanyInventory.js`
 **Purpose**: Manager screen for company-wide stock management.

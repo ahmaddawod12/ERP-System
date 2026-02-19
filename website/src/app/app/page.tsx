@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, getCountFromServer } from "firebase/firestore";
+import { collection, doc, getCountFromServer, getDoc } from "firebase/firestore";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { db } from "@/lib/firebase/client";
 import { useAppContext } from "@/hooks/use-app-context";
+import { resolveCompanyScope } from "@/lib/services/firestore-service";
+import type { InventoryDoc } from "@/lib/types";
 
 interface StatItem {
   label: string;
@@ -19,22 +21,24 @@ export default function AppOverviewPage() {
 
   useEffect(() => {
     async function load() {
-      if (!profile) return;
+      if (!profile || !uid) return;
       const items: StatItem[] = [];
+      const scopeId = resolveCompanyScope(companyId, uid);
 
-      if (companyId) {
-        const pendingCount = await getCountFromServer(collection(db, "companies", companyId, "PendingJobs"));
-        const finishedCount = await getCountFromServer(collection(db, "companies", companyId, "finishedJobs"));
-        const clientsCount = await getCountFromServer(collection(db, "companies", companyId, "clients"));
-        items.push({ label: "Pending Jobs", value: pendingCount.data().count });
-        items.push({ label: "Finished Jobs", value: finishedCount.data().count });
-        items.push({ label: "Clients", value: clientsCount.data().count });
-      } else if (uid) {
-        const jobsCount = await getCountFromServer(collection(db, "users", uid, "jobs"));
-        const invCount = await getCountFromServer(collection(db, "users", uid, "personal_inventory"));
-        items.push({ label: "My Jobs", value: jobsCount.data().count });
-        items.push({ label: "Personal Inventory", value: invCount.data().count });
-      }
+      const pendingCount = await getCountFromServer(collection(db, "companies", scopeId, "PendingJobs"));
+      const finishedCount = await getCountFromServer(collection(db, "companies", scopeId, "finishedJobs"));
+      const clientsCount = await getCountFromServer(collection(db, "companies", scopeId, "clients"));
+      items.push({ label: "Pending Jobs", value: pendingCount.data().count });
+      items.push({ label: "Finished Jobs", value: finishedCount.data().count });
+      items.push({ label: "Clients", value: clientsCount.data().count });
+
+      // Inventory parts count from single-doc
+      const invRef = companyId
+        ? doc(db, "companies", companyId, "business_data", "inventory")
+        : doc(db, "users", uid, "data", "inventory");
+      const invSnap = await getDoc(invRef);
+      const invData = invSnap.exists() ? (invSnap.data() as InventoryDoc) : null;
+      items.push({ label: "Inventory Parts", value: invData?.parts?.length ?? 0 });
 
       setStats(items);
     }

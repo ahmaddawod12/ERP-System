@@ -55,10 +55,15 @@ async function seed() {
     .doc("business_info")
     .set(
       {
-        name: "Demo HVAC Services",
-        number: "HVAC-12345",
+        he_name: "שירותי מיזוג אוויר דמו",
+        en_name: "Demo HVAC Services",
+        city: "Tel Aviv",
         address: "100 Service Avenue",
-        phone: "+1-555-0100",
+        vat_number: "HVAC-12345",
+        business_type: "HVAC",
+        business_email: "info@demohvac.example.com",
+        business_phone: "+1-555-0100",
+        document_numbers: { tax_invoice: 1, receipt: 1, work_order: 1, price_offer: 1 },
       },
       { merge: true },
     );
@@ -66,6 +71,7 @@ async function seed() {
   await db.collection("companies").doc(companyId).collection("workers").doc(managerUid).set(
     {
       workerId: managerUid,
+      uid: managerUid,
       role: "Manager",
       email: "manager@example.com",
       name: "Demo Manager",
@@ -78,6 +84,7 @@ async function seed() {
   await db.collection("companies").doc(companyId).collection("workers").doc(workerUid).set(
     {
       workerId: workerUid,
+      uid: workerUid,
       role: "Worker",
       email: "worker@example.com",
       name: "Demo Worker",
@@ -119,14 +126,36 @@ async function seed() {
     {
       tier: "Team",
       status: "active",
+      enabledModules: {
+        team: true,
+        solojob: true,
+        documents: true,
+        teaminventory: true,
+        companyinventory: true,
+        inventory: true,
+      },
       updatedAt: new Date().toISOString(),
+    },
+    { merge: true },
+  );
+
+  // Seed inventory as a single doc with parts array (matches phone app structure)
+  await db.collection("companies").doc(companyId).collection("business_data").doc("inventory").set(
+    {
+      parts: [
+        { id: 1, name: "Air Filter 20x25", active: true, dateAdded: new Date().toISOString() },
+        { id: 2, name: "Refrigerant R-410A", active: true, dateAdded: new Date().toISOString() },
+        { id: 3, name: "Thermostat Wire 18/5", active: false, dateAdded: new Date().toISOString() },
+      ],
+      nextId: 4,
+      lastUpdated: new Date().toISOString(),
     },
     { merge: true },
   );
 
   await db.collection("companies").doc(companyId).collection("counters").doc("clients").set({ lastNumber: 0 }, { merge: true });
 
-  await db.collection("companies").doc(companyId).collection("PendingJobs").doc("demo-job-1").set(
+  await db.collection("companies").doc(companyId).collection("PendingJobs").doc("p_00001").set(
     {
       title: "AC maintenance visit",
       clientName: "Demo Client",

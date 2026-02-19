@@ -71,27 +71,28 @@ The app uses **Firebase Auth UID** as the primary user identifier throughout:
 
 ```
 users/{uid}/
-  data/profile            � { uid, role, email, companyId, accountType, name, phoneNumber, ... }
-  data/cache              � user cache version tracking
-  data/inventory          � user inventory { parts: [...] }
-  inventory/{id}          � solo personal parts
+  data/profile            → { uid, role, email, companyId, accountType, name, phoneNumber, ... }
+  data/cache              → user cache version tracking
+  data/inventory          → { parts: [...], nextId, lastUpdated } (single doc, solo users)
 
 companies/{companyId}/
-  workers/{uid}                         � company membership + role
-  clients/{clientId}                    � shared company clients
-  counters/clients                      � auto-increment counter for clients
-  PendingJobs/{jobId}                   � active jobs
-  finishedJobs/{jobId}                  � completed jobs
-  certifications/{id}                   � generated docs/certificates
-  invites/{inviteId}                    � onboarding invite codes
-  business_data/business_info           � business profile
-  business_data/subscription            � tier/status
-  business_data/cache                   � company cache version tracking
-  business_data/inventory/              � canonical company parts catalog
+  workers/{uid}                         → company membership + role
+  clients/{clientId}                    → shared company clients
+  counters/clients                      → auto-increment counter for clients
+  PendingJobs/{p_XXXXX}                 → active jobs (p_ prefix IDs)
+  finishedJobs/{f_XXXXX}                → completed/denied jobs (f_ prefix IDs)
+  certifications/{c_XXXXX}              → generated docs/certificates (c_ prefix IDs)
+  invites/{inviteId}                    → onboarding invite codes
+  business_data/business_info           → business profile (he_name, en_name, vat_number, etc.)
+  business_data/subscription            → { tier, status, enabledModules }
+  business_data/cache                   → company cache version tracking
+  business_data/inventory               → { parts: [...], nextId, lastUpdated } (single doc)
 
-upgrade_requests/{id}                   � manual upgrade requests
-contact_requests/{id}                   � public contact submissions
+upgrade_requests/{id}                   → manual upgrade requests
+contact_requests/{id}                   → public contact submissions
 ```
+
+**Solo users** store everything under `companies/{uid}/*` — their UID acts as the company ID.
 
 ## Cache System (MMKV)
 

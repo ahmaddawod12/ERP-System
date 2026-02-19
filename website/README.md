@@ -40,18 +40,33 @@ All endpoints return:
 
 ## Data Model
 
-- `users/{uid}/data/profile`
-- `companies/{companyId}/business_data/subscription`
-- `companies/{companyId}/business_data/business_info`
-- `companies/{companyId}/workers/{workerId}`
-- `companies/{companyId}/clients/{clientId}`
-- `companies/{companyId}/counters/clients`
-- `companies/{companyId}/business_data/inventory/parts/{partId}`
-- `companies/{companyId}/PendingJobs/{jobId}`
-- `companies/{companyId}/finishedJobs/{jobId}`
-- `companies/{companyId}/certifications/{id}`
-- `companies/{companyId}/invites/{inviteId}`
-- `upgrade_requests/{id}`
+All paths are shared with the phone app — both apps connect to the same Firestore database.
+
+```
+users/{uid}/data/profile                              → user profile
+users/{uid}/data/cache                                → user cache versioning
+users/{uid}/data/inventory                            → { parts: [...], nextId, lastUpdated } (single doc)
+
+companies/{companyId}/business_data/subscription      → { tier, status, enabledModules }
+companies/{companyId}/business_data/business_info     → { he_name, en_name, vat_number, city, ... }
+companies/{companyId}/business_data/inventory         → { parts: [...], nextId, lastUpdated } (single doc)
+companies/{companyId}/business_data/cache             → company cache versioning
+companies/{companyId}/workers/{uid}                   → worker membership + role
+companies/{companyId}/clients/{clientId}              → client records
+companies/{companyId}/counters/clients                → auto-increment counter
+companies/{companyId}/PendingJobs/{p_XXXXX}           → active jobs (p_ prefix IDs)
+companies/{companyId}/finishedJobs/{f_XXXXX}          → completed/denied jobs (f_ prefix IDs)
+companies/{companyId}/certifications/{c_XXXXX}        → generated documents (c_ prefix IDs)
+companies/{companyId}/invites/{inviteId}              → onboarding invite codes
+
+upgrade_requests/{id}                                 → upgrade request tickets
+```
+
+**Solo users**: `companyId = uid` — all data under `companies/{uid}/*`.
+
+### Job Status Flow
+
+`pending` → `waiting` → `finished` (or `denied`)
 
 ## Environment Variables
 
@@ -95,21 +110,18 @@ Optional seed vars:
 - `SEED_MANAGER_UID`
 - `SEED_WORKER_UID`
 
-## Path Migration
+## Path Migration (Legacy)
 
-If your project still has old user paths, run this once before enabling the new rules:
+If your project still has old user paths from before the alignment, run migration scripts. These are one-time operations.
 
 ```bash
 npm run migrate:user-paths
 ```
 
-This copies data from:
-
-- `users/{uid}/profile/data` -> `users/{uid}/data/profile`
-- `users/{uid}/subscription/data` -> `companies/{companyId}/business_data/subscription`
-- legacy top-level `{uid}/{profile|cache|inventory}` -> `users/{uid}/data/{profile|cache|inventory}`
-
-To migrate legacy company inventory/worker layouts into canonical paths, run:
+Copies legacy data:
+- `users/{uid}/profile/data` → `users/{uid}/data/profile`
+- `users/{uid}/subscription/data` → `companies/{companyId}/business_data/subscription`
+- legacy top-level `{uid}/{profile|cache|inventory}` → `users/{uid}/data/{profile|cache|inventory}`
 
 ```bash
 npm run migrate:company-schema -- --dry-run

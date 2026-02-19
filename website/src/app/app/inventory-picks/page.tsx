@@ -8,21 +8,22 @@ import { DataTable } from "@/components/ui/DataTable";
 import { LoadingState } from "@/components/states/loading-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
-import { addInventoryPick, listCompanyInventory } from "@/lib/services/firestore-service";
-import type { InventoryItem } from "@/lib/types";
+import { getCompanyInventory, pickCompanyParts } from "@/lib/services/firestore-service";
+import type { InventoryPart } from "@/lib/types";
 
 export default function InventoryPicksPage() {
   const { uid, companyId } = useAppContext();
   const { toast } = useAppToast();
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [parts, setParts] = useState<InventoryPart[]>([]);
   const [loading, setLoading] = useState(true);
-  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [quantities, setQuantities] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
     if (!companyId) return;
     setLoading(true);
-    const result = await listCompanyInventory(companyId);
-    setItems(result);
+    const inv = await getCompanyInventory(companyId);
+    // Only show active parts for worker picking
+    setParts(inv.parts.filter((p) => p.active !== false));
     setLoading(false);
   }, [companyId]);
 
@@ -30,16 +31,18 @@ export default function InventoryPicksPage() {
     void load();
   }, [load]);
 
-  const submitPick = async (itemId: string) => {
+  const submitPick = async (part: InventoryPart) => {
     if (!companyId || !uid) return;
-    const quantity = Number(quantities[itemId] || "0");
+    const quantity = Number(quantities[part.id] || "0");
     if (!quantity || quantity <= 0) {
       toast({ title: "Quantity required", variant: "error" });
       return;
     }
-    await addInventoryPick(companyId, uid, { itemId, quantity });
-    toast({ title: "Pick recorded", description: `${quantity} item(s) allocated`, variant: "success" });
-    setQuantities((prev) => ({ ...prev, [itemId]: "" }));
+    await pickCompanyParts(companyId, uid, [
+      { id: part.id, name: part.name, quantity },
+    ]);
+    toast({ title: "Parts picked", description: `${quantity} × ${part.name} added to your inventory`, variant: "success" });
+    setQuantities((prev) => ({ ...prev, [part.id]: "" }));
     await load();
   };
 
@@ -49,7 +52,7 @@ export default function InventoryPicksPage() {
         <Card>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Inventory Picks</h1>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            Workers can reserve and consume parts from company inventory.
+            Pick parts from company inventory to add to your personal stock.
           </p>
         </Card>
 
@@ -58,7 +61,7 @@ export default function InventoryPicksPage() {
         ) : (
           <Card>
             <DataTable
-              data={items}
+              data={parts}
               emptyMessage="No company inventory available."
               columns={[
                 {
@@ -67,14 +70,9 @@ export default function InventoryPicksPage() {
                   render: (row) => (
                     <div>
                       <p className="font-medium">{row.name}</p>
-                      <p className="text-xs text-slate-500">{row.sku || "No SKU"}</p>
+                      <p className="text-xs text-slate-500">ID: {row.id}</p>
                     </div>
                   ),
-                },
-                {
-                  key: "quantity",
-                  header: "Current Qty",
-                  render: (row) => row.quantity,
                 },
                 {
                   key: "pick",
@@ -92,8 +90,8 @@ export default function InventoryPicksPage() {
                         }
                         className="h-8 w-20 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                       />
-                      <Button size="sm" onClick={() => void submitPick(row.id)}>
-                        Use
+                      <Button size="sm" onClick={() => void submitPick(row)}>
+                        Pick
                       </Button>
                     </div>
                   ),

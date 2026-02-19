@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { addDoc, collection, doc, getDocs, orderBy, query, updateDoc, deleteDoc } from "firebase/firestore";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -12,11 +11,10 @@ import { LoadingState } from "@/components/states/loading-state";
 import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
-import { db } from "@/lib/firebase/client";
 import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
 import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
-import { deleteClient, listClients, updateClient } from "@/lib/services/firestore-service";
+import { deleteClient, listClients, resolveCompanyScope, updateClient } from "@/lib/services/firestore-service";
 import type { ClientRecord } from "@/lib/types";
 
 interface ClientForm {
@@ -43,66 +41,50 @@ export default function ClientsPage() {
   const [form, setForm] = useState<ClientForm>(initialForm);
   const [editing, setEditing] = useState<ClientRecord | null>(null);
 
+  const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
   const canMutate = role !== "Worker";
 
   const load = useCallback(async () => {
-    if (!uid) return;
+    if (!scopeId) return;
     setLoading(true);
-    if (companyId) {
-      setClients(await listClients(companyId));
-    } else {
-      const snap = await getDocs(query(collection(db, "users", uid, "clients"), orderBy("numericId", "asc")));
-      setClients(
-        snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<ClientRecord, "id">) })),
-      );
-    }
+    setClients(await listClients(scopeId));
     setLoading(false);
-  }, [companyId, uid]);
+  }, [scopeId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const createClient = async () => {
-    if (!uid || !form.name) return;
+    if (!uid || !scopeId || !form.name) return;
     try {
-      if (companyId) {
-        const requestId = crypto.randomUUID();
-        const response = await fetch("/api/clients/create", {
-          method: "POST",
-          headers: await buildAuthedJsonHeaders(),
-          body: JSON.stringify(
-            withDevUidFallback(
-              {
-                companyId,
-                requestId,
-                ...form,
-              },
-              uid,
-            ),
+      const requestId = crypto.randomUUID();
+      const response = await fetch("/api/clients/create", {
+        method: "POST",
+        headers: await buildAuthedJsonHeaders(),
+        body: JSON.stringify(
+          withDevUidFallback(
+            {
+              companyId: scopeId,
+              requestId,
+              ...form,
+            },
+            uid,
           ),
+        ),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{
+        clientId: string;
+        numericId: number;
+        idempotent: boolean;
+      }>;
+      if (!response.ok || !payload.ok) {
+        toast({
+          title: "Client creation failed",
+          description: getClientApiErrorMessage(payload, "Request failed"),
+          variant: "error",
         });
-        const payload = (await response.json()) as ClientApiResponse<{
-          clientId: string;
-          numericId: number;
-          idempotent: boolean;
-        }>;
-        if (!response.ok || !payload.ok) {
-          toast({
-            title: "Client creation failed",
-            description: getClientApiErrorMessage(payload, "Request failed"),
-            variant: "error",
-          });
-          return;
-        }
-      } else {
-        const nextId = (clients[clients.length - 1]?.numericId ?? 0) + 1;
-        await addDoc(collection(db, "users", uid, "clients"), {
-          numericId: nextId,
-          ...form,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
+        return;
       }
 
       setForm(initialForm);
@@ -118,16 +100,9 @@ export default function ClientsPage() {
   };
 
   const saveEdit = async () => {
-    if (!editing || !uid) return;
+    if (!editing || !scopeId) return;
     try {
-      if (companyId) {
-        await updateClient(companyId, editing.id, editing);
-      } else {
-        await updateDoc(doc(db, "users", uid, "clients", editing.id), {
-          ...editing,
-          updatedAt: new Date().toISOString(),
-        });
-      }
+      await updateClient(scopeId, editing.id, editing);
       setEditing(null);
       await load();
       toast({ title: "Client updated", variant: "success" });
@@ -141,13 +116,9 @@ export default function ClientsPage() {
   };
 
   const removeClient = async (clientId: string) => {
-    if (!uid) return;
+    if (!scopeId) return;
     try {
-      if (companyId) {
-        await deleteClient(companyId, clientId);
-      } else {
-        await deleteDoc(doc(db, "users", uid, "clients", clientId));
-      }
+      await deleteClient(scopeId, clientId);
       await load();
       toast({ title: "Client deleted", variant: "info" });
     } catch (error) {
@@ -165,9 +136,7 @@ export default function ClientsPage() {
         <Card>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Clients</h1>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            {companyId
-              ? "Company-scoped client records with auto-increment numeric IDs."
-              : "Manage your personal client records."}
+            Client records with auto-increment numeric IDs.
           </p>
           {canMutate ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2">

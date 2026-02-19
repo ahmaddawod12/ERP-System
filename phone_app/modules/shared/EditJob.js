@@ -134,7 +134,7 @@ export default function EditJob() {
           const originalPartsInFirestore = currentJobData.partsUsed || [];
           
           // Calculate inventory changes
-          const inventoryRef = doc(db, workerId, 'inventory');
+          const inventoryRef = doc(db, 'users', workerId, 'data', 'inventory');
           const inventorySnap = await getDoc(inventoryRef);
           
           if (inventorySnap.exists()) {
@@ -201,7 +201,7 @@ export default function EditJob() {
               });
             }
 
-            await updateDoc(doc(db, workerId, 'inventory'), { parts });
+            await updateDoc(doc(db, 'users', workerId, 'data', 'inventory'), { parts });
           }
         }
       }

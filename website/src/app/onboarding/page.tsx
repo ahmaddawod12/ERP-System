@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import type { Locale } from "@/lib/i18n/translations";
 import type { Role } from "@/lib/types";
-import { writeUserProfile, writeUserSubscription, createCompanyForManager } from "@/lib/services/firestore-service";
+import { writeUserProfile, writeCompanySubscription, createCompanyForManager } from "@/lib/services/firestore-service";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
@@ -213,10 +213,13 @@ export default function OnboardingPage() {
         accountType: values.accountType,
       });
 
-      await writeUserSubscription(user.uid, {
-        role: resolvedRole as Role,
-        accountType: values.accountType,
-      });
+      if (values.accountType !== "business" || values.role !== "Worker") {
+        const subscriptionCompanyId = companyId ?? user.uid;
+        await writeCompanySubscription(subscriptionCompanyId, {
+          role: resolvedRole as Role,
+          accountType: values.accountType,
+        });
+      }
 
       setLocale(values.language as Locale);
       setTheme(values.theme);

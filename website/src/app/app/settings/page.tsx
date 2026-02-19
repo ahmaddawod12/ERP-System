@@ -30,7 +30,7 @@ export default function SettingsPage() {
   const saveProfile = async () => {
     if (!uid || !profile) return;
     await setDoc(
-      doc(db, "users", uid, "profile", "data"),
+      doc(db, "users", uid, "data", "profile"),
       {
         name,
         phoneNumber: phone,

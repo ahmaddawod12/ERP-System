@@ -359,7 +359,7 @@ export default function WorkersMonitor() {
       // This function only sets up the inventory listener
 
       // Real-time listener for worker inventory (not cached at company level)
-      const inventoryDocRef = doc(db, workerUid, 'inventory');
+      const inventoryDocRef = doc(db, 'users', workerUid, 'data', 'inventory');
       const unsubscribeInventory = onSnapshot(inventoryDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const inventoryData = docSnap.data();

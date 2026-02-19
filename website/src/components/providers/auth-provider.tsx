@@ -26,16 +26,19 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function loadUserProfile(uid: string) {
-  const profileRef = doc(db, "users", uid, "profile", "data");
-  const subscriptionRef = doc(db, "users", uid, "subscription", "data");
+  const profileRef = doc(db, "users", uid, "data", "profile");
+  const profileSnap = await getDoc(profileRef);
+  const profile = profileSnap.exists() ? (profileSnap.data() as UserProfile) : null;
+  if (!profile) {
+    return { profile: null, subscription: null };
+  }
 
-  const [profileSnap, subscriptionSnap] = await Promise.all([
-    getDoc(profileRef),
-    getDoc(subscriptionRef),
-  ]);
+  const companyIdForSubscription = profile.companyId ?? uid;
+  const subscriptionRef = doc(db, "companies", companyIdForSubscription, "business_data", "subscription");
+  const subscriptionSnap = await getDoc(subscriptionRef);
 
   return {
-    profile: profileSnap.exists() ? (profileSnap.data() as UserProfile) : null,
+    profile,
     subscription: subscriptionSnap.exists()
       ? (subscriptionSnap.data() as UserSubscription)
       : null,

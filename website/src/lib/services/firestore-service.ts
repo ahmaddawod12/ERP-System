@@ -40,7 +40,7 @@ import type {
 } from "@/lib/types";
 
 export async function writeUserProfile(uid: string, profile: Omit<UserProfile, "uid" | "createdAt">) {
-  const ref = doc(db, "users", uid, "profile", "data");
+  const ref = doc(db, "users", uid, "data", "profile");
   await setDoc(
     ref,
     {
@@ -53,11 +53,11 @@ export async function writeUserProfile(uid: string, profile: Omit<UserProfile, "
   );
 }
 
-export async function writeUserSubscription(
-  uid: string,
+export async function writeCompanySubscription(
+  companyId: string,
   payload: { role: Role; accountType: AccountType; tier?: "Basic" | "Solo" | "Team" | "Enterprise" },
 ) {
-  const ref = doc(db, "users", uid, "subscription", "data");
+  const ref = doc(db, "companies", companyId, "business_data", "subscription");
   await setDoc(
     ref,
     {

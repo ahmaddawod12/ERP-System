@@ -87,7 +87,7 @@ async function seed() {
     { merge: true },
   );
 
-  await db.collection("users").doc(managerUid).collection("profile").doc("data").set(
+  await db.collection("users").doc(managerUid).collection("data").doc("profile").set(
     {
       uid: managerUid,
       email: "manager@example.com",
@@ -101,16 +101,7 @@ async function seed() {
     { merge: true },
   );
 
-  await db.collection("users").doc(managerUid).collection("subscription").doc("data").set(
-    {
-      tier: "Team",
-      status: "active",
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true },
-  );
-
-  await db.collection("users").doc(workerUid).collection("profile").doc("data").set(
+  await db.collection("users").doc(workerUid).collection("data").doc("profile").set(
     {
       uid: workerUid,
       email: "worker@example.com",
@@ -124,7 +115,7 @@ async function seed() {
     { merge: true },
   );
 
-  await db.collection("users").doc(workerUid).collection("subscription").doc("data").set(
+  await db.collection("companies").doc(companyId).collection("business_data").doc("subscription").set(
     {
       tier: "Team",
       status: "active",
@@ -158,4 +149,3 @@ seed().catch((error) => {
   console.error("Seed failed:", error);
   process.exitCode = 1;
 });
-

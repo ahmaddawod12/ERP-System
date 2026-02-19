@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       .doc(body.companyId)
       .collection("workers")
       .doc(auth.uid);
-    const profileRef = adminDb().collection("users").doc(auth.uid).collection("profile").doc("data");
+    const profileRef = adminDb().collection("users").doc(auth.uid).collection("data").doc("profile");
 
     const result = await adminDb().runTransaction(async (tx) => {
       const [inviteDocSnap, workerSnap, profileSnap] = await Promise.all([

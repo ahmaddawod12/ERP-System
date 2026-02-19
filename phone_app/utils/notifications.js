@@ -4,7 +4,7 @@
  * Uses @react-native-firebase/messaging for FCM (token management, background messages)
  * Uses @notifee/react-native for local notifications (foreground display, advanced features)
  * 
- * Tokens are stored as native FCM tokens in user profile: {uid}/profile.pushToken
+ * Tokens are stored as native FCM tokens in user profile: users/{uid}/data/profile.pushToken
  * 
  * SETUP REQUIREMENTS:
  * - iOS: APNs key uploaded to Firebase Console
@@ -156,8 +156,8 @@ export async function registerPushTokenForUser(userId) {
       return false;
     }
 
-    // React Native Firebase modular API - use UID directly as document path
-    const profileRef = doc(db, userId, 'profile');
+    // React Native Firebase modular API - canonical user profile path
+    const profileRef = doc(db, 'users', userId, 'data', 'profile');
 
     // Check if token has changed
     const profileSnap = await getDoc(profileRef);

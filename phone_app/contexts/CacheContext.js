@@ -360,7 +360,7 @@ export function CacheProvider({ children }) {
           batch.update(companyCacheRef, deleteFields);
         } else if (role === 'worker') {
           // Worker: delete from user cache
-          const userCacheRef = doc(db, uid, 'cache');
+          const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
           const deleteFields = {};
           expiredIds.forEach(id => {
             deleteFields[id] = FieldValue.delete();
@@ -368,7 +368,7 @@ export function CacheProvider({ children }) {
           batch.update(userCacheRef, deleteFields);
         } else {
           // User: delete from user cache (and company cache for certs)
-          const userCacheRef = doc(db, uid, 'cache');
+          const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
           const deleteFields = {};
           expiredIds.forEach(id => {
             deleteFields[id] = FieldValue.delete();
@@ -491,13 +491,13 @@ export function CacheProvider({ children }) {
     try {
       switch (field) {
         case 'profile': {
-          const profileRef = doc(db, uid, 'profile');
+          const profileRef = doc(db, 'users', uid, 'data', 'profile');
           const profileDoc = await getDoc(profileRef);
           return profileDoc.exists() ? profileDoc.data() : null;
         }
         
         case 'inventory': {
-          const inventoryRef = doc(db, uid, 'inventory');
+          const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
           const inventoryDoc = await getDoc(inventoryRef);
           if (inventoryDoc.exists()) {
             const inventoryData = inventoryDoc.data();
@@ -781,7 +781,7 @@ export function CacheProvider({ children }) {
     // =====================================================
     // USER CACHE LISTENER (for all roles)
     // =====================================================
-    const userCacheRef = doc(db, uid, 'cache');
+    const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
     unsubscribeRef.current = onSnapshot(userCacheRef, async (snapshot) => {
       if (!snapshot.exists()) return;
       
@@ -1314,7 +1314,7 @@ export function CacheProvider({ children }) {
       const companyVersions = {};
       
       // Fetch user cache doc
-      const userCacheRef = doc(db, uid, 'cache');
+      const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
       const userCacheSnap = await getDoc(userCacheRef);
       if (userCacheSnap.exists()) {
         const userCacheData = userCacheSnap.data();
@@ -1381,7 +1381,7 @@ export function CacheProvider({ children }) {
       // STEP 2: Then update Firebase (snapshot listener will see local version already matches)
       const cacheRef = isCompanyCache 
         ? doc(db, 'companies', companyId, 'business_data', 'cache')
-        : doc(db, uid, 'cache');
+        : doc(db, 'users', uid, 'data', 'cache');
       
       await setDoc(cacheRef, {
         [fieldOrDocId]: FieldValue.increment(1),
@@ -1417,7 +1417,7 @@ export function CacheProvider({ children }) {
       // Delete from Firebase cache doc
       const cacheRef = isCompanyCache 
         ? doc(db, 'companies', companyId, 'business_data', 'cache')
-        : doc(db, uid, 'cache');
+        : doc(db, 'users', uid, 'data', 'cache');
       
       await updateDoc(cacheRef, {
         [fieldOrDocId]: FieldValue.delete(),
@@ -1460,7 +1460,7 @@ export function CacheProvider({ children }) {
     saveToLocalCache(CACHE_KEYS.INVENTORY, newInventory);
     
     // 2. Save to Firebase
-    const inventoryRef = doc(db, uid, 'inventory');
+    const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
     await setDoc(inventoryRef, {
       parts: newInventory,
       lastUpdated: new Date().toISOString()
@@ -1478,7 +1478,7 @@ export function CacheProvider({ children }) {
    */
   const updateWorkerCacheVersion = useCallback(async (workerId, jobId) => {
     try {
-      const workerCacheRef = doc(db, workerId, 'cache');
+      const workerCacheRef = doc(db, 'users', workerId, 'data', 'cache');
       await setDoc(workerCacheRef, {
         [jobId]: FieldValue.increment(1),
         lastUpdated: new Date().toISOString(),
@@ -1496,7 +1496,7 @@ export function CacheProvider({ children }) {
    */
   const deleteWorkerCacheField = useCallback(async (workerId, fieldOrDocId) => {
     try {
-      const workerCacheRef = doc(db, workerId, 'cache');
+      const workerCacheRef = doc(db, 'users', workerId, 'data', 'cache');
       await updateDoc(workerCacheRef, {
         [fieldOrDocId]: FieldValue.delete(),
         lastUpdated: new Date().toISOString(),

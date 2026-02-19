@@ -25,7 +25,7 @@ export const useAuth = () => {
         try {
           const uid = authUser.uid;
           // React Native Firebase modular API
-          const userDocRef = doc(db, uid, 'profile');
+          const userDocRef = doc(db, 'users', uid, 'data', 'profile');
           const userDoc = await getDoc(userDocRef);
           
           if (userDoc.exists()) {
@@ -167,7 +167,7 @@ export const useFirestoreDoc = (...pathSegments) => {
  * @returns {Object} { profile, loading, error, refresh }
  */
 export const useUserProfile = (uid) => {
-  return useFirestoreDoc(uid, 'profile');
+  return useFirestoreDoc('users', uid, 'data', 'profile');
 };
 
 /**

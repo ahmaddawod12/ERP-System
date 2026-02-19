@@ -539,7 +539,7 @@ export default function GenerateReceipt() {
           
           if (userToFetch) {
             try {
-              const userProfileRef = doc(db, userToFetch, 'profile');
+              const userProfileRef = doc(db, 'users', userToFetch, 'data', 'profile');
               const userProfileSnap = await getDoc(userProfileRef);
               if (userProfileSnap.exists()) {
                 jobData.workerName = userProfileSnap.data().name || userToFetch;

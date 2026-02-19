@@ -310,7 +310,7 @@ export default function ManageJobs() {
 
               // Deduct parts from worker's inventory if parts were used
               if (workerId && job.partsUsed && job.partsUsed.length > 0) {
-                const inventoryRef = doc(db, workerId, 'inventory');
+                const inventoryRef = doc(db, 'users', workerId, 'data', 'inventory');
                 const inventorySnap = await getDoc(inventoryRef);
                 
                 if (inventorySnap.exists()) {
@@ -340,7 +340,7 @@ export default function ManageJobs() {
                   });
                   
                   // Increment worker's inventory version
-                  const workerCacheRef = doc(db, workerId, 'cache');
+                  const workerCacheRef = doc(db, 'users', workerId, 'data', 'cache');
                   await updateDoc(workerCacheRef, {
                     inventory: FieldValue.increment(1)
                   }).catch(() => {

@@ -483,7 +483,7 @@ export default function FillJob() {
       // If cache is empty, fetch from Firebase as fallback
       if (partsArray.length === 0) {
         console.warn('⚠️ Cached inventory is empty, fetching from Firebase...');
-        const inventoryRef = doc(db, uid, 'inventory');
+        const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
         const inventorySnap = await getDoc(inventoryRef);
         if (inventorySnap.exists()) {
           const inventoryDoc = inventorySnap.data();

@@ -1,10 +1,11 @@
 import { collection, doc } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 
-export const userProfileRef = (uid: string) => doc(db, "users", uid, "profile", "data");
-export const userSubscriptionRef = (uid: string) => doc(db, "users", uid, "subscription", "data");
+export const userProfileRef = (uid: string) => doc(db, "users", uid, "data", "profile");
 export const companyBusinessInfoRef = (companyId: string) =>
   doc(db, "companies", companyId, "business_data", "business_info");
+export const companySubscriptionRef = (companyId: string) =>
+  doc(db, "companies", companyId, "business_data", "subscription");
 
 export const companyWorkersCollection = (companyId: string) =>
   collection(db, "companies", companyId, "workers");
@@ -29,4 +30,3 @@ export const companyInvitesCollection = (companyId: string) =>
 
 export const userPersonalInventoryCollection = (uid: string) =>
   collection(db, "users", uid, "personal_inventory");
-

@@ -9,7 +9,7 @@ export interface CompanyAccessResult {
 }
 
 export async function getUserProfileOrThrow(uid: string): Promise<UserProfile> {
-  const profileRef = adminDb().collection("users").doc(uid).collection("profile").doc("data");
+  const profileRef = adminDb().collection("users").doc(uid).collection("data").doc("profile");
   const profileSnap = await profileRef.get();
   if (!profileSnap.exists) {
     throw new ApiRouteError(403, "profile_not_found", "User profile not found");

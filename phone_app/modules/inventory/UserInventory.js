@@ -211,7 +211,7 @@ export default function UserInventory() {
     try {
       const user = auth.currentUser;
       const targetUid = getUid() || user.uid;
-      const userDocRef = doc(db, targetUid, 'inventory');
+      const userDocRef = doc(db, 'users', targetUid, 'data', 'inventory');
 
       let updatedParts = [];
 

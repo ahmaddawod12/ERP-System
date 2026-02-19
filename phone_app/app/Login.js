@@ -97,7 +97,7 @@ export default function Login() {
       const uid = user.uid;
       
       // Use Firebase UID for Firestore document path
-      const userDocRef = doc(db, uid, 'profile');
+      const userDocRef = doc(db, 'users', uid, 'data', 'profile');
       const userDoc = await getDoc(userDocRef);
       
       let userData;
@@ -114,7 +114,7 @@ export default function Login() {
           uid: uid,
           createdAt: new Date().toISOString(),
         };
-        await setDoc(doc(db, uid, 'profile'), userData);
+        await setDoc(doc(db, 'users', uid, 'data', 'profile'), userData);
         role = 'user';
       }
       

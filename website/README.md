@@ -40,8 +40,8 @@ All endpoints return:
 
 ## Data Model
 
-- `users/{uid}/profile/data`
-- `users/{uid}/subscription/data`
+- `users/{uid}/data/profile`
+- `companies/{companyId}/business_data/subscription`
 - `companies/{companyId}/business_data/business_info`
 - `companies/{companyId}/workers/{workerId}`
 - `companies/{companyId}/clients/{clientId}`
@@ -95,6 +95,20 @@ Optional seed vars:
 - `SEED_MANAGER_UID`
 - `SEED_WORKER_UID`
 
+## Path Migration
+
+If your project still has old user paths, run this once before enabling the new rules:
+
+```bash
+npm run migrate:user-paths
+```
+
+This copies data from:
+
+- `users/{uid}/profile/data` -> `users/{uid}/data/profile`
+- `users/{uid}/subscription/data` -> `companies/{companyId}/business_data/subscription`
+- legacy top-level `{uid}/{profile|cache|inventory}` -> `users/{uid}/data/{profile|cache|inventory}`
+
 ## Deployment (Vercel)
 
 1. Set project root to `website/`.
@@ -102,4 +116,3 @@ Optional seed vars:
 3. Provide Firebase Admin credentials (JSON or split vars).
 4. Keep emulator vars disabled in production.
 5. Deploy and verify API routes with real bearer tokens.
-

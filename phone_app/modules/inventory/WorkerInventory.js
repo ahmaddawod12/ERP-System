@@ -230,7 +230,7 @@ export default function WorkerInventory() {
       }
     } else {
       // Viewing worker's inventory via WorkersMonitor → set up Firestore listener
-      const userDocRef = doc(db, targetUid, 'inventory');
+      const userDocRef = doc(db, 'users', targetUid, 'data', 'inventory');
 
       const unsubscribe = onSnapshot(userDocRef, (docSnapshot) => {
         if (docSnapshot.exists()) {
@@ -304,7 +304,7 @@ export default function WorkerInventory() {
       await updateInventory(updatedInventory);
     } else {
       // For worker inventory (manager viewing), write directly to Firestore
-      const userDocRef = doc(db, targetUid, 'inventory');
+      const userDocRef = doc(db, 'users', targetUid, 'data', 'inventory');
       await setDoc(userDocRef, {
         parts: updatedInventory,
         lastUpdated: new Date().toISOString(),

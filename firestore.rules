@@ -5,8 +5,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function userDataPath(userId, docId) {
+      return /databases/$(database)/documents/users/$(userId)/data/$(docId);
+    }
+
     function userProfilePath(userId) {
-      return /databases/$(database)/documents/users/$(userId)/profile/data;
+      return userDataPath(userId, "profile");
     }
 
     function userProfileExists(userId) {
@@ -54,6 +58,26 @@ service cloud.firestore {
 
     function companyRole(companyId) {
       return signedIn() ? workerRole(companyId, request.auth.uid) : null;
+    }
+
+    function canReadCompanyUserData(userId) {
+      return signedIn() &&
+        currentCompanyId() != null &&
+        isCompanyWorker(currentCompanyId()) &&
+        workerExists(currentCompanyId(), userId);
+    }
+
+    function canManageWorkerUserData(userId) {
+      return canReadCompanyUserData(userId) &&
+        companyRole(currentCompanyId()) in ["Manager", "Dev", "manager", "dev"];
+    }
+
+    function validProfileRole(role) {
+      return role in ["Manager", "Worker", "User", "Basic", "Dev", "manager", "worker", "user", "basic", "dev"];
+    }
+
+    function validAccountType(accountType) {
+      return accountType in ["solo", "business", "Solo", "Business"];
     }
 
     function isSoloScope(companyId) {
@@ -138,40 +162,46 @@ service cloud.firestore {
         get(/databases/$(database)/documents/companies/$(companyId)).data.createdBy == request.auth.uid;
     }
 
-    match /users/{uid}/profile/data {
-      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
+    match /users/{uid}/data/profile {
+      allow read: if isAdmin() || (
+        signedIn() &&
+        (request.auth.uid == uid || canReadCompanyUserData(uid))
+      );
 
       allow create: if signedIn() &&
         request.auth.uid == uid &&
         request.resource.data.uid == uid &&
         request.resource.data.email is string &&
-        request.resource.data.role in ["Manager", "Worker", "User", "Basic", "Dev"] &&
-        request.resource.data.accountType in ["solo", "business"];
+        validProfileRole(request.resource.data.role) &&
+        (
+          !("accountType" in request.resource.data) ||
+          validAccountType(request.resource.data.accountType)
+        );
 
       allow update: if isAdmin() || (
         signedIn() &&
         request.auth.uid == uid &&
         request.resource.data.uid == resource.data.uid &&
         request.resource.data.email == resource.data.email &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.companyId == resource.data.companyId &&
-        request.resource.data.accountType == resource.data.accountType
+        validProfileRole(request.resource.data.role) &&
+        (
+          !("accountType" in request.resource.data) ||
+          validAccountType(request.resource.data.accountType)
+        )
       );
     }
 
-    match /users/{uid}/subscription/data {
-      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
-
-      allow create: if signedIn() &&
-        request.auth.uid == uid &&
-        request.resource.data.tier in ["Basic", "Solo", "Team", "Enterprise"] &&
-        request.resource.data.status in ["active", "inactive", "pending"];
-
-      allow update: if isAdmin() || (
+    match /users/{uid}/data/cache {
+      allow read, write: if isAdmin() || (
         signedIn() &&
-        request.auth.uid == uid &&
-        request.resource.data.tier == resource.data.tier &&
-        request.resource.data.status == resource.data.status
+        (request.auth.uid == uid || canManageWorkerUserData(uid))
+      );
+    }
+
+    match /users/{uid}/data/inventory {
+      allow read, write: if isAdmin() || (
+        signedIn() &&
+        (request.auth.uid == uid || canManageWorkerUserData(uid))
       );
     }
 
@@ -207,6 +237,11 @@ service cloud.firestore {
     match /companies/{companyId}/business_data/business_info {
       allow read: if canReadCompany(companyId);
       allow write: if canManageCompany(companyId);
+    }
+
+    match /companies/{companyId}/business_data/subscription {
+      allow read: if canReadCompany(companyId);
+      allow create, update: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
     }
 
     match /companies/{companyId}/business_data/inventory/parts/{partId} {
@@ -295,4 +330,3 @@ service cloud.firestore {
     }
   }
 }
-

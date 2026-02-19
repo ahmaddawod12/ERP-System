@@ -464,7 +464,7 @@ export default function JobMonitor() {
   const loadWorkerInventory = async (workerId) => {
     try {
       console.log('Loading inventory for worker:', workerId);
-      const inventoryDocRef = doc(db, workerId, 'inventory');
+      const inventoryDocRef = doc(db, 'users', workerId, 'data', 'inventory');
       const inventoryDoc = await getDoc(inventoryDocRef);
       
       if (inventoryDoc.exists()) {

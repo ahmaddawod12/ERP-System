@@ -194,7 +194,7 @@ export default function BusinessReg() {
       
       // CRITICAL: Ensure user profile exists in Firestore BEFORE saving business_info
       // The Firestore rules check if profile exists to authorize business_info write
-      const userProfileRef = doc(db, uid, 'profile');
+      const userProfileRef = doc(db, 'users', uid, 'data', 'profile');
       const userProfileSnap = await getDoc(userProfileRef);
       
       if (!userProfileSnap.exists()) {
@@ -256,7 +256,7 @@ export default function BusinessReg() {
       await setDoc(businessInfoRef, businessData);
       try {
         if (userRole !== 'manager') {
-          await updateDoc(doc(db, uid, 'cache'), {
+          await updateDoc(doc(db, 'users', uid, 'data', 'cache'), {
             business_info: FieldValue.increment(1),
           });
         } else {

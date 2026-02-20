@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Tou
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, auth, doc, getDoc, setDoc, signInWithEmailAndPassword } from '../firebase';
+import { db, auth, doc, getDoc, signInWithEmailAndPassword } from '../firebase';
 import { getColors, gradients, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -107,14 +107,9 @@ export default function Login() {
         userData = userDoc.data();
         role = userData.role || 'user';
       } else {
-        // Create default profile for users without one
-        userData = {
-          role: 'user',
-          email: user.email,
-          uid: uid,
-          createdAt: new Date().toISOString(),
-        };
-        await setDoc(doc(db, 'users', uid, 'data', 'profile'), userData);
+        // No profile yet — index.js will detect this and route to BusinessReg/onboarding
+        // Profile creation is handled by registerBusinessV1 Cloud Function
+        userData = { role: 'user' };
         role = 'user';
       }
       

@@ -1,6 +1,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ── Utility functions ──────────────────────────────────────────────
+
     function signedIn() {
       return request.auth != null;
     }
@@ -60,26 +63,6 @@ service cloud.firestore {
       return signedIn() ? workerRole(companyId, request.auth.uid) : null;
     }
 
-    function canReadCompanyUserData(userId) {
-      return signedIn() &&
-        currentCompanyId() != null &&
-        isCompanyWorker(currentCompanyId()) &&
-        workerExists(currentCompanyId(), userId);
-    }
-
-    function canManageWorkerUserData(userId) {
-      return canReadCompanyUserData(userId) &&
-        companyRole(currentCompanyId()) in ["Manager", "Dev", "manager", "dev"];
-    }
-
-    function validProfileRole(role) {
-      return role in ["Manager", "Worker", "User", "Basic", "Dev", "manager", "worker", "user", "basic", "dev"];
-    }
-
-    function validAccountType(accountType) {
-      return accountType in ["solo", "business", "Solo", "Business"];
-    }
-
     function isSoloScope(companyId) {
       return currentProfileExists() &&
         currentAccountType() == "solo" &&
@@ -108,103 +91,53 @@ service cloud.firestore {
       );
     }
 
-    function canWriteCompanyClients(companyId) {
-      return isAdmin() || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Manager", "User", "Basic", "Dev"]
-      );
-    }
-
-    function canReadCompanyJobs(companyId) {
-      return isAdmin() || (
-        isCompanyWorker(companyId) &&
-        !(companyRole(companyId) in ["Basic"])
-      );
-    }
-
-    function canMutateAssignedJob(companyId) {
+    // Manager/User/Basic can read company data (shared role set)
+    function isManagerUserBasic(companyId) {
       return isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Worker", "User"] &&
-        resource.data.workerId == request.auth.uid &&
-        request.resource.data.workerId == resource.data.workerId &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]);
+        companyRole(companyId) in ["Manager", "User", "Basic", "Dev"];
     }
 
-    function canDeleteAssignedCompletedJob(companyId) {
-      return isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Worker", "User"] &&
-        resource.data.workerId == request.auth.uid &&
-        resource.data.status == "completed";
-    }
-
-    function canWorkerConsumeInventory(companyId) {
-      return isCompanyWorker(companyId) &&
-        companyRole(companyId) == "Worker" &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["quantity", "updatedAt"]) &&
-        request.resource.data.quantity is int &&
-        resource.data.quantity is int &&
-        request.resource.data.quantity >= 0 &&
-        request.resource.data.quantity <= resource.data.quantity;
-    }
-
-    function canCreateCertification(companyId) {
-      return isAdmin() || isSoloScope(companyId) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Manager", "Worker", "User", "Basic", "Dev"]
-      );
-    }
-
-    function isCompanyBootstrapManagerWrite(companyId, workerId) {
+    // Check if caller is a manager in their own company and the target user is in the same company
+    function canManagerAccessWorkerData(userId) {
       return signedIn() &&
-        request.auth.uid == workerId &&
-        request.resource.data.role in ["Manager", "Dev"] &&
-        exists(/databases/$(database)/documents/companies/$(companyId)) &&
-        get(/databases/$(database)/documents/companies/$(companyId)).data.createdBy == request.auth.uid;
+        currentCompanyId() != null &&
+        isCompanyWorker(currentCompanyId()) &&
+        companyRole(currentCompanyId()) in ["Manager", "Dev"] &&
+        workerExists(currentCompanyId(), userId);
     }
 
+    // ── Profile: READ-ONLY from client. Updates via Cloud Function only ──
+    // Each user can read their own profile.
+    // Manager can read profiles of workers in the same company.
+    // No client create/update/delete — handled by Cloud Functions.
     match /users/{uid}/data/profile {
       allow read: if isAdmin() || (
-        signedIn() &&
-        (request.auth.uid == uid || canReadCompanyUserData(uid))
-      );
+        signedIn() && request.auth.uid == uid
+      ) || canManagerAccessWorkerData(uid);
 
-      allow create: if signedIn() &&
-        request.auth.uid == uid &&
-        request.resource.data.uid == uid &&
-        request.resource.data.email is string &&
-        validProfileRole(request.resource.data.role) &&
-        (
-          !("accountType" in request.resource.data) ||
-          validAccountType(request.resource.data.accountType)
-        );
-
-      allow update: if isAdmin() || (
-        signedIn() &&
-        request.auth.uid == uid &&
-        request.resource.data.uid == resource.data.uid &&
-        request.resource.data.email == resource.data.email &&
-        validProfileRole(request.resource.data.role) &&
-        (
-          !("accountType" in request.resource.data) ||
-          validAccountType(request.resource.data.accountType)
-        )
-      );
+      // Profile create/update/delete are ALL handled by Cloud Functions
+      // (registerBusinessV1, updateProfileV1, manageWorker, joinCompanyV1)
+      allow create, update, delete: if false;
     }
 
+    // ── User Cache: owner can read/write, manager can write worker cache ──
     match /users/{uid}/data/cache {
       allow read, write: if isAdmin() || (
-        signedIn() &&
-        (request.auth.uid == uid || canManageWorkerUserData(uid))
+        signedIn() && request.auth.uid == uid
       );
+      // Manager can write to worker's cache (same company)
+      allow write: if canManagerAccessWorkerData(uid);
     }
 
+    // ── User Inventory: owner can read/write/update/delete ──
+    // Manager can read/write worker inventory (same company)
     match /users/{uid}/data/inventory {
       allow read, write: if isAdmin() || (
-        signedIn() &&
-        (request.auth.uid == uid || canManageWorkerUserData(uid))
-      );
+        signedIn() && request.auth.uid == uid
+      ) || canManagerAccessWorkerData(uid);
     }
 
+    // Legacy paths — keep existing access
     match /users/{uid}/jobs/{jobId} {
       allow read, write: if isAdmin() || (
         signedIn() &&
@@ -225,87 +158,152 @@ service cloud.firestore {
       allow read, write: if isAdmin() || (signedIn() && request.auth.uid == uid);
     }
 
+    // ── Company root document (cid, wid, jid fields) ──
+    // Manager/User/Basic can read and update (for counter increments).
+    // Create only by the company creator. No delete from client.
     match /companies/{companyId} {
       allow read: if canReadCompany(companyId);
       allow create: if isAdmin() || (
         signedIn() &&
         request.resource.data.createdBy == request.auth.uid
       );
-      allow update, delete: if canManageCompany(companyId);
+      allow update: if isAdmin() || isManagerUserBasic(companyId);
+      allow delete: if false;
     }
 
+    // ── Business Info: READ-ONLY from client ──
+    // Basic/User/Manager can read. Updates via Cloud Function only.
+    // Cannot delete or write from client.
     match /companies/{companyId}/business_data/business_info {
       allow read: if canReadCompany(companyId);
-      allow write: if canManageCompany(companyId);
+      allow create: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
+      allow update, delete: if false;
     }
 
+    // ── Subscription: READ-ONLY from client ──
+    // All company members can read. Write/update/delete via Cloud Function only.
     match /companies/{companyId}/business_data/subscription {
       allow read: if canReadCompany(companyId);
-      allow create, update: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
+      allow create: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
+      allow update, delete: if false;
     }
 
-    match /companies/{companyId}/business_data/inventory/parts/{partId} {
-      allow read: if canReadCompany(companyId);
-      allow create, delete: if canManageCompany(companyId);
-      allow update: if canManageCompany(companyId) || canWorkerConsumeInventory(companyId);
-    }
-
-    match /companies/{companyId}/workers/{workerId} {
-      allow read: if canReadCompany(companyId);
-      allow create: if canManageCompany(companyId) || isCompanyBootstrapManagerWrite(companyId, workerId);
-      allow update, delete: if canManageCompany(companyId);
-    }
-
-    match /companies/{companyId}/clients/{clientId} {
-      allow read: if canReadCompany(companyId);
-      allow write: if canWriteCompanyClients(companyId);
-    }
-
-    match /companies/{companyId}/counters/{counterId} {
+    // ── Company Inventory (single doc with parts array) ──
+    // Worker + Manager can read. Manager can write/update/delete.
+    match /companies/{companyId}/business_data/inventory {
       allow read: if canReadCompany(companyId);
       allow write: if canManageCompany(companyId);
+    }
+
+    // ── Company Cache: Manager can read/write/update/delete ──
+    match /companies/{companyId}/business_data/cache {
+      allow read, write: if canManageCompany(companyId);
+      // Workers and users can read company cache (for cache invalidation)
+      allow read: if canReadCompany(companyId);
+    }
+
+    // ── Token: NO client access ──
+    // Tax Authority OAuth tokens — Cloud Functions only via Admin SDK.
+    match /companies/{companyId}/business_data/token {
+      allow read, write: if false;
+    }
+
+    // ── Workers ──
+    match /companies/{companyId}/workers/{workerId} {
+      allow read: if canReadCompany(companyId);
+      // create/update/delete handled by Cloud Functions (manageWorker, joinCompanyV1)
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Clients ──
+    // Manager/User/Basic can read and update.
+    // Create and delete via Cloud Functions only (addClientV1, deleteClientV1).
+    match /companies/{companyId}/clients/{clientId} {
+      allow read: if isAdmin() || isManagerUserBasic(companyId);
+      allow update: if isAdmin() || isManagerUserBasic(companyId);
+      allow create, delete: if false;
+    }
+
+    // ── Counters (client counter, etc.) ──
+    match /companies/{companyId}/counters/{counterId} {
+      allow read: if canReadCompany(companyId);
+      allow write: if false;
     }
 
     match /companies/{companyId}/client_create_requests/{requestId} {
       allow read, write: if false;
     }
 
+    // ── Pending Jobs ──
+    // User role does NOT have pending jobs.
+    // Manager can read/write/update. Delete via Cloud Function only.
+    // Worker can read + update ONLY jobs assigned to them.
     match /companies/{companyId}/PendingJobs/{jobId} {
-      allow read: if canReadCompanyJobs(companyId);
-      allow create: if canManageCompany(companyId);
-      allow update: if canManageCompany(companyId) || canMutateAssignedJob(companyId);
-      allow delete: if canManageCompany(companyId) || canDeleteAssignedCompletedJob(companyId);
-    }
-
-    match /companies/{companyId}/finishedJobs/{jobId} {
-      allow read: if canReadCompanyJobs(companyId);
-
-      allow create: if canManageCompany(companyId) || (
+      allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Worker", "User"] &&
-        request.resource.data.workerId == request.auth.uid
+        companyRole(companyId) == "Worker" &&
+        resource.data.workerId == request.auth.uid
       );
 
-      allow update: if canManageCompany(companyId) || (
+      allow create: if isAdmin() || canManageCompany(companyId);
+
+      allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Worker", "User"] &&
+        companyRole(companyId) == "Worker" &&
         resource.data.workerId == request.auth.uid &&
         request.resource.data.workerId == resource.data.workerId
       );
 
-      allow delete: if canManageCompany(companyId);
+      // Delete via Cloud Function only (deleteJobV1 / acceptJobV1)
+      allow delete: if false;
     }
 
+    // ── Finished Jobs ──
+    // User and Manager can read/write/update their company finished jobs.
+    // Worker can read ONLY jobs assigned to them.
+    // Delete via Cloud Function only (deleteJobV1).
+    match /companies/{companyId}/finishedJobs/{jobId} {
+      allow read: if isAdmin() || canManageCompany(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) == "User"
+      ) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) == "Worker" &&
+        resource.data.workerId == request.auth.uid
+      );
+
+      allow create: if isAdmin() || canManageCompany(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) == "User" &&
+        request.resource.data.workerId == request.auth.uid
+      );
+
+      allow update: if isAdmin() || canManageCompany(companyId) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) == "User" &&
+        resource.data.workerId == request.auth.uid &&
+        request.resource.data.workerId == resource.data.workerId
+      );
+
+      // Delete via Cloud Function only (deleteJobV1)
+      allow delete: if false;
+    }
+
+    // ── Certifications ──
+    // Basic/User/Manager can READ. Write via Cloud Function (publishGenerateTask).
+    // Manager can delete. No create or update from client.
     match /companies/{companyId}/certifications/{id} {
-      allow read: if canReadCompany(companyId);
-      allow create: if canCreateCertification(companyId);
-      allow update, delete: if canManageCompany(companyId);
+      allow read: if isAdmin() || isManagerUserBasic(companyId) || isSoloScope(companyId);
+      allow delete: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
+      allow create, update: if false;
     }
 
+    // ── Invites ──
     match /companies/{companyId}/invites/{inviteId} {
       allow read, create, update, delete: if canManageCompany(companyId);
     }
 
+    // ── Inventory Picks ──
     match /companies/{companyId}/inventory_picks/{pickId} {
       allow read: if canReadCompany(companyId);
       allow create: if canManageCompany(companyId) || (
@@ -316,6 +314,35 @@ service cloud.firestore {
       allow update, delete: if canManageCompany(companyId);
     }
 
+    // ── Document Tasks ──
+    // Users can read their own tasks (for listening to task completion status).
+    // Write is handled by Cloud Functions only.
+    match /documentTasks/{taskId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // ── Conversations (Support Chat) ──
+    match /conversations/{conversationId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAdmin() || (
+          signedIn() &&
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid
+        );
+        allow create: if isAdmin() || (
+          signedIn() &&
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid
+        );
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ── Upgrade Requests ──
     match /upgrade_requests/{requestId} {
       allow create: if signedIn() &&
         request.resource.data.uid == request.auth.uid &&
@@ -324,9 +351,27 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ── Contact Requests ──
     match /contact_requests/{requestId} {
       allow read, update, delete: if isAdmin();
       allow create: if false;
+    }
+
+    // ── Admin-only paths (Cloud Functions via Admin SDK) ──
+    match /companies/{companyId}/auditLogs/{logId} {
+      allow read, write: if false;
+    }
+
+    match /notificationLog/{logId} {
+      allow read, write: if false;
+    }
+
+    match /taxAuthPending/{authId} {
+      allow read, write: if false;
+    }
+
+    match /taxAuthCallbacks/{authId} {
+      allow read, write: if false;
     }
   }
 }

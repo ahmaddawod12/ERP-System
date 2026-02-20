@@ -32,15 +32,19 @@ Always use **Firestore transactions** when modifying parts arrays to prevent con
 
 ### 3. Job ID Format & Status Flow
 
+Job IDs use a **sequential `jid` counter** stored atomically on the company document (`companies/{companyId}.jid`). IDs are always generated **server-side** via the `createJobV1` Cloud Function.
+
 | Prefix | Collection | Meaning |
 |--------|------------|---------|
-| `p_XXXXX` | `PendingJobs` | Active/pending job |
-| `f_XXXXX` | `finishedJobs` | Completed/denied job |
+| `p_{jid}` | `PendingJobs` | Active/pending job |
+| `f_{jid}` | `finishedJobs` | Completed/denied job |
 | `c_XXXXX` | `certifications` | Generated document |
 
 **Status values**: `pending` → `waiting` → `finished` (or `denied`)
 
 NEVER use `in_progress` or `completed` — those are legacy values.
+NEVER generate job IDs client-side — always use `createJobV1`.
+Legacy Base62 functions (`generatePendingJobId`, `generateFinishedJobId`, `convertToFinishedJobId`) are deprecated.
 
 ### 4. Business Info Fields
 
@@ -124,6 +128,37 @@ All exported from a single file. Firebase Functions v7, Node 22.
 | `requestPermit` | onRequest (me-west1) | Tax authority integration |
 | `fetchPermit` | onRequest (me-west1) | Tax authority permit |
 | `reportDocument` | onRequest (me-west1) | Tax authority reporting |
+| `updateProfileV1` | onCall | Update name/phoneNumber on profile |
+| `updatePushTokenV1` | onCall | Update FCM push token on profile |
+| `updateBusinessInfoV1` | onCall | Update business_info (except vat_number/document_numbers) |
+| `deleteJobV1` | onCall | Delete pending or finished job (role-checked) |
+| `acceptJobV1` | onCall | Atomic: pending→finished + delete + deduct worker inventory |
+| `registerBusinessV1` | onCall | Atomic onboarding: profile + company + subscription + counters + inventory |
+| `createJobV1` | onCall | Create job with sequential jid (atomic counter) |
+
+## Security Model
+
+Firestore security rules enforce **read-only client access** for sensitive documents. All mutations to these documents go through Cloud Functions (Admin SDK bypasses rules).
+
+### Read-Only from Client (create/update/delete: false)
+- `users/{uid}/data/profile` — use `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1`
+- `companies/{companyId}/business_data/business_info` — use `registerBusinessV1`, `updateBusinessInfoV1`
+- `companies/{companyId}/business_data/subscription` — use `registerBusinessV1`
+- `companies/{companyId}/business_data/token` — Cloud Functions only
+- `companies/{companyId}/counters/*` — Cloud Functions only
+- `documentTasks/{taskId}` — Cloud Functions only
+
+### Delete via Cloud Function Only
+- `companies/{companyId}/PendingJobs/*` — use `deleteJobV1`, `acceptJobV1`
+- `companies/{companyId}/finishedJobs/*` — use `deleteJobV1`
+
+### Client-Writable (within role-based rules)
+- `users/{uid}/data/cache`, `users/{uid}/data/inventory` — owner + manager
+- `companies/{companyId}/PendingJobs/*` — manager create, worker update (own jobs)
+- `companies/{companyId}/finishedJobs/*` — manager/user create+update
+- `companies/{companyId}/business_data/inventory` — manager write
+- `companies/{companyId}/clients/*` — manager/user/basic update (create/delete via CF)
+- `companies/{companyId}/certifications/*` — manager/solo can delete, create/update via CF
 
 ## Platform-Specific Notes
 

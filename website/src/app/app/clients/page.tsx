@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { httpsCallable } from "firebase/functions";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -11,10 +12,8 @@ import { LoadingState } from "@/components/states/loading-state";
 import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
-import type { ClientApiResponse } from "@/lib/api/client";
-import { getClientApiErrorMessage } from "@/lib/api/client";
-import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
-import { deleteClient, listClients, resolveCompanyScope, updateClient } from "@/lib/services/firestore-service";
+import { functions } from "@/lib/firebase/client";
+import { listClients, resolveCompanyScope, updateClient } from "@/lib/services/firestore-service";
 import type { ClientRecord } from "@/lib/types";
 
 interface ClientForm {
@@ -59,38 +58,12 @@ export default function ClientsPage() {
     void load();
   }, [load]);
 
+  // Create client via Cloud Function — uses phone-app cid counter pattern server-side
   const createClient = async () => {
-    if (!uid || !scopeId || !form.name) return;
+    if (!scopeId || !form.name) return;
     try {
-      const requestId = crypto.randomUUID();
-      const response = await fetch("/api/clients/create", {
-        method: "POST",
-        headers: await buildAuthedJsonHeaders(),
-        body: JSON.stringify(
-          withDevUidFallback(
-            {
-              companyId: scopeId,
-              requestId,
-              ...form,
-            },
-            uid,
-          ),
-        ),
-      });
-      const payload = (await response.json()) as ClientApiResponse<{
-        clientId: string;
-        numericId: number;
-        idempotent: boolean;
-      }>;
-      if (!response.ok || !payload.ok) {
-        toast({
-          title: "Client creation failed",
-          description: getClientApiErrorMessage(payload, "Request failed"),
-          variant: "error",
-        });
-        return;
-      }
-
+      const addClientFn = httpsCallable(functions, "addClientV1");
+      await addClientFn({ companyId: scopeId, ...form });
       setForm(initialForm);
       await load();
       toast({ title: "Client created", variant: "success" });
@@ -119,10 +92,12 @@ export default function ClientsPage() {
     }
   };
 
+  // Delete client via Cloud Function — CF handles Firestore delete + cache version bump
   const removeClient = async (clientId: string) => {
     if (!scopeId) return;
     try {
-      await deleteClient(scopeId, clientId);
+      const deleteClientFn = httpsCallable(functions, "deleteClientV1");
+      await deleteClientFn({ companyId: scopeId, clientId });
       await load();
       toast({ title: "Client deleted", variant: "info" });
     } catch (error) {
@@ -198,7 +173,7 @@ export default function ClientsPage() {
             <DataTable
               data={clients}
               columns={[
-                { key: "id", header: "Client #", render: (row) => row.numericId },
+                { key: "id", header: "Client #", render: (row) => row.numericId ?? row.id },
                 {
                   key: "name",
                   header: "Name",
@@ -257,17 +232,17 @@ export default function ClientsPage() {
               />
               <Input
                 label="Email"
-                value={editing.email}
+                value={editing.email ?? ""}
                 onChange={(event) => setEditing((prev) => (prev ? { ...prev, email: event.target.value } : prev))}
               />
               <Input
                 label="Phone"
-                value={editing.phone}
+                value={editing.phone ?? ""}
                 onChange={(event) => setEditing((prev) => (prev ? { ...prev, phone: event.target.value } : prev))}
               />
               <Input
                 label="Address"
-                value={editing.address}
+                value={editing.address ?? ""}
                 onChange={(event) => setEditing((prev) => (prev ? { ...prev, address: event.target.value } : prev))}
               />
               <Input
@@ -283,7 +258,7 @@ export default function ClientsPage() {
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Notes</span>
                 <textarea
-                  value={editing.notes}
+                  value={editing.notes ?? ""}
                   onChange={(event) => setEditing((prev) => (prev ? { ...prev, notes: event.target.value } : prev))}
                   rows={3}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"

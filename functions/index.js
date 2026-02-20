@@ -933,104 +933,151 @@ exports.manageWorker = onCall(async (request) => {
 });
 
 /**
- * HTTP Function: createClientV1
- * Canonical privileged endpoint for client creation with idempotency + company counter.
+ * Callable Function: addClientV1
+ * Creates a new client using the phone-app-compatible cid counter pattern:
+ * - Reads `cid` from companies/{companyId} document
+ * - Uses String(cid) as the client document ID (matches phone app exactly)
+ * - Increments cid atomically in a transaction
+ * - Bumps the appropriate cache version based on caller role
+ *   (company cache for manager, user cache for everyone else)
+ * Used by both the phone app and the website.
  */
-exports.createClientV1 = onRequest({
-  region: "us-central1",
-  cors: true,
-}, async (req, res) => {
-  if (req.method !== 'POST') {
-    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+exports.addClientV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
   }
 
-  try {
-    const body = parseJsonBody(req);
-    const auth = await resolveHttpAuth(req, body);
+  const uid = request.auth.uid;
+  const data = request.data || {};
 
-    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
-    const requestId = requireNonEmptyString(body.requestId, 'requestId', 8, 120);
-    const name = requireNonEmptyString(body.name, 'name', 2, 140);
-    const email = optionalTrimmedString(body.email, 320);
-    const phone = optionalTrimmedString(body.phone, 40);
-    const address = optionalTrimmedString(body.address, 240);
-    const notes = optionalTrimmedString(body.notes, 2000);
-    const city = optionalTrimmedString(body.city, 120);
-    const vatNumber = optionalTrimmedString(body.vatNumber, 64);
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  if (!companyId) {
+    throw new HttpsError('invalid-argument', 'companyId is required');
+  }
 
-    if (email && !isValidEmail(email)) {
-      throw new HttpsError('invalid-argument', 'Invalid email format');
+  const name = typeof data.name === 'string' ? data.name.trim() : '';
+  if (!name) {
+    throw new HttpsError('invalid-argument', 'name is required');
+  }
+
+  const email     = typeof data.email     === 'string' ? data.email.trim()     : '';
+  const phone     = typeof data.phone     === 'string' ? data.phone.trim()     : '';
+  const address   = typeof data.address   === 'string' ? data.address.trim()   : '';
+  const city      = typeof data.city      === 'string' ? data.city.trim()      : '';
+  const vatNumber = typeof data.vatNumber === 'string' ? data.vatNumber.trim() : '';
+  const notes     = typeof data.notes     === 'string' ? data.notes.trim()     : '';
+
+  if (email && !isValidEmail(email)) {
+    throw new HttpsError('invalid-argument', 'Invalid email format');
+  }
+
+  const { resolvedRole } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+    allowSoloScope: true,
+  });
+
+  const db = admin.firestore();
+  const companyRef = db.doc(`companies/${companyId}`);
+
+  const newClient = await db.runTransaction(async (tx) => {
+    const companySnap = await tx.get(companyRef);
+    if (!companySnap.exists) {
+      throw new HttpsError('not-found', 'Company not found');
+    }
+    const cid = companySnap.data().cid;
+    if (typeof cid !== 'number') {
+      throw new HttpsError('failed-precondition', 'Company not initialized — missing cid counter');
     }
 
-    await assertHttpCompanyAccess({
-      uid: auth.uid,
-      companyId,
-      allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
-      allowSoloScope: true,
-    });
+    const clientId = String(cid);
+    const clientRef = db.doc(`companies/${companyId}/clients/${clientId}`);
+    const now = new Date().toISOString();
 
-    const db = admin.firestore();
-    const companyRef = db.collection('companies').doc(companyId);
-    const counterRef = companyRef.collection('counters').doc('clients');
-    const requestRef = companyRef.collection('client_create_requests').doc(requestId);
-    const clientsCollection = companyRef.collection('clients');
+    // Build client doc — only include fields that have a value (matches phone app)
+    const clientDoc = { name, createdAt: now };
+    if (email)     clientDoc.email     = email;
+    if (phone)     clientDoc.phone     = phone;
+    if (address)   clientDoc.address   = address;
+    if (city)      clientDoc.city      = city;
+    if (vatNumber) clientDoc.vatNumber = vatNumber;
+    if (notes)     clientDoc.notes     = notes;
 
-    const result = await db.runTransaction(async (tx) => {
-      const existingRequest = await tx.get(requestRef);
-      if (existingRequest.exists) {
-        const existingData = existingRequest.data() || {};
-        return {
-          clientId: String(existingData.clientId || ''),
-          numericId: Number(existingData.numericId || 0),
-          idempotent: true,
-        };
-      }
+    tx.set(companyRef, { cid: cid + 1 }, { merge: true });
+    tx.set(clientRef, clientDoc);
 
-      const counterSnap = await tx.get(counterRef);
-      const currentLastNumber = Number(counterSnap.data()?.lastNumber || 0);
-      const safeLastNumber = Number.isFinite(currentLastNumber) && currentLastNumber >= 0 ? currentLastNumber : 0;
-      const nextNumber = safeLastNumber + 1;
-      const clientRef = clientsCollection.doc();
-      const nowIso = new Date().toISOString();
+    return { id: clientId, ...clientDoc };
+  });
 
-      tx.set(counterRef, {
-        lastNumber: nextNumber,
-        updatedAt: nowIso,
-      }, { merge: true });
+  // Bump cache version so other devices detect the change and refetch
+  // Manager → company cache; everyone else → their own user cache
+  const isManagerRole = resolvedRole === 'manager';
+  const cacheRef = isManagerRole
+    ? db.doc(`companies/${companyId}/business_data/cache`)
+    : db.doc(`users/${uid}/data/cache`);
+  await cacheRef.set({
+    clients: admin.firestore.FieldValue.increment(1),
+    lastUpdated: new Date().toISOString(),
+  }, { merge: true });
 
-      tx.set(clientRef, {
-        numericId: nextNumber,
-        name,
-        email,
-        phone,
-        address,
-        notes,
-        city,
-        vatNumber,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        createdBy: auth.uid,
-      });
+  logger.info('addClientV1: client created', { companyId, clientId: newClient.id, uid });
+  return { success: true, client: newClient };
+});
 
-      tx.set(requestRef, {
-        requestId,
-        clientId: clientRef.id,
-        numericId: nextNumber,
-        createdBy: auth.uid,
-        createdAt: nowIso,
-      });
-
-      return {
-        clientId: clientRef.id,
-        numericId: nextNumber,
-        idempotent: false,
-      };
-    });
-
-    return sendHttpOk(res, result, 201);
-  } catch (error) {
-    return sendCaughtHttpError(res, error);
+/**
+ * Callable Function: deleteClientV1
+ * Deletes a client document and increments the company cache version so phone app
+ * users automatically detect the change and invalidate their local cache.
+ * Used by both the phone app and the website.
+ */
+exports.deleteClientV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
   }
+
+  const uid = request.auth.uid;
+  const { companyId, clientId } = request.data || {};
+
+  if (!companyId || typeof companyId !== 'string' || !companyId.trim()) {
+    throw new HttpsError('invalid-argument', 'companyId is required');
+  }
+  if (!clientId || typeof clientId !== 'string' || !clientId.trim()) {
+    throw new HttpsError('invalid-argument', 'clientId is required');
+  }
+
+  const { resolvedRole } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+    allowSoloScope: true,
+  });
+
+  const db = admin.firestore();
+  const clientRef = db.doc(`companies/${companyId}/clients/${clientId}`);
+  const clientSnap = await clientRef.get();
+
+  if (!clientSnap.exists) {
+    throw new HttpsError('not-found', 'Client not found');
+  }
+
+  // Delete client and bump the appropriate cache version in one atomic batch
+  // Manager → company cache; everyone else → their own user cache
+  const isManagerRole = resolvedRole === 'manager';
+  const cacheRef = isManagerRole
+    ? db.doc(`companies/${companyId}/business_data/cache`)
+    : db.doc(`users/${uid}/data/cache`);
+
+  const batch = db.batch();
+  batch.delete(clientRef);
+  batch.set(cacheRef, {
+    clients: admin.firestore.FieldValue.increment(1),
+    lastUpdated: new Date().toISOString(),
+  }, { merge: true });
+  await batch.commit();
+
+  logger.info('deleteClientV1: client deleted', { companyId, clientId, uid });
+  return { success: true, clientId };
 });
 
 /**
@@ -3489,6 +3536,708 @@ exports.publishGenerateTask = onCall({
     
     throw new HttpsError('internal', `Failed to publish generate task: ${error.message}`);
   }
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// NEW SECURITY-ENFORCED CLOUD FUNCTIONS
+// These functions enforce data integrity rules that cannot be trusted
+// to the client. All profile, business_info, subscription, and job
+// deletion/accept operations go through these endpoints.
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * Callable Function: updateProfileV1
+ * Updates ONLY the user's name and phoneNumber on their profile.
+ * Role, companyId, accountType, email, uid etc. CANNOT be changed by the user.
+ */
+exports.updateProfileV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const name = typeof data.name === 'string' ? data.name.trim() : undefined;
+  const phoneNumber = typeof data.phoneNumber === 'string' ? data.phoneNumber.trim() : undefined;
+
+  if (name === undefined && phoneNumber === undefined) {
+    throw new HttpsError('invalid-argument', 'At least one of name or phoneNumber must be provided');
+  }
+
+  // Validate field lengths
+  if (name !== undefined && name.length > 200) {
+    throw new HttpsError('invalid-argument', 'Name is too long');
+  }
+  if (phoneNumber !== undefined && phoneNumber.length > 30) {
+    throw new HttpsError('invalid-argument', 'Phone number is too long');
+  }
+
+  const profileRef = admin.firestore().doc(userProfileDocPath(uid));
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', 'User profile not found');
+  }
+
+  const updates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+  if (name !== undefined) updates.name = name;
+  if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
+
+  await profileRef.update(updates);
+
+  logger.info('updateProfileV1: profile updated', { uid, fields: Object.keys(updates) });
+  return { success: true };
+});
+
+/**
+ * Callable Function: updatePushTokenV1
+ * Updates ONLY push-notification fields on the user profile.
+ * Since profile is read-only from the client, this CF handles pushToken writes.
+ */
+exports.updatePushTokenV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const pushToken = typeof data.pushToken === 'string' ? data.pushToken.trim() : '';
+  const pushTokenPlatform = typeof data.pushTokenPlatform === 'string' ? data.pushTokenPlatform.trim() : '';
+  const pushTokenType = typeof data.pushTokenType === 'string' ? data.pushTokenType.trim() : 'fcm';
+
+  if (!pushToken) {
+    throw new HttpsError('invalid-argument', 'pushToken is required');
+  }
+
+  if (pushToken.length > 500) {
+    throw new HttpsError('invalid-argument', 'pushToken is too long');
+  }
+
+  const profileRef = admin.firestore().doc(userProfileDocPath(uid));
+  const profileSnap = await profileRef.get();
+  if (!profileSnap.exists) {
+    throw new HttpsError('not-found', 'User profile not found');
+  }
+
+  // Only update if token has changed
+  const currentToken = profileSnap.data().pushToken;
+  if (currentToken === pushToken) {
+    return { success: true, changed: false };
+  }
+
+  const now = new Date().toISOString();
+  await profileRef.update({
+    pushToken,
+    pushTokenUpdatedAt: now,
+    pushTokenPlatform,
+    pushTokenType,
+  });
+
+  logger.info('updatePushTokenV1: push token updated', { uid, platform: pushTokenPlatform });
+  return { success: true, changed: true };
+});
+
+/**
+ * Callable Function: updateBusinessInfoV1
+ * Updates business_info fields EXCEPT vat_number and document_numbers.
+ * Only Manager/User/Basic roles with company access can call this.
+ */
+exports.updateBusinessInfoV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  if (!companyId) {
+    throw new HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: HTTP_COMPANY_CLIENT_ROLES, // manager, user, basic, dev
+    allowSoloScope: true,
+  });
+
+  const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+  const bizSnap = await businessInfoRef.get();
+  if (!bizSnap.exists) {
+    throw new HttpsError('not-found', 'Business info not found');
+  }
+
+  // Build update — ONLY allowed fields
+  const ALLOWED_FIELDS = [
+    'he_name', 'en_name', 'city', 'address',
+    'business_type', 'business_phone', 'business_email', 'business_fax',
+    'accountant_name', 'accountant_email', 'accountant_phone',
+  ];
+
+  const updates = { last_updated: new Date().toISOString() };
+  let hasChange = false;
+  for (const field of ALLOWED_FIELDS) {
+    if (data[field] !== undefined) {
+      updates[field] = typeof data[field] === 'string' ? data[field].trim() : data[field];
+      hasChange = true;
+    }
+  }
+
+  if (!hasChange) {
+    throw new HttpsError('invalid-argument', 'No updatable fields provided');
+  }
+
+  // BLOCKED fields — vat_number and document_numbers cannot be changed
+  if (data.vat_number !== undefined || data.document_numbers !== undefined) {
+    throw new HttpsError('permission-denied', 'Cannot modify vat_number or document_numbers');
+  }
+
+  await businessInfoRef.update(updates);
+
+  // Bump cache
+  const cacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
+  await cacheRef.set({
+    business_info: admin.firestore.FieldValue.increment(1),
+    lastUpdated: new Date().toISOString(),
+  }, { merge: true });
+
+  logger.info('updateBusinessInfoV1: updated', { companyId, uid, fields: Object.keys(updates) });
+  return { success: true };
+});
+
+/**
+ * Callable Function: deleteJobV1
+ * Deletes a pending or finished job, enforcing:
+ * - Cannot delete a finished job that has isCert=true (has a generated document)
+ * - Manager/User can delete their company's jobs
+ * - Worker can delete their own assigned finished jobs only
+ */
+exports.deleteJobV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+
+  if (!companyId || !jobId) {
+    throw new HttpsError('invalid-argument', 'companyId and jobId are required');
+  }
+
+  const { resolvedRole } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: HTTP_ALL_APP_ROLES,
+    allowSoloScope: true,
+  });
+
+  const dbRef = admin.firestore();
+
+  // Try pending first
+  const pendingRef = dbRef.doc(`companies/${companyId}/PendingJobs/${jobId}`);
+  const pendingSnap = await pendingRef.get();
+
+  if (pendingSnap.exists) {
+    // Only manager/dev can delete pending jobs
+    if (!['manager', 'dev'].includes(resolvedRole)) {
+      throw new HttpsError('permission-denied', 'Only managers can delete pending jobs');
+    }
+    await pendingRef.delete();
+    logger.info('deleteJobV1: pending job deleted', { companyId, jobId, uid });
+    return { success: true, collection: 'PendingJobs' };
+  }
+
+  // Try finished
+  const finishedRef = dbRef.doc(`companies/${companyId}/finishedJobs/${jobId}`);
+  const finishedSnap = await finishedRef.get();
+
+  if (!finishedSnap.exists) {
+    throw new HttpsError('not-found', 'Job not found');
+  }
+
+  const jobData = finishedSnap.data();
+
+  // Cannot delete a job with a generated certification
+  if (jobData.isCert === true) {
+    throw new HttpsError('failed-precondition', 'Cannot delete a job that has a generated document (isCert=true)');
+  }
+
+  // Worker can only delete their own assigned jobs
+  if (resolvedRole === 'worker') {
+    if (jobData.workerId !== uid) {
+      throw new HttpsError('permission-denied', 'Workers can only delete their own jobs');
+    }
+  }
+
+  // Basic role cannot delete jobs
+  if (resolvedRole === 'basic') {
+    throw new HttpsError('permission-denied', 'Basic role cannot delete jobs');
+  }
+
+  await finishedRef.delete();
+  logger.info('deleteJobV1: finished job deleted', { companyId, jobId, uid });
+  return { success: true, collection: 'finishedJobs' };
+});
+
+/**
+ * Callable Function: acceptJobV1
+ * Atomically moves a pending job to finished jobs and deducts worker inventory.
+ * This replaces the client-side accept flow to prevent:
+ * - Duplicate jobs (pending + finished)
+ * - Race conditions on inventory
+ * - Cross-user writes from client
+ *
+ * Also bumps worker inventory cache version.
+ */
+exports.acceptJobV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  const finishedJobId = typeof data.finishedJobId === 'string' ? data.finishedJobId.trim() : '';
+
+  if (!companyId || !jobId) {
+    throw new HttpsError('invalid-argument', 'companyId and jobId are required');
+  }
+
+  // Only manager/dev can accept jobs
+  await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
+    allowSoloScope: false,
+  });
+
+  const dbRef = admin.firestore();
+
+  // Use a transaction for atomicity
+  const result = await dbRef.runTransaction(async (tx) => {
+    const pendingRef = dbRef.doc(`companies/${companyId}/PendingJobs/${jobId}`);
+    const pendingSnap = await tx.get(pendingRef);
+
+    if (!pendingSnap.exists) {
+      throw new HttpsError('not-found', 'Pending job not found');
+    }
+
+    const jobData = pendingSnap.data();
+
+    // Determine finished job ID
+    const fJobId = finishedJobId || (jobId.startsWith('p_') ? `f_${jobId.slice(2)}` : `f_${jobId}`);
+    const finishedRef = dbRef.doc(`companies/${companyId}/finishedJobs/${fJobId}`);
+
+    const now = new Date().toISOString();
+
+    // Write finished job
+    const finishedJobData = {
+      ...jobData,
+      id: fJobId,
+      status: 'finished',
+      acceptedBy: uid,
+      acceptedAt: now,
+      updatedAt: now,
+    };
+    tx.set(finishedRef, finishedJobData);
+
+    // Delete pending job
+    tx.delete(pendingRef);
+
+    // Deduct worker inventory if partsUsed exists
+    const partsUsed = jobData.partsUsed || jobData.parts || [];
+    const workerId = jobData.workerId || jobData.completedBy;
+
+    if (Array.isArray(partsUsed) && partsUsed.length > 0 && workerId) {
+      const workerInvRef = dbRef.doc(`users/${workerId}/data/inventory`);
+      const workerInvSnap = await tx.get(workerInvRef);
+
+      if (workerInvSnap.exists) {
+        const invData = workerInvSnap.data() || {};
+        const currentParts = Array.isArray(invData.parts) ? invData.parts : [];
+
+        const updatedParts = currentParts.map((p) => {
+          const usedPart = partsUsed.find(
+            (u) => u.id === p.id || u.name === p.name
+          );
+          if (usedPart && typeof usedPart.quantity === 'number') {
+            const newQty = Math.max(0, (p.quantity || 0) - usedPart.quantity);
+            return { ...p, quantity: newQty };
+          }
+          return p;
+        });
+
+        tx.update(workerInvRef, {
+          parts: updatedParts,
+          lastUpdated: now,
+        });
+
+        // Bump worker cache version
+        const workerCacheRef = dbRef.doc(`users/${workerId}/data/cache`);
+        tx.set(workerCacheRef, {
+          inventory: admin.firestore.FieldValue.increment(1),
+          lastUpdated: now,
+        }, { merge: true });
+      }
+    }
+
+    return { finishedJobId: fJobId, workerId };
+  });
+
+  logger.info('acceptJobV1: job accepted', {
+    companyId, jobId, finishedJobId: result.finishedJobId, uid,
+  });
+
+  return { success: true, finishedJobId: result.finishedJobId };
+});
+
+/**
+ * Callable Function: registerBusinessV1
+ * Creates/updates user profile + business_info + subscription + company structure.
+ * This replaces the client-side registration flow (BusinessReg + onboarding)
+ * to prevent users from forging roles, companyIds, or document numbers.
+ *
+ * Handles:
+ * - Solo user registration (User/Basic): companyId = uid
+ * - Manager company creation: generates companyId, creates company structure
+ */
+exports.registerBusinessV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const email = request.auth.token.email;
+  const data = request.data || {};
+
+  // Validate role
+  const rawRole = typeof data.role === 'string' ? data.role.trim() : '';
+  const role = normalizeRole(rawRole);
+  if (!role || !['manager', 'user', 'basic'].includes(role)) {
+    throw new HttpsError('invalid-argument', 'role must be Manager, User, or Basic');
+  }
+
+  // Validate account type
+  const rawAccountType = typeof data.accountType === 'string' ? data.accountType.trim() : '';
+  const accountType = normalizeAccountType(rawAccountType);
+  if (!accountType) {
+    throw new HttpsError('invalid-argument', 'accountType must be solo or business');
+  }
+
+  // Validate name
+  const name = typeof data.name === 'string' ? data.name.trim() : '';
+  const phoneNumber = typeof data.phoneNumber === 'string' ? data.phoneNumber.trim() : '';
+
+  // Validate business info fields
+  const heName = requireNonEmptyString(data.he_name || '', 'he_name', 1, 200);
+  const enName = optionalTrimmedString(data.en_name || '', 200);
+  const vatNumber = requireNonEmptyString(data.vat_number || '', 'vat_number', 1, 50);
+  const businessType = requireNonEmptyString(data.business_type || '', 'business_type', 1, 100);
+  const city = optionalTrimmedString(data.city || '', 200);
+  const address = optionalTrimmedString(data.address || '', 500);
+
+  // Optional fields
+  const businessEmail = optionalTrimmedString(data.business_email || '', 200);
+  const businessPhone = optionalTrimmedString(data.business_phone || '', 30);
+  const businessFax = optionalTrimmedString(data.business_fax || '', 30);
+  const accountantName = optionalTrimmedString(data.accountant_name || '', 200);
+  const accountantEmail = optionalTrimmedString(data.accountant_email || '', 200);
+  const accountantPhone = optionalTrimmedString(data.accountant_phone || '', 30);
+
+  // Document numbers — server sets starting values (always 1)
+  const documentNumbers = {
+    305: 1, 400: 1, 330: 1, 210: 1, 10: 1, 200: 1,
+  };
+
+  const dbRef = admin.firestore();
+  const profileRole = toProfileRole(role);
+
+  let companyId;
+
+  if (role === 'manager' && accountType === 'business') {
+    // Company creation — generate slug from business name
+    const slugBase = (enName || heName).toLowerCase()
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    const randomSuffix = crypto.randomBytes(3).toString('hex');
+    companyId = `${slugBase}-${randomSuffix}`;
+  } else {
+    // Solo scope — companyId = uid
+    companyId = uid;
+  }
+
+  // Check if profile already exists (prevent re-registration)
+  const existingProfile = await dbRef.doc(userProfileDocPath(uid)).get();
+  if (existingProfile.exists && existingProfile.data()?.companyId) {
+    throw new HttpsError('already-exists', 'User is already registered with a company');
+  }
+
+  const now = new Date().toISOString();
+
+  // Build business info data
+  const businessData = {
+    he_name: heName,
+    en_name: enName,
+    vat_number: vatNumber,
+    business_type: businessType,
+    city,
+    address,
+    document_numbers: documentNumbers,
+    registered_at: now,
+    registered_by: uid,
+    registered_by_role: profileRole,
+    last_updated: now,
+  };
+  if (businessEmail) businessData.business_email = businessEmail;
+  if (businessPhone) businessData.business_phone = businessPhone;
+  if (businessFax) businessData.business_fax = businessFax;
+  if (accountantName) businessData.accountant_name = accountantName;
+  if (accountantEmail) businessData.accountant_email = accountantEmail;
+  if (accountantPhone) businessData.accountant_phone = accountantPhone;
+
+  // Determine subscription tier
+  const tierMap = { manager: 'Team', user: 'Solo', basic: 'Basic' };
+  const tier = tierMap[role] || 'Basic';
+  const enabledModules = {
+    team: tier === 'Team' || tier === 'Enterprise',
+    solojob: tier !== 'Basic',
+    documents: true,
+    teaminventory: tier === 'Team' || tier === 'Enterprise',
+    companyinventory: tier === 'Team' || tier === 'Enterprise',
+    inventory: tier !== 'Basic',
+  };
+
+  const batch = dbRef.batch();
+
+  // 1. Profile
+  batch.set(dbRef.doc(userProfileDocPath(uid)), {
+    uid,
+    email,
+    role: profileRole,
+    companyId,
+    accountType,
+    name,
+    phoneNumber,
+    createdAt: now,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  // 2. User cache
+  batch.set(dbRef.doc(userCacheDocPath(uid)), {
+    profile: 1,
+    lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  if (role === 'manager' && accountType === 'business') {
+    // 3. Company root doc
+    batch.set(dbRef.doc(`companies/${companyId}`), {
+      companyId,
+      createdBy: uid,
+      createdAt: now,
+      cid: 1,
+      wid: 1,
+      jid: 1,
+    });
+
+    // 4. Worker (manager) record
+    batch.set(dbRef.doc(companyWorkerDocPath(companyId, uid)), {
+      workerId: uid,
+      uid,
+      role: profileRole,
+      email,
+      name,
+      phoneNumber,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // 5. Business info
+    batch.set(dbRef.doc(`companies/${companyId}/business_data/business_info`), businessData);
+
+    // 6. Subscription
+    batch.set(dbRef.doc(`companies/${companyId}/business_data/subscription`), {
+      tier,
+      status: 'active',
+      enabledModules,
+      updatedAt: now,
+    });
+
+    // 7. Counters
+    batch.set(dbRef.doc(`companies/${companyId}/counters/clients`), { lastNumber: 0 }, { merge: true });
+
+    // 8. Empty inventory
+    batch.set(dbRef.doc(`companies/${companyId}/business_data/inventory`), {
+      parts: [],
+      nextId: 1,
+      lastUpdated: now,
+    });
+
+    // 9. Company cache
+    batch.set(dbRef.doc(`companies/${companyId}/business_data/cache`), {
+      business_info: 1,
+      lastUpdated: now,
+    });
+  } else {
+    // Solo user — companyId = uid
+    // Company root doc (if not exists)
+    batch.set(dbRef.doc(`companies/${uid}`), {
+      companyId: uid,
+      createdBy: uid,
+      createdAt: now,
+      cid: 1,
+      jid: 1,
+    }, { merge: true });
+
+    // Business info
+    batch.set(dbRef.doc(`companies/${uid}/business_data/business_info`), businessData);
+
+    // Subscription
+    batch.set(dbRef.doc(`companies/${uid}/business_data/subscription`), {
+      tier,
+      status: 'active',
+      enabledModules,
+      updatedAt: now,
+    });
+
+    // Worker record (self)
+    batch.set(dbRef.doc(companyWorkerDocPath(uid, uid)), {
+      workerId: uid,
+      uid,
+      role: profileRole,
+      email,
+      name,
+      phoneNumber,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Counters
+    batch.set(dbRef.doc(`companies/${uid}/counters/clients`), { lastNumber: 0 }, { merge: true });
+
+    // Empty inventory
+    batch.set(dbRef.doc(`companies/${uid}/business_data/inventory`), {
+      parts: [],
+      nextId: 1,
+      lastUpdated: now,
+    });
+
+    // Cache
+    batch.set(dbRef.doc(`companies/${uid}/business_data/cache`), {
+      business_info: 1,
+      lastUpdated: now,
+    });
+  }
+
+  await batch.commit();
+
+  logger.info('registerBusinessV1: registered', { uid, companyId, role, accountType });
+
+  return {
+    success: true,
+    companyId,
+    role: profileRole,
+    tier,
+  };
+});
+
+/**
+ * Callable Function: createJobV1
+ * Creates a pending or finished job with a sequential jid-based ID.
+ * Atomically increments the jid counter on the company doc.
+ *
+ * - Manager creates pending jobs (p_{jid})
+ * - User (solo) creates finished jobs directly (f_{jid})
+ */
+exports.createJobV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  if (!companyId) {
+    throw new HttpsError('invalid-argument', 'companyId is required');
+  }
+
+  // type: 'pending' | 'finished' — determines which collection
+  const jobType = typeof data.type === 'string' ? data.type.trim() : 'pending';
+  if (!['pending', 'finished'].includes(jobType)) {
+    throw new HttpsError('invalid-argument', 'type must be pending or finished');
+  }
+
+  const { resolvedRole } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: ['manager', 'user', 'dev'],
+    allowSoloScope: true,
+  });
+
+  // Solo users (role=user) can only create finished jobs
+  if (resolvedRole === 'user' && jobType === 'pending') {
+    throw new HttpsError('permission-denied', 'Solo users cannot create pending jobs');
+  }
+
+  const dbRef = admin.firestore();
+  const companyRef = dbRef.doc(`companies/${companyId}`);
+
+  const result = await dbRef.runTransaction(async (tx) => {
+    const companySnap = await tx.get(companyRef);
+    if (!companySnap.exists) {
+      throw new HttpsError('not-found', 'Company not found');
+    }
+
+    const currentJid = Number(companySnap.data()?.jid || 1);
+    tx.set(companyRef, { jid: currentJid + 1 }, { merge: true });
+
+    const prefix = jobType === 'pending' ? 'p' : 'f';
+    const jobId = `${prefix}_${currentJid}`;
+    const collectionName = jobType === 'pending' ? 'PendingJobs' : 'finishedJobs';
+    const jobRef = dbRef.doc(`companies/${companyId}/${collectionName}/${jobId}`);
+
+    const now = new Date().toISOString();
+
+    // Build job document from provided payload (strip metadata)
+    const jobPayload = { ...data };
+    delete jobPayload.companyId;
+    delete jobPayload.type;
+
+    const jobDoc = {
+      ...jobPayload,
+      id: jobId,
+      jid: currentJid,
+      status: jobType === 'pending' ? 'pending' : 'finished',
+      createdBy: uid,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (jobType === 'finished') {
+      jobDoc.isCert = false;
+      jobDoc.workerId = jobPayload.workerId || uid;
+      jobDoc.completedBy = jobPayload.completedBy || uid;
+    }
+
+    tx.set(jobRef, jobDoc);
+
+    return { jobId, jid: currentJid };
+  });
+
+  logger.info('createJobV1: job created', {
+    companyId, jobId: result.jobId, jid: result.jid, uid, jobType,
+  });
+
+  return { success: true, jobId: result.jobId, jid: result.jid };
 });
 
 /**

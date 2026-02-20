@@ -46,9 +46,8 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, runTransaction, FieldValue } from '../firebase';
+import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
 import { getDocTypeFromId } from '../utils/helpers';
-import { callHttpFunction } from '../utils/httpFunctions';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
@@ -221,16 +220,6 @@ const getDocumentType = (docData) => {
   return 'unknown';
 };
 
-const normalizeRole = (role) => {
-  const raw = String(role || '').trim().toLowerCase();
-  if (raw === 'manager') return 'manager';
-  if (raw === 'worker') return 'worker';
-  if (raw === 'user') return 'user';
-  if (raw === 'basic') return 'basic';
-  if (raw === 'dev') return 'dev';
-  return '';
-};
-
 export function CacheProvider({ children }) {
   // State
   const [isInitialized, setIsInitialized] = useState(false);
@@ -255,7 +244,7 @@ export function CacheProvider({ children }) {
   
   // Get current user info from cache (canonical names)
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
-  const getUserRole = useCallback(() => normalizeRole(mmkvHelpers.getString(CACHE_KEYS.USER_ROLE)), []);
+  const getUserRole = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_ROLE), []);
   const getCompanyId = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID), []);
   // Backward-compatible aliases (deprecated � use getUid/getCompanyId)
   const getUsername = getUid;
@@ -404,21 +393,9 @@ export function CacheProvider({ children }) {
     console.log('?? [CACHE READ] Loading from local MMKV cache...');
     
     const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
-    const cachedRole = normalizeRole(mmkvHelpers.getString(CACHE_KEYS.USER_ROLE));
+    const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
     const cachedCompanyId = mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID);
-    const cachedProfileRaw = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
-    const normalizedProfileRole = normalizeRole(cachedProfileRaw?.role);
-    const cachedProfile = cachedProfileRaw
-      ? {
-          ...cachedProfileRaw,
-          ...(normalizedProfileRole ? { role: normalizedProfileRole } : {}),
-        }
-      : null;
-    const resolvedCachedRole = cachedRole || normalizedProfileRole || '';
-    if (!cachedRole && resolvedCachedRole) {
-      mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, resolvedCachedRole);
-    }
-
+    const cachedProfile = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
     const cachedInventory = mmkvHelpers.getObject(CACHE_KEYS.INVENTORY);
     const cachedPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS);
     const cachedFinishedJobs = mmkvHelpers.getObject(CACHE_KEYS.FINISHED_JOBS);
@@ -448,7 +425,7 @@ export function CacheProvider({ children }) {
     return {
       hasCache: !!cachedProfile,
       uid: cachedUid,
-      role: resolvedCachedRole,
+      role: cachedRole,
       companyId: cachedCompanyId,
       profile: cachedProfile,
       hasBusinessInfo: cachedHasBusinessInfo === 'true',
@@ -461,65 +438,45 @@ export function CacheProvider({ children }) {
    * Save data to local cache
    */
   const saveToLocalCache = useCallback((key, data) => {
-    const dataToStore =
-      key === CACHE_KEYS.PROFILE && data && typeof data === 'object'
-        ? {
-            ...data,
-            ...(normalizeRole(data.role) ? { role: normalizeRole(data.role) } : {}),
-          }
-        : data;
-
-    mmkvHelpers.setObject(key, dataToStore);
+    mmkvHelpers.setObject(key, data);
     
     // Update state based on key
     switch (key) {
       case CACHE_KEYS.PROFILE:
-        if (dataToStore && typeof dataToStore === 'object') {
-          const normalizedRole = normalizeRole(dataToStore.role);
-          const normalizedProfile = {
-            ...dataToStore,
-            ...(normalizedRole ? { role: normalizedRole } : {}),
-          };
-          setProfile(normalizedProfile);
-          if (normalizedRole) {
-            mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, normalizedRole);
-          }
-        } else {
-          setProfile(data);
-        }
+        setProfile(data);
         break;
       case CACHE_KEYS.INVENTORY:
-        setInventory(dataToStore);
+        setInventory(data);
         break;
       case CACHE_KEYS.PENDING_JOBS:
-        setPendingJobs(dataToStore);
+        setPendingJobs(data);
         break;
       case CACHE_KEYS.FINISHED_JOBS:
-        setFinishedJobs(dataToStore);
+        setFinishedJobs(data);
         break;
       case CACHE_KEYS.WORKERS:
-        setWorkers(dataToStore);
+        setWorkers(data);
         break;
       case CACHE_KEYS.COMPANY_PENDING_JOBS:
-        setCompanyPendingJobs(dataToStore);
+        setCompanyPendingJobs(data);
         break;
       case CACHE_KEYS.COMPANY_FINISHED_JOBS:
-        setCompanyFinishedJobs(dataToStore);
+        setCompanyFinishedJobs(data);
         break;
       case CACHE_KEYS.CERTIFICATIONS:
-        setCertifications(dataToStore);
+        setCertifications(data);
         break;
       case CACHE_KEYS.CLIENTS:
-        setClients(dataToStore);
+        setClients(data);
         break;
       case CACHE_KEYS.SUBSCRIPTION:
-        setSubscription(dataToStore);
+        setSubscription(data);
         break;
       case CACHE_KEYS.CACHE_VERSIONS:
-        setCacheVersions(dataToStore);
+        setCacheVersions(data);
         break;
       case CACHE_KEYS.COMPANY_CACHE_VERSIONS:
-        setCompanyCacheVersions(dataToStore);
+        setCompanyCacheVersions(data);
         break;
     }
   }, []);
@@ -536,13 +493,7 @@ export function CacheProvider({ children }) {
         case 'profile': {
           const profileRef = doc(db, 'users', uid, 'data', 'profile');
           const profileDoc = await getDoc(profileRef);
-          if (!profileDoc.exists()) return null;
-          const profileData = profileDoc.data() || {};
-          const normalizedRole = normalizeRole(profileData.role);
-          return {
-            ...profileData,
-            ...(normalizedRole ? { role: normalizedRole } : {}),
-          };
+          return profileDoc.exists() ? profileDoc.data() : null;
         }
         
         case 'inventory': {
@@ -568,7 +519,6 @@ export function CacheProvider({ children }) {
                 ...workerDoc,
                 uid: workerUid,
                 workerId: workerDoc.workerId || workerUid,
-                wid: workerDoc.wid ?? workerDoc.Wid ?? null,
               };
             });
             return workersData;
@@ -590,11 +540,7 @@ export function CacheProvider({ children }) {
           snapshot.forEach(d => {
             clientsList.push({ id: d.id, ...d.data() });
           });
-          clientsList.sort((a, b) => {
-            const aNumber = Number(a.numericId || a.id || 0);
-            const bNumber = Number(b.numericId || b.id || 0);
-            return aNumber - bNumber;
-          });
+          clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
           return clientsList;
         }
         
@@ -1173,7 +1119,7 @@ export function CacheProvider({ children }) {
       
       // STEP 2: Determine uid (UID), role, and companyId
       let uid = cachedData.uid;
-      let role = normalizeRole(cachedData.role);
+      let role = cachedData.role;
       let companyId = cachedData.companyId;
       let profileData = cachedData.profile;
       
@@ -1183,7 +1129,7 @@ export function CacheProvider({ children }) {
       } else {
         // Try to get from cached profile
         if (profileData && !role) {
-          role = normalizeRole(profileData.role);
+          role = profileData.role;
           companyId = profileData.companyId;
         }
         
@@ -1203,15 +1149,8 @@ export function CacheProvider({ children }) {
             return null;
           }
           
-          role = normalizeRole(profileData.role);
+          role = profileData.role;
           companyId = profileData.companyId;
-
-          if (role && profileData.role !== role) {
-            profileData = {
-              ...profileData,
-              role,
-            };
-          }
           
           // Save profile to local cache
           saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
@@ -1799,10 +1738,10 @@ export function CacheProvider({ children }) {
    * 1. Local cache workers list
    * 2. Increment cache version
    * 
-   * @param {string} workerUid - Worker UID
-   * @param {object} workerData - { email, name, phoneNumber, uid, workerId?, wid? }
+   * @param {string} workerId - Worker ID 
+   * @param {object} workerData - { email, name, phoneNumber, uid }
    */
-  const addWorker = useCallback(async (workerUid, workerData) => {
+  const addWorker = useCallback(async (workerId, workerData) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1816,22 +1755,19 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`?? Adding worker ${workerUid} to cache...`);
+    console.log(`?? Adding worker ${workerId} to cache...`);
     
     try {
       // 1. Update local cache
       const updatedWorkers = {
         ...workers,
-        [workerUid]: {
-          uid: workerUid,
-          workerId: workerData.workerId || workerUid,
-          wid: workerData.wid ?? workerData.Wid ?? null,
+        [workerId]: {
           email: workerData.email,
           name: workerData.name,
           phoneNumber: workerData.phoneNumber,
-          Uid: workerUid, // legacy compatibility
-          Wid: workerData.wid ?? workerData.Wid ?? null, // legacy compatibility
-          role: normalizeRole(workerData.role) || 'worker',
+          Uid: workerData.Uid,
+          Wid: workerId || workerData.Wid,
+          role: 'worker',
           companyId: companyId
         }
       };
@@ -1840,7 +1776,7 @@ export function CacheProvider({ children }) {
       // 2. Increment cache version (triggers other devices to refresh)
       await incrementCacheVersion('workers', true);
       
-      console.log(`? Worker ${workerUid} added to cache successfully`);
+      console.log(`? Worker ${workerId} added to cache successfully`);
       
     } catch (error) {
       console.error('Error adding worker to cache:', error);
@@ -1853,10 +1789,10 @@ export function CacheProvider({ children }) {
    * Can update: name, phoneNumber
    * CANNOT update: email (immutable)
    * 
-   * @param {string} workerUid - Worker UID to edit in cache
+   * @param {string} workerId - Worker ID to edit in cache  
    * @param {object} updates - { name?, phoneNumber? }
    */
-  const editWorker = useCallback(async (workerUid, updates) => {
+  const editWorker = useCallback(async (workerId, updates) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1870,11 +1806,11 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`?? Editing worker ${workerUid} in cache...`);
+    console.log(`?? Editing worker ${workerId} in cache...`);
     
     try {
       // 1. Update local cache
-      const currentWorker = workers[workerUid];
+      const currentWorker = workers[workerId];
       if (!currentWorker) {
         throw new Error('Worker not found in cache');
       }
@@ -1888,14 +1824,14 @@ export function CacheProvider({ children }) {
       
       const updatedWorkers = {
         ...workers,
-        [workerUid]: updatedWorkerData
+        [workerId]: updatedWorkerData
       };
       saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
       
       // 2. Increment cache version
       await incrementCacheVersion('workers', true);
       
-      console.log(`? Worker ${workerUid} updated in cache successfully`);
+      console.log(`? Worker ${workerId} updated in cache successfully`);
       
     } catch (error) {
       console.error('Error editing worker in cache:', error);
@@ -1909,9 +1845,9 @@ export function CacheProvider({ children }) {
    * 1. Worker from local cache
    * 2. Increment cache version
    * 
-   * @param {string} workerUid - Worker UID to delete from cache
+   * @param {string} workerId - Worker ID to delete from cache
    */
-  const deleteWorker = useCallback(async (workerUid) => {
+  const deleteWorker = useCallback(async (workerId) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1925,17 +1861,17 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`??? Deleting worker ${workerUid} from cache...`);
+    console.log(`??? Deleting worker ${workerId} from cache...`);
     
     try {
       // 1. Remove from local cache
-      const { [workerUid]: deletedWorker, ...remainingWorkers } = workers;
+      const { [workerId]: deletedWorker, ...remainingWorkers } = workers;
       saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
       
       // 2. Increment cache version
       await incrementCacheVersion('workers', true);
       
-      console.log(`? Worker ${workerUid} deleted from cache successfully`);
+      console.log(`? Worker ${workerId} deleted from cache successfully`);
       
     } catch (error) {
       console.error('Error deleting worker from cache:', error);
@@ -1976,12 +1912,8 @@ export function CacheProvider({ children }) {
       snapshot.forEach(d => {
         clientsList.push({ id: d.id, ...d.data() });
       });
-      // Sort by numericId (fallback to doc ID for legacy clients)
-      clientsList.sort((a, b) => {
-        const aNumber = Number(a.numericId || a.id || 0);
-        const bNumber = Number(b.numericId || b.id || 0);
-        return aNumber - bNumber;
-      });
+      // Sort by numeric ID so newest clients appear last
+      clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
       saveToLocalCache(CACHE_KEYS.CLIENTS, clientsList);
       setClients(clientsList); // Update state immediately
       console.log(`? Fetched ${clientsList.length} clients`);
@@ -1993,13 +1925,19 @@ export function CacheProvider({ children }) {
   }, [getCompanyId, saveToLocalCache]);
 
   /**
-   * Add a new client via Cloud Function (canonical privileged path).
-   * Backend handles counters + idempotency and returns { clientId, numericId }.
+   * Add a new client using a Firestore transaction
+   * - Reads companies/{companyId} document for cid field
+   * - Increments cid in company doc
+   * - Creates companies/{companyId}/clients/{cid} with client data
+   * - Updates local cache
+   * 
+   * @param {Object} clientData - { name, phone, email, address, city, vatNumber }
+   * @returns {Object} - The created client with id
    */
   const addClient = useCallback(async (clientData) => {
     const companyId = getCompanyId();
     console.log('?? Adding client to company:', companyId);
-    
+
     if (!companyId) {
       const error = new Error('Company name not found in cache');
       console.error('?', error);
@@ -2007,61 +1945,39 @@ export function CacheProvider({ children }) {
     }
 
     try {
-      const requestId = `mobile_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-      const clientPayload = {
-        companyId,
-        requestId,
-        name: String(clientData?.name || '').trim(),
-        email: String(clientData?.email || '').trim(),
-        phone: String(clientData?.phone || '').trim(),
-        address: String(clientData?.address || '').trim(),
-        notes: String(clientData?.notes || '').trim(),
-        city: String(clientData?.city || '').trim(),
-        vatNumber: String(clientData?.vatNumber || '').trim(),
-      };
+      // Call addClientV1 CF — uses phone-app cid counter pattern on the server side
+      const addClientFn = httpsCallable(functions, 'addClientV1');
+      const result = await addClientFn({ companyId, ...clientData });
+      const newClient = result.data.client;
 
-      if (!clientPayload.name) {
-        throw new Error('Client name is required');
+      if (!newClient) {
+        throw new Error('addClientV1 returned no client data');
       }
 
-      const created = await callHttpFunction('createClientV1', clientPayload, { requireAuth: true });
-      const nowIso = new Date().toISOString();
-      const newClient = {
-        id: created.clientId,
-        numericId: Number(created.numericId || 0),
-        name: clientPayload.name,
-        email: clientPayload.email,
-        phone: clientPayload.phone,
-        address: clientPayload.address,
-        notes: clientPayload.notes,
-        city: clientPayload.city,
-        vatNumber: clientPayload.vatNumber,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-
-      // Update local cache (dedupe by ID for idempotent retries)
-      const withoutExisting = clients.filter(c => c.id !== newClient.id);
-      const updatedClients = [...withoutExisting, newClient].sort((a, b) => {
-        const aNumber = Number(a.numericId || a.id || 0);
-        const bNumber = Number(b.numericId || b.id || 0);
-        return aNumber - bNumber;
-      });
+      // Update local cache immediately (optimistic)
+      const updatedClients = [...clients, newClient];
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
-      setClients(updatedClients); // Update state immediately
+      setClients(updatedClients);
 
-      // Increment clients cache version based on role
+      // Pre-increment local cache version to match what the CF just wrote to Firestore.
+      // This prevents the snapshot listener from triggering an unnecessary refetch
+      // (local version will already match remote when the snapshot arrives).
       const role = getUserRole();
       const isCompanyCache = role === 'manager';
-      await incrementCacheVersion('clients', isCompanyCache);
+      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
+      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
+      localVersions['clients'] = (localVersions['clients'] || 0) + 1;
+      saveToLocalCache(localVersionsKey, localVersions);
 
-      console.log(`? Client created with ID: ${newClient.id}`);
+      console.log(`✅ Client created with ID: ${newClient.id}`);
       return newClient;
     } catch (error) {
-      console.error('? Error creating client:', error);
+      console.error('❌ Error creating client:', error);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
       throw error;
     }
-  }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
+  }, [getCompanyId, getUserRole, clients, saveToLocalCache]);
 
   /**
    * Update an existing client
@@ -2094,32 +2010,40 @@ export function CacheProvider({ children }) {
   }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
 
   /**
-   * Delete a client from the company's clients collection
+   * Delete a client via the deleteClientV1 Cloud Function.
+   * The CF handles the Firestore delete and increments the company cache version,
+   * so other devices (and the snapshot listener) are notified automatically.
    */
   const deleteClient = useCallback(async (clientId) => {
     const companyId = getCompanyId();
     if (!companyId) throw new Error('Company name not found');
 
     try {
-      const clientRef = doc(db, 'companies', companyId, 'clients', clientId);
-      await deleteDoc(clientRef);
+      // CF deletes the Firestore doc and bumps companies/{companyId}/business_data/cache.clients
+      const deleteClientFn = httpsCallable(functions, 'deleteClientV1');
+      await deleteClientFn({ companyId, clientId });
 
-      // Update local cache
+      // Update local client list immediately (optimistic)
       const updatedClients = clients.filter(c => c.id !== clientId);
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
-      setClients(updatedClients); // Update state immediately
-      
-      // Increment clients cache version based on role
+      setClients(updatedClients);
+
+      // Pre-increment local cache version to match the Firestore version CF just wrote.
+      // This prevents the snapshot listener from triggering an unnecessary refetch
+      // (local version will already match remote when the snapshot arrives).
       const role = getUserRole();
       const isCompanyCache = role === 'manager';
-      await incrementCacheVersion('clients', isCompanyCache);
-      
-      console.log(`? Client ${clientId} deleted`);
+      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
+      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
+      localVersions['clients'] = (localVersions['clients'] || 0) + 1;
+      saveToLocalCache(localVersionsKey, localVersions);
+
+      console.log(`✅ Client ${clientId} deleted via CF`);
     } catch (error) {
       console.error('Error deleting client:', error);
       throw error;
     }
-  }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
+  }, [getCompanyId, getUserRole, clients, saveToLocalCache]);
 
   /**
    * Clear all cache (on logout)

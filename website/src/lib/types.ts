@@ -141,16 +141,17 @@ export interface InventoryDoc {
 
 export interface ClientRecord {
   id: string;
-  numericId: number;
+  /** Stored for website ordering; may be absent on legacy phone-app-created docs. */
+  numericId?: number;
   name: string;
-  email: string;
-  phone: string;
-  address: string;
-  notes: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
   city?: string;
   vatNumber?: string;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
 }
 
 /**

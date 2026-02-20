@@ -17,8 +17,9 @@ import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notif
 import { 
   db, 
   doc, 
-  getDoc, 
-  updateDoc,
+  getDoc,
+  functions,
+  httpsCallable,
   messaging,
   getToken,
   requestPermission,
@@ -156,10 +157,8 @@ export async function registerPushTokenForUser(userId) {
       return false;
     }
 
-    // React Native Firebase modular API - canonical user profile path
+    // Quick client-side check to skip if token hasn't changed
     const profileRef = doc(db, 'users', userId, 'data', 'profile');
-
-    // Check if token has changed
     const profileSnap = await getDoc(profileRef);
     if (profileSnap.exists()) {
       const currentToken = profileSnap.data().pushToken;
@@ -169,12 +168,12 @@ export async function registerPushTokenForUser(userId) {
       }
     }
 
-    // Update/overwrite the FCM token in user profile
-    await updateDoc(profileRef, {
+    // Use Cloud Function to update push token (profile is read-only from client)
+    const updatePushTokenFn = httpsCallable(functions, 'updatePushTokenV1');
+    await updatePushTokenFn({
       pushToken: fcmToken,
-      pushTokenUpdatedAt: new Date().toISOString(),
       pushTokenPlatform: Platform.OS,
-      pushTokenType: 'fcm', // Mark as FCM token (not Expo)
+      pushTokenType: 'fcm',
     });
 
     console.log(`✅ FCM token registered for ${userId}`);
@@ -182,8 +181,8 @@ export async function registerPushTokenForUser(userId) {
   } catch (error) {
     console.error('Error registering push token:', error);
     
-    // If profile doesn't exist, the update will fail - this is expected for new users
-    if (error.code === 'not-found') {
+    // If profile doesn't exist, the CF will throw not-found - this is expected for new users
+    if (error.code === 'functions/not-found' || error.code === 'not-found') {
       console.warn('User profile not found - push token registration skipped');
     }
     

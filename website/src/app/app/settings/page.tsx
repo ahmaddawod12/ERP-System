@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { doc, setDoc } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { db } from "@/lib/firebase/client";
+import { functions } from "@/lib/firebase/client";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
@@ -29,15 +29,9 @@ export default function SettingsPage() {
 
   const saveProfile = async () => {
     if (!uid || !profile) return;
-    await setDoc(
-      doc(db, "users", uid, "data", "profile"),
-      {
-        name,
-        phoneNumber: phone,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true },
-    );
+    // Use updateProfileV1 Cloud Function instead of direct Firestore write
+    const updateProfileFn = httpsCallable(functions, "updateProfileV1");
+    await updateProfileFn({ name, phoneNumber: phone });
     await refreshUserData();
     toast({ title: "Settings saved", variant: "success" });
   };

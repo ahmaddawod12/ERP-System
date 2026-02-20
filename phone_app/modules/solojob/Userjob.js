@@ -14,14 +14,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, db, storage, doc, getDoc, setDoc, deleteDoc } from '../../firebase';
+import { auth, db, storage, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
-import { generateFinishedJobId } from '../../utils/helpers';
 
 export default function Userjob() {
   const router = useRouter();
@@ -336,22 +335,34 @@ export default function Userjob() {
         try {
           const uid = pendingJob.uid || getUid();
           const companyId = getCompanyId();
-          const jobId = pendingJob.id || generateFinishedJobId();
 
           if (!companyId) throw new Error('No companyId');
 
-          const jobToSave = {
-            id: jobId,
+          const jobPayload = {
             ...pendingJob.jobData,
-            status: 'finished',
             completedBy: uid,
             name: profile?.name || '',
+          };
+
+          // Use createJobV1 Cloud Function for atomic creation
+          const createJobFn = httpsCallable(functions, 'createJobV1');
+          const result = await createJobFn({
+            companyId,
+            type: 'finished',
+            ...jobPayload,
+          });
+
+          const serverJobId = result.data?.jobId || result.jobId;
+
+          const jobToSave = {
+            id: serverJobId,
+            ...jobPayload,
+            status: 'finished',
             finishedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
 
           await addJob(jobToSave, false);
-          await setDoc(doc(db, 'companies', companyId, 'finishedJobs', jobId), jobToSave);
         } catch (error) {
           console.error('Error syncing job:', error);
           failedJobs.push(pendingJob);
@@ -538,7 +549,9 @@ export default function Userjob() {
                 return;
               }
 
-              await deleteDoc(doc(db, 'companies', companyId, 'finishedJobs', jobId));
+              // Use deleteJobV1 Cloud Function for secure deletion
+              const deleteJobFn = httpsCallable(functions, 'deleteJobV1');
+              await deleteJobFn({ companyId, jobId });
               await removeJob(jobId, false);
               alert.success('Success', 'Job deleted successfully');
               loadJobs();

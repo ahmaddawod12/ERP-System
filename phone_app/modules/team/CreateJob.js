@@ -12,10 +12,9 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth, db, collection, doc, getDocs, setDoc } from '../../firebase';
+import { auth, db, collection, doc, getDocs, setDoc, functions, httpsCallable } from '../../firebase';
 import { colors, spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
 import { SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../components';
-import { generatePendingJobId } from '../../utils/helpers';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -225,8 +224,6 @@ export default function CreateJob() {
         alert.error('Error', 'Company ID not found');
         return;
       }
-      
-      const jobId = generatePendingJobId();
 
       // Auto-save new client or update existing client with missing fields
       let clientId = selectedClientObj?.id || null;
@@ -261,9 +258,7 @@ export default function CreateJob() {
       
       const jobData = {
         ...newJob,
-        id: jobId,
         status: 'pending',
-        createdAt: new Date().toISOString(),
         MName: managerName,
         completedBy: selectedWorker,  // Worker UID for filtering
         workerId: selectedWorker,     // Canonical worker identifier
@@ -272,13 +267,19 @@ export default function CreateJob() {
         ...(clientId && { clientId }),
       };
 
-      // STEP 1: Add job to local cache FIRST (prevents unnecessary Firebase read when snapshot fires)
-      // addJob() already increments worker cache version internally, no need to call updateWorkerCacheVersion separately
-      await addJob({ ...jobData, id: jobId }, true, selectedWorker);
+      // Use createJobV1 Cloud Function for atomic job creation with sequential ID
+      const createJobFn = httpsCallable(functions, 'createJobV1');
+      const result = await createJobFn({
+        companyId,
+        type: 'pending',
+        ...jobData,
+      });
 
-      // STEP 2: Save to company's PendingJobs collection in Firebase
-      // Note: Firestore trigger will automatically send push notification to worker
-      await setDoc(doc(db, 'companies', companyId, 'PendingJobs', jobId), jobData);
+      const serverJobId = result.data?.jobId || result.jobId;
+      const createdJob = { ...jobData, id: serverJobId, createdAt: new Date().toISOString() };
+
+      // Update local cache with the server-generated ID
+      await addJob(createdJob, true, selectedWorker);
 
       alert.success('Success', t.jobCreated);
       setNewJob({ title: '', description: '', location: '', clientName: '', clientPhone: '' });

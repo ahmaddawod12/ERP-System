@@ -13,7 +13,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, FieldValue, doc, setDoc, getDoc, updateDoc, deleteDoc } from '../../firebase';
+import { auth, db, FieldValue, doc, setDoc, getDoc, updateDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -277,78 +277,33 @@ export default function ManageJobs() {
               }
 
               const workerId = job.workerId || job.completedBy || job.assignedTo;
-              const currentUid = getUid();
               
               // Convert pending job ID (p_) to finished job ID (f_)
               const finishedJobId = convertToFinishedJobId(job.id);
-              
-              // Prepare finished job data with new f_ ID
+
+              // Use acceptJobV1 Cloud Function for atomic accept
+              // Handles: move pending→finished, delete pending, deduct worker inventory
+              console.log('🔥 ManageJobs: Calling acceptJobV1...');
+              const acceptJobFn = httpsCallable(functions, 'acceptJobV1');
+              await acceptJobFn({
+                companyId,
+                jobId: job.id,
+                finishedJobId,
+              });
+
+              // Update local cache
               const finishedJobData = {
                 ...job,
-                id: finishedJobId,  // Update ID with f_ prefix
+                id: finishedJobId,
                 status: 'finished',
                 isCert: false,
                 finishedAt: new Date().toISOString(),
-                approvedBy: currentUid || auth.currentUser.uid,
+                approvedBy: getUid() || auth.currentUser.uid,
               };
-              
-
-              
-              // STEP 1: Move job to finishedJobs collection in Firebase
-              console.log('🔥 ManageJobs: Writing to Firebase...');
-              const finishedJobRef = doc(db, 'companies', companyId, 'finishedJobs', finishedJobId);
-              await setDoc(finishedJobRef, finishedJobData);
-              // STEP 2: Update local cache FIRST (prevents unnecessary Firebase read when snapshot fires)
-              // Also deletes p_jobId from company cache and worker cache, adds f_jobId
-              console.log('📦 ManageJobs: Updating local cache first...');
+              console.log('📦 ManageJobs: Updating local cache...');
               await moveJobToFinished(job.id, finishedJobData, workerId);
-              // STEP 3: Delete from PendingJobs using original p_ ID
-              const pendingJobRef = doc(db, 'companies', companyId, 'PendingJobs', job.id);
-              await deleteDoc(pendingJobRef);
               
               console.log('✅ ManageJobs: Job accepted successfully');
-
-              // Deduct parts from worker's inventory if parts were used
-              if (workerId && job.partsUsed && job.partsUsed.length > 0) {
-                const inventoryRef = doc(db, 'users', workerId, 'data', 'inventory');
-                const inventorySnap = await getDoc(inventoryRef);
-                
-                if (inventorySnap.exists()) {
-                  const inventoryDoc = inventorySnap.data();
-                  let partsArray = Array.isArray(inventoryDoc.parts) ? [...inventoryDoc.parts] : [];
-                  
-                  // Deduct parts from array (matching FillJob.js logic)
-                  job.partsUsed.forEach(usedPart => {
-                    const partIndex = partsArray.findIndex(p => p.id === usedPart.id);
-                    if (partIndex !== -1) {
-                      const currentQty = parseInt(partsArray[partIndex].quantity) || 0;
-                      const usedQty = parseInt(usedPart.quantity) || 0;
-                      const newQty = Math.max(0, currentQty - usedQty);
-                      
-                      partsArray[partIndex] = {
-                        ...partsArray[partIndex],
-                        quantity: newQty
-                      };
-                      console.log(`📦 ManageJobs: Deducting ${usedQty} of ${partsArray[partIndex].name} from worker inventory. New qty: ${newQty}`);
-                    }
-                  });
-                  
-                  // Update Firestore with array structure
-                  await setDoc(inventoryRef, {
-                    parts: partsArray,
-                    lastUpdated: new Date().toISOString()
-                  });
-                  
-                  // Increment worker's inventory version
-                  const workerCacheRef = doc(db, 'users', workerId, 'data', 'cache');
-                  await updateDoc(workerCacheRef, {
-                    inventory: FieldValue.increment(1)
-                  }).catch(() => {
-                    // Cache doc might not exist for this worker
-                    setDoc(workerCacheRef, { inventory: 1 }, { merge: true });
-                  });
-                }
-              }
 
               alert.success('Success', t.acceptSuccess);
               setSelectedJobDetails(null);

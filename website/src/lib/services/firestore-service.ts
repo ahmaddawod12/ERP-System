@@ -15,7 +15,8 @@ import {
   where,
   type QueryConstraint,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase/client";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "@/lib/firebase/client";
 import {
   companyBusinessInfoRef,
   companyCertificationsCollection,
@@ -26,8 +27,6 @@ import {
   companyWorkersCollection,
   userInventoryRef,
 } from "@/lib/firestore-paths";
-import { defaultTierForRole } from "@/lib/access";
-import { generateCompanySlug } from "@/lib/utils";
 import type {
   AccountType,
   BusinessInfo,
@@ -43,17 +42,6 @@ import type {
 
 /* ─── helpers ─── */
 
-function generatePendingJobId(): string {
-  const chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  let id = "p_";
-  for (let i = 0; i < 5; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
-}
-
-function convertToFinishedJobId(id: string): string {
-  return id.startsWith("p_") ? `f_${id.slice(2)}` : id;
-}
-
 /**
  * For solo users (no companyId), use uid as companyId.
  * This matches the phone app behaviour where solo users
@@ -65,100 +53,26 @@ export function resolveCompanyScope(companyId: string | null, uid: string): stri
 
 /* ─── Profile ─── */
 
-export async function writeUserProfile(uid: string, profile: Omit<UserProfile, "uid" | "createdAt">) {
-  const ref = doc(db, "users", uid, "data", "profile");
-  await setDoc(
-    ref,
-    {
-      uid,
-      ...profile,
-      createdAt: new Date().toISOString(),
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
-}
+/**
+ * Profile writes are now handled by Cloud Functions:
+ * - registerBusinessV1 (initial profile + company creation)
+ * - updateProfileV1 (name/phoneNumber changes only)
+ * Direct client writes to profile are blocked by Firestore rules.
+ */
 
 /* ─── Subscription ─── */
 
-export async function writeCompanySubscription(
-  companyId: string,
-  payload: { role: Role; accountType: AccountType; tier?: "Basic" | "Solo" | "Team" | "Enterprise" },
-) {
-  const tier = payload.tier ?? defaultTierForRole(payload.role, payload.accountType);
-  const ref = doc(db, "companies", companyId, "business_data", "subscription");
-  await setDoc(
-    ref,
-    {
-      tier,
-      status: "active",
-      enabledModules: defaultEnabledModules(tier),
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true },
-  );
-}
+/**
+ * Subscription writes are now handled by Cloud Functions:
+ * - registerBusinessV1 (initial subscription creation)
+ * Direct client writes to subscription are blocked by Firestore rules.
+ */
 
-function defaultEnabledModules(tier: string) {
-  return {
-    team: tier === "Team" || tier === "Enterprise",
-    solojob: tier !== "Basic",
-    documents: true,
-    teaminventory: tier === "Team" || tier === "Enterprise",
-    companyinventory: tier === "Team" || tier === "Enterprise",
-    inventory: tier !== "Basic",
-  };
-}
 
-/* ─── Company creation ─── */
-
-export async function createCompanyForManager(params: {
-  uid: string;
-  email: string;
-  name: string;
-  phoneNumber: string;
-  businessInfo: BusinessInfo;
-}) {
-  const companyId = generateCompanySlug(params.businessInfo.en_name || params.businessInfo.he_name);
-  const companyRef = doc(db, "companies", companyId);
-
-  await setDoc(companyRef, {
-    companyId,
-    createdBy: params.uid,
-    createdAt: new Date().toISOString(),
-  });
-
-  await setDoc(doc(db, "companies", companyId, "workers", params.uid), {
-    workerId: params.uid,
-    uid: params.uid,
-    role: "Manager",
-    email: params.email,
-    name: params.name,
-    phoneNumber: params.phoneNumber,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-
-  await setDoc(
-    companyBusinessInfoRef(companyId),
-    {
-      ...params.businessInfo,
-      last_updated: new Date().toISOString(),
-    },
-    { merge: true },
-  );
-
-  await setDoc(doc(db, "companies", companyId, "counters", "clients"), { lastNumber: 0 }, { merge: true });
-
-  // Initialise empty inventory document (single doc with parts array)
-  await setDoc(companyInventoryRef(companyId), {
-    parts: [],
-    nextId: 1,
-    lastUpdated: new Date().toISOString(),
-  });
-
-  return companyId;
-}
+/**
+ * Company creation is now handled by registerBusinessV1 Cloud Function.
+ * This prevents clients from forging companyIds, roles, or document numbers.
+ */
 
 /* ─── Workers ─── */
 
@@ -194,36 +108,30 @@ export async function listJobs(companyId: string, opts?: { role?: Role; uid?: st
   };
 }
 
+/** Creates a pending job via createJobV1 Cloud Function (sequential jid). */
 export async function createJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt">,
 ) {
-  const jobId = generatePendingJobId();
-  await setDoc(doc(db, "companies", companyId, "PendingJobs", jobId), {
-    id: jobId,
-    ...payload,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-  return jobId;
+  const createJobFn = httpsCallable<
+    Record<string, unknown>,
+    { success: boolean; jobId: string; jid: number }
+  >(functions, "createJobV1");
+  const result = await createJobFn({ companyId, type: "pending", ...payload });
+  return result.data.jobId;
 }
 
-/** Solo users create finished jobs directly (matches phone app FillJob flow). */
+/** Solo users create finished jobs directly via createJobV1 Cloud Function. */
 export async function createFinishedJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt" | "status">,
 ) {
-  const tempId = generatePendingJobId();
-  const jobId = convertToFinishedJobId(tempId);
-  await setDoc(doc(db, "companies", companyId, "finishedJobs", jobId), {
-    id: jobId,
-    ...payload,
-    status: "finished",
-    isCert: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
-  return jobId;
+  const createJobFn = httpsCallable<
+    Record<string, unknown>,
+    { success: boolean; jobId: string; jid: number }
+  >(functions, "createJobV1");
+  const result = await createJobFn({ companyId, type: "finished", ...payload });
+  return result.data.jobId;
 }
 
 export async function updateJob(companyId: string, jobId: string, payload: Partial<JobRecord>) {
@@ -234,27 +142,23 @@ export async function updateJob(companyId: string, jobId: string, payload: Parti
   const merged = { ...pendingSnap.data(), ...payload, updatedAt: new Date().toISOString() };
   await updateDoc(pendingRef, merged);
 
-  // When marking as finished, move to finishedJobs (matches phone app flow)
+  // When marking as finished, use acceptJobV1 Cloud Function for atomic move
   if (payload.status === "finished") {
-    const finishedId = convertToFinishedJobId(jobId);
-    await setDoc(doc(db, "companies", companyId, "finishedJobs", finishedId), {
-      ...merged,
-      id: finishedId,
-      status: "finished",
-    });
-    await deleteDoc(pendingRef);
+    const acceptJobFn = httpsCallable<
+      Record<string, unknown>,
+      { success: boolean; finishedJobId: string }
+    >(functions, "acceptJobV1");
+    await acceptJobFn({ companyId, jobId });
   }
 }
 
+/** Delete a job via deleteJobV1 Cloud Function (enforces isCert check). */
 export async function deleteJob(companyId: string, jobId: string) {
-  const pendingRef = doc(db, "companies", companyId, "PendingJobs", jobId);
-  const pendingSnap = await getDoc(pendingRef);
-  if (pendingSnap.exists()) {
-    await deleteDoc(pendingRef);
-    return;
-  }
-  const finishedRef = doc(db, "companies", companyId, "finishedJobs", jobId);
-  await deleteDoc(finishedRef);
+  const deleteJobFn = httpsCallable<
+    Record<string, unknown>,
+    { success: boolean; collection: string }
+  >(functions, "deleteJobV1");
+  await deleteJobFn({ companyId, jobId });
 }
 
 /* ─── Company Inventory (single-doc with parts array) ─── */
@@ -429,8 +333,11 @@ export async function pickCompanyParts(
 /* ─── Clients (always company-scoped) ─── */
 
 export async function listClients(companyId: string): Promise<ClientRecord[]> {
-  const snap = await getDocs(query(companyClientsCollection(companyId), orderBy("numericId", "asc")));
-  return snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<ClientRecord, "id">) }));
+  const snap = await getDocs(companyClientsCollection(companyId));
+  const clients = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<ClientRecord, "id">) }));
+  // Sort by numeric document ID — matches phone app behaviour where doc ID = String(cid)
+  clients.sort((a, b) => parseInt(a.id) - parseInt(b.id));
+  return clients;
 }
 
 export async function updateClient(companyId: string, clientId: string, payload: Partial<ClientRecord>) {
@@ -438,10 +345,6 @@ export async function updateClient(companyId: string, clientId: string, payload:
     ...payload,
     updatedAt: new Date().toISOString(),
   });
-}
-
-export async function deleteClient(companyId: string, clientId: string) {
-  await deleteDoc(doc(db, "companies", companyId, "clients", clientId));
 }
 
 /* ─── Certifications ─── */

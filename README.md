@@ -52,7 +52,7 @@ contact_requests/{id}         → public contact form submissions
 |------|--------|
 | **Solo users** | `companyId = uid` — all data stored under `companies/{uid}/*` |
 | **Inventory** | Single document with `parts` array + `nextId` counter (NOT a subcollection) |
-| **Job IDs** | `p_XXXXX` (pending), `f_XXXXX` (finished), `c_XXXXX` (certification) |
+| **Job IDs** | Sequential `jid` counter on company doc. `p_{jid}` (pending), `f_{jid}` (finished), `c_XXXXX` (certification). Always server-generated via `createJobV1`. |
 | **Job statuses** | `pending` → `waiting` → `finished` (or `denied`) |
 | **Identity** | Firebase Auth UID everywhere — no email-derived usernames |
 | **Business info** | Uses `he_name`, `en_name`, `vat_number` (NOT `name`, `number`) |
@@ -84,6 +84,29 @@ All functions are in `functions/index.js` (Firebase Functions v7, Node 22).
 | `requestPermit` | onRequest | me-west1 | Israeli Tax Authority integration |
 | `fetchPermit` | onRequest | me-west1 | Israeli Tax Authority permit fetch |
 | `reportDocument` | onRequest | me-west1 | Report document to tax authority |
+| `updateProfileV1` | onCall | us-central1 | Update name/phoneNumber on profile |
+| `updatePushTokenV1` | onCall | us-central1 | Update FCM push token on profile |
+| `updateBusinessInfoV1` | onCall | us-central1 | Update business_info (except vat_number/document_numbers) |
+| `deleteJobV1` | onCall | us-central1 | Delete pending or finished job (role-checked) |
+| `acceptJobV1` | onCall | us-central1 | Atomic: pending→finished + delete + deduct worker inventory |
+| `registerBusinessV1` | onCall | us-central1 | Atomic onboarding: profile + company + subscription + counters + inventory |
+| `createJobV1` | onCall | us-central1 | Create job with sequential jid (atomic counter) |
+
+## Security Model
+
+Firestore security rules enforce **read-only client access** for sensitive documents. All mutations go through Cloud Functions (Admin SDK bypasses rules).
+
+| Document | Client Access | Mutation Method |
+|----------|--------------|----------------|
+| `users/{uid}/data/profile` | Read only | `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1` |
+| `business_data/business_info` | Read only | `registerBusinessV1`, `updateBusinessInfoV1` |
+| `business_data/subscription` | Read only | `registerBusinessV1` |
+| `business_data/token` | No access | Cloud Functions only |
+| `counters/*` | Read only | Cloud Functions only |
+| `PendingJobs/*` | Manager: create/read/update. Worker: read/update own. | Delete via `deleteJobV1`/`acceptJobV1` |
+| `finishedJobs/*` | Manager/User: create/read/update. | Delete via `deleteJobV1` |
+| `certifications/*` | Read + manager delete | Create/update via Cloud Functions |
+| `documentTasks/*` | Read own | Cloud Functions only |
 
 ## Tech Stack Comparison
 

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, KeyboardAvoidingV
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { db, auth, doc, getDoc, setDoc, updateDoc, FieldValue } from '../firebase';
+import { db, auth, doc, getDoc, setDoc, updateDoc, FieldValue, functions, httpsCallable } from '../firebase';
 import { getColors, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -191,83 +191,29 @@ export default function BusinessReg() {
       // Get current user info
       const currentUser = auth.currentUser;
       const uid = currentUser ? currentUser.uid : 'unknown';
-      
-      // CRITICAL: Ensure user profile exists in Firestore BEFORE saving business_info
-      // The Firestore rules check if profile exists to authorize business_info write
-      const userProfileRef = doc(db, 'users', uid, 'data', 'profile');
-      const userProfileSnap = await getDoc(userProfileRef);
-      
-      if (!userProfileSnap.exists()) {
-        // Create profile if it doesn't exist
-        console.log('Creating user profile in Firestore...');
-        await setDoc(userProfileRef, {
-          email: currentUser.email,
-          role: userRole || 'user',
-          companyId: companyId,
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        // Update profile to ensure companyId is set
-        console.log('Updating user profile companyId...');
-        await setDoc(userProfileRef, {
-          companyId: companyId,
-          updatedAt: new Date().toISOString(),
-        }, { merge: true });
-      }
-      
-      const businessData = {
-        // Required changeable
+
+      // Use registerBusinessV1 Cloud Function for secure registration
+      const registerBusinessFn = httpsCallable(functions, 'registerBusinessV1');
+      const result = await registerBusinessFn({
+        role: userRole || 'user',
+        accountType: userRole === 'manager' ? 'business' : 'solo',
+        name: '',
+        phoneNumber: '',
         he_name: heName.trim(),
         en_name: enName.trim(),
-        city: city.trim(),
-        address: address.trim(),
-        
-        // Required non-changeable
         vat_number: vatNumber.trim(),
         business_type: businessType.trim(),
-        
-        // Serial numbers for different document types
-        document_numbers: {
-          305: parseInt(taxInvoiceNumber) || 1,
-          400: parseInt(receiptNumber) || 1,
-          330: parseInt(refundNumber) || 1,
-          210: parseInt(returnCertNumber) || 1,
-          10: parseInt(priceProposalNumber) || 1,
-          200: parseInt(deliveryNoteNumber) || 1,
-        },
-        
-        // Optional fields (only save if provided)
+        city: city.trim(),
+        address: address.trim(),
         ...(businessEmail && { business_email: businessEmail.trim() }),
         ...(businessPhone && { business_phone: businessPhone.trim() }),
         ...(businessFax && { business_fax: businessFax.trim() }),
-        
-        // Optional accountant info (only save if provided)
         ...(accountantName && { accountant_name: accountantName.trim() }),
         ...(accountantEmail && { accountant_email: accountantEmail.trim() }),
         ...(accountantPhone && { accountant_phone: accountantPhone.trim() }),
-        
-        // Metadata
-        registered_at: new Date().toISOString(),
-        registered_by: uid,
-        registered_by_role: userRole || 'user',
-        last_updated: new Date().toISOString(),
-      };
-      const businessInfoRef = doc(db, 'companies', companyId, 'business_data', 'business_info');
-      await setDoc(businessInfoRef, businessData);
-      try {
-        if (userRole !== 'manager') {
-          await updateDoc(doc(db, 'users', uid, 'data', 'cache'), {
-            business_info: FieldValue.increment(1),
-          });
-        } else {
-          await updateDoc(doc(db, 'companies', companyId, 'business_data', 'cache'), {
-            business_info: FieldValue.increment(1),
-          });
-        }
-      } catch (cacheError) {
-        // Cache version bump is non-blocking for registration success.
-        console.warn('Failed to increment business_info cache version:', cacheError?.message || cacheError);
-      }
+      });
+
+      const registrationData = result.data || result;
 
       alert.success(t.success, 'You can now use all app features');
       

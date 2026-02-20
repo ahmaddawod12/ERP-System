@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import type { Locale } from "@/lib/i18n/translations";
 import type { Role } from "@/lib/types";
-import { writeUserProfile, writeCompanySubscription, createCompanyForManager } from "@/lib/services/firestore-service";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
@@ -19,6 +18,8 @@ import { useTheme } from "@/components/providers/theme-provider";
 import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
 import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase/client";
 
 const schema = z
   .object({
@@ -158,26 +159,8 @@ export default function OnboardingPage() {
       let companyId: string | null = null;
       let joinedRole: Role | null = null;
 
-      if (values.accountType === "business" && values.role === "Manager") {
-        companyId = await createCompanyForManager({
-          uid: user.uid,
-          email: user.email,
-          name: values.name,
-          phoneNumber: values.phoneNumber,
-          businessInfo: {
-            he_name: values.companyName ?? "",
-            en_name: "",
-            vat_number: values.businessNumber ?? "",
-            city: "",
-            address: values.businessAddress ?? "",
-            business_type: "",
-            document_numbers: {},
-            business_phone: values.businessPhone ?? "",
-          },
-        });
-      }
-
       if (values.accountType === "business" && values.role === "Worker") {
+        // Workers join via invite — this is still handled server-side
         const response = await fetch("/api/onboarding/join-company", {
           method: "POST",
           headers: await buildAuthedJsonHeaders(),
@@ -204,25 +187,28 @@ export default function OnboardingPage() {
         }
         companyId = data.data.companyId;
         joinedRole = data.data.role;
-      }
+      } else {
+        // Manager or Solo user — use registerBusinessV1 Cloud Function
+        const registerFn = httpsCallable<
+          Record<string, unknown>,
+          { success: boolean; companyId: string; role: string; tier: string }
+        >(functions, "registerBusinessV1");
 
-      const resolvedRole = values.accountType === "solo" ? "User" : joinedRole ?? values.role;
-
-      await writeUserProfile(user.uid, {
-        role: resolvedRole as Role,
-        email: user.email,
-        companyId,
-        name: values.name,
-        phoneNumber: values.phoneNumber,
-        accountType: values.accountType,
-      });
-
-      if (values.accountType !== "business" || values.role !== "Worker") {
-        const subscriptionCompanyId = companyId ?? user.uid;
-        await writeCompanySubscription(subscriptionCompanyId, {
-          role: resolvedRole as Role,
+        const result = await registerFn({
+          role: values.accountType === "solo" ? "User" : values.role,
           accountType: values.accountType,
+          name: values.name,
+          phoneNumber: values.phoneNumber,
+          he_name: values.companyName ?? "",
+          en_name: "",
+          vat_number: values.businessNumber ?? "",
+          business_type: "",
+          city: "",
+          address: values.businessAddress ?? "",
+          business_phone: values.businessPhone ?? "",
         });
+
+        companyId = result.data.companyId;
       }
 
       setLocale(values.language as Locale);

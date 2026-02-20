@@ -21,14 +21,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, db, storage, FieldValue, doc, getDoc, setDoc, updateDoc } from '../../firebase';
+import { auth, db, storage, FieldValue, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { generateFinishedJobId } from '../../utils/helpers';
+
+// Generate a temporary ID for file upload paths (not used as Firestore doc ID)
+function generateTempId() {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  let id = '';
+  for (let i = 0; i < 8; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
 
 
 
@@ -531,7 +538,7 @@ export default function FillJob() {
     try {
       const user = auth.currentUser;
       const uid = getUid() || user.uid;
-      const jobId = editingJob?.id || generateFinishedJobId();
+      const jobId = editingJob?.id || generateTempId();
       const currentDate = new Date();
 
       // Get user profile from cache
@@ -608,17 +615,21 @@ export default function FillJob() {
 
       // Save to appropriate location
       if (mode === 'user') {
-        console.log('💾 FillJob: Saving user finished job...');
+        console.log('💾 FillJob: Creating user finished job via Cloud Function...');
         
-        // STEP 1: Add to local cache FIRST (prevents unnecessary Firebase read when snapshot fires)
-        console.log('📦 FillJob: Adding to local cache first...');
-        await addJob({ ...jobToSave, id: jobId }, false);
-        
-        // STEP 2: Save to Firebase
-        console.log('🔥 FillJob: Saving to Firestore...', jobId);
-        await setDoc(doc(db, 'companies', companyId, 'finishedJobs', jobId), {
+        // Use createJobV1 Cloud Function for atomic job creation with sequential ID
+        const createJobFn = httpsCallable(functions, 'createJobV1');
+        const result = await createJobFn({
+          companyId,
+          type: 'finished',
           ...jobToSave,
         });
+
+        const serverJobId = result.data?.jobId || result.jobId;
+        
+        // Update local cache with the server-generated ID
+        console.log('📦 FillJob: Adding to local cache...');
+        await addJob({ ...jobToSave, id: serverJobId }, false);
         
         console.log('✅ FillJob: Job saved successfully');
         

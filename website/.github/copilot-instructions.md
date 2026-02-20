@@ -56,11 +56,25 @@ Website API routes at `/api/*` proxy to Firebase Cloud Functions. This keeps sen
 | API Route | Cloud Function |
 |-----------|---------------|
 | `POST /api/clients/create` | `createClientV1` |
-| `POST /api/documents/generate` | `generateDocumentV1` |
+| `POST /api/documents/generate` | `generateDocumentV1` (legacy — kept for backward compat) |
 | `POST /api/invites/create` | `createInvite` |
 | `POST /api/onboarding/join-company` | `joinCompanyWithInvite` |
 | `POST /api/upgrades/request` | `submitUpgradeRequest` |
 | `POST /api/contact/request` | `submitContactRequest` |
+
+### Document Generation (Pub/Sub — matches phone app)
+
+The website uses the same Pub/Sub-based document flow as the phone app:
+
+1. **Preview**: `useDocumentTask.publishPreview()` → callable `publishPreviewTask` (us-central1) → Pub/Sub → Cloud Run PDF worker → `documentTasks/{taskId}` with `previewURL`
+2. **Generate**: `useDocumentTask.publishGenerate()` → callable `publishGenerateTask` (us-central1) → Pub/Sub → Cloud Run PDF worker → `documentTasks/{taskId}` with `downloadURL`
+3. **Tax Invoice (305)**: `useDocumentTask.getInvoiceApproval()` → callable `getInvoiceApproval` (me-west1) → Tax Authority API → approval → PDF task via Pub/Sub
+
+Firebase Functions SDK is initialized with two regions in `lib/firebase/client.ts`:
+- `functions` — us-central1 (publishPreviewTask, publishGenerateTask)
+- `middleEastFunctions` — me-west1 (getInvoiceApproval)
+
+The `useDocumentTask` hook (`hooks/use-document-task.ts`) manages the full lifecycle with `onSnapshot` listeners on `documentTasks/{taskId}`, matching the phone app’s hook.
 
 ### Auth Pattern
 
@@ -88,7 +102,7 @@ src/
 │   ├── register/            # Registration flow
 │   └── login/               # Login page
 ├── components/              # Shared UI components
-├── hooks/                   # React hooks (use-app-context, use-auth, etc.)
+├── hooks/                   # React hooks (use-app-context, use-auth, use-document-task, etc.)
 └── lib/
     ├── types.ts             # All TypeScript interfaces
     ├── firestore-paths.ts   # Firestore document/collection references

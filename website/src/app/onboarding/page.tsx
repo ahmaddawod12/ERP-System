@@ -165,10 +165,14 @@ export default function OnboardingPage() {
           name: values.name,
           phoneNumber: values.phoneNumber,
           businessInfo: {
-            name: values.companyName ?? "",
-            number: values.businessNumber ?? "",
+            he_name: values.companyName ?? "",
+            en_name: "",
+            vat_number: values.businessNumber ?? "",
+            city: "",
             address: values.businessAddress ?? "",
-            phone: values.businessPhone ?? "",
+            business_type: "",
+            document_numbers: {},
+            business_phone: values.businessPhone ?? "",
           },
         });
       }

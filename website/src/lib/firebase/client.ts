@@ -3,6 +3,7 @@
 import { initializeApp, getApp, getApps } from "firebase/app";
 import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
+import { connectFunctionsEmulator, getFunctions, type Functions } from "firebase/functions";
 
 function readRequiredPublicEnv(name: string, fallback: string) {
   const value = process.env[name];
@@ -49,11 +50,20 @@ const isBrowser = typeof window !== "undefined";
 export const auth: Auth = isBrowser ? getAuth(app) : ({} as Auth);
 export const db: Firestore = isBrowser ? getFirestore(app) : ({} as Firestore);
 
+/** Default region (us-central1) — publishPreviewTask, publishGenerateTask */
+export const functions: Functions = isBrowser ? getFunctions(app) : ({} as Functions);
+/** Middle East region (me-west1) — getInvoiceApproval, requestPermit, etc. */
+export const middleEastFunctions: Functions = isBrowser
+  ? getFunctions(app, "me-west1")
+  : ({} as Functions);
+
 let emulatorsConnected = false;
 
 if (isBrowser && process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" && !emulatorsConnected) {
   const emulator = parseEmulatorHost(process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST);
   connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
   connectFirestoreEmulator(db, emulator.host, emulator.port);
+  connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+  connectFunctionsEmulator(middleEastFunctions, "127.0.0.1", 5001);
   emulatorsConnected = true;
 }

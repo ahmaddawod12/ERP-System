@@ -42,3 +42,8 @@ export const companyCertificationsCollection = (companyId: string) =>
 
 export const companyInvitesCollection = (companyId: string) =>
   collection(db, "companies", companyId, "invites");
+
+/* ── Document task refs (Pub/Sub task tracking) ── */
+
+export const documentTaskRef = (taskId: string) =>
+  doc(db, "documentTasks", taskId);

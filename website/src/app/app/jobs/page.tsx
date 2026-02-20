@@ -295,7 +295,7 @@ export default function JobsPage() {
                     key: "status",
                     header: "Status",
                     render: (row) => (
-                      <Badge variant={row.status === "denied" ? "error" : "success"}>{row.status}</Badge>
+                      <Badge variant={row.status === "denied" ? "danger" : "success"}>{row.status}</Badge>
                     ),
                   },
                 ]}

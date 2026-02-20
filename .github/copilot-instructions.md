@@ -101,6 +101,7 @@ companies/{companyId}/
 
 upgrade_requests/{id}         → upgrade tickets
 contact_requests/{id}         → contact form submissions
+documentTasks/{taskId}        → Pub/Sub task tracking (preview/generate)
 ```
 
 ## Cloud Functions (functions/index.js)
@@ -110,7 +111,10 @@ All exported from a single file. Firebase Functions v7, Node 22.
 | Function | Type | Description |
 |----------|------|-------------|
 | `createClientV1` | onRequest | Idempotent client creation |
-| `generateDocumentV1` | onRequest | Document generation queue |
+| `generateDocumentV1` | onRequest | Legacy document generation (website backward compat) |
+| `publishPreviewTask` | onCall (us-central1) | Pub/Sub preview PDF task |
+| `publishGenerateTask` | onCall (us-central1) | Pub/Sub generate PDF task |
+| `getInvoiceApproval` | onCall (me-west1) | Tax Authority invoice approval + PDF task |
 | `createInvite` | onCall | Invite code generation |
 | `joinCompanyWithInvite` | onCall | Worker onboarding |
 | `onFinishedJobCreated` | Firestore trigger | Cleanup pending job |
@@ -133,10 +137,14 @@ All exported from a single file. Firebase Functions v7, Node 22.
 ### Website (`website/`)
 - Firebase Web SDK (client) + Firebase Admin SDK (server API routes)
 - API routes proxy to Cloud Functions (e.g., `/api/clients/create` → `createClientV1`)
+- **Document generation uses Pub/Sub** via `useDocumentTask` hook → `publishPreviewTask` / `publishGenerateTask` callable Cloud Functions → listens on `documentTasks/{taskId}` for completion (same as phone app)
+- Tax Invoices (type 305) use `getInvoiceApproval` on `me-west1` region (same as phone app)
+- Firebase Functions SDK initialized with two regions: `functions` (us-central1) and `middleEastFunctions` (me-west1) in `lib/firebase/client.ts`
 - TypeScript with strict types in `lib/types.ts`
 - Tailwind CSS for styling, React Hook Form + Zod for forms
 - `resolveCompanyScope(companyId, uid)` helper returns `companyId ?? uid` for unified solo/team paths
 - All inventory operations use Firestore transactions via `firestore-service.ts`
+- Client creation uses `createClientV1` Cloud Function via `/api/clients/create` proxy (same as phone app)
 
 ## Roles
 

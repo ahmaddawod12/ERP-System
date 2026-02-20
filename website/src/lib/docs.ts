@@ -55,13 +55,14 @@ export const docs: DocEntry[] = [
   {
     slug: "documents-pdfs",
     title: "Documents / PDFs",
-    summary: "Generate certifications with API tasks and optional Cloud Run forwarding.",
+    summary: "Generate documents via Pub/Sub Cloud Functions with PDF preview and generation.",
     body: [
-      "Use /api/documents/generate to queue a certification task.",
-      "Production API requests must include Authorization: Bearer <Firebase ID token>.",
-      "The API writes into companies/{companyId}/certifications.",
-      "If CLOUDRUN_PDF_URL is set, requests are forwarded to Cloud Run for advanced generation.",
-      "Document history is visible in /app/documents.",
+      "Documents are created using publishPreviewTask and publishGenerateTask Cloud Functions (via Firebase callable).",
+      "Tax Invoices (type 305) use getInvoiceApproval on me-west1 for Tax Authority approval before PDF generation.",
+      "Document types: Price Proposal (10), Delivery Note (200), Return Certificate (210), Tax Invoice (305), Refund (330), Receipt (400).",
+      "Tasks are tracked via documentTasks/{taskId} Firestore documents with status: pending → queued → completed/failed.",
+      "The legacy /api/documents/generate route (generateDocumentV1) still exists for backward compatibility.",
+      "Document history and certification details are visible in /app/documents.",
     ],
   },
   {

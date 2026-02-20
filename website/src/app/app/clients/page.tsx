@@ -22,6 +22,8 @@ interface ClientForm {
   email: string;
   phone: string;
   address: string;
+  city: string;
+  vatNumber: string;
   notes: string;
 }
 
@@ -30,6 +32,8 @@ const initialForm: ClientForm = {
   email: "",
   phone: "",
   address: "",
+  city: "",
+  vatNumber: "",
   notes: "",
 };
 
@@ -156,6 +160,16 @@ export default function ClientsPage() {
                 value={form.address}
                 onChange={(event) => setForm((prev) => ({ ...prev, address: event.target.value }))}
               />
+              <Input
+                label="City"
+                value={form.city}
+                onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
+              />
+              <Input
+                label="VAT Number"
+                value={form.vatNumber}
+                onChange={(event) => setForm((prev) => ({ ...prev, vatNumber: event.target.value }))}
+              />
               <label className="md:col-span-2">
                 <span className="mb-1.5 inline-flex text-sm font-medium text-slate-700 dark:text-slate-200">Notes</span>
                 <textarea
@@ -202,8 +216,14 @@ export default function ClientsPage() {
                     <div className="text-sm">
                       <p>{row.phone || "No phone"}</p>
                       <p className="text-xs text-slate-500">{row.address || "No address"}</p>
+                      {row.city && <p className="text-xs text-slate-500">{row.city}</p>}
                     </div>
                   ),
+                },
+                {
+                  key: "vatNumber",
+                  header: "VAT #",
+                  render: (row) => row.vatNumber || "—",
                 },
                 {
                   key: "actions",
@@ -249,6 +269,16 @@ export default function ClientsPage() {
                 label="Address"
                 value={editing.address}
                 onChange={(event) => setEditing((prev) => (prev ? { ...prev, address: event.target.value } : prev))}
+              />
+              <Input
+                label="City"
+                value={editing.city ?? ""}
+                onChange={(event) => setEditing((prev) => (prev ? { ...prev, city: event.target.value } : prev))}
+              />
+              <Input
+                label="VAT Number"
+                value={editing.vatNumber ?? ""}
+                onChange={(event) => setEditing((prev) => (prev ? { ...prev, vatNumber: event.target.value } : prev))}
               />
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Notes</span>

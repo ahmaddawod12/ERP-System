@@ -19,12 +19,26 @@ Next.js App Router website for Smart-Job ERP (TypeScript + Tailwind + Firebase W
 
 ## API Endpoints
 
-- `POST /api/documents/generate`
+- `POST /api/documents/generate` (legacy — kept for backward compatibility)
 - `POST /api/invites/create`
 - `POST /api/onboarding/join-company`
 - `POST /api/clients/create`
 - `POST /api/upgrades/request`
 - `POST /api/contact/request`
+
+## Document Generation (Pub/Sub)
+
+The website uses the same Pub/Sub document generation flow as the phone app:
+
+1. **Preview**: `publishPreviewTask` callable Cloud Function (us-central1) → Pub/Sub `document-preview` → Cloud Run PDF worker → `documentTasks/{taskId}` updated with `previewURL`
+2. **Generate**: `publishGenerateTask` callable Cloud Function (us-central1) → Pub/Sub `document-generate` → Cloud Run PDF worker → `documentTasks/{taskId}` updated with `downloadURL`
+3. **Tax Invoice (305)**: `getInvoiceApproval` callable Cloud Function (me-west1) → Tax Authority API → approval → PDF task via Pub/Sub
+
+The `useDocumentTask` hook (`hooks/use-document-task.ts`) manages the full lifecycle with `onSnapshot` listeners on `documentTasks/{taskId}`.
+
+Firebase Functions SDK is initialized with two regions in `lib/firebase/client.ts`:
+- `functions` — us-central1 (default)
+- `middleEastFunctions` — me-west1 (Tax Authority)
 
 All endpoints return:
 
@@ -60,6 +74,7 @@ companies/{companyId}/certifications/{c_XXXXX}        → generated documents (c
 companies/{companyId}/invites/{inviteId}              → onboarding invite codes
 
 upgrade_requests/{id}                                 → upgrade request tickets
+documentTasks/{taskId}                                → Pub/Sub task tracking (preview/generate)
 ```
 
 **Solo users**: `companyId = uid` — all data under `companies/{uid}/*`.

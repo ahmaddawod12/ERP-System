@@ -154,23 +154,34 @@ export interface ClientRecord {
 }
 
 /**
- * Matches phone app certification at companies/{id}/certifications/{certId}
+ * Matches phone app certification at companies/{id}/certifications/{certId}.
+ * Document type codes: 10 (Price Proposal), 200 (Delivery Note),
+ * 210 (Return Certificate), 305 (Tax Invoice), 330 (Refund), 400 (Receipt).
  */
 export interface CertificationRecord {
   id: string;
   type: string;
+  documentType?: number;
   documentNumber?: number;
+  documentId?: string;
   clientName?: string;
   clientId?: string;
   clientEmail?: string;
   clientPhone?: string;
   clientAddress?: string;
+  clientCity?: string;
+  clientVatNumber?: string;
   createdAt: string;
   downloadURL?: string;
   url?: { origin?: string; he?: string; en?: string };
   notes?: string;
   confirmationNumber?: string;
-  items?: Array<{ description: string; price: number; quantity: number; partId?: number }>;
+  items?: Array<{
+    description: string;
+    price: number;
+    quantity: number;
+    partId?: number;
+  }>;
   totalBeforeVat?: number;
   vatAmount?: number;
   totalWithVat?: number;
@@ -178,5 +189,11 @@ export interface CertificationRecord {
   paymentMethod?: string;
   paymentInfo?: Record<string, unknown>;
   createdByUid?: string;
-  status?: "queued" | "generated" | "failed";
+  language?: string;
+  date?: string;
+  jobId?: string;
+  jobsData?: Array<{ jobId: string }>;
+  priceProposalId?: string;
+  status?: "queued" | "generated" | "failed" | "completed";
+  isCert?: boolean;
 }

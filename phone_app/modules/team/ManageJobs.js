@@ -58,7 +58,7 @@ export default function ManageJobs() {
     close: 'Close',
     accept: 'Accept',
     deny: 'Deny',
-    worker: 'Worker',
+    worker: 'worker',
     createdAt: 'Created At',
     status: 'Status',
     title: 'Title',

@@ -20,13 +20,13 @@ export const docs: DocEntry[] = [
   {
     slug: "roles",
     title: "Roles",
-    summary: "Understand Manager, Worker, User, Basic, and Dev access patterns.",
+    summary: "Understand manager, worker, user, basic, and dev access patterns.",
     body: [
-      "Manager controls workers, jobs, company inventory, and clients.",
-      "Worker handles assigned jobs and inventory picks.",
-      "User (solo owner) manages own jobs and personal inventory.",
-      "Basic keeps only clients and documents access; upgrade for jobs.",
-      "Dev role is full-access for internal support and implementation.",
+      "manager controls workers, jobs, company inventory, and clients.",
+      "worker handles assigned jobs and inventory picks.",
+      "user (solo owner) manages own jobs and personal inventory.",
+      "basic keeps only clients and documents access; upgrade for jobs.",
+      "dev role is full-access for internal support and implementation.",
     ],
   },
   {

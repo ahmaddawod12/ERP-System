@@ -8,13 +8,24 @@ export interface CompanyAccessResult {
   soloScope: boolean;
 }
 
+const APP_ROLES = new Set<Role>(["manager", "worker", "user", "basic", "dev"]);
+
+function normalizeRoleValue(role: unknown): Role {
+  const raw = String(role ?? "").trim().toLowerCase() as Role;
+  return APP_ROLES.has(raw) ? raw : "user";
+}
+
 export async function getUserProfileOrThrow(uid: string): Promise<UserProfile> {
   const profileRef = adminDb().collection("users").doc(uid).collection("data").doc("profile");
   const profileSnap = await profileRef.get();
   if (!profileSnap.exists) {
     throw new ApiRouteError(403, "profile_not_found", "User profile not found");
   }
-  return profileSnap.data() as UserProfile;
+  const profile = profileSnap.data() as UserProfile;
+  return {
+    ...profile,
+    role: normalizeRoleValue(profile.role),
+  };
 }
 
 export async function getWorkerRoleForCompany(
@@ -26,7 +37,7 @@ export async function getWorkerRoleForCompany(
   if (!workerSnap.exists) {
     return null;
   }
-  return (workerSnap.data()?.role as Role) ?? null;
+  return normalizeRoleValue(workerSnap.data()?.role);
 }
 
 export async function assertCompanyAccess(params: {
@@ -56,7 +67,7 @@ export async function assertCompanyAccess(params: {
   }
 
   const workerRole = await getWorkerRoleForCompany(companyId, uid);
-  const resolvedRole = workerRole ?? profile.role;
+  const resolvedRole = workerRole ?? normalizeRoleValue(profile.role);
 
   if (!workerRole && profile.role !== "dev") {
     throw new ApiRouteError(

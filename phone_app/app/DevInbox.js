@@ -510,7 +510,7 @@ export default function DevInbox() {
             </TouchableOpacity>
             <View style={styles.modalTitleContainer}>
               <Text style={styles.modalTitle} numberOfLines={1}>
-                {selectedConversation?.userName || selectedConversation?.userId || 'User'}
+                {selectedConversation?.userName || selectedConversation?.userId || 'user'}
               </Text>
             </View>
             <TouchableOpacity 

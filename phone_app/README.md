@@ -6,12 +6,12 @@ A comprehensive **ERP (Enterprise Resource Planning)** mobile application built 
 
 | Business Type | Roles | Description |
 |---|---|---|
-| **Solo business owner** | User / Basic | One person manages their own jobs, inventory, clients, and documents |
-| **Business with workers** | Manager + Workers | Owner (manager) assigns jobs to workers, monitors progress, manages team inventory and company resources |
+| **Solo business owner** | user / basic | One person manages their own jobs, inventory, clients, and documents |
+| **Business with workers** | manager + workers | Owner (manager) assigns jobs to workers, monitors progress, manages team inventory and company resources |
 
 ## Key Features
 
-- **Role-based access** — Manager, Worker, User, Basic, Dev
+- **Role-based access** — manager, worker, user, basic, dev
 - **Job lifecycle** — Create, assign, fill, submit, approve/deny, finish
 - **Inventory tracking** — Personal inventory (solo users) + company-wide parts with low-stock alerts (teams)
 - **Client book** — Shared company clients with auto-incrementing IDs
@@ -96,10 +96,10 @@ contact_requests/{id}                   → public contact submissions
 
 ## Cache System (MMKV)
 
-- **Manager**: 2 listeners — user cache (profile, inventory) + company cache (workers, business_info, clients, jobs, certs)
-- **Worker**: 1 listener — user cache (profile, inventory, pending/finished jobs)
-- **User**: 1 listener — user cache (profile, inventory, clients, finished jobs, business_info, certs)
-- **Basic**: 1 listener — user cache (profile, clients, business_info, certs — no inventory, no jobs)
+- **manager**: 2 listeners — user cache (profile, inventory) + company cache (workers, business_info, clients, jobs, certs)
+- **worker**: 1 listener — user cache (profile, inventory, pending/finished jobs)
+- **user**: 1 listener — user cache (profile, inventory, clients, finished jobs, business_info, certs)
+- **basic**: 1 listener — user cache (profile, clients, business_info, certs — no inventory, no jobs)
 
 Client cache versioning is **role-based**: manager → company cache, others → user cache.
 

@@ -17,7 +17,7 @@ const tiers = [
   },
   {
     name: "Team",
-    audience: "Manager + worker collaboration",
+    audience: "manager + worker collaboration",
     features: ["Worker assignments", "Company inventory", "Invites and role control"],
   },
   {

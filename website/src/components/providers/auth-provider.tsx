@@ -25,10 +25,27 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const APP_ROLES = new Set(["manager", "worker", "user", "basic", "dev"]);
+
+function normalizeRoleValue(role: unknown): UserProfile["role"] {
+  const raw = String(role ?? "").trim().toLowerCase();
+  return APP_ROLES.has(raw) ? (raw as UserProfile["role"]) : "user";
+}
+
+function normalizeProfile(profile: UserProfile | null): UserProfile | null {
+  if (!profile) return null;
+  return {
+    ...profile,
+    role: normalizeRoleValue(profile.role),
+  };
+}
+
 async function loadUserProfile(uid: string) {
   const profileRef = doc(db, "users", uid, "data", "profile");
   const profileSnap = await getDoc(profileRef);
-  const profile = profileSnap.exists() ? (profileSnap.data() as UserProfile) : null;
+  const profile = profileSnap.exists()
+    ? normalizeProfile(profileSnap.data() as UserProfile)
+    : null;
   if (!profile) {
     return { profile: null, subscription: null };
   }

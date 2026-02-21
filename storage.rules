@@ -58,39 +58,39 @@ service firebase.storage {
              getProfile(getUid()).companyId == companyId;
     }
     
-    // User job photos and signatures
+    // user job photos and signatures
     // Path: {uid}/jobs/{jobId}/{filename}
     match /{uid}/jobs/{jobId}/{filename} {
-      // Users can read/write/delete their own job files
+      // users can read/write/delete their own job files
       allow read, write, delete: if isAuthenticated() && getUid() == uid;
       
-      // Managers can read/write/delete files of workers in their company
+      // managers can read/write/delete files of workers in their company
       allow read, write, delete: if isManagerOfWorker(uid);
     }
     
     // Inventory or other user files
     // Path: {uid}/inventory/{filename}
     match /{uid}/inventory/{filename} {
-      // Users can read/write/delete their own inventory files
+      // users can read/write/delete their own inventory files
       allow read, write, delete: if isAuthenticated() && getUid() == uid;
       
-      // Managers can read/write/delete inventory files of workers in their company
+      // managers can read/write/delete inventory files of workers in their company
       allow read, write, delete: if isManagerOfWorker(uid);
     }
     
     // Company-level storage for documents (PDFs, invoices, etc.)
     // Path: companies/{companyId}/documents/{filename}
     match /companies/{companyId}/documents/{filename} {
-      // Managers and users can read/write/delete documents in their own company
+      // managers and users can read/write/delete documents in their own company
       allow read, write, delete: if ownsCompany(companyId) && (isManager() || isUser());
     }
     
     // Company-level storage for job-related files
     // Path: companies/{companyId}/jobs/{jobId}/{filename}
     match /companies/{companyId}/jobs/{jobId}/{filename} {
-      // Managers can manage all company job files
+      // managers can manage all company job files
       allow read, write, delete: if ownsCompany(companyId) && isManager();
-      // Users can manage files for jobs they created
+      // users can manage files for jobs they created
       allow read, write, delete: if ownsCompany(companyId) && isUser();
     }
     

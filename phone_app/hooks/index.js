@@ -7,6 +7,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { auth, db, doc, getDoc, onAuthStateChanged, onSnapshot } from '../firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const APP_ROLES = ['manager', 'worker', 'user', 'basic', 'dev'];
+
+function normalizeRoleValue(role) {
+  const raw = String(role || '').trim().toLowerCase();
+  return APP_ROLES.includes(raw) ? raw : 'user';
+}
+
 /**
  * Hook for managing authentication state
  * @returns {Object} { user, loading, error, uid, userRole }
@@ -29,7 +36,9 @@ export const useAuth = () => {
           const userDoc = await getDoc(userDocRef);
           
           if (userDoc.exists()) {
-            setUserRole(userDoc.data().role || 'user');
+            setUserRole(normalizeRoleValue(userDoc.data().role));
+          } else {
+            setUserRole('user');
           }
         } catch (err) {
           setError(err);

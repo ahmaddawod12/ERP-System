@@ -190,7 +190,7 @@ export default function OnboardingPage() {
         companyId = data.data.companyId;
         joinedRole = data.data.role;
       } else {
-        // Manager or Solo user — use registerBusinessV1 Cloud Function
+        // manager or solo user — use registerBusinessV1 Cloud Function
         const registerFn = httpsCallable<
           Record<string, unknown>,
           { success: boolean; companyId: string; role: string; tier: string }

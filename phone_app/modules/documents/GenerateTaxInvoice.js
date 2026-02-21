@@ -236,7 +236,7 @@ export default function GenerateReceipt() {
     searchPlaceholder: 'Search by worker name...',
     noJobs: 'No finished jobs found',
     jobTitle: 'Job Title',
-    worker: 'Worker',
+    worker: 'worker',
     customer: 'Customer',
     completedOn: 'Completed On',
     generateButton: 'Generate Tax Invoice',

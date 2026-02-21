@@ -1157,7 +1157,7 @@ export function CacheProvider({ children }) {
         }
         
         // Normalize role to lowercase for consistent comparisons across the app
-        // Backend writes TitleCase (Manager, Worker, User, Basic, Dev)
+        // Canonical roles are lowercase: manager, worker, user, basic, dev
         if (role && typeof role === 'string') {
           role = role.toLowerCase();
         }
@@ -1887,7 +1887,7 @@ export function CacheProvider({ children }) {
 
   /**
    * Add certification
-   * Manager/User/Basic adds certification ? Company cache, increment cert version
+   * manager/user/basic adds certification ? Company cache, increment cert version
    */
   const addCertification = useCallback(async (certification) => {
     if (!certification.id) {

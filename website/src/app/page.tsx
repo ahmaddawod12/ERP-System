@@ -18,7 +18,7 @@ const highlights = [
   {
     icon: ShieldCheck,
     title: "Role + tier access control",
-    description: "Manager, Worker, User, Basic, and Dev roles with subscription gating for every module.",
+    description: "manager, worker, user, basic, and dev roles with subscription gating for every module.",
   },
 ];
 
@@ -107,4 +107,3 @@ export default function HomePage() {
     </PublicLayout>
   );
 }
-

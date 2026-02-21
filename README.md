@@ -60,11 +60,11 @@ contact_requests/{id}         → public contact form submissions
 
 | Role | Scope | Access |
 |------|-------|--------|
-| **Manager** | Team | Full control: workers, jobs, company inventory, clients, documents |
-| **Worker** | Team | Assigned jobs, inventory picks from company stock |
-| **User** | Solo | Own jobs, personal inventory, clients, documents |
-| **Basic** | Solo | Clients + documents only (upgrade for jobs/inventory) |
-| **Dev** | Internal | Full access for development/support |
+| **manager** | Team | Full control: workers, jobs, company inventory, clients, documents |
+| **worker** | Team | Assigned jobs, inventory picks from company stock |
+| **user** | Solo | Own jobs, personal inventory, clients, documents |
+| **basic** | Solo | Clients + documents only (upgrade for jobs/inventory) |
+| **dev** | Internal | Full access for development/support |
 
 ## Cloud Functions
 
@@ -107,8 +107,8 @@ Firestore security rules enforce **read-only client access** for sensitive docum
 | `business_data/subscription` | Read only | `registerBusinessV1` |
 | `business_data/token` | No access | Cloud Functions only |
 | `counters/*` | Read only | Cloud Functions only |
-| `PendingJobs/*` | Manager: create/read/update. Worker: read/update own. | Delete via `deleteJobV1`/`acceptJobV1` |
-| `finishedJobs/*` | Manager/User: create/read/update. | Delete via `deleteJobV1` |
+| `PendingJobs/*` | manager: create/read/update. worker: read/update own. | Delete via `deleteJobV1`/`acceptJobV1` |
+| `finishedJobs/*` | manager/user: create/read/update. | Delete via `deleteJobV1` |
 | `certifications/*` | Read + manager delete | Create/update via Cloud Functions |
 | `documentTasks/*` | Read own | Cloud Functions only |
 

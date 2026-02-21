@@ -91,7 +91,7 @@ service cloud.firestore {
       );
     }
 
-    // Manager/User/Basic can read company data (shared role set)
+    // manager/user/basic can read company data (shared role set)
     function isManagerUserBasic(companyId) {
       return isCompanyWorker(companyId) &&
         companyRole(companyId) in ["manager", "user", "basic", "dev"];
@@ -108,7 +108,7 @@ service cloud.firestore {
 
     // ── Profile: READ-ONLY from client. Updates via Cloud Function only ──
     // Each user can read their own profile.
-    // Manager can read profiles of workers in the same company.
+    // manager can read profiles of workers in the same company.
     // No client create/update/delete — handled by Cloud Functions.
     match /users/{uid}/data/profile {
       allow read: if isAdmin() || (
@@ -120,17 +120,17 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── User Cache: owner can read/write, manager can write worker cache ──
+    // ── user cache: owner can read/write, manager can write worker cache ──
     match /users/{uid}/data/cache {
       allow read, write: if isAdmin() || (
         signedIn() && request.auth.uid == uid
       );
-      // Manager can write to worker's cache (same company)
+      // manager can write to worker's cache (same company)
       allow write: if canManagerAccessWorkerData(uid);
     }
 
-    // ── User Inventory: owner can read/write/update/delete ──
-    // Manager can read/write worker inventory (same company)
+    // ── user inventory: owner can read/write/update/delete ──
+    // manager can read/write worker inventory (same company)
     match /users/{uid}/data/inventory {
       allow read, write: if isAdmin() || (
         signedIn() && request.auth.uid == uid
@@ -159,7 +159,7 @@ service cloud.firestore {
     }
 
     // ── Company root document (cid, wid, jid fields) ──
-    // Manager/User/Basic can read and update (for counter increments).
+    // manager/user/basic can read and update (for counter increments).
     // Create only by the company creator. No delete from client.
     match /companies/{companyId} {
       allow read: if canReadCompany(companyId);
@@ -172,7 +172,7 @@ service cloud.firestore {
     }
 
     // ── Business Info: READ-ONLY from client ──
-    // Basic/User/Manager can read. Updates via Cloud Function only.
+    // basic/user/manager can read. Updates via Cloud Function only.
     // Cannot delete or write from client.
     match /companies/{companyId}/business_data/business_info {
       allow read: if canReadCompany(companyId);
@@ -189,13 +189,13 @@ service cloud.firestore {
     }
 
     // ── Company Inventory (single doc with parts array) ──
-    // Worker + Manager can read. Manager can write/update/delete.
+    // worker + manager can read. manager can write/update/delete.
     match /companies/{companyId}/business_data/inventory {
       allow read: if canReadCompany(companyId);
       allow write: if canManageCompany(companyId);
     }
 
-    // ── Company Cache: Manager can read/write/update/delete ──
+    // ── company cache: manager can read/write/update/delete ──
     match /companies/{companyId}/business_data/cache {
       allow read, write: if canManageCompany(companyId);
       // Workers and users can read company cache (for cache invalidation)
@@ -208,7 +208,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // ── Workers ──
+    // ── workers ──
     match /companies/{companyId}/workers/{workerId} {
       allow read: if canReadCompany(companyId);
       // create/update/delete handled by Cloud Functions (manageWorker, joinCompanyV1)
@@ -216,7 +216,7 @@ service cloud.firestore {
     }
 
     // ── Clients ──
-    // Manager/User/Basic can read and update.
+    // manager/user/basic can read and update.
     // Create and delete via Cloud Functions only (addClientV1, deleteClientV1).
     match /companies/{companyId}/clients/{clientId} {
       allow read: if isAdmin() || isManagerUserBasic(companyId);
@@ -235,9 +235,9 @@ service cloud.firestore {
     }
 
     // ── Pending Jobs ──
-    // User role does NOT have pending jobs.
-    // Manager can read/write/update. Delete via Cloud Function only.
-    // Worker can read + update ONLY jobs assigned to them, with field restrictions.
+    // user role does NOT have pending jobs.
+    // manager can read/write/update. Delete via Cloud Function only.
+    // worker can read + update ONLY jobs assigned to them, with field restrictions.
     match /companies/{companyId}/PendingJobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
@@ -247,7 +247,7 @@ service cloud.firestore {
 
       allow create: if isAdmin() || canManageCompany(companyId);
 
-      // S2: Worker updates are field-constrained — cannot change assignment, creator, or status
+      // S2: worker updates are field-constrained — cannot change assignment, creator, or status
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "worker" &&
@@ -256,7 +256,7 @@ service cloud.firestore {
         request.resource.data.workerId == resource.data.workerId &&
         request.resource.data.completedBy == resource.data.completedBy &&
         request.resource.data.createdBy == resource.data.createdBy &&
-        // Workers cannot jump to 'finished' or 'denied' — must go through callable
+        // workers cannot jump to 'finished' or 'denied' — must go through callable
         request.resource.data.status in ["pending", "received", "waiting"]
       );
 
@@ -265,8 +265,8 @@ service cloud.firestore {
     }
 
     // ── Finished Jobs ──
-    // User and Manager can read/write/update their company finished jobs.
-    // Worker can read ONLY jobs assigned to them.
+    // user and manager can read/write/update their company finished jobs.
+    // worker can read ONLY jobs assigned to them.
     // Delete via Cloud Function only (deleteJobV1).
     match /companies/{companyId}/finishedJobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
@@ -296,8 +296,8 @@ service cloud.firestore {
     }
 
     // ── Certifications ──
-    // Basic/User/Manager can READ. Write via Cloud Function (publishGenerateTask).
-    // Manager can delete. No create or update from client.
+    // basic/user/manager can READ. Write via Cloud Function (publishGenerateTask).
+    // manager can delete. No create or update from client.
     match /companies/{companyId}/certifications/{id} {
       allow read: if isAdmin() || isManagerUserBasic(companyId) || isSoloScope(companyId);
       allow delete: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
@@ -321,7 +321,7 @@ service cloud.firestore {
     }
 
     // ── Document Tasks ──
-    // Users can read their own tasks (for listening to task completion status).
+    // users can read their own tasks (for listening to task completion status).
     // Write is handled by Cloud Functions only.
     match /documentTasks/{taskId} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;

@@ -76,7 +76,7 @@ export default function JobMonitor() {
     noJobs: 'No jobs in this category',
     jobDetails: 'Job Details',
     close: 'Close',
-    worker: 'Worker',
+    worker: 'worker',
     assignedBy: 'Assigned By',
     createdAt: 'Created At',
     status: 'Status',

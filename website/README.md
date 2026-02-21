@@ -50,7 +50,7 @@ All endpoints return:
 - Production API calls require `Authorization: Bearer <Firebase ID token>`.
 - `uid` request-body fallback is accepted only in local development when emulator mode is enabled.
 - Server routes validate request JSON with Zod before processing.
-- Firestore security rules are least-privilege and role-scoped (`Manager`, `Worker`, `User`, `Basic`, `Dev`, plus admin custom claim).
+- Firestore security rules are least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`, plus admin custom claim).
 
 ## Data Model
 

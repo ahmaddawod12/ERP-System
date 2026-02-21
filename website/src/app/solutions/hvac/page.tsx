@@ -32,7 +32,7 @@ export default function HvacSolutionPage() {
           <Card className="bg-gradient-to-br from-cyan-600 to-blue-700 text-white">
             <h2 className="text-xl font-semibold">Ready to onboard your HVAC crew?</h2>
             <p className="mt-2 text-sm text-cyan-50">
-              Start with Manager + Worker roles, configure company profile, and begin assigning jobs in minutes.
+              Start with manager + worker roles, configure company profile, and begin assigning jobs in minutes.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
               <Link href="/register">
@@ -50,4 +50,3 @@ export default function HvacSolutionPage() {
     </PublicLayout>
   );
 }
-

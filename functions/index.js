@@ -150,13 +150,7 @@ function normalizeRole(role) {
 }
 
 function toProfileRole(role) {
-  const normalized = normalizeRole(role);
-  if (normalized === 'manager') return 'manager';
-  if (normalized === 'worker') return 'worker';
-  if (normalized === 'user') return 'user';
-  if (normalized === 'basic') return 'basic';
-  if (normalized === 'dev') return 'dev';
-  return role;
+  return normalizeRole(role);
 }
 
 function normalizeAccountType(accountType) {
@@ -3687,7 +3681,7 @@ exports.updatePushTokenV1 = onCall(async (request) => {
 /**
  * Callable Function: updateBusinessInfoV1
  * Updates business_info fields EXCEPT vat_number and document_numbers.
- * Only Manager/User/Basic roles with company access can call this.
+ * Only manager/user/basic roles with company access can call this.
  */
 exports.updateBusinessInfoV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -3757,8 +3751,8 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
  * Callable Function: deleteJobV1
  * Deletes a pending or finished job, enforcing:
  * - Cannot delete a finished job that has isCert=true (has a generated document)
- * - Manager/User can delete their company's jobs
- * - Worker can delete their own assigned finished jobs only
+ * - manager/user can delete their company's jobs
+ * - worker can delete their own assigned finished jobs only
  */
 exports.deleteJobV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -3958,8 +3952,8 @@ exports.acceptJobV1 = onCall(async (request) => {
  * to prevent users from forging roles, companyIds, or document numbers.
  *
  * Handles:
- * - Solo user registration (User/Basic): companyId = uid
- * - Manager company creation: generates companyId, creates company structure
+ * - Solo user registration (user/basic): companyId = uid
+ * - manager company creation: generates companyId, creates company structure
  */
 exports.registerBusinessV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -3989,7 +3983,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
   const phoneNumber = typeof data.phoneNumber === 'string' ? data.phoneNumber.trim() : '';
 
   // Validate business info fields
-  // Solo users (User/Basic) don't require business fields; managers do.
+  // Solo users (user/basic) don't require business fields; managers do.
   const isSoloRole = (role === 'user' || role === 'basic');
   const heName = isSoloRole
     ? optionalTrimmedString(data.he_name || data.name || '', 200)
@@ -4209,8 +4203,8 @@ exports.registerBusinessV1 = onCall(async (request) => {
  * Creates a pending or finished job with a sequential jid-based ID.
  * Atomically increments the jid counter on the company doc.
  *
- * - Manager creates pending jobs (p_{jid})
- * - User (solo) creates finished jobs directly (f_{jid})
+ * - manager creates pending jobs (p_{jid})
+ * - user (solo) creates finished jobs directly (f_{jid})
  */
 exports.createJobV1 = onCall(async (request) => {
   if (!request.auth) {

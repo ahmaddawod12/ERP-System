@@ -79,7 +79,7 @@ export default function JobsPage() {
 
     try {
       if (isSoloUser) {
-        // Solo users (User role) create finished jobs directly — backend denies pending for solo
+        // Solo users (user role) create finished jobs directly — backend denies pending for solo
         await createFinishedJob(scopeId, {
           title: form.title,
           clientName: form.clientName,

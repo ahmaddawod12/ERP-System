@@ -23,7 +23,7 @@ type FormValues = z.infer<typeof schema>;
 const tierDetails = [
   { name: "Basic", desc: "Clients + Documents only" },
   { name: "Solo", desc: "Jobs + Personal inventory + Docs" },
-  { name: "Team", desc: "Manager/Worker workflows + company inventory" },
+  { name: "Team", desc: "manager/worker workflows + company inventory" },
   { name: "Enterprise", desc: "All features + priority support (contact)" },
 ];
 

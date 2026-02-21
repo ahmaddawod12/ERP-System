@@ -11,7 +11,7 @@ const items = [
   {
     icon: UserRoundCheck,
     title: "Role and tier guards",
-    description: "Manager, Worker, User, Basic, and Dev roles plus tier checks across routes and APIs.",
+    description: "manager, worker, user, basic, and dev roles plus tier checks across routes and APIs.",
   },
   {
     icon: Lock,
@@ -49,4 +49,3 @@ export default function SecurityPage() {
     </PublicLayout>
   );
 }
-

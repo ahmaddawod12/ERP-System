@@ -345,7 +345,7 @@ async function processGenerateTask(taskData) {
       throw new Error(`Requester profile not found for uid: ${uid}`);
     }
     const requesterProfile = requesterProfileSnap.data() || {};
-    // Normalize role to lowercase for comparison (backend writes TitleCase)
+    // Normalize role to lowercase for comparison (canonical role format)
     userRole = (requesterProfile.role || '').toLowerCase();
 
     if (!['manager', 'user', 'basic', 'dev'].includes(userRole)) {
@@ -500,8 +500,8 @@ async function processGenerateTask(taskData) {
     const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
     
     // Determine cache path based on user role
-    // Manager: companies/{companyId}/business_data/cache
-    // User/Basic: users/{uid}/data/cache
+    // manager: companies/{companyId}/business_data/cache
+    // user/basic/dev: users/{uid}/data/cache
     const getCachePath = () => {
       if (userRole === 'manager') {
         return `companies/${companyId}/business_data/cache`;

@@ -160,7 +160,7 @@ export default function ClientsPage() {
             </div>
           ) : (
             <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-              Worker role has read-only access to clients.
+              worker role has read-only access to clients.
             </p>
           )}
         </Card>

@@ -4,7 +4,7 @@
  */
 
 // ── Roles ──────────────────────────────────────────────────────────────────
-export type RoleTitle = 'Manager' | 'Worker' | 'User' | 'Basic' | 'Dev';
+export type RoleTitle = 'manager' | 'worker' | 'user' | 'basic' | 'dev';
 export type RoleLowercase = 'manager' | 'worker' | 'user' | 'basic' | 'dev';
 
 export declare const Role: Readonly<Record<RoleTitle, RoleTitle>>;

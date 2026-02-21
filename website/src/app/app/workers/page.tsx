@@ -46,7 +46,7 @@ export default function WorkersPage() {
         inviteId: string;
         inviteCode: string;
         expiresAt: string;
-        targetRole: "Worker" | "User" | "Basic";
+        targetRole: "worker" | "user" | "basic";
       }>;
 
       if (!response.ok || !payload.ok) {
@@ -133,10 +133,10 @@ export default function WorkersPage() {
                       onChange={(event) => void handleRoleChange(row.workerId, event.target.value as Role)}
                       className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                     >
-                      <option value="Manager">Manager</option>
-                      <option value="Worker">Worker</option>
-                      <option value="User">User</option>
-                      <option value="Basic">Basic</option>
+                      <option value="manager">manager</option>
+                      <option value="worker">worker</option>
+                      <option value="user">user</option>
+                      <option value="basic">basic</option>
                     </select>
                   ),
                 },

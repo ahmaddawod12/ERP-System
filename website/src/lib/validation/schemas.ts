@@ -33,7 +33,7 @@ export const createInviteSchema = z
   .object({
     uid: uidFallbackSchema,
     companyId: companyIdSchema,
-    targetRole: z.enum(["Worker", "User", "Basic"]).optional().default("Worker"),
+    targetRole: z.enum(["worker", "user", "basic"]).optional().default("worker"),
   })
   .strict();
 
@@ -41,7 +41,7 @@ export const joinCompanySchema = z
   .object({
     uid: uidFallbackSchema,
     email: z.string().trim().email("Valid email is required"),
-    role: z.enum(["Worker", "User", "Basic"]).optional(),
+    role: z.enum(["worker", "user", "basic"]).optional(),
     name: optionalText(120),
     phoneNumber: optionalText(40),
     companyId: companyIdSchema,

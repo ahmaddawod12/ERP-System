@@ -46,8 +46,8 @@ export default function JobsPage() {
   const [loading, setLoading] = useState(true);
 
   const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
-  const canManageCompanyJobs = role === "Manager" || role === "Dev";
-  const isSoloUser = role === "User" && (!companyId || companyId === uid);
+  const canManageCompanyJobs = role === "manager" || role === "dev";
+  const isSoloUser = role === "user" && (!companyId || companyId === uid);
 
   const workerNameMap = useMemo(
     () => Object.fromEntries(workers.map((worker) => [worker.workerId, worker.name || worker.email])),

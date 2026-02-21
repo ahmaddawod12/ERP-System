@@ -45,7 +45,7 @@ export default function ClientsPage() {
   const [editing, setEditing] = useState<ClientRecord | null>(null);
 
   const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
-  const canMutate = role !== "Worker";
+  const canMutate = role !== "worker";
 
   const load = useCallback(async () => {
     if (!scopeId) return;

@@ -151,11 +151,11 @@ function normalizeRole(role) {
 
 function toProfileRole(role) {
   const normalized = normalizeRole(role);
-  if (normalized === 'manager') return 'Manager';
-  if (normalized === 'worker') return 'Worker';
-  if (normalized === 'user') return 'User';
-  if (normalized === 'basic') return 'Basic';
-  if (normalized === 'dev') return 'Dev';
+  if (normalized === 'manager') return 'manager';
+  if (normalized === 'worker') return 'worker';
+  if (normalized === 'user') return 'user';
+  if (normalized === 'basic') return 'basic';
+  if (normalized === 'dev') return 'dev';
   return role;
 }
 
@@ -728,7 +728,7 @@ exports.manageWorker = onCall(async (request) => {
       const batch = admin.firestore().batch();
       batch.set(workerProfileRef, {
         uid: workerUid,
-        role: 'Worker',
+        role: 'worker',
         email: normalizedEmail,
         companyId: companyId,
         name: String(name || '').trim(),
@@ -752,7 +752,7 @@ exports.manageWorker = onCall(async (request) => {
         Uid: workerUid,
         Wid: workerSerial,
         wid: workerSerial,
-        role: 'Worker',
+        role: 'worker',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -920,7 +920,7 @@ exports.manageWorker = onCall(async (request) => {
         updateData.Wid = numericWorkerId;
         updateData.wid = numericWorkerId;
       }
-      updateData.role = newRole || 'Worker';
+      updateData.role = newRole || 'worker';
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
       if (name !== undefined) {
         updateData.name = String(name || '').trim();
@@ -1135,10 +1135,10 @@ exports.createInviteV1 = onRequest({
     const auth = await resolveHttpAuth(req, body);
 
     const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
-    const rawTargetRole = String(body.targetRole || 'Worker').trim();
+    const rawTargetRole = String(body.targetRole || 'worker').trim();
     const targetRole = toProfileRole(rawTargetRole);
-    if (!['Worker', 'User', 'Basic'].includes(targetRole)) {
-      throw new HttpsError('invalid-argument', 'targetRole must be Worker, User, or Basic');
+    if (!['worker', 'user', 'basic'].includes(targetRole)) {
+      throw new HttpsError('invalid-argument', 'targetRole must be worker, user, or basic');
     }
 
     await assertHttpCompanyAccess({
@@ -1207,8 +1207,8 @@ exports.joinCompanyV1 = onRequest({
     if (!isValidEmail(email)) {
       throw new HttpsError('invalid-argument', 'Invalid email format');
     }
-    if (requestedRole && !['Worker', 'User', 'Basic'].includes(requestedRole)) {
-      throw new HttpsError('invalid-argument', 'role must be Worker, User, or Basic');
+    if (requestedRole && !['worker', 'user', 'basic'].includes(requestedRole)) {
+      throw new HttpsError('invalid-argument', 'role must be worker, user, or basic');
     }
     if (auth.token?.email && String(auth.token.email).toLowerCase() !== email) {
       throw new HttpsError('permission-denied', 'Email does not match authenticated user');
@@ -1259,9 +1259,9 @@ exports.joinCompanyV1 = onRequest({
       const resolvedRole = toProfileRole(
         workerSnap.exists
           ? workerSnap.data()?.role
-          : (inviteData.targetRole || requestedRole || 'Worker')
+          : (inviteData.targetRole || requestedRole || 'worker')
       );
-      if (!['Worker', 'User', 'Basic'].includes(resolvedRole)) {
+      if (!['worker', 'user', 'basic'].includes(resolvedRole)) {
         throw new HttpsError('failed-precondition', 'Invite target role is invalid');
       }
 
@@ -3822,7 +3822,7 @@ exports.deleteJobV1 = onCall(async (request) => {
 
   // Basic role cannot delete jobs
   if (resolvedRole === 'basic') {
-    throw new HttpsError('permission-denied', 'Basic role cannot delete jobs');
+    throw new HttpsError('permission-denied', 'basic role cannot delete jobs');
   }
 
   await finishedRef.delete();
@@ -3974,7 +3974,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
   const rawRole = typeof data.role === 'string' ? data.role.trim() : '';
   const role = normalizeRole(rawRole);
   if (!role || !['manager', 'user', 'basic'].includes(role)) {
-    throw new HttpsError('invalid-argument', 'role must be Manager, User, or Basic');
+    throw new HttpsError('invalid-argument', 'role must be manager, user, or basic');
   }
 
   // Validate account type

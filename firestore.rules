@@ -43,7 +43,7 @@ service cloud.firestore {
     function isAdmin() {
       return signedIn() && (
         request.auth.token.admin == true ||
-        currentRole() == "Dev"
+        currentRole() == "dev"
       );
     }
 
@@ -87,14 +87,14 @@ service cloud.firestore {
     function canManageCompany(companyId) {
       return isAdmin() || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Manager", "Dev"]
+        companyRole(companyId) in ["manager", "dev"]
       );
     }
 
     // Manager/User/Basic can read company data (shared role set)
     function isManagerUserBasic(companyId) {
       return isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Manager", "User", "Basic", "Dev"];
+        companyRole(companyId) in ["manager", "user", "basic", "dev"];
     }
 
     // Check if caller is a manager in their own company and the target user is in the same company
@@ -102,7 +102,7 @@ service cloud.firestore {
       return signedIn() &&
         currentCompanyId() != null &&
         isCompanyWorker(currentCompanyId()) &&
-        companyRole(currentCompanyId()) in ["Manager", "Dev"] &&
+        companyRole(currentCompanyId()) in ["manager", "dev"] &&
         workerExists(currentCompanyId(), userId);
     }
 
@@ -142,7 +142,7 @@ service cloud.firestore {
       allow read, write: if isAdmin() || (
         signedIn() &&
         request.auth.uid == uid &&
-        currentRole() != "Basic"
+        currentRole() != "basic"
       );
     }
 
@@ -150,7 +150,7 @@ service cloud.firestore {
       allow read, write: if isAdmin() || (
         signedIn() &&
         request.auth.uid == uid &&
-        currentRole() != "Basic"
+        currentRole() != "basic"
       );
     }
 
@@ -241,7 +241,7 @@ service cloud.firestore {
     match /companies/{companyId}/PendingJobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        (companyRole(companyId) == "Worker") &&
+        (companyRole(companyId) == "worker") &&
         (resource.data.workerId == request.auth.uid || resource.data.completedBy == request.auth.uid)
       );
 
@@ -250,7 +250,7 @@ service cloud.firestore {
       // S2: Worker updates are field-constrained — cannot change assignment, creator, or status
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "Worker" &&
+        companyRole(companyId) == "worker" &&
         resource.data.workerId == request.auth.uid &&
         // Pin immutable fields: assignment, creation, and approval metadata
         request.resource.data.workerId == resource.data.workerId &&
@@ -271,22 +271,22 @@ service cloud.firestore {
     match /companies/{companyId}/finishedJobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "User"
+        companyRole(companyId) == "user"
       ) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "Worker" &&
+        companyRole(companyId) == "worker" &&
         resource.data.workerId == request.auth.uid
       );
 
       allow create: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "User" &&
+        companyRole(companyId) == "user" &&
         request.resource.data.workerId == request.auth.uid
       );
 
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "User" &&
+        companyRole(companyId) == "user" &&
         resource.data.workerId == request.auth.uid &&
         request.resource.data.workerId == resource.data.workerId
       );
@@ -314,7 +314,7 @@ service cloud.firestore {
       allow read: if canReadCompany(companyId);
       allow create: if canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["Worker", "User"] &&
+        companyRole(companyId) in ["worker", "user"] &&
         request.resource.data.workerId == request.auth.uid
       );
       allow update, delete: if canManageCompany(companyId);

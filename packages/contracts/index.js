@@ -6,13 +6,13 @@
  */
 
 // ── Roles ──────────────────────────────────────────────────────────────────
-/** Canonical TitleCase roles as stored in Firestore profile docs. */
+/** Canonical lowercase roles as stored in Firestore profile docs. */
 const Role = Object.freeze({
-  Manager: 'Manager',
-  Worker:  'Worker',
-  User:    'User',
-  Basic:   'Basic',
-  Dev:     'Dev',
+  manager: 'manager',
+  worker:  'worker',
+  user:    'user',
+  basic:   'basic',
+  dev:     'dev',
 });
 
 /** Lowercase role set used for internal permission checks. */
@@ -105,7 +105,7 @@ const paths = {
 
 /**
  * Resolve the effective companyId for data paths.
- * Solo users (role User/Basic) use their own uid as companyId.
+ * Solo users (role user/basic) use their own uid as companyId.
  */
 function resolveCompanyScope(companyId, uid) {
   return companyId || uid;

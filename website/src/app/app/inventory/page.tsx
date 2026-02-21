@@ -41,7 +41,7 @@ export default function InventoryPage() {
   const [form, setForm] = useState<PartFormState>(initialForm);
   const [loading, setLoading] = useState(true);
 
-  const isCompanyInventory = Boolean(companyId && (role === "Manager" || role === "Dev"));
+  const isCompanyInventory = Boolean(companyId && (role === "manager" || role === "dev"));
 
   const load = useCallback(async () => {
     setLoading(true);

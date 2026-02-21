@@ -29,7 +29,7 @@ service firebase.storage {
     function isManagerOfWorker(workerId) {
       return isAuthenticated() && 
              profileExists(getUid()) &&
-             getProfile(getUid()).role in ['Manager', 'Dev'] &&
+             getProfile(getUid()).role in ['manager', 'dev'] &&
              profileExists(workerId) &&
              'companyId' in getProfile(getUid()) &&
              'companyId' in getProfile(workerId) &&
@@ -40,14 +40,14 @@ service firebase.storage {
     function isUser() {
       return isAuthenticated() && 
              profileExists(getUid()) &&
-             getProfile(getUid()).role == 'User';
+             getProfile(getUid()).role == 'user';
     }
     
     // Helper function to check if user is a manager
     function isManager() {
       return isAuthenticated() && 
              profileExists(getUid()) &&
-             getProfile(getUid()).role in ['Manager', 'Dev'];
+             getProfile(getUid()).role in ['manager', 'dev'];
     }
     
     // Helper function to check if user owns the company

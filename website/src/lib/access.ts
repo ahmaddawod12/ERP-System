@@ -33,16 +33,16 @@ export interface SectionRule {
 }
 
 const sectionRules: Record<AppSection, SectionRule> = {
-  overview: { roles: ["Manager", "Worker", "User", "Basic", "Dev"], minTier: "Basic" },
-  jobs: { roles: ["Manager", "Worker", "User", "Dev"], minTier: "Solo" },
-  workers: { roles: ["Manager", "Dev"], minTier: "Team" },
-  inventory: { roles: ["Manager", "User", "Dev"], minTier: "Solo" },
-  inventoryPicks: { roles: ["Worker", "Dev"], minTier: "Team" },
-  clients: { roles: ["Manager", "User", "Basic", "Dev"], minTier: "Basic" },
-  documents: { roles: ["Manager", "User", "Basic", "Dev"], minTier: "Basic" },
-  settings: { roles: ["Manager", "Worker", "User", "Basic", "Dev"], minTier: "Basic" },
-  upgrade: { roles: ["Manager", "Worker", "User", "Basic", "Dev"], minTier: "Basic" },
-  admin: { roles: ["Dev"], minTier: "Basic" },
+  overview: { roles: ["manager", "worker", "user", "basic", "dev"], minTier: "Basic" },
+  jobs: { roles: ["manager", "worker", "user", "dev"], minTier: "Solo" },
+  workers: { roles: ["manager", "dev"], minTier: "Team" },
+  inventory: { roles: ["manager", "user", "dev"], minTier: "Solo" },
+  inventoryPicks: { roles: ["worker", "dev"], minTier: "Team" },
+  clients: { roles: ["manager", "user", "basic", "dev"], minTier: "Basic" },
+  documents: { roles: ["manager", "user", "basic", "dev"], minTier: "Basic" },
+  settings: { roles: ["manager", "worker", "user", "basic", "dev"], minTier: "Basic" },
+  upgrade: { roles: ["manager", "worker", "user", "basic", "dev"], minTier: "Basic" },
+  admin: { roles: ["dev"], minTier: "Basic" },
 };
 
 export function canAccessSection(role: Role, tier: Tier, section: AppSection) {
@@ -51,8 +51,8 @@ export function canAccessSection(role: Role, tier: Tier, section: AppSection) {
 }
 
 export function defaultTierForRole(role: Role, accountType: "solo" | "business"): Tier {
-  if (role === "Basic") return "Basic";
+  if (role === "basic") return "Basic";
   if (accountType === "solo") return "Solo";
-  if (role === "Worker" || role === "Manager" || role === "Dev") return "Team";
+  if (role === "worker" || role === "manager" || role === "dev") return "Team";
   return "Solo";
 }

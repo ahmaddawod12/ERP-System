@@ -107,13 +107,13 @@ export async function updateWorkerRole(companyId: string, workerId: string, role
 
 export async function listJobs(companyId: string, opts?: { role?: Role; uid?: string }) {
   let constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
-  if (opts?.role === "Worker" && opts.uid) {
+  if (opts?.role === "worker" && opts.uid) {
     // Worker queries use completedBy (canonical field matching phone app + trigger)
     constraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc")];
   }
   const pendingSnap = await getDocs(query(companyPendingJobsCollection(companyId), ...constraints));
   const finishedConstraints =
-    opts?.role === "Worker" && opts.uid
+    opts?.role === "worker" && opts.uid
       ? [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc")]
       : [orderBy("createdAt", "desc")];
   const finishedSnap = await getDocs(query(companyFinishedJobsCollection(companyId), ...finishedConstraints));

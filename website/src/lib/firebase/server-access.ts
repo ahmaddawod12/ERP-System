@@ -51,14 +51,14 @@ export async function assertCompanyAccess(params: {
     return { profile, role: profile.role, soloScope: true };
   }
 
-  if (profile.companyId !== companyId && profile.role !== "Dev") {
+  if (profile.companyId !== companyId && profile.role !== "dev") {
     throw new ApiRouteError(403, "company_mismatch", "User does not belong to this company");
   }
 
   const workerRole = await getWorkerRoleForCompany(companyId, uid);
   const resolvedRole = workerRole ?? profile.role;
 
-  if (!workerRole && profile.role !== "Dev") {
+  if (!workerRole && profile.role !== "dev") {
     throw new ApiRouteError(
       403,
       "membership_missing",
@@ -76,4 +76,3 @@ export async function assertCompanyAccess(params: {
     soloScope: false,
   };
 }
-

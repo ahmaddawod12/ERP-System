@@ -72,7 +72,7 @@ async function seed() {
     {
       workerId: managerUid,
       uid: managerUid,
-      role: "Manager",
+      role: "manager",
       email: "manager@example.com",
       name: "Demo Manager",
       phoneNumber: "+1-555-1000",
@@ -85,7 +85,7 @@ async function seed() {
     {
       workerId: workerUid,
       uid: workerUid,
-      role: "Worker",
+      role: "worker",
       email: "worker@example.com",
       name: "Demo Worker",
       phoneNumber: "+1-555-2000",
@@ -98,7 +98,7 @@ async function seed() {
     {
       uid: managerUid,
       email: "manager@example.com",
-      role: "Manager",
+      role: "manager",
       companyId,
       name: "Demo Manager",
       phoneNumber: "+1-555-1000",
@@ -112,7 +112,7 @@ async function seed() {
     {
       uid: workerUid,
       email: "worker@example.com",
-      role: "Worker",
+      role: "worker",
       companyId,
       name: "Demo Worker",
       phoneNumber: "+1-555-2000",

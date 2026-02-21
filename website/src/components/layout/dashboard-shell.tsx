@@ -31,7 +31,7 @@ interface NavItem {
 }
 
 function navItemsByRole(role: string): NavItem[] {
-  if (role === "Dev") {
+  if (role === "dev") {
     return [
       { label: "Overview", href: "/app", section: "overview", icon: Gauge },
       { label: "Jobs", href: "/app/jobs", section: "jobs", icon: BriefcaseBusiness },
@@ -44,7 +44,7 @@ function navItemsByRole(role: string): NavItem[] {
       { label: "Admin", href: "/app/admin", section: "admin", icon: Shield },
     ];
   }
-  if (role === "Manager") {
+  if (role === "manager") {
     return [
       { label: "Overview", href: "/app", section: "overview", icon: Gauge },
       { label: "Jobs", href: "/app/jobs", section: "jobs", icon: BriefcaseBusiness },
@@ -56,7 +56,7 @@ function navItemsByRole(role: string): NavItem[] {
       { label: "Upgrade", href: "/app/upgrade", section: "upgrade", icon: TrendingUp },
     ];
   }
-  if (role === "Worker") {
+  if (role === "worker") {
     return [
       { label: "Overview", href: "/app", section: "overview", icon: Gauge },
       { label: "My Jobs", href: "/app/jobs", section: "jobs", icon: ClipboardList },
@@ -67,7 +67,7 @@ function navItemsByRole(role: string): NavItem[] {
       { label: "Upgrade", href: "/app/upgrade", section: "upgrade", icon: TrendingUp },
     ];
   }
-  if (role === "User") {
+  if (role === "user") {
     return [
       { label: "Overview", href: "/app", section: "overview", icon: Gauge },
       { label: "My Jobs", href: "/app/jobs", section: "jobs", icon: ClipboardList },

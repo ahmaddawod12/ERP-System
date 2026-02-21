@@ -24,7 +24,7 @@ import { functions } from "@/lib/firebase/client";
 const schema = z
   .object({
     accountType: z.enum(["solo", "business"]),
-    role: z.enum(["Manager", "Worker", "User", "Basic"]),
+    role: z.enum(["manager", "worker", "user", "basic"]),
     name: z.string().min(2, "Name is required"),
     phoneNumber: z.string().min(6, "Phone number is required"),
     companyName: z.string().optional(),
@@ -38,23 +38,23 @@ const schema = z
     theme: z.enum(["light", "dark"]),
   })
   .superRefine((value, ctx) => {
-    if (value.accountType === "solo" && value.role !== "User") {
+    if (value.accountType === "solo" && value.role !== "user") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Solo accounts use User role.",
+        message: "Solo accounts use user role.",
         path: ["role"],
       });
     }
 
-    if (value.accountType === "business" && value.role !== "Manager" && value.role !== "Worker") {
+    if (value.accountType === "business" && value.role !== "manager" && value.role !== "worker") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Business accounts must use Manager or Worker role.",
+        message: "Business accounts must use manager or worker role.",
         path: ["role"],
       });
     }
 
-    if (value.accountType === "business" && value.role === "Manager") {
+    if (value.accountType === "business" && value.role === "manager") {
       if (!value.companyName) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Company name is required", path: ["companyName"] });
       if (!value.businessNumber) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Business number is required", path: ["businessNumber"] });
       if (!value.businessAddress) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Address is required", path: ["businessAddress"] });
@@ -62,7 +62,7 @@ const schema = z
       if (!value.businessType) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Business type is required", path: ["businessType"] });
     }
 
-    if (value.accountType === "business" && value.role === "Worker") {
+    if (value.accountType === "business" && value.role === "worker") {
       if (!value.joinCompanyId) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "companyId is required", path: ["joinCompanyId"] });
       if (!value.inviteCode) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invite code is required", path: ["inviteCode"] });
     }
@@ -91,7 +91,7 @@ export default function OnboardingPage() {
     resolver: zodResolver(schema),
     defaultValues: {
       accountType: "solo",
-      role: "User",
+      role: "user",
       language: "en",
       theme: "light",
     },
@@ -112,11 +112,11 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (accountType === "solo") {
-      setValue("role", "User");
+      setValue("role", "user");
       return;
     }
-    if (role !== "Manager" && role !== "Worker") {
-      setValue("role", "Manager");
+    if (role !== "manager" && role !== "worker") {
+      setValue("role", "manager");
     }
   }, [accountType, role, setValue]);
 
@@ -142,10 +142,10 @@ export default function OnboardingPage() {
     }
 
     if (step === 2) {
-      if (role === "Manager") {
+      if (role === "manager") {
         const ok = await trigger(["companyName", "businessNumber", "businessAddress", "businessPhone", "businessType"]);
         if (ok) setStep(3);
-      } else if (role === "Worker") {
+      } else if (role === "worker") {
         const ok = await trigger(["joinCompanyId", "inviteCode"]);
         if (ok) setStep(3);
       } else {
@@ -161,7 +161,7 @@ export default function OnboardingPage() {
       let companyId: string | null = null;
       let joinedRole: Role | null = null;
 
-      if (values.accountType === "business" && values.role === "Worker") {
+      if (values.accountType === "business" && values.role === "worker") {
         // Workers join via invite — this is still handled server-side
         const response = await fetch("/api/onboarding/join-company", {
           method: "POST",
@@ -170,7 +170,7 @@ export default function OnboardingPage() {
             withDevUidFallback(
               {
                 email: user.email,
-                role: "Worker",
+                role: "worker",
                 name: values.name,
                 phoneNumber: values.phoneNumber,
                 companyId: values.joinCompanyId,
@@ -182,7 +182,7 @@ export default function OnboardingPage() {
         });
         const data = (await response.json()) as ClientApiResponse<{
           companyId: string;
-          role: "Worker" | "User" | "Basic";
+          role: "worker" | "user" | "basic";
         }>;
         if (!response.ok || !data.ok || !data.data.companyId) {
           throw new Error(getClientApiErrorMessage(data, "Invite validation failed"));
@@ -197,7 +197,7 @@ export default function OnboardingPage() {
         >(functions, "registerBusinessV1");
 
         const result = await registerFn({
-          role: values.accountType === "solo" ? "User" : values.role,
+          role: values.accountType === "solo" ? "user" : values.role,
           accountType: values.accountType,
           name: values.name,
           phoneNumber: values.phoneNumber,
@@ -284,15 +284,15 @@ export default function OnboardingPage() {
                       className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:disabled:bg-slate-800"
                     >
                       {accountType === "solo" ? (
-                        <option value="User">User</option>
+                        <option value="user">user</option>
                       ) : (
                         <>
-                          <option value="Manager">Manager</option>
-                          <option value="Worker">Worker</option>
+                          <option value="manager">manager</option>
+                          <option value="worker">worker</option>
                         </>
                       )}
                     </select>
-                    {accountType === "solo" ? <p className="text-xs text-slate-500 dark:text-slate-400">Solo account defaults to User role.</p> : null}
+                    {accountType === "solo" ? <p className="text-xs text-slate-500 dark:text-slate-400">Solo account defaults to user role.</p> : null}
                     {errors.role?.message ? <p className="text-xs text-red-600">{errors.role.message}</p> : null}
                   </label>
                 </div>
@@ -300,7 +300,7 @@ export default function OnboardingPage() {
 
               {step === 2 ? (
                 <div className="grid gap-3">
-                  {role === "Manager" ? (
+                  {role === "manager" ? (
                     <>
                       <Input label="Company Name" {...register("companyName")} error={errors.companyName?.message} />
                       <Input label="Business Number" {...register("businessNumber")} error={errors.businessNumber?.message} />
@@ -310,14 +310,14 @@ export default function OnboardingPage() {
                     </>
                   ) : null}
 
-                  {role === "Worker" ? (
+                  {role === "worker" ? (
                     <>
                       <Input label="Company ID" {...register("joinCompanyId")} error={errors.joinCompanyId?.message} />
                       <Input label="Invite Code" {...register("inviteCode")} error={errors.inviteCode?.message} />
                     </>
                   ) : null}
 
-                  {role !== "Manager" && role !== "Worker" ? (
+                  {role !== "manager" && role !== "worker" ? (
                     <p className="text-sm text-slate-600 dark:text-slate-300">No additional company setup is required for this role.</p>
                   ) : null}
                 </div>

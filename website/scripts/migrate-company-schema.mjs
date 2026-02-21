@@ -45,11 +45,11 @@ function parseArgs(argv) {
 
 function normalizeRole(role) {
   const raw = String(role || "").trim().toLowerCase();
-  if (raw === "manager") return "Manager";
-  if (raw === "worker") return "Worker";
-  if (raw === "user") return "User";
-  if (raw === "basic") return "Basic";
-  if (raw === "dev") return "Dev";
+  if (raw === "manager") return "manager";
+  if (raw === "worker") return "worker";
+  if (raw === "user") return "user";
+  if (raw === "basic") return "basic";
+  if (raw === "dev") return "dev";
   return "";
 }
 
@@ -193,7 +193,7 @@ async function migrateCompanies(params) {
       }
 
       const canonicalWorkerRef = companyRef.collection("workers").doc(workerUid);
-      const resolvedRole = normalizeRole(workerData.role) || "Worker";
+      const resolvedRole = normalizeRole(workerData.role) || "worker";
       const resolvedEmail = String(workerData.email || "").trim().toLowerCase();
       const resolvedName = String(workerData.name || "").trim();
       const resolvedPhone = String(workerData.phoneNumber || "").trim();

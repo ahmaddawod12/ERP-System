@@ -13,6 +13,7 @@ import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import {
   createJob,
+  createFinishedJob,
   deleteJob,
   listJobs,
   listWorkers,
@@ -46,6 +47,7 @@ export default function JobsPage() {
 
   const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
   const canManageCompanyJobs = role === "Manager" || role === "Dev";
+  const isSoloUser = role === "User" && (!companyId || companyId === uid);
 
   const workerNameMap = useMemo(
     () => Object.fromEntries(workers.map((worker) => [worker.workerId, worker.name || worker.email])),
@@ -76,13 +78,25 @@ export default function JobsPage() {
     }
 
     try {
-      await createJob(scopeId, {
-        title: form.title,
-        clientName: form.clientName,
-        description: form.description,
-        status: "pending",
-        workerId: form.workerId || uid,
-      });
+      if (isSoloUser) {
+        // Solo users (User role) create finished jobs directly — backend denies pending for solo
+        await createFinishedJob(scopeId, {
+          title: form.title,
+          clientName: form.clientName,
+          description: form.description,
+          workerId: uid,
+          completedBy: uid,
+        });
+      } else {
+        await createJob(scopeId, {
+          title: form.title,
+          clientName: form.clientName,
+          description: form.description,
+          status: "pending",
+          workerId: form.workerId || uid,
+          completedBy: form.workerId || uid,
+        });
+      }
       await loadJobs();
       setForm(initialState);
       toast({ title: "Job created", variant: "success" });

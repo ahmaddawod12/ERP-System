@@ -95,8 +95,8 @@ class AmazonSESEmailService {
     const senderName = businessInfo.name || 'Smart-Job';
     const fromAddress = `${senderName} <${senderEmail}>`;
     console.log('[SES] Preparing to send email', {
-      to: recipientEmail,
-      from: fromAddress,
+      to: recipientEmail ? `***@${recipientEmail.split('@')[1] || '?'}` : '(none)',
+      from: senderName,
       documentTitle,
       language
     });
@@ -138,8 +138,8 @@ class AmazonSESEmailService {
       const response = await this.client.send(command);
       console.log('[SES] Email sent successfully', {
         messageId: response.MessageId,
-        to: recipientEmail,
-        from: senderEmail
+        to: recipientEmail ? `***@${recipientEmail.split('@')[1] || '?'}` : '(none)',
+        from: senderName
       });
 
       return {

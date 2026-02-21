@@ -237,21 +237,27 @@ service cloud.firestore {
     // ── Pending Jobs ──
     // User role does NOT have pending jobs.
     // Manager can read/write/update. Delete via Cloud Function only.
-    // Worker can read + update ONLY jobs assigned to them.
+    // Worker can read + update ONLY jobs assigned to them, with field restrictions.
     match /companies/{companyId}/PendingJobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "Worker" &&
-        resource.data.workerId == request.auth.uid
+        (companyRole(companyId) == "Worker") &&
+        (resource.data.workerId == request.auth.uid || resource.data.completedBy == request.auth.uid)
       );
 
       allow create: if isAdmin() || canManageCompany(companyId);
 
+      // S2: Worker updates are field-constrained — cannot change assignment, creator, or status
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "Worker" &&
         resource.data.workerId == request.auth.uid &&
-        request.resource.data.workerId == resource.data.workerId
+        // Pin immutable fields: assignment, creation, and approval metadata
+        request.resource.data.workerId == resource.data.workerId &&
+        request.resource.data.completedBy == resource.data.completedBy &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        // Workers cannot jump to 'finished' or 'denied' — must go through callable
+        request.resource.data.status in ["pending", "received", "waiting"]
       );
 
       // Delete via Cloud Function only (deleteJobV1 / acceptJobV1)

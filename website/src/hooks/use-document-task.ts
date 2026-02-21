@@ -24,7 +24,7 @@ export interface DocumentTaskCallbacks {
 }
 
 export interface PublishParams {
-  documentType: string;
+  documentType: number;
   companyId: string;
   documentData?: Record<string, unknown>;
   documentId?: string;
@@ -33,7 +33,15 @@ export interface PublishParams {
 export interface InvoiceApprovalParams {
   companyId: string;
   type: number;
-  documentData: Record<string, unknown>;
+  client: Record<string, unknown>;
+  items: Array<Record<string, unknown>>;
+  company?: Record<string, unknown>;
+  language?: string;
+  date?: string;
+  notes?: string;
+  jobData?: Record<string, unknown>;
+  jobsData?: Array<Record<string, unknown>>;
+  priceProposalId?: string;
 }
 
 export interface TaskData {

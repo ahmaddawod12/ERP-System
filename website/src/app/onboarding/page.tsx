@@ -31,6 +31,7 @@ const schema = z
     businessNumber: z.string().optional(),
     businessAddress: z.string().optional(),
     businessPhone: z.string().optional(),
+    businessType: z.string().optional(),
     joinCompanyId: z.string().optional(),
     inviteCode: z.string().optional(),
     language: z.enum(["en", "he", "ar"]),
@@ -58,6 +59,7 @@ const schema = z
       if (!value.businessNumber) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Business number is required", path: ["businessNumber"] });
       if (!value.businessAddress) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Address is required", path: ["businessAddress"] });
       if (!value.businessPhone) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Business phone is required", path: ["businessPhone"] });
+      if (!value.businessType) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Business type is required", path: ["businessType"] });
     }
 
     if (value.accountType === "business" && value.role === "Worker") {
@@ -141,7 +143,7 @@ export default function OnboardingPage() {
 
     if (step === 2) {
       if (role === "Manager") {
-        const ok = await trigger(["companyName", "businessNumber", "businessAddress", "businessPhone"]);
+        const ok = await trigger(["companyName", "businessNumber", "businessAddress", "businessPhone", "businessType"]);
         if (ok) setStep(3);
       } else if (role === "Worker") {
         const ok = await trigger(["joinCompanyId", "inviteCode"]);
@@ -199,10 +201,11 @@ export default function OnboardingPage() {
           accountType: values.accountType,
           name: values.name,
           phoneNumber: values.phoneNumber,
-          he_name: values.companyName ?? "",
+          // Solo users use their name as business name; managers use company form fields
+          he_name: values.accountType === "solo" ? values.name : (values.companyName ?? ""),
           en_name: "",
           vat_number: values.businessNumber ?? "",
-          business_type: "",
+          business_type: values.accountType === "solo" ? "solo" : (values.businessType ?? ""),
           city: "",
           address: values.businessAddress ?? "",
           business_phone: values.businessPhone ?? "",
@@ -303,6 +306,7 @@ export default function OnboardingPage() {
                       <Input label="Business Number" {...register("businessNumber")} error={errors.businessNumber?.message} />
                       <Input label="Address" {...register("businessAddress")} error={errors.businessAddress?.message} />
                       <Input label="Business Phone" {...register("businessPhone")} error={errors.businessPhone?.message} />
+                      <Input label="Business Type" placeholder="e.g. HVAC, Plumbing, Electrical" {...register("businessType")} error={errors.businessType?.message} />
                     </>
                   ) : null}
 

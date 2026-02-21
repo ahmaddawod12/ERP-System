@@ -81,10 +81,25 @@ export async function listWorkers(companyId: string): Promise<WorkerProfile[]> {
   return snap.docs.map((docSnap) => docSnap.data() as WorkerProfile);
 }
 
+/**
+ * Update worker role via manageWorker Cloud Function (admin-only rules block direct writes).
+ * Fetches the worker doc first to get the email (required by manageWorker).
+ */
 export async function updateWorkerRole(companyId: string, workerId: string, role: Role) {
-  await updateDoc(doc(db, "companies", companyId, "workers", workerId), {
+  // Get the worker's email from their worker doc
+  const workerSnap = await getDoc(doc(db, "companies", companyId, "workers", workerId));
+  const workerEmail = workerSnap.exists() ? (workerSnap.data() as WorkerProfile).email : "";
+
+  const manageWorkerFn = httpsCallable<
+    Record<string, unknown>,
+    { success: boolean }
+  >(functions, "manageWorker");
+  await manageWorkerFn({
+    action: "edit",
+    companyId,
+    workerUid: workerId,
+    email: workerEmail,
     role,
-    updatedAt: new Date().toISOString(),
   });
 }
 
@@ -93,12 +108,13 @@ export async function updateWorkerRole(companyId: string, workerId: string, role
 export async function listJobs(companyId: string, opts?: { role?: Role; uid?: string }) {
   let constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
   if (opts?.role === "Worker" && opts.uid) {
-    constraints = [where("workerId", "==", opts.uid), orderBy("createdAt", "desc")];
+    // Worker queries use completedBy (canonical field matching phone app + trigger)
+    constraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc")];
   }
   const pendingSnap = await getDocs(query(companyPendingJobsCollection(companyId), ...constraints));
   const finishedConstraints =
     opts?.role === "Worker" && opts.uid
-      ? [where("workerId", "==", opts.uid), orderBy("createdAt", "desc")]
+      ? [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc")]
       : [orderBy("createdAt", "desc")];
   const finishedSnap = await getDocs(query(companyFinishedJobsCollection(companyId), ...finishedConstraints));
 
@@ -135,21 +151,23 @@ export async function createFinishedJob(
 }
 
 export async function updateJob(companyId: string, jobId: string, payload: Partial<JobRecord>) {
-  const pendingRef = doc(db, "companies", companyId, "PendingJobs", jobId);
-  const pendingSnap = await getDoc(pendingRef);
-  if (!pendingSnap.exists()) return;
-
-  const merged = { ...pendingSnap.data(), ...payload, updatedAt: new Date().toISOString() };
-  await updateDoc(pendingRef, merged);
-
-  // When marking as finished, use acceptJobV1 Cloud Function for atomic move
+  // When marking as finished, ONLY use acceptJobV1 Cloud Function for atomic move.
+  // Never set status='finished' on the pending doc client-side (leaves invalid state if CF fails).
   if (payload.status === "finished") {
     const acceptJobFn = httpsCallable<
       Record<string, unknown>,
       { success: boolean; finishedJobId: string }
     >(functions, "acceptJobV1");
     await acceptJobFn({ companyId, jobId });
+    return;
   }
+
+  const pendingRef = doc(db, "companies", companyId, "PendingJobs", jobId);
+  const pendingSnap = await getDoc(pendingRef);
+  if (!pendingSnap.exists()) return;
+
+  const merged = { ...pendingSnap.data(), ...payload, updatedAt: new Date().toISOString() };
+  await updateDoc(pendingRef, merged);
 }
 
 /** Delete a job via deleteJobV1 Cloud Function (enforces isCert check). */

@@ -89,7 +89,7 @@ export interface JobRecord {
   clientEmail?: string;
   clientAddress?: string;
   clientId?: string;
-  status: "pending" | "waiting" | "denied" | "finished";
+  status: "pending" | "received" | "waiting" | "denied" | "finished";
   workerId: string | null;
   name?: string;
   MName?: string;

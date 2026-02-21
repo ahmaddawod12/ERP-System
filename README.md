@@ -36,7 +36,6 @@ companies/{companyId}/
   business_data/cache         → company cache version tracking
   workers/{uid}               → { workerId, uid, role, email, name, phoneNumber, createdAt }
   clients/{clientId}          → { numericId, name, email, phone, address, notes, ... }
-  counters/clients            → { lastNumber }   (auto-increment counter)
   PendingJobs/{p_XXXXX}       → active jobs      (p_ prefix IDs)
   finishedJobs/{f_XXXXX}      → completed jobs   (f_ prefix IDs)
   certifications/{c_XXXXX}    → generated docs   (c_ prefix IDs)
@@ -74,19 +73,24 @@ All functions are in `functions/index.js` (Firebase Functions v7, Node 22).
 | Function | Type | Region | Purpose |
 |----------|------|--------|---------|
 | `createClientV1` | onRequest | us-central1 | Idempotent client creation with auto-increment ID |
-| `generateDocumentV1` | onRequest | us-central1 | Queue document generation (optionally forwards to Cloud Run) |
+| `generateDocumentV1` | onRequest | us-central1 | **Deprecated** — legacy document generation (use Pub/Sub tasks) |
+| `publishPreviewTask` | onCall | us-central1 | Pub/Sub preview PDF task |
+| `publishGenerateTask` | onCall | us-central1 | Pub/Sub generate PDF task |
+| `getInvoiceApproval` | onCall | me-west1 | Tax Authority invoice approval + PDF task |
 | `createInvite` | onCall | us-central1 | Generate invite code for worker onboarding |
 | `joinCompanyWithInvite` | onCall | us-central1 | Worker joins company using invite code |
 | `onFinishedJobCreated` | Firestore trigger | us-central1 | Cleanup pending job on finish |
+| `onJobAssignTrigger` | Firestore trigger | us-central1 | Push notification on job assignment |
 | `sendNotification` | onCall | us-central1 | Push notifications via FCM |
 | `submitUpgradeRequest` | onCall | us-central1 | Submit subscription upgrade request |
-| `submitContactRequest` | onCall | us-central1 | Submit public contact form |
+| `contactRequestV1` | onRequest | us-central1 | Public contact form (rate-limited) |
 | `requestPermit` | onRequest | me-west1 | Israeli Tax Authority integration |
 | `fetchPermit` | onRequest | me-west1 | Israeli Tax Authority permit fetch |
 | `reportDocument` | onRequest | me-west1 | Report document to tax authority |
 | `updateProfileV1` | onCall | us-central1 | Update name/phoneNumber on profile |
 | `updatePushTokenV1` | onCall | us-central1 | Update FCM push token on profile |
 | `updateBusinessInfoV1` | onCall | us-central1 | Update business_info (except vat_number/document_numbers) |
+| `manageWorker` | onCall | us-central1 | Add/edit/remove workers (supports role changes) |
 | `deleteJobV1` | onCall | us-central1 | Delete pending or finished job (role-checked) |
 | `acceptJobV1` | onCall | us-central1 | Atomic: pending→finished + delete + deduct worker inventory |
 | `registerBusinessV1` | onCall | us-central1 | Atomic onboarding: profile + company + subscription + counters + inventory |

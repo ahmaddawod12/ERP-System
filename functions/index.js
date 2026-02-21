@@ -92,6 +92,35 @@ setGlobalOptions({
   region: "us-central1" // Change to your preferred region
 });
 
+// ── Simple in-memory rate limiter for unauthenticated endpoints ───────────
+const _rateLimitMap = new Map(); // key → { count, resetAt }
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 5;            // max requests per window per key
+
+/**
+ * Returns true if the caller identified by `key` has exceeded the rate limit.
+ * Call this at the top of public endpoints (e.g. contactRequestV1).
+ */
+function isRateLimited(key) {
+  const now = Date.now();
+  let entry = _rateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    _rateLimitMap.set(key, entry);
+    return false;
+  }
+  entry.count += 1;
+  if (entry.count > RATE_LIMIT_MAX) return true;
+  return false;
+}
+// Periodic cleanup so the map doesn't grow indefinitely
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _rateLimitMap) {
+    if (now > v.resetAt) _rateLimitMap.delete(k);
+  }
+}, 5 * 60_000);
+
 
 
 /**
@@ -820,8 +849,14 @@ exports.manageWorker = onCall(async (request) => {
 
     // ========== EDIT WORKER ==========
     if (action === 'edit') {
-      if (!newPassword && name === undefined && phoneNumber === undefined) {
+      if (!newPassword && name === undefined && phoneNumber === undefined && !request.data?.role) {
         throw new HttpsError('invalid-argument', 'At least one field must be provided for update');
+      }
+
+      // Validate role if provided
+      const newRole = request.data?.role ? toProfileRole(normalizeRole(request.data.role)) : null;
+      if (request.data?.role && !newRole) {
+        throw new HttpsError('invalid-argument', 'Invalid role value');
       }
 
       // Read worker profile (using UID-based path)
@@ -857,6 +892,9 @@ exports.manageWorker = onCall(async (request) => {
       if (phoneNumber !== undefined) {
         firestoreUpdates.phoneNumber = String(phoneNumber || '');
       }
+      if (newRole) {
+        firestoreUpdates.role = newRole;
+      }
       firestoreUpdates.email = normalizedEmail;
       firestoreUpdates.workerId = workerUid;
       const numericWorkerId = Number(workerId);
@@ -882,7 +920,7 @@ exports.manageWorker = onCall(async (request) => {
         updateData.Wid = numericWorkerId;
         updateData.wid = numericWorkerId;
       }
-      updateData.role = 'Worker';
+      updateData.role = newRole || 'Worker';
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
       if (name !== undefined) {
         updateData.name = String(name || '').trim();
@@ -1329,7 +1367,8 @@ exports.requestUpgradeV1 = onRequest({
 
 /**
  * HTTP Function: generateDocumentV1
- * Canonical privileged endpoint for queueing website document generation.
+ * @deprecated Legacy endpoint — use publishPreviewTask/publishGenerateTask (Pub/Sub) instead.
+ * Restricted to manager/dev roles only for backward compatibility.
  */
 exports.generateDocumentV1 = onRequest({
   region: "us-central1",
@@ -1347,11 +1386,16 @@ exports.generateDocumentV1 = onRequest({
     const type = requireNonEmptyString(body.type, 'type', 2, 100);
     const jobId = optionalTrimmedString(body.jobId, 120) || 'manual';
 
+    // S3: Restricted to manager/dev only (previously open to all app roles)
     await assertHttpCompanyAccess({
       uid: auth.uid,
       companyId,
-      allowedRoles: HTTP_ALL_APP_ROLES,
+      allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
       allowSoloScope: true,
+    });
+
+    logger.warn('generateDocumentV1: Legacy endpoint called — migrate to Pub/Sub pipeline', {
+      uid: auth.uid, companyId, type,
     });
 
     const certificationsRef = admin.firestore()
@@ -1421,6 +1465,7 @@ exports.generateDocumentV1 = onRequest({
 /**
  * HTTP Function: contactRequestV1
  * Canonical endpoint for public contact submissions.
+ * Rate-limited per IP (S6).
  */
 exports.contactRequestV1 = onRequest({
   region: "us-central1",
@@ -1428,6 +1473,12 @@ exports.contactRequestV1 = onRequest({
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  // S6: IP-based rate limiting
+  const clientIp = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  if (isRateLimited(`contact_${clientIp}`)) {
+    return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
 
   try {
@@ -2564,7 +2615,7 @@ exports.getInvoiceApproval = onCall({
         error: error.message,
         code: error.code,
         status: error.response?.status,
-        responseData: error.response?.data,
+        responseKeys: error.response?.data ? Object.keys(error.response.data) : [],
         totalTime
       });
       
@@ -2572,8 +2623,7 @@ exports.getInvoiceApproval = onCall({
         'internal',
         `Failed to submit invoice after retries: ${error.message}`,
         {
-          status: error.response?.status,
-          responseData: error.response?.data
+          status: error.response?.status
         }
       );
     }
@@ -2586,7 +2636,7 @@ exports.getInvoiceApproval = onCall({
       statusText: response.statusText,
       apiTime,
       totalTime,
-      responseData: response.data
+      responseKeys: response.data ? Object.keys(response.data) : []
     });
 
     // Handle 400, 406, and 422 errors with error message from response
@@ -2601,7 +2651,6 @@ exports.getInvoiceApproval = onCall({
       logger.warn('Tax Authority rejected invoice with validation error', {
         status: response.status,
         errorMessage,
-        responseData: response.data,
         invoiceId: documentId
       });
       
@@ -2610,7 +2659,6 @@ exports.getInvoiceApproval = onCall({
         `${errorMessage} (Status: ${response.status})${response.data?.errors ? '\nErrors: ' + JSON.stringify(response.data.errors) : ''}`,
         {
           status: response.status,
-          responseData: response.data,
           invoice_id: documentId
         }
       );
@@ -2625,9 +2673,7 @@ exports.getInvoiceApproval = onCall({
       logger.error('Tax Authority returned error status', {
         status: response.status,
         errorMessage,
-        responseData: response.data,
-        responseDataType: typeof response.data,
-        responseDataKeys: response.data ? Object.keys(response.data) : []
+        responseKeys: response.data ? Object.keys(response.data) : []
       });
       
       throw new HttpsError(
@@ -3831,6 +3877,13 @@ exports.acceptJobV1 = onCall(async (request) => {
 
     const jobData = pendingSnap.data();
 
+    // Validate source status — only accept from valid transition states
+    const validSourceStatuses = ['pending', 'received', 'waiting'];
+    if (jobData.status && !validSourceStatuses.includes(jobData.status)) {
+      throw new HttpsError('failed-precondition',
+        `Cannot accept job with status "${jobData.status}". Expected: ${validSourceStatuses.join(', ')}`);
+    }
+
     // Determine finished job ID
     const fJobId = finishedJobId || (jobId.startsWith('p_') ? `f_${jobId.slice(2)}` : `f_${jobId}`);
     const finishedRef = dbRef.doc(`companies/${companyId}/finishedJobs/${fJobId}`);
@@ -3936,10 +3989,18 @@ exports.registerBusinessV1 = onCall(async (request) => {
   const phoneNumber = typeof data.phoneNumber === 'string' ? data.phoneNumber.trim() : '';
 
   // Validate business info fields
-  const heName = requireNonEmptyString(data.he_name || '', 'he_name', 1, 200);
+  // Solo users (User/Basic) don't require business fields; managers do.
+  const isSoloRole = (role === 'user' || role === 'basic');
+  const heName = isSoloRole
+    ? optionalTrimmedString(data.he_name || data.name || '', 200)
+    : requireNonEmptyString(data.he_name || '', 'he_name', 1, 200);
   const enName = optionalTrimmedString(data.en_name || '', 200);
-  const vatNumber = requireNonEmptyString(data.vat_number || '', 'vat_number', 1, 50);
-  const businessType = requireNonEmptyString(data.business_type || '', 'business_type', 1, 100);
+  const vatNumber = isSoloRole
+    ? optionalTrimmedString(data.vat_number || '', 50)
+    : requireNonEmptyString(data.vat_number || '', 'vat_number', 1, 50);
+  const businessType = isSoloRole
+    ? optionalTrimmedString(data.business_type || 'solo', 100)
+    : requireNonEmptyString(data.business_type || '', 'business_type', 1, 100);
   const city = optionalTrimmedString(data.city || '', 200);
   const address = optionalTrimmedString(data.address || '', 500);
 
@@ -4071,10 +4132,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
       updatedAt: now,
     });
 
-    // 7. Counters
-    batch.set(dbRef.doc(`companies/${companyId}/counters/clients`), { lastNumber: 0 }, { merge: true });
-
-    // 8. Empty inventory
+    // 7. Empty inventory (client counter uses cid on company root doc)
     batch.set(dbRef.doc(`companies/${companyId}/business_data/inventory`), {
       parts: [],
       nextId: 1,
@@ -4120,10 +4178,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
       updatedAt: now,
     });
 
-    // Counters
-    batch.set(dbRef.doc(`companies/${uid}/counters/clients`), { lastNumber: 0 }, { merge: true });
-
-    // Empty inventory
+    // Empty inventory (client counter uses cid on company root doc)
     batch.set(dbRef.doc(`companies/${uid}/business_data/inventory`), {
       parts: [],
       nextId: 1,

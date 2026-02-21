@@ -27,9 +27,9 @@ const { v4: uuidv4 } = require('uuid');
 // Email service for document delivery
 const { getEmailServiceInstance, getDocumentTitle } = require('./emailService');
 
-// Initialize Firebase Admin with storage bucket
+// Initialize Firebase Admin with storage bucket (prefer env var over hardcoded default)
 admin.initializeApp({
-  storageBucket: 'cooling-inventory-5be04.firebasestorage.app'
+  storageBucket: process.env.STORAGE_BUCKET || 'cooling-inventory-5be04.firebasestorage.app'
 });
 const db = admin.firestore();
 const storage = admin.storage();
@@ -131,7 +131,10 @@ const generateDocumentHTML = require('./htmlTemplate');
 
 /**
  * Request verification for Pub/Sub push endpoints.
- * Requires PUBSUB_VERIFICATION_TOKEN to be configured on the service.
+ * S4: Uses PUBSUB_VERIFICATION_TOKEN for request authentication.
+ * In production, also enforce Cloud Run IAM invoker restriction and
+ * configure Pub/Sub to use OIDC JWT authentication.
+ * The query-token fallback is removed — only header token is accepted.
  */
 function verifyPubSubRequest(req, res, next) {
   if (!PUBSUB_VERIFICATION_TOKEN) {
@@ -139,9 +142,13 @@ function verifyPubSubRequest(req, res, next) {
     return res.status(503).send('Service misconfigured');
   }
 
-  const token = String(req.headers['x-pubsub-token'] || req.query.token || '').trim();
+  // Only accept token from header (not query string) to reduce leakage risk
+  const token = String(req.headers['x-pubsub-token'] || '').trim();
   if (token !== PUBSUB_VERIFICATION_TOKEN) {
-    console.warn('Rejected unauthenticated Pub/Sub request');
+    console.warn('Rejected unauthenticated Pub/Sub request', {
+      hasHeader: !!req.headers['x-pubsub-token'],
+      ip: req.ip,
+    });
     return res.status(401).send('Unauthorized');
   }
 
@@ -332,15 +339,17 @@ async function processGenerateTask(taskData) {
     }
 
     // Resolve requester role/company from Firestore, never from Pub/Sub payload.
-    const requesterProfileSnap = await db.doc(`${uid}/profile`).get();
+    // Canonical path: users/{uid}/data/profile
+    const requesterProfileSnap = await db.doc(`users/${uid}/data/profile`).get();
     if (!requesterProfileSnap.exists) {
       throw new Error(`Requester profile not found for uid: ${uid}`);
     }
     const requesterProfile = requesterProfileSnap.data() || {};
-    userRole = requesterProfile.role;
+    // Normalize role to lowercase for comparison (backend writes TitleCase)
+    userRole = (requesterProfile.role || '').toLowerCase();
 
-    if (!['manager', 'user', 'basic'].includes(userRole)) {
-      throw new Error(`Role not authorized for document generation: ${userRole || 'unknown'}`);
+    if (!['manager', 'user', 'basic', 'dev'].includes(userRole)) {
+      throw new Error(`Role not authorized for document generation: ${requesterProfile.role || 'unknown'}`);
     }
     if (!requesterProfile.companyId || requesterProfile.companyId !== companyId) {
       throw new Error('Requester company mismatch');
@@ -492,12 +501,12 @@ async function processGenerateTask(taskData) {
     
     // Determine cache path based on user role
     // Manager: companies/{companyId}/business_data/cache
-    // User/Basic: {uid}/cache
+    // User/Basic: users/{uid}/data/cache
     const getCachePath = () => {
       if (userRole === 'manager') {
         return `companies/${companyId}/business_data/cache`;
       } else {
-        return `${uid}/cache`;
+        return `users/${uid}/data/cache`;
       }
     };
     const cachePath = getCachePath();

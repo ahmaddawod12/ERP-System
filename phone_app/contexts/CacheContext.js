@@ -1156,6 +1156,12 @@ export function CacheProvider({ children }) {
           saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
         }
         
+        // Normalize role to lowercase for consistent comparisons across the app
+        // Backend writes TitleCase (Manager, Worker, User, Basic, Dev)
+        if (role && typeof role === 'string') {
+          role = role.toLowerCase();
+        }
+
         // Save metadata to local cache
         if (uid) mmkvHelpers.setString(CACHE_KEYS.UID, uid);
         if (role) mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, role);

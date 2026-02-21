@@ -63,7 +63,7 @@ async function seed() {
         business_type: "HVAC",
         business_email: "info@demohvac.example.com",
         business_phone: "+1-555-0100",
-        document_numbers: { tax_invoice: 1, receipt: 1, work_order: 1, price_offer: 1 },
+        document_numbers: { 305: 1, 400: 1, 330: 1, 210: 1, 10: 1, 200: 1 },
       },
       { merge: true },
     );

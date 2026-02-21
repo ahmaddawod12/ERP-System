@@ -11,40 +11,51 @@ service firebase.storage {
     function getUid() {
       return request.auth.uid;
     }
+
+    // Canonical profile path: users/{uid}/data/profile
+    function profilePath(uid) {
+      return /databases/(default)/documents/users/$(uid)/data/profile;
+    }
+
+    function profileExists(uid) {
+      return firestore.exists(profilePath(uid));
+    }
+
+    function getProfile(uid) {
+      return firestore.get(profilePath(uid)).data;
+    }
     
     // Helper function to check if user is a manager with access to worker's data
     function isManagerOfWorker(workerId) {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
-             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.role == 'manager' &&
-             firestore.exists(/databases/(default)/documents/$(workerId)/profile) &&
-             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
-             'companyId' in firestore.get(/databases/(default)/documents/$(getUid())/profile).data &&
-             'companyId' in firestore.get(/databases/(default)/documents/$(workerId)/profile).data &&
-             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.companyId == 
-             firestore.get(/databases/(default)/documents/$(workerId)/profile).data.companyId;
+             profileExists(getUid()) &&
+             getProfile(getUid()).role in ['Manager', 'Dev'] &&
+             profileExists(workerId) &&
+             'companyId' in getProfile(getUid()) &&
+             'companyId' in getProfile(workerId) &&
+             getProfile(getUid()).companyId == getProfile(workerId).companyId;
     }
     
     // Helper function to check if user is a standard user (not manager or worker)
     function isUser() {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
-             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.role == 'user';
+             profileExists(getUid()) &&
+             getProfile(getUid()).role == 'User';
     }
     
     // Helper function to check if user is a manager
     function isManager() {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
-             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.role == 'manager';
+             profileExists(getUid()) &&
+             getProfile(getUid()).role in ['Manager', 'Dev'];
     }
     
     // Helper function to check if user owns the company
     function ownsCompany(companyId) {
       return isAuthenticated() && 
-             firestore.exists(/databases/(default)/documents/$(getUid())/profile) &&
-             'companyId' in firestore.get(/databases/(default)/documents/$(getUid())/profile).data &&
-             firestore.get(/databases/(default)/documents/$(getUid())/profile).data.companyId == companyId;
+             profileExists(getUid()) &&
+             'companyId' in getProfile(getUid()) &&
+             getProfile(getUid()).companyId == companyId;
     }
     
     // User job photos and signatures

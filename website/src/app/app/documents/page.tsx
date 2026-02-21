@@ -239,8 +239,13 @@ export default function DocumentsPage() {
     return null;
   }, [clientData, docType, items]);
 
-  /* ── Get the document type key expected by Cloud Functions ── */
-  const getDocumentTypeKey = useCallback(() => {
+  /* ── Get the numeric document type code expected by Cloud Functions ── */
+  const getDocumentTypeCode = useCallback((): number => {
+    return docType;
+  }, [docType]);
+
+  /** @deprecated use getDocumentTypeCode — kept only for reference */
+  const _getDocumentTypeKeyLegacy = useCallback(() => {
     switch (docType) {
       case 10: return "priceProposal";
       case 200: return "deliveryNote";
@@ -263,7 +268,7 @@ export default function DocumentsPage() {
 
     try {
       await publishPreview({
-        documentType: getDocumentTypeKey(),
+        documentType: getDocumentTypeCode(),
         companyId: companyScopeId,
         documentData: buildDocumentData(),
       });
@@ -286,10 +291,16 @@ export default function DocumentsPage() {
     if (docType === 305) {
       // Tax Invoice → getInvoiceApproval on me-west1
       try {
+        const docData = buildDocumentData();
         const result = await getInvoiceApproval({
           companyId: companyScopeId,
           type: 305,
-          documentData: buildDocumentData(),
+          // Spread top-level fields as backend expects (not nested under documentData)
+          client: docData.client as Record<string, unknown>,
+          items: docData.items as Array<Record<string, unknown>>,
+          language: docData.language as string,
+          date: docData.date as string,
+          notes: docData.notes as string,
         });
         if (result.confirmation_number) {
           setConfirmationNumber(result.confirmation_number);
@@ -306,7 +317,7 @@ export default function DocumentsPage() {
       // Non-tax-invoice → publishGenerateTask
       try {
         await publishGenerate({
-          documentType: getDocumentTypeKey(),
+          documentType: getDocumentTypeCode(),
           companyId: companyScopeId,
           documentData: buildDocumentData(),
         });

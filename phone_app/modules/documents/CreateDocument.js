@@ -930,12 +930,16 @@ export default function CreateDocument() {
         throw new Error(approvalResult.data.error || 'Tax Authority did not approve the invoice');
       }
 
-      const { documentId, taskId, invoiceNumber, confirmationNumber } = approvalResult.data;
+      const { documentId, pdfTaskId, taskId: legacyTaskId, invoiceNumber, confirmation_number, confirmationNumber: legacyConfNum } = approvalResult.data;
+
+      // Use canonical keys with legacy fallbacks
+      const resolvedTaskId = pdfTaskId || legacyTaskId;
+      const resolvedConfirmation = confirmation_number || legacyConfNum;
 
       // Listen to PDF generation task
-      if (taskId) {
-        console.log('📄 Listening to PDF generation task:', taskId);
-        listenToTask(taskId, 'generate');
+      if (resolvedTaskId) {
+        console.log('📄 Listening to PDF generation task:', resolvedTaskId);
+        listenToTask(resolvedTaskId, 'generate');
         // Keep loading state active - will be cleared by onGenerateComplete or onError
       } else {
         // No PDF task - approval completed but no PDF generation
@@ -947,7 +951,7 @@ export default function CreateDocument() {
         setTimeout(() => {
           showSuccessMessage(
             t.successTitle,
-            `Tax invoice approved!\nDocument ID: ${documentId}\nConfirmation: ${confirmationNumber || 'N/A'}`,
+            `Tax invoice approved!\nDocument ID: ${documentId}\nConfirmation: ${resolvedConfirmation || 'N/A'}`,
             [
               {
                 text: t.done,

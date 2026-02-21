@@ -138,57 +138,45 @@ async function migrateCompanies(params) {
     const company = companyRef.id;
     stats.companiesVisited += 1;
 
-    // 1) Legacy company inventory doc -> canonical parts collection.
+    // 1) Legacy company inventory -> canonical single-doc model (parts array).
+    //    Canonical path: companies/{companyId}/business_data/inventory = { parts: [...], nextId, lastUpdated }
+    //    NOTE: This script was previously writing to a subcollection model which contradicts
+    //    the canonical app types. It now writes/ensures the single-doc format.
     const legacyInventoryRef = companyRef.collection("business_data").doc("inventory");
     const legacyInventorySnap = await legacyInventoryRef.get();
-    const legacyParts = Array.isArray(legacyInventorySnap.data()?.parts)
-      ? legacyInventorySnap.data().parts
+    const existingData = legacyInventorySnap.data() || {};
+    const legacyParts = Array.isArray(existingData.parts)
+      ? existingData.parts
       : [];
 
     if (legacyParts.length > 0) {
-      let maxPartNumber = 0;
-      for (let i = 0; i < legacyParts.length; i += 1) {
-        const part = legacyParts[i] || {};
+      // Ensure parts have proper shape (id, name, active, dateAdded)
+      let maxId = 0;
+      const normalizedParts = legacyParts.map((part, i) => {
         const partName = String(part.name || "").trim();
-        if (!partName) continue;
-        const partId = legacyPartDocId(part, i);
-        const partNumber = partNumberFromLegacy(part, i);
-        maxPartNumber = Math.max(maxPartNumber, partNumber);
-        const canonicalPartRef = companyRef
-          .collection("business_data")
-          .doc("inventory")
-          .collection("parts")
-          .doc(partId);
+        if (!partName) return null;
+        const id = typeof part.id === "number" ? part.id : i + 1;
+        maxId = Math.max(maxId, id);
+        return {
+          id,
+          name: partName,
+          active: part.active !== false,
+          quantity: Number(part.quantity || 0),
+          lowThreshold: Number(part.lowThreshold || 0),
+          dateAdded: part.dateAdded || part.createdAt || nowIso,
+        };
+      }).filter(Boolean);
 
-        await queueSet(
-          canonicalPartRef,
-          {
-            partId,
-            partNumber,
-            name: partName,
-            active: part.active !== false,
-            quantity: Number(part.quantity || 0),
-            lowThreshold: Number(part.lowThreshold || 0),
-            createdAt: part.dateAdded || part.createdAt || nowIso,
-            updatedAt: nowIso,
-            migratedFrom: "legacy_business_data_inventory_doc",
-          },
-          { merge: true },
-        );
-        stats.inventoryPartsWritten += 1;
-      }
-
-      if (maxPartNumber > 0) {
-        await queueSet(
-          companyRef.collection("counters").doc("inventory_parts"),
-          {
-            lastNumber: maxPartNumber,
-            updatedAt: nowIso,
-            migratedFrom: "legacy_business_data_inventory_doc",
-          },
-          { merge: true },
-        );
-      }
+      await queueSet(
+        legacyInventoryRef,
+        {
+          parts: normalizedParts,
+          nextId: maxId + 1,
+          lastUpdated: nowIso,
+        },
+        { merge: false },
+      );
+      stats.inventoryPartsWritten += normalizedParts.length;
     }
 
     // 2) Worker docs -> canonical UID-keyed worker docs + user profiles.

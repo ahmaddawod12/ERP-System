@@ -50,7 +50,11 @@ async function loadUserProfile(uid: string) {
     return { profile: null, subscription: null };
   }
 
-  const companyIdForSubscription = profile.companyId ?? uid;
+  const companyIdForSubscription = profile.companyId?.trim() ?? "";
+  if (!companyIdForSubscription) {
+    return { profile, subscription: null };
+  }
+
   const subscriptionRef = doc(db, "companies", companyIdForSubscription, "business_data", "subscription");
   const subscriptionSnap = await getDoc(subscriptionRef);
 

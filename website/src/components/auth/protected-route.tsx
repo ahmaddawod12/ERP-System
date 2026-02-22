@@ -22,7 +22,7 @@ export function ProtectedRoute({ section, children }: ProtectedRouteProps) {
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
       return;
     }
-    if (!profile) {
+    if (!profile || (!profile.companyId && profile.role !== "dev")) {
       router.replace("/onboarding");
       return;
     }
@@ -32,7 +32,7 @@ export function ProtectedRoute({ section, children }: ProtectedRouteProps) {
     }
   }, [loading, pathname, profile, router, section, subscription?.tier, user]);
 
-  if (loading || !user || !profile) {
+  if (loading || !user || !profile || (!profile.companyId && profile.role !== "dev")) {
     return <LoadingState label="Checking access..." />;
   }
 
@@ -44,4 +44,3 @@ export function ProtectedRoute({ section, children }: ProtectedRouteProps) {
 
   return <>{children}</>;
 }
-

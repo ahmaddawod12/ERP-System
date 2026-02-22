@@ -19,7 +19,11 @@ export default function InventoryPicksPage() {
   const [quantities, setQuantities] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
-    if (!companyId) return;
+    if (!companyId) {
+      setParts([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const inv = await getCompanyInventory(companyId);
     // Only show active parts for worker picking

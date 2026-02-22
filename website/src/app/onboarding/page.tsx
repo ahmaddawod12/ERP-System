@@ -10,7 +10,6 @@ import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import type { Locale } from "@/lib/i18n/translations";
-import type { Role } from "@/lib/types";
 import { useAuth } from "@/hooks/use-auth";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
@@ -64,6 +63,13 @@ const schema = z
 
     if (value.accountType === "business" && value.role === "worker") {
       if (!value.joinCompanyId) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "companyId is required", path: ["joinCompanyId"] });
+      if (value.joinCompanyId && !/^\d+$/.test(value.joinCompanyId.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "companyId must be numeric",
+          path: ["joinCompanyId"],
+        });
+      }
       if (!value.inviteCode) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invite code is required", path: ["inviteCode"] });
     }
   });
@@ -158,9 +164,6 @@ export default function OnboardingPage() {
     if (!user || !user.email) return;
 
     try {
-      let companyId: string | null = null;
-      let joinedRole: Role | null = null;
-
       if (values.accountType === "business" && values.role === "worker") {
         // Workers join via invite — this is still handled server-side
         const response = await fetch("/api/onboarding/join-company", {
@@ -173,7 +176,7 @@ export default function OnboardingPage() {
                 role: "worker",
                 name: values.name,
                 phoneNumber: values.phoneNumber,
-                companyId: values.joinCompanyId,
+                companyId: values.joinCompanyId?.trim(),
                 inviteCode: values.inviteCode,
               },
               user.uid,
@@ -187,8 +190,6 @@ export default function OnboardingPage() {
         if (!response.ok || !data.ok || !data.data.companyId) {
           throw new Error(getClientApiErrorMessage(data, "Invite validation failed"));
         }
-        companyId = data.data.companyId;
-        joinedRole = data.data.role;
       } else {
         // manager or solo user — use registerBusinessV1 Cloud Function
         const registerFn = httpsCallable<
@@ -196,7 +197,7 @@ export default function OnboardingPage() {
           { success: boolean; companyId: string; role: string; tier: string }
         >(functions, "registerBusinessV1");
 
-        const result = await registerFn({
+        await registerFn({
           role: values.accountType === "solo" ? "user" : values.role,
           accountType: values.accountType,
           name: values.name,
@@ -210,8 +211,6 @@ export default function OnboardingPage() {
           address: values.businessAddress ?? "",
           business_phone: values.businessPhone ?? "",
         });
-
-        companyId = result.data.companyId;
       }
 
       setLocale(values.language as Locale);
@@ -312,7 +311,7 @@ export default function OnboardingPage() {
 
                   {role === "worker" ? (
                     <>
-                      <Input label="Company ID" {...register("joinCompanyId")} error={errors.joinCompanyId?.message} />
+                      <Input label="Company ID (numbers only)" {...register("joinCompanyId")} error={errors.joinCompanyId?.message} />
                       <Input label="Invite Code" {...register("inviteCode")} error={errors.inviteCode?.message} />
                     </>
                   ) : null}

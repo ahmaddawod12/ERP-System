@@ -77,7 +77,7 @@ upgrade_requests/{id}                                 → upgrade request ticket
 documentTasks/{taskId}                                → Pub/Sub task tracking (preview/generate)
 ```
 
-**Solo users**: `companyId = uid` — all data under `companies/{uid}/*`.
+**Company IDs**: `companyId` is backend-assigned (sequential numeric string, e.g. `1`, `2`, `3`) and is never derived from `uid`.
 
 ### Job Status Flow
 

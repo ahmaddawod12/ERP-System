@@ -37,7 +37,7 @@ const initialState: JobFormState = {
 };
 
 export default function JobsPage() {
-  const { uid, companyId, role } = useAppContext();
+  const { uid, companyId, role, profile } = useAppContext();
   const { toast } = useAppToast();
   const [form, setForm] = useState<JobFormState>(initialState);
   const [pendingJobs, setPendingJobs] = useState<JobRecord[]>([]);
@@ -45,9 +45,9 @@ export default function JobsPage() {
   const [workers, setWorkers] = useState<WorkerProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
+  const scopeId = resolveCompanyScope(companyId);
   const canManageCompanyJobs = role === "manager" || role === "dev";
-  const isSoloUser = role === "user" && (!companyId || companyId === uid);
+  const isSoloUser = role === "user" && profile?.accountType === "solo";
 
   const workerNameMap = useMemo(
     () => Object.fromEntries(workers.map((worker) => [worker.workerId, worker.name || worker.email])),
@@ -55,17 +55,23 @@ export default function JobsPage() {
   );
 
   const loadJobs = useCallback(async () => {
-    if (!scopeId) return;
+    if (!scopeId) {
+      setPendingJobs([]);
+      setFinishedJobs([]);
+      setWorkers([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const [jobsResult, workersResult] = await Promise.all([
       listJobs(scopeId, { role: role ?? undefined, uid: uid ?? undefined }),
-      companyId ? listWorkers(companyId) : Promise.resolve([]),
+      canManageCompanyJobs ? listWorkers(scopeId) : Promise.resolve([]),
     ]);
     setPendingJobs(jobsResult.pending);
     setFinishedJobs(jobsResult.finished);
     setWorkers(workersResult);
     setLoading(false);
-  }, [scopeId, companyId, role, uid]);
+  }, [scopeId, canManageCompanyJobs, role, uid]);
 
   useEffect(() => {
     void loadJobs();
@@ -139,15 +145,15 @@ export default function JobsPage() {
       <section className="grid gap-4">
         <Card>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
-            {companyId ? "Company Jobs" : "My Jobs"}
+            {isSoloUser ? "My Jobs" : "Company Jobs"}
           </h1>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            {companyId
-              ? "Manage pending and completed jobs, worker assignments, and status updates."
-              : "Create and manage your job workflow."}
+            {isSoloUser
+              ? "Create and manage your job workflow."
+              : "Manage pending and completed jobs, worker assignments, and status updates."}
           </p>
 
-          {(companyId ? canManageCompanyJobs : true) ? (
+          {(isSoloUser || canManageCompanyJobs) ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <Input
                 label="Job title"
@@ -170,7 +176,7 @@ export default function JobsPage() {
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
                 />
               </label>
-              {companyId && canManageCompanyJobs ? (
+              {canManageCompanyJobs ? (
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Assign worker</span>
                   <select
@@ -199,7 +205,7 @@ export default function JobsPage() {
         {!loading && pendingJobs.length === 0 && finishedJobs.length === 0 ? (
           <EmptyState
             title="No jobs yet"
-            description={companyId ? "Create your first company job above." : "Add your first job to get started."}
+            description={isSoloUser ? "Add your first job to get started." : "Create your first company job above."}
           />
         ) : null}
 
@@ -239,7 +245,7 @@ export default function JobsPage() {
                     header: "Actions",
                     render: (row) => (
                       <div className="flex flex-wrap gap-2">
-                        {companyId && canManageCompanyJobs ? (
+                        {canManageCompanyJobs ? (
                           <select
                             defaultValue={row.workerId ?? ""}
                             onChange={(event) => {
@@ -269,7 +275,7 @@ export default function JobsPage() {
                           <option value="finished">finished</option>
                           <option value="denied">denied</option>
                         </select>
-                        {!companyId ? (
+                        {isSoloUser ? (
                           <Button size="sm" variant="danger" onClick={() => void removeJob(row.id)}>
                             Delete
                           </Button>

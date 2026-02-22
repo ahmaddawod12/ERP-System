@@ -37,18 +37,22 @@ const initialForm: ClientForm = {
 };
 
 export default function ClientsPage() {
-  const { uid, companyId, role } = useAppContext();
+  const { companyId, role } = useAppContext();
   const { toast } = useAppToast();
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<ClientForm>(initialForm);
   const [editing, setEditing] = useState<ClientRecord | null>(null);
 
-  const scopeId = uid ? resolveCompanyScope(companyId, uid) : null;
+  const scopeId = resolveCompanyScope(companyId);
   const canMutate = role !== "worker";
 
   const load = useCallback(async () => {
-    if (!scopeId) return;
+    if (!scopeId) {
+      setClients([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setClients(await listClients(scopeId));
     setLoading(false);

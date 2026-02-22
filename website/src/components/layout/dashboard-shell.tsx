@@ -106,7 +106,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       router.replace(`/login${redirect}`);
       return;
     }
-    if (!profile) {
+    if (!profile || (!profile.companyId && profile.role !== "dev")) {
       router.replace("/onboarding");
     }
   }, [loading, pathname, profile, router, user]);
@@ -115,7 +115,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return <LoadingState label="Preparing dashboard..." />;
   }
 
-  if (!user || !profile) {
+  if (!user || !profile || (!profile.companyId && profile.role !== "dev")) {
     return <LoadingState label="Redirecting..." />;
   }
 

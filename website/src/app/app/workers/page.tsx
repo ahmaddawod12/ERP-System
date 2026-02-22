@@ -23,7 +23,11 @@ export default function WorkersPage() {
   const [inviteCode, setInviteCode] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!companyId) return;
+    if (!companyId) {
+      setWorkers([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const result = await listWorkers(companyId);
     setWorkers(result);

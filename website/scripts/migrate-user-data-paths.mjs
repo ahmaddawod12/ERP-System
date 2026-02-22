@@ -56,11 +56,11 @@ async function migrateUserSubcollectionDocs(db) {
 
     const batch = db.batch();
     let hasChanges = false;
-    let companyIdForSubscription = uid;
+    let companyIdForSubscription = "";
 
     if (oldProfile.exists) {
       const profileData = oldProfile.data() || {};
-      companyIdForSubscription = profileData.companyId || uid;
+      companyIdForSubscription = typeof profileData.companyId === "string" ? profileData.companyId.trim() : "";
       batch.set(
         db.collection("users").doc(uid).collection("data").doc("profile"),
         profileData,
@@ -73,21 +73,28 @@ async function migrateUserSubcollectionDocs(db) {
       if (!oldProfile.exists) {
         const newProfileSnap = await db.collection("users").doc(uid).collection("data").doc("profile").get();
         const newProfileData = newProfileSnap.exists ? newProfileSnap.data() || {} : {};
-        companyIdForSubscription = newProfileData.companyId || uid;
+        companyIdForSubscription = typeof newProfileData.companyId === "string" ? newProfileData.companyId.trim() : "";
       }
-      batch.set(
-        db.collection("companies").doc(companyIdForSubscription).collection("business_data").doc("subscription"),
-        oldSubscription.data(),
-        { merge: true },
-      );
-      hasChanges = true;
+
+      if (!companyIdForSubscription) {
+        console.warn(
+          `skipped users/${uid}/subscription/data migration: missing companyId on profile`,
+        );
+      } else {
+        batch.set(
+          db.collection("companies").doc(companyIdForSubscription).collection("business_data").doc("subscription"),
+          oldSubscription.data(),
+          { merge: true },
+        );
+        hasChanges = true;
+      }
     }
 
     if (hasChanges) {
       await batch.commit();
       migrated += 1;
       console.log(`migrated users/${uid}/profile/data -> users/${uid}/data/profile`);
-      if (oldSubscription.exists) {
+      if (oldSubscription.exists && companyIdForSubscription) {
         console.log(
           `migrated users/${uid}/subscription/data -> companies/${companyIdForSubscription}/business_data/subscription`,
         );
@@ -118,10 +125,10 @@ async function migrateLegacyTopLevelUidCollections(db) {
     }
 
     const batch = db.batch();
-    let companyIdForSubscription = uid;
+    let companyIdForSubscription = "";
     if (legacyProfile.exists) {
       const profileData = legacyProfile.data() || {};
-      companyIdForSubscription = profileData.companyId || uid;
+      companyIdForSubscription = typeof profileData.companyId === "string" ? profileData.companyId.trim() : "";
       batch.set(
         db.collection("users").doc(uid).collection("data").doc("profile"),
         profileData,
@@ -136,11 +143,17 @@ async function migrateLegacyTopLevelUidCollections(db) {
       );
     }
     if (legacySubscription.exists) {
-      batch.set(
-        db.collection("companies").doc(companyIdForSubscription).collection("business_data").doc("subscription"),
-        legacySubscription.data(),
-        { merge: true },
-      );
+      if (!companyIdForSubscription) {
+        console.warn(
+          `skipped legacy ${uid}/subscription migration: missing companyId on profile`,
+        );
+      } else {
+        batch.set(
+          db.collection("companies").doc(companyIdForSubscription).collection("business_data").doc("subscription"),
+          legacySubscription.data(),
+          { merge: true },
+        );
+      }
     }
     if (legacyInventory.exists) {
       batch.set(

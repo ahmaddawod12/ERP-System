@@ -49,10 +49,10 @@ const emptyItem = (): DocumentItem => ({ description: "", price: 0, quantity: 1 
 type ViewMode = "history" | "create";
 
 export default function DocumentsPage() {
-  const { uid, companyId, role } = useAppContext();
+  const { companyId } = useAppContext();
   const { toast } = useAppToast();
 
-  const companyScopeId = uid ? resolveCompanyScope(companyId, uid) : null;
+  const companyScopeId = resolveCompanyScope(companyId);
 
   /* ── History state ── */
   const [records, setRecords] = useState<CertificationRecord[]>([]);
@@ -125,7 +125,11 @@ export default function DocumentsPage() {
   /* ── Load data ── */
 
   const loadRecords = useCallback(async () => {
-    if (!companyScopeId) return;
+    if (!companyScopeId) {
+      setRecords([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const result = await listCertifications(companyScopeId);
@@ -137,7 +141,10 @@ export default function DocumentsPage() {
   }, [companyScopeId]);
 
   const loadClients = useCallback(async () => {
-    if (!companyScopeId) return;
+    if (!companyScopeId) {
+      setClients([]);
+      return;
+    }
     try {
       setClients(await listClients(companyScopeId));
     } catch {

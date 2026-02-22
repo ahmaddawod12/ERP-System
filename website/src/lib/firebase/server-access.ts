@@ -5,7 +5,6 @@ import type { Role, UserProfile } from "@/lib/types";
 export interface CompanyAccessResult {
   profile: UserProfile;
   role: Role;
-  soloScope: boolean;
 }
 
 const APP_ROLES = new Set<Role>(["manager", "worker", "user", "basic", "dev"]);
@@ -44,23 +43,9 @@ export async function assertCompanyAccess(params: {
   uid: string;
   companyId: string;
   allowedRoles: Role[];
-  allowSoloScope?: boolean;
 }): Promise<CompanyAccessResult> {
-  const { uid, companyId, allowedRoles, allowSoloScope = false } = params;
+  const { uid, companyId, allowedRoles } = params;
   const profile = await getUserProfileOrThrow(uid);
-
-  const isSoloScope =
-    allowSoloScope &&
-    profile.accountType === "solo" &&
-    profile.companyId === null &&
-    uid === companyId;
-
-  if (isSoloScope) {
-    if (!allowedRoles.includes(profile.role)) {
-      throw new ApiRouteError(403, "forbidden", "Role is not allowed for this action");
-    }
-    return { profile, role: profile.role, soloScope: true };
-  }
 
   if (profile.companyId !== companyId && profile.role !== "dev") {
     throw new ApiRouteError(403, "company_mismatch", "User does not belong to this company");
@@ -84,6 +69,5 @@ export async function assertCompanyAccess(params: {
   return {
     profile,
     role: resolvedRole,
-    soloScope: false,
   };
 }

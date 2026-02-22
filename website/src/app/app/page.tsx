@@ -23,7 +23,11 @@ export default function AppOverviewPage() {
     async function load() {
       if (!profile || !uid) return;
       const items: StatItem[] = [];
-      const scopeId = resolveCompanyScope(companyId, uid);
+      const scopeId = resolveCompanyScope(companyId);
+      if (!scopeId) {
+        setStats([]);
+        return;
+      }
 
       const pendingCount = await getCountFromServer(collection(db, "companies", scopeId, "PendingJobs"));
       const finishedCount = await getCountFromServer(collection(db, "companies", scopeId, "finishedJobs"));
@@ -33,8 +37,9 @@ export default function AppOverviewPage() {
       items.push({ label: "Clients", value: clientsCount.data().count });
 
       // Inventory parts count from single-doc
-      const invRef = companyId
-        ? doc(db, "companies", companyId, "business_data", "inventory")
+      const useCompanyInventory = profile.role === "manager" || profile.role === "dev";
+      const invRef = useCompanyInventory
+        ? doc(db, "companies", scopeId, "business_data", "inventory")
         : doc(db, "users", uid, "data", "inventory");
       const invSnap = await getDoc(invRef);
       const invData = invSnap.exists() ? (invSnap.data() as InventoryDoc) : null;
@@ -57,7 +62,7 @@ export default function AppOverviewPage() {
           <div className="mt-4 flex gap-2">
             <Badge>{profile?.role}</Badge>
             <Badge variant="success">{tier}</Badge>
-            {companyId ? <Badge>Company: {companyId}</Badge> : <Badge>Solo mode</Badge>}
+            <Badge>Company: {companyId ?? "N/A"}</Badge>
           </div>
         </Card>
 
@@ -73,4 +78,3 @@ export default function AppOverviewPage() {
     </ProtectedRoute>
   );
 }
-

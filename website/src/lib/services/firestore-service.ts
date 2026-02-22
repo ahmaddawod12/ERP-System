@@ -43,12 +43,12 @@ import type {
 /* ─── helpers ─── */
 
 /**
- * For solo users (no companyId), use uid as companyId.
- * This matches the phone app behaviour where solo users
- * store data under companies/{uid}/*.
+ * Company scope is always based on the profile companyId
+ * returned by backend registration flows.
  */
-export function resolveCompanyScope(companyId: string | null, uid: string): string {
-  return companyId ?? uid;
+export function resolveCompanyScope(companyId: string | null): string | null {
+  const normalized = companyId?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
 }
 
 /* ─── Profile ─── */

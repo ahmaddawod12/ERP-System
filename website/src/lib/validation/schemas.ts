@@ -10,9 +10,9 @@ const uidFallbackSchema = z
 const companyIdSchema = z
   .string()
   .trim()
-  .min(3, "companyId is required")
-  .max(80, "companyId is too long")
-  .regex(/^[a-zA-Z0-9-]+$/, "companyId must only contain letters, numbers, and hyphen");
+  .min(1, "companyId is required")
+  .max(20, "companyId is too long")
+  .regex(/^\d+$/, "companyId must only contain numbers");
 
 const optionalText = (max = 400) =>
   z

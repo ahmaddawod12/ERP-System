@@ -148,9 +148,10 @@ function isValidEmail(email) {
 
 function generateInviteCode(length = 8) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(length);
   let code = '';
   for (let i = 0; i < length; i += 1) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    code += alphabet[bytes[i] % alphabet.length];
   }
   return code;
 }
@@ -523,11 +524,11 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
   const managerData = managerProfile.data();
   const managerRole = normalizeRole(managerData.role);
 
-  if (managerRole !== 'manager') {
+  if (!['manager', 'dev'].includes(managerRole)) {
     throw new HttpsError('permission-denied', 'Only managers can perform this action');
   }
 
-  if (managerData.companyId !== companyId) {
+  if (managerRole !== 'dev' && managerData.companyId !== companyId) {
     throw new HttpsError('permission-denied', 'Manager can only manage workers from their own company');
   }
 
@@ -2325,25 +2326,34 @@ exports.getInvoiceApproval = onCall({
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
     const businessRegRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
-    const businessRegDoc = await businessRegRef.get();
-    if (!businessRegDoc.exists) {
-      throw new HttpsError('not-found', 'Business registration not found. Please register your business first.');
-    }
-    businessInfo = businessRegDoc.data();
+
+    // CRITICAL FIX: Use transaction to atomically read + increment document number
+    // This prevents two concurrent requests from getting the same invoice number
+    const { documentNumber, documentId, businessInfoData } = await admin.firestore().runTransaction(async (tx) => {
+      const businessRegDoc = await tx.get(businessRegRef);
+      if (!businessRegDoc.exists) {
+        throw new HttpsError('not-found', 'Business registration not found. Please register your business first.');
+      }
+      const bizData = businessRegDoc.data();
+      
+      if (!bizData.vat_number) {
+        throw new HttpsError('invalid-argument', 'Missing VAT number in business registration.');
+      }
+      
+      const docNum = (bizData.document_numbers && bizData.document_numbers[305]) || 1;
+      const docId = `TI${docNum}-${companyId}`;
+      
+      // Atomically increment the counter so the next request gets the next number
+      tx.update(businessRegRef, {
+        'document_numbers.305': admin.firestore.FieldValue.increment(1),
+        last_updated: new Date().toISOString(),
+      });
+      
+      return { documentNumber: docNum, documentId: docId, businessInfoData: bizData };
+    });
     
-    if (!businessInfo.vat_number) {
-      throw new HttpsError('invalid-argument', 'Missing VAT number in business registration. Please complete your business registration.');
-    }
-
-    // Verify companyId strictly matches user's company
-    if (!userData.companyId || userData.companyId !== companyId) {
-      throw new HttpsError('permission-denied', 'Company name mismatch');
-    }
-
-    // Generate next document number and build document ID using date-number-type format
-    const documentNumber = businessInfo.document_numbers[305];
+    businessInfo = businessInfoData;
     const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const documentId = `TI${documentNumber}-${companyId}`; // e.g., "TI1-4" - using companyId for uniqueness across companies
 
     logger.info('Preparing Tax Authority submission', {
       documentId,
@@ -2890,26 +2900,19 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('internal', `Invoice approved but failed to save: ${firestoreError.message}`);
     }
 
-    // Increment document counter
-    if (businessInfo.document_numbers) {
-      try {
-        const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
-        await businessInfoRef.update({
-          'document_numbers.305': admin.firestore.FieldValue.increment(1),
-          last_updated: new Date().toISOString()
-        });
-        const businessCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
-        await businessCacheRef.update({
-          business_info: admin.firestore.FieldValue.increment(1),
-          lastUpdated: new Date().toISOString()
-        });
-        logger.info('Tax invoice counter incremented', {
-          documentNumber,
-          newNumber: businessInfo.document_numbers[305] + 1
-        });
-      } catch (counterError) {
-        logger.error('Failed to increment invoice counter', { error: counterError.message });
-      }
+    // Document counter was already atomically incremented in the transaction above.
+    // Only bump the business_info cache version so clients detect the change.
+    try {
+      const businessCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
+      await businessCacheRef.set({
+        business_info: admin.firestore.FieldValue.increment(1),
+        lastUpdated: new Date().toISOString()
+      }, { merge: true });
+      logger.info('Tax invoice counter already incremented transactionally', {
+        documentNumber,
+      });
+    } catch (counterError) {
+      logger.error('Failed to bump business_info cache', { error: counterError.message });
     }
 
     // Save audit log for Tax Authority submission
@@ -3543,12 +3546,22 @@ exports.publishGenerateTask = onCall({
       // Other document types - prepare everything here
       const { client, items, language, date, notes } = documentData;
       
-      // Get and increment document number
-      const documentNumbers = businessInfo.document_numbers || {};
-      documentNumber = documentNumbers[numericDocType] || 1;
+      // Atomically read + increment document number to prevent race conditions
+      const docNumResult = await admin.firestore().runTransaction(async (tx) => {
+        const bizRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+        const bizSnap = await tx.get(bizRef);
+        const bizData = bizSnap.data() || {};
+        const docNums = bizData.document_numbers || {};
+        const num = docNums[numericDocType] || 1;
+        tx.update(bizRef, {
+          [`document_numbers.${numericDocType}`]: admin.firestore.FieldValue.increment(1),
+          last_updated: new Date().toISOString(),
+        });
+        return num;
+      });
+      documentNumber = docNumResult;
       
-      // Generate document ID using YYYYMMDD format with suffix
-      const todayDate = new Date().toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD
+      // Generate document ID using suffix
       const typeSuffix = DOC_SUFFIX[numericDocType] || 'XX';
       
       documentId = `${typeSuffix}${documentNumber}-${companyId}`;
@@ -4539,6 +4552,9 @@ exports.updateInventoryV1 = onCall(async (request) => {
     const now = new Date().toISOString();
 
     if (action === 'addPart') {
+      if (parts.length >= 5000) {
+        throw new HttpsError('resource-exhausted', 'Inventory limit reached (max 5000 parts)');
+      }
       const partName = typeof data.partName === 'string' ? data.partName.trim() : '';
       if (!partName) throw new HttpsError('invalid-argument', 'partName is required');
       const newPart = {
@@ -4619,6 +4635,7 @@ exports.updateInventoryV1 = onCall(async (request) => {
       // Manager replaces the full parts array on a worker's inventory (e.g. EditJob adjustments)
       const newParts = data.parts;
       if (!Array.isArray(newParts)) throw new HttpsError('invalid-argument', 'parts array is required');
+      if (newParts.length > 5000) throw new HttpsError('resource-exhausted', 'Inventory limit exceeded (max 5000 parts)');
       // Sanitize each part
       const sanitized = newParts.map((p) => ({
         id: typeof p.id === 'number' ? p.id : nextId++,
@@ -4653,6 +4670,7 @@ exports.updateInventoryV1 = onCall(async (request) => {
  * Callable Function: updateCacheV1
  * Updates cache version fields via Cloud Function.
  * Replaces direct client writes to cache documents.
+ * Supports targetUid for cross-user cache writes (manager updating worker cache).
  */
 exports.updateCacheV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -4666,6 +4684,7 @@ exports.updateCacheV1 = onCall(async (request) => {
   const isCompanyCache = data.isCompanyCache === true;
   const field = typeof data.field === 'string' ? data.field.trim() : '';
   const action = typeof data.action === 'string' ? data.action.trim() : 'increment';
+  const targetUid = typeof data.targetUid === 'string' ? data.targetUid.trim() : '';
 
   if (!field) {
     throw new HttpsError('invalid-argument', 'field is required');
@@ -4681,10 +4700,25 @@ exports.updateCacheV1 = onCall(async (request) => {
     });
   }
 
+  // Cross-user cache writes require manager/dev role
+  if (targetUid && targetUid !== uid) {
+    if (!companyId) {
+      throw new HttpsError('invalid-argument', 'companyId is required for cross-user cache updates');
+    }
+    await assertHttpCompanyAccess({
+      uid,
+      companyId,
+      allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
+      allowSoloScope: false,
+    });
+  }
+
+  const resolvedUid = targetUid || uid;
+
   const dbRef = admin.firestore();
   const cacheRef = isCompanyCache && companyId
     ? dbRef.doc(`companies/${companyId}/business_data/cache`)
-    : dbRef.doc(`users/${uid}/data/cache`);
+    : dbRef.doc(`users/${resolvedUid}/data/cache`);
 
   if (action === 'delete') {
     await cacheRef.update({
@@ -4727,6 +4761,58 @@ exports.clearPushTokenV1 = onCall(async (request) => {
 
   logger.info('clearPushTokenV1: token cleared', { uid });
   return { success: true };
+});
+
+/**
+ * Callable Function: deleteCertificationV1
+ * Deletes a certification document via Cloud Function.
+ * Only manager/user/basic (with company access) can delete.
+ * Cannot delete certifications linked to tax invoices that have been approved.
+ */
+exports.deleteCertificationV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const certificationId = typeof data.certificationId === 'string' ? data.certificationId.trim() : '';
+
+  if (!companyId || !certificationId) {
+    throw new HttpsError('invalid-argument', 'companyId and certificationId are required');
+  }
+
+  await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES, // manager, user, basic
+    allowSoloScope: true,
+  });
+
+  const dbRef = admin.firestore();
+  const certRef = dbRef.doc(`companies/${companyId}/certifications/${certificationId}`);
+  const certSnap = await certRef.get();
+
+  if (!certSnap.exists) {
+    throw new HttpsError('not-found', 'Certification not found');
+  }
+
+  const certData = certSnap.data();
+
+  // Prevent deleting tax invoices that have been approved by the Tax Authority
+  if (certData.type === DOC_TYPE.TAX_INVOICE && certData.taxAuthorityResponseData) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Cannot delete a Tax Authority approved invoice'
+    );
+  }
+
+  await certRef.delete();
+
+  logger.info('deleteCertificationV1: certification deleted', { companyId, certificationId, uid });
+  return { success: true, certificationId };
 });
 
 /**

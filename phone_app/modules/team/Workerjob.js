@@ -15,7 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { auth, db, doc, getDoc, setDoc, updateDoc } from '../../firebase';
+import { auth, db, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, shadows } from '../../theme';
 import { GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -243,7 +243,8 @@ export default function Workerjob() {
               completedBy: pendingJob.uid || getUid(),
             };
             await updateJob(jobId, updatedJob, true);
-            await setDoc(jobRef, updatedJob, { merge: true });
+            const updateJobFn = httpsCallable(functions, 'updateJobV1');
+            await updateJobFn({ companyId, jobId, ...updatedJob });
           } else {
             // Job no longer exists — skip
             console.warn('Job not found during sync, skipping:', jobId);
@@ -331,12 +332,13 @@ export default function Workerjob() {
       }
 
       const updates = {
-        status: 'received',
+        status: 'waiting',
         name: profile.name || '',
         receivedAt: new Date().toISOString(),
       };
 
-      await updateDoc(doc(db, 'companies', companyId, 'PendingJobs', job.id), updates);
+      const updateJobFn = httpsCallable(functions, 'updateJobV1');
+      await updateJobFn({ companyId, jobId: job.id, ...updates });
       await updateJob(job.id, updates, true);
 
       alert.success('Success',

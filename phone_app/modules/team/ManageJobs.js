@@ -341,9 +341,11 @@ export default function ManageJobs() {
 
               const currentUid = getUid();
 
-              // Update job status to denied in PendingJobs
-              const pendingJobRef = doc(db, 'companies', companyId, 'PendingJobs', job.id);
-              await updateDoc(pendingJobRef, {
+              // Update job status to denied via Cloud Function
+              const updateJobFn = httpsCallable(functions, 'updateJobV1');
+              await updateJobFn({
+                companyId,
+                jobId: job.id,
                 status: 'denied',
                 deniedAt: new Date().toISOString(),
                 deniedBy: currentUid || auth.currentUser.uid,

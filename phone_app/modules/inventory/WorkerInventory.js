@@ -303,12 +303,9 @@ export default function WorkerInventory() {
     if (!workerId) {
       await updateInventory(updatedInventory);
     } else {
-      // For worker inventory (manager viewing), write directly to Firestore
-      const userDocRef = doc(db, 'users', targetUid, 'data', 'inventory');
-      await setDoc(userDocRef, {
-        parts: updatedInventory,
-        lastUpdated: new Date().toISOString(),
-      }, { merge: true });
+      // For worker inventory (manager viewing), write directly
+      const invRef = doc(db, `users/${targetUid}/data/inventory`);
+      await setDoc(invRef, { parts: updatedInventory, lastUpdated: new Date().toISOString() }, { merge: true });
     }
   };
 

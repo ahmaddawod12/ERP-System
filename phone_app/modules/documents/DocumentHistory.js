@@ -23,7 +23,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
-import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc } from '../../firebase';
+import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
@@ -593,9 +593,9 @@ export default function DocumentHistory() {
             style: 'destructive',
             onPress: async () => {
               try {
-                // Delete from Firestore
-                const docRef = doc(db, 'companies', companyId, 'certifications', document.id);
-                await deleteDoc(docRef);
+                // Delete certification via Cloud Function
+                const deleteCertFn = httpsCallable(functions, 'deleteCertificationV1');
+                await deleteCertFn({ companyId, certificationId: document.id });
                 alert.success(t.deleteSuccess || 'Success', t.deleteSuccess);
               } catch (error) {
                 console.error('Error deleting document:', error);

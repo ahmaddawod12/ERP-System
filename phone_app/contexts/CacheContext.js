@@ -1409,15 +1409,11 @@ export function CacheProvider({ children }) {
       
       console.log(`?? Pre-incremented local ${fieldOrDocId} version to ${newVersion} in ${isCompanyCache ? 'company' : 'user'} cache`);
       
-      // STEP 2: Then update Firebase (snapshot listener will see local version already matches)
-      const cacheRef = isCompanyCache 
-        ? doc(db, 'companies', companyId, 'business_data', 'cache')
-        : doc(db, 'users', uid, 'data', 'cache');
-      
-      await setDoc(cacheRef, {
-        [fieldOrDocId]: FieldValue.increment(1),
-        lastUpdated: new Date().toISOString(),
-      }, { merge: true });
+      // STEP 2: Then update Firebase directly
+      const cacheRef = isCompanyCache
+        ? doc(db, `companies/${companyId}/business_data/cache`)
+        : doc(db, `users/${uid}/data/cache`);
+      await updateDoc(cacheRef, { [fieldOrDocId]: FieldValue.increment(1) });
       
       console.log(`? Firebase ${fieldOrDocId} version incremented`);
     } catch (error) {
@@ -1445,15 +1441,11 @@ export function CacheProvider({ children }) {
       delete localVersions[fieldOrDocId];
       saveToLocalCache(localVersionsKey, localVersions);
       
-      // Delete from Firebase cache doc
-      const cacheRef = isCompanyCache 
-        ? doc(db, 'companies', companyId, 'business_data', 'cache')
-        : doc(db, 'users', uid, 'data', 'cache');
-      
-      await updateDoc(cacheRef, {
-        [fieldOrDocId]: FieldValue.delete(),
-        lastUpdated: new Date().toISOString(),
-      });
+      // Delete field from Firebase cache doc directly
+      const cacheRef = isCompanyCache
+        ? doc(db, `companies/${companyId}/business_data/cache`)
+        : doc(db, `users/${uid}/data/cache`);
+      await updateDoc(cacheRef, { [fieldOrDocId]: FieldValue.delete() });
       
       console.log(`??? Deleted ${fieldOrDocId} from ${isCompanyCache ? 'company' : 'user'} cache`);
     } catch (error) {
@@ -1490,12 +1482,9 @@ export function CacheProvider({ children }) {
     // 1. Update local cache FIRST
     saveToLocalCache(CACHE_KEYS.INVENTORY, newInventory);
     
-    // 2. Save to Firebase
-    const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
-    await setDoc(inventoryRef, {
-      parts: newInventory,
-      lastUpdated: new Date().toISOString()
-    }, { merge: true });
+    // 2. Save to Firebase directly
+    const invRef = doc(db, `users/${uid}/data/inventory`);
+    await setDoc(invRef, { parts: newInventory, lastUpdated: new Date().toISOString() }, { merge: true });
     
     // 3. Increment cache version (triggers other devices to refresh)
     await incrementCacheVersion('inventory', false);
@@ -1509,11 +1498,8 @@ export function CacheProvider({ children }) {
    */
   const updateWorkerCacheVersion = useCallback(async (workerId, jobId) => {
     try {
-      const workerCacheRef = doc(db, 'users', workerId, 'data', 'cache');
-      await setDoc(workerCacheRef, {
-        [jobId]: FieldValue.increment(1),
-        lastUpdated: new Date().toISOString(),
-      }, { merge: true });
+      const workerCacheRef = doc(db, `users/${workerId}/data/cache`);
+      await updateDoc(workerCacheRef, { [jobId]: FieldValue.increment(1) });
       
       console.log(`?? Incremented job ${jobId} version in worker ${workerId}'s cache`);
     } catch (error) {
@@ -1527,11 +1513,8 @@ export function CacheProvider({ children }) {
    */
   const deleteWorkerCacheField = useCallback(async (workerId, fieldOrDocId) => {
     try {
-      const workerCacheRef = doc(db, 'users', workerId, 'data', 'cache');
-      await updateDoc(workerCacheRef, {
-        [fieldOrDocId]: FieldValue.delete(),
-        lastUpdated: new Date().toISOString(),
-      });
+      const workerCacheRef = doc(db, `users/${workerId}/data/cache`);
+      await updateDoc(workerCacheRef, { [fieldOrDocId]: FieldValue.delete() });
       
       console.log(`??? Deleted ${fieldOrDocId} from worker ${workerId}'s cache`);
     } catch (error) {

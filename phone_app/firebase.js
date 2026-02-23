@@ -4,6 +4,10 @@
 
 import { getApp } from '@react-native-firebase/app';
 import {
+  initializeAppCheck,
+  ReactNativeFirebaseAppCheckProvider,
+} from '@react-native-firebase/app-check';
+import {
   getFirestore,
   collection,
   doc,
@@ -51,6 +55,22 @@ import {
 
 // Get the default app instance (modular API)
 export const app = getApp();
+
+// Initialize App Check — required for Cloud Functions enforcement
+// Uses DeviceCheck (iOS) and Play Integrity (Android) attestation providers
+const appCheckProvider = new ReactNativeFirebaseAppCheckProvider();
+appCheckProvider.configure({
+  apple: {
+    provider: __DEV__ ? 'debug' : 'deviceCheck',
+  },
+  android: {
+    provider: __DEV__ ? 'debug' : 'playIntegrity',
+  },
+});
+initializeAppCheck(app, {
+  provider: appCheckProvider,
+  isTokenAutoRefreshEnabled: true,
+});
 
 // Firestore instance (modular API)
 export const db = getFirestore(app);

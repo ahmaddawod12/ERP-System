@@ -85,11 +85,14 @@ Worker documents at `companies/{companyId}/workers/{uid}` must include both `wor
 ### 7. All Mutations Through Cloud Functions
 
 **ALL writes to protected documents go through Cloud Functions.** The client SDK is read-only for most paths. Never use `setDoc`, `updateDoc`, or `deleteDoc` directly from the client for:
-- Profile, cache, inventory, subscription, business_info, counters, workers, invites, certifications, documentTasks
+- Profile, subscription, business_info, counters, workers, invites, certifications, documentTasks
 - PendingJobs (use `createJobV1` / `updateJobV1` / `deleteJobV1` / `acceptJobV1`)
 - Clients (use `addClientV1` / `updateClientV1` / `deleteClientV1`)
 
-Client-side update is allowed only for:
+Client-side write is allowed for:
+- `users/{uid}/data/cache` — direct `updateDoc`/`setDoc` when uid matches
+- `users/{uid}/data/inventory` — direct `setDoc` when uid matches (or manager for worker's inventory)
+- `companies/{companyId}/business_data/cache` — direct `updateDoc`/`setDoc` for managers
 - `finishedJobs/*` — manager/user can update
 - `clients/*` — manager/user/basic can update
 
@@ -98,14 +101,14 @@ Client-side update is allowed only for:
 ```
 users/{uid}/
   data/profile                → user profile document (READ-ONLY from client)
-  data/cache                  → cache version tracking (READ-ONLY from client)
-  data/inventory              → { parts: [...], nextId, lastUpdated } (READ-ONLY from client)
+  data/cache                  → cache version tracking (user can write directly)
+  data/inventory              → { parts: [...], nextId, lastUpdated } (user can write directly)
 
 companies/{companyId}/
   business_data/business_info → rich business profile (READ-ONLY from client)
   business_data/subscription  → { tier, status, enabledModules } (READ-ONLY from client)
   business_data/inventory     → { parts: [...], nextId, lastUpdated } (READ-ONLY from client)
-  business_data/cache         → company cache version tracking (READ-ONLY from client)
+  business_data/cache         → company cache version tracking (manager can write directly)
   workers/{uid}               → worker membership + role (READ-ONLY from client)
   clients/{clientId}          → client records (read + update from client)
   counters/clients            → { lastNumber } auto-increment (CF only)
@@ -151,8 +154,9 @@ All exported from a single file. Firebase Functions v7, Node 22. App Check enfor
 | `registerBusinessV1` | onCall | Atomic onboarding: profile + company + subscription + counters + inventory (transactional) |
 | `createJobV1` | onCall | Create job with sequential jid (atomic counter) |
 | `updateJobV1` | onCall | Update job fields (status/assignment/details) |
-| `updateInventoryV1` | onCall | Transactional inventory mutations (add/remove/toggle/update/pick/replace) |
-| `updateCacheV1` | onCall | Bump cache version for a given key |
+| `updateInventoryV1` | onCall | Transactional inventory mutations (add/remove/toggle/update/pick/replace). Max 5000 parts per document. |
+| `updateCacheV1` | onCall | Bump cache version for a given key. Supports `targetUid` for cross-user cache writes (manager/dev only). |
+| `deleteCertificationV1` | onCall | Delete a certification document (not tax invoices). Role-checked (manager/user/dev). |
 
 ## Security Model
 
@@ -160,21 +164,21 @@ Firestore security rules enforce **read-only client access** for most documents.
 
 ### Read-Only from Client (create/update/delete: false)
 - `users/{uid}/data/profile` — use `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1`, `clearPushTokenV1`
-- `users/{uid}/data/cache` — use `updateCacheV1`
-- `users/{uid}/data/inventory` — use `updateInventoryV1`
 - `companies/{companyId}/business_data/business_info` — use `registerBusinessV1`, `updateBusinessInfoV1`
 - `companies/{companyId}/business_data/subscription` — use `registerBusinessV1`
 - `companies/{companyId}/business_data/inventory` — use `updateInventoryV1`
-- `companies/{companyId}/business_data/cache` — use `updateCacheV1`
 - `companies/{companyId}/business_data/token` — Cloud Functions only
 - `companies/{companyId}/counters/*` — Cloud Functions only
 - `companies/{companyId}/workers/*` — use `manageWorker`
 - `companies/{companyId}/invites/*` — use `createInviteV1`
-- `companies/{companyId}/certifications/*` — Cloud Functions only
+- `companies/{companyId}/certifications/*` — use `deleteCertificationV1` for deletion (create via Pub/Sub CF)
 - `companies/{companyId}/PendingJobs/*` — use `createJobV1`, `updateJobV1`, `deleteJobV1`, `acceptJobV1`
 - `documentTasks/{taskId}` — Cloud Functions only
 
 ### Client-Writable (within role-based rules)
+- `users/{uid}/data/cache` — direct `updateDoc`/`setDoc` when uid matches; manager can write worker's cache
+- `users/{uid}/data/inventory` — direct `setDoc` when uid matches (or manager for worker's inventory)
+- `companies/{companyId}/business_data/cache` — direct `updateDoc`/`setDoc` for managers
 - `companies/{companyId}/finishedJobs/*` — manager/user can update (create/delete via CF)
 - `companies/{companyId}/clients/*` — manager/user/basic can update (create/delete via CF)
 
@@ -185,11 +189,13 @@ Firestore security rules enforce **read-only client access** for most documents.
 
 ### Phone App (`phone_app/`)
 - Uses `@react-native-firebase/*` native SDKs with **modular API** (`doc(db, ...)`, NOT `db.collection(...)`)
+- **App Check** initialized in `firebase.js` — DeviceCheck (iOS) / Play Integrity (Android) in production, debug provider in dev
 - MMKV for local caching with version-based invalidation, **keys scoped by `uid:companyId:` prefix**
 - `withGate` HOC for subscription-based feature gating
 - Screens in `modules/`, thin wrappers in `app/`
 - NEVER use `Alert.alert()` — use custom `useAlert()` hook
 - NEVER use direct `updateDoc`/`setDoc` for protected paths — use Cloud Functions via `httpsCallable`
+- For `cache` and `inventory` paths, direct client writes ARE allowed (see Client-Writable rules above)
 - Token refresh auto-saves via `updatePushTokenV1`; logout calls `clearPushTokenV1`
 
 ### Website (`website/`)

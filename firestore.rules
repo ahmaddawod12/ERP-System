@@ -120,24 +120,26 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── user cache: READ-ONLY from client. Writes via Cloud Function (updateCacheV1) ──
+    // ── user cache: user can write own cache; manager can write worker's cache ──
     match /users/{uid}/data/cache {
       allow read: if isAdmin() || (
         signedIn() && request.auth.uid == uid
       ) || canManagerAccessWorkerData(uid);
 
-      // Cache writes now handled by Cloud Functions (updateCacheV1)
-      allow create, update, delete: if false;
+      allow create, update, delete: if isAdmin() || (
+        signedIn() && request.auth.uid == uid
+      ) || canManagerAccessWorkerData(uid);
     }
 
-    // ── user inventory: READ-ONLY from client. Writes via Cloud Function (updateInventoryV1) ──
+    // ── user inventory: user can write own inventory; manager can write worker's inventory ──
     match /users/{uid}/data/inventory {
       allow read: if isAdmin() || (
         signedIn() && request.auth.uid == uid
       ) || canManagerAccessWorkerData(uid);
 
-      // Inventory writes now handled by Cloud Functions (updateInventoryV1)
-      allow create, update, delete: if false;
+      allow create, update, delete: if isAdmin() || (
+        signedIn() && request.auth.uid == uid
+      ) || canManagerAccessWorkerData(uid);
     }
 
     // ── Legacy paths — DENIED (deprecated, migration complete) ──
@@ -190,10 +192,10 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── company cache: READ-ONLY from client. Writes via Cloud Function (updateCacheV1) ──
+    // ── company cache: managers can write directly ──
     match /companies/{companyId}/business_data/cache {
       allow read: if canReadCompany(companyId);
-      allow create, update, delete: if false;
+      allow create, update, delete: if canManageCompany(companyId);
     }
 
     // ── Token: NO client access ──
@@ -239,11 +241,12 @@ service cloud.firestore {
         (resource.data.workerId == request.auth.uid || resource.data.completedBy == request.auth.uid)
       );
 
-      allow create: if isAdmin() || canManageCompany(companyId);
+      // Job creation via createJobV1 Cloud Function only (Admin SDK bypasses rules)
+      allow create: if false;
 
       // S2: worker updates are field-constrained — cannot change assignment, creator, or status
-      // S2: worker updates are field-constrained — cannot change assignment, creator, or status
       // P0-8: Canonical statuses only: pending, waiting (no 'received')
+      // Manager/dev updates go through updateJobV1 CF (Admin SDK bypasses rules)
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "worker" &&

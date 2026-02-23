@@ -28,7 +28,7 @@ users/{uid}/data/inventory                    → { parts: [...], nextId, lastUp
 
 Each part object: `{ id: number, name: string, active?: boolean, quantity?: number, lowThreshold?: number, dateAdded: string }`
 
-Always use **Firestore transactions** when modifying parts arrays to prevent concurrent write conflicts.
+All inventory mutations go through `updateInventoryV1` Cloud Function (addPart, removePart, togglePart, updatePart, pickParts, replaceParts). NEVER write directly to inventory documents from the client.
 
 ### 3. Job ID Format & Status Flow
 
@@ -42,9 +42,9 @@ Job IDs use a **sequential `jid` counter** stored atomically on the company docu
 
 **Status values**: `pending` → `waiting` → `finished` (or `denied`)
 
-NEVER use `in_progress` or `completed` — those are legacy values.
+NEVER use `in_progress`, `completed`, or `received` — those are legacy values.
 NEVER generate job IDs client-side — always use `createJobV1`.
-Legacy Base62 functions (`generatePendingJobId`, `generateFinishedJobId`, `convertToFinishedJobId`) are deprecated.
+Job updates go through `updateJobV1` — NEVER use direct `updateDoc` on job documents.
 
 ### 4. Business Info Fields
 
@@ -80,28 +80,39 @@ Use the canonical field names from the phone app:
 
 ### 6. Worker Fields
 
-Worker documents at `companies/{companyId}/workers/{uid}` must include both `workerId` and `uid` fields (both set to the worker's Firebase UID).
+Worker documents at `companies/{companyId}/workers/{uid}` must include both `workerId` and `uid` fields (both set to the worker's Firebase UID). Worker lookup uses `workerUid` (UID), never email-based lookups.
+
+### 7. All Mutations Through Cloud Functions
+
+**ALL writes to protected documents go through Cloud Functions.** The client SDK is read-only for most paths. Never use `setDoc`, `updateDoc`, or `deleteDoc` directly from the client for:
+- Profile, cache, inventory, subscription, business_info, counters, workers, invites, certifications, documentTasks
+- PendingJobs (use `createJobV1` / `updateJobV1` / `deleteJobV1` / `acceptJobV1`)
+- Clients (use `addClientV1` / `updateClientV1` / `deleteClientV1`)
+
+Client-side update is allowed only for:
+- `finishedJobs/*` — manager/user can update
+- `clients/*` — manager/user/basic can update
 
 ## Canonical Firestore Schema
 
 ```
 users/{uid}/
-  data/profile                → user profile document
-  data/cache                  → cache version tracking
-  data/inventory              → { parts: [...], nextId, lastUpdated }
+  data/profile                → user profile document (READ-ONLY from client)
+  data/cache                  → cache version tracking (READ-ONLY from client)
+  data/inventory              → { parts: [...], nextId, lastUpdated } (READ-ONLY from client)
 
 companies/{companyId}/
-  business_data/business_info → rich business profile
-  business_data/subscription  → { tier, status, enabledModules }
-  business_data/inventory     → { parts: [...], nextId, lastUpdated }
-  business_data/cache         → company cache version tracking
-  workers/{uid}               → worker membership + role
-  clients/{clientId}          → client records
-  counters/clients            → { lastNumber } auto-increment
-  PendingJobs/{p_XXXXX}       → active jobs
-  finishedJobs/{f_XXXXX}      → completed/denied jobs
-  certifications/{c_XXXXX}    → generated documents
-  invites/{inviteId}          → onboarding invite codes
+  business_data/business_info → rich business profile (READ-ONLY from client)
+  business_data/subscription  → { tier, status, enabledModules } (READ-ONLY from client)
+  business_data/inventory     → { parts: [...], nextId, lastUpdated } (READ-ONLY from client)
+  business_data/cache         → company cache version tracking (READ-ONLY from client)
+  workers/{uid}               → worker membership + role (READ-ONLY from client)
+  clients/{clientId}          → client records (read + update from client)
+  counters/clients            → { lastNumber } auto-increment (CF only)
+  PendingJobs/{p_XXXXX}       → active jobs (READ-ONLY from client)
+  finishedJobs/{f_XXXXX}      → completed/denied jobs (read + update from client)
+  certifications/{c_XXXXX}    → generated documents (READ-ONLY from client)
+  invites/{inviteId}          → onboarding invite codes (READ-ONLY from client)
 
 upgrade_requests/{id}         → upgrade tickets
 contact_requests/{id}         → contact form submissions
@@ -110,76 +121,88 @@ documentTasks/{taskId}        → Pub/Sub task tracking (preview/generate)
 
 ## Cloud Functions (functions/index.js)
 
-All exported from a single file. Firebase Functions v7, Node 22.
+All exported from a single file. Firebase Functions v7, Node 22. App Check enforced globally (except `contactRequestV1`). Token revocation checked server-side.
 
 | Function | Type | Description |
 |----------|------|-------------|
-| `createClientV1` | onRequest | Idempotent client creation |
-| `generateDocumentV1` | onRequest | Legacy document generation (website backward compat) |
+| `addClientV1` | onCall | Idempotent client creation with auto-increment ID |
+| `deleteClientV1` | onCall | Delete a client record |
+| `updateClientV1` | onCall | Update client fields + bump cache |
+| `generateDocumentV1` | onRequest | **Deprecated** — legacy document generation (use Pub/Sub) |
 | `publishPreviewTask` | onCall (us-central1) | Pub/Sub preview PDF task |
 | `publishGenerateTask` | onCall (us-central1) | Pub/Sub generate PDF task |
 | `getInvoiceApproval` | onCall (me-west1) | Tax Authority invoice approval + PDF task |
-| `createInvite` | onCall | Invite code generation |
-| `joinCompanyWithInvite` | onCall | Worker onboarding |
-| `onFinishedJobCreated` | Firestore trigger | Cleanup pending job |
-| `sendNotification` | onCall | FCM push notifications |
-| `submitUpgradeRequest` | onCall | Subscription upgrade request |
-| `submitContactRequest` | onCall | Public contact form |
-| `requestPermit` | onRequest (me-west1) | Tax authority integration |
-| `fetchPermit` | onRequest (me-west1) | Tax authority permit |
-| `reportDocument` | onRequest (me-west1) | Tax authority reporting |
+| `createInviteV1` | onRequest | Invite code generation (rate-limited) |
+| `joinCompanyV1` | onRequest | Worker onboarding via invite (rate-limited) |
+| `onJobAssignTrigger` | Firestore trigger | Push notification on job assignment |
+| `onJobSubmitTrigger` | Firestore trigger | Push notification on job submission |
+| `onTaskCompleted` | Firestore trigger | Cleanup on document task completion |
+| `contactRequestV1` | onRequest | Public contact form (rate-limited, no App Check) |
+| `requestUpgradeV1` | onRequest | Submit subscription upgrade request |
+| `startTaxAuthorityAuth` | onCall | Start Israeli Tax Authority OAuth flow |
+| `taxAuthorityCallback` | onRequest | Tax Authority OAuth callback |
 | `updateProfileV1` | onCall | Update name/phoneNumber on profile |
 | `updatePushTokenV1` | onCall | Update FCM push token on profile |
+| `clearPushTokenV1` | onCall | Clear push token on logout |
 | `updateBusinessInfoV1` | onCall | Update business_info (except vat_number/document_numbers) |
+| `manageWorker` | onCall | Add/edit/remove workers (role whitelist: worker/user/basic only) |
 | `deleteJobV1` | onCall | Delete pending or finished job (role-checked) |
 | `acceptJobV1` | onCall | Atomic: pending→finished + delete + deduct worker inventory |
-| `registerBusinessV1` | onCall | Atomic onboarding: profile + company + subscription + counters + inventory |
+| `registerBusinessV1` | onCall | Atomic onboarding: profile + company + subscription + counters + inventory (transactional) |
 | `createJobV1` | onCall | Create job with sequential jid (atomic counter) |
+| `updateJobV1` | onCall | Update job fields (status/assignment/details) |
+| `updateInventoryV1` | onCall | Transactional inventory mutations (add/remove/toggle/update/pick/replace) |
+| `updateCacheV1` | onCall | Bump cache version for a given key |
 
 ## Security Model
 
-Firestore security rules enforce **read-only client access** for sensitive documents. All mutations to these documents go through Cloud Functions (Admin SDK bypasses rules).
+Firestore security rules enforce **read-only client access** for most documents. All mutations go through Cloud Functions (Admin SDK bypasses rules). App Check is enforced on all callable/HTTP functions except `contactRequestV1`.
 
 ### Read-Only from Client (create/update/delete: false)
-- `users/{uid}/data/profile` — use `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1`
+- `users/{uid}/data/profile` — use `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1`, `clearPushTokenV1`
+- `users/{uid}/data/cache` — use `updateCacheV1`
+- `users/{uid}/data/inventory` — use `updateInventoryV1`
 - `companies/{companyId}/business_data/business_info` — use `registerBusinessV1`, `updateBusinessInfoV1`
 - `companies/{companyId}/business_data/subscription` — use `registerBusinessV1`
+- `companies/{companyId}/business_data/inventory` — use `updateInventoryV1`
+- `companies/{companyId}/business_data/cache` — use `updateCacheV1`
 - `companies/{companyId}/business_data/token` — Cloud Functions only
 - `companies/{companyId}/counters/*` — Cloud Functions only
+- `companies/{companyId}/workers/*` — use `manageWorker`
+- `companies/{companyId}/invites/*` — use `createInviteV1`
+- `companies/{companyId}/certifications/*` — Cloud Functions only
+- `companies/{companyId}/PendingJobs/*` — use `createJobV1`, `updateJobV1`, `deleteJobV1`, `acceptJobV1`
 - `documentTasks/{taskId}` — Cloud Functions only
 
-### Delete via Cloud Function Only
-- `companies/{companyId}/PendingJobs/*` — use `deleteJobV1`, `acceptJobV1`
-- `companies/{companyId}/finishedJobs/*` — use `deleteJobV1`
-
 ### Client-Writable (within role-based rules)
-- `users/{uid}/data/cache`, `users/{uid}/data/inventory` — owner + manager
-- `companies/{companyId}/PendingJobs/*` — manager create, worker update (own jobs)
-- `companies/{companyId}/finishedJobs/*` — manager/user create+update
-- `companies/{companyId}/business_data/inventory` — manager write
-- `companies/{companyId}/clients/*` — manager/user/basic update (create/delete via CF)
-- `companies/{companyId}/certifications/*` — manager/solo can delete, create/update via CF
+- `companies/{companyId}/finishedJobs/*` — manager/user can update (create/delete via CF)
+- `companies/{companyId}/clients/*` — manager/user/basic can update (create/delete via CF)
+
+### Legacy Paths (denied)
+- `users/{uid}/jobs`, `users/{uid}/personal_inventory`, `users/{uid}/clients` — all access denied
 
 ## Platform-Specific Notes
 
 ### Phone App (`phone_app/`)
 - Uses `@react-native-firebase/*` native SDKs with **modular API** (`doc(db, ...)`, NOT `db.collection(...)`)
-- MMKV for local caching with version-based invalidation
+- MMKV for local caching with version-based invalidation, **keys scoped by `uid:companyId:` prefix**
 - `withGate` HOC for subscription-based feature gating
 - Screens in `modules/`, thin wrappers in `app/`
 - NEVER use `Alert.alert()` — use custom `useAlert()` hook
+- NEVER use direct `updateDoc`/`setDoc` for protected paths — use Cloud Functions via `httpsCallable`
+- Token refresh auto-saves via `updatePushTokenV1`; logout calls `clearPushTokenV1`
 
 ### Website (`website/`)
 - Firebase Web SDK (client) + Firebase Admin SDK (server API routes)
-- API routes proxy to Cloud Functions (e.g., `/api/clients/create` → `createClientV1`)
+- API routes proxy to Cloud Functions with **server-side auth verification** before forwarding
 - **Document generation uses Pub/Sub** via `useDocumentTask` hook → `publishPreviewTask` / `publishGenerateTask` callable Cloud Functions → listens on `documentTasks/{taskId}` for completion (same as phone app)
 - Tax Invoices (type 305) use `getInvoiceApproval` on `me-west1` region (same as phone app)
 - Firebase Functions SDK initialized with two regions: `functions` (us-central1) and `middleEastFunctions` (me-west1) in `lib/firebase/client.ts`
 - TypeScript with strict types in `lib/types.ts`
-- Tailwind CSS for styling, React Hook Form + Zod for forms
+- Tailwind CSS for styling, React Hook Form + Zod for forms (all forms should use RHF + Zod)
 - `resolveCompanyScope(companyId, uid)` helper returns `companyId ?? uid` for unified solo/team paths
-- All inventory operations use Firestore transactions via `firestore-service.ts`
-- Client creation uses `createClientV1` Cloud Function via `/api/clients/create` proxy (same as phone app)
+- All inventory and job mutations route through Cloud Functions via `firestore-service.ts`
+- Client creation uses `addClientV1` Cloud Function via `/api/clients/create` proxy (same as phone app)
 
 ## Roles
 
@@ -190,3 +213,5 @@ Firestore security rules enforce **read-only client access** for sensitive docum
 | User | Solo: own jobs, inventory, clients, docs |
 | Basic | Clients + documents only |
 | Dev | Full internal access |
+
+**Role assignment is restricted**: `manageWorker` only allows assigning `worker`, `user`, or `basic` roles — never `manager` or `dev`.

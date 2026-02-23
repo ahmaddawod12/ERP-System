@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ApiRouteError } from "@/lib/api/errors";
+import { resolveRequestAuth } from "@/lib/firebase/request-auth";
 
 function trimTrailingSlash(value: string) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
@@ -63,6 +64,10 @@ export async function proxyToHttpFunction(
   functionName: string,
   body: unknown,
 ) {
+  // P1-3: Verify auth server-side before proxying (defense-in-depth)
+  const bodyObj = (typeof body === "object" && body !== null) ? body as Record<string, unknown> : {};
+  const auth = await resolveRequestAuth(request, bodyObj.uid as string | undefined);
+
   const headers = new Headers({ "Content-Type": "application/json" });
   const authorization = request.headers.get("authorization");
   if (authorization) {

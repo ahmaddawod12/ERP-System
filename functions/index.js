@@ -87,9 +87,11 @@ const HTTP_ALL_APP_ROLES = ['manager', 'worker', 'user', 'basic', 'dev'];
 
 
 // For cost control, set maximum concurrent instances
+// P1-2: Enable App Check enforcement globally for all callable/onRequest functions
 setGlobalOptions({ 
   maxInstances: 10,
-  region: "us-central1" // Change to your preferred region
+  region: "us-central1", // Change to your preferred region
+  enforceAppCheck: true, // Reject requests without valid App Check token
 });
 
 // ── Simple in-memory rate limiter for unauthenticated endpoints ───────────
@@ -121,6 +123,20 @@ setInterval(() => {
   }
 }, 5 * 60_000);
 
+// ── P1-9: PII redaction helper ────────────────────────────────────────────
+/**
+ * Redact an email address for safe logging: "user@example.com" → "u***@e***.com"
+ */
+function redactEmail(email) {
+  if (!email || typeof email !== 'string') return '[none]';
+  const parts = email.split('@');
+  if (parts.length !== 2) return '[invalid]';
+  const [local, domain] = parts;
+  const domainParts = domain.split('.');
+  const tld = domainParts.pop();
+  const domainName = domainParts.join('.');
+  return `${local[0]}***@${domainName[0]}***.${tld}`;
+}
 
 
 /**
@@ -190,13 +206,17 @@ async function resolveHttpAuth(req, body = {}) {
   const token = parseBearerToken(req.get('authorization') || req.headers?.authorization || '');
   if (token) {
     try {
-      const decoded = await admin.auth().verifyIdToken(token);
+      // P1-3: Check token revocation for sensitive operations
+      const decoded = await admin.auth().verifyIdToken(token, true /* checkRevoked */);
       return {
         uid: decoded.uid,
         token: decoded,
         source: 'token',
       };
     } catch (error) {
+      if (error.code === 'auth/id-token-revoked') {
+        throw new HttpsError('unauthenticated', 'Token has been revoked. Please sign in again.');
+      }
       throw new HttpsError('unauthenticated', 'Invalid or expired auth token');
     }
   }
@@ -712,7 +732,7 @@ exports.manageWorker = onCall(async (request) => {
       });
       const workerUid = userRecord.uid;
 
-      logger.info(`Created Authentication user for worker: ${normalizedEmail}`, { uid: workerUid });
+      logger.info(`Created Authentication user for worker: ${redactEmail(normalizedEmail)}`, { uid: workerUid });
 
       // Canonical worker paths (UID-keyed)
       const workerProfileRef = admin.firestore().doc(userProfileDocPath(workerUid));
@@ -752,10 +772,10 @@ exports.manageWorker = onCall(async (request) => {
       }, { merge: true });
       await batch.commit();
 
-      logger.info(`Created Firestore profile for worker: ${normalizedEmail} (uid: ${workerUid})`);
+      logger.info(`Created Firestore profile for worker: ${redactEmail(normalizedEmail)} (uid: ${workerUid})`);
 
       logger.info(`Added worker to company list: ${companyId}`);
-      await saveAuditLog(companyId, 'addWorker', request.auth.token.email);
+      await saveAuditLog(companyId, 'addWorker', request.auth.uid);
 
       return {
         success: true,
@@ -769,16 +789,9 @@ exports.manageWorker = onCall(async (request) => {
     let workerUid = providedWorkerUid || null;
     let workerId = providedWorkerId || null;
 
+    // P0-7: Require workerUid for edit/delete — email-based lookup is deprecated
     if (!workerUid) {
-      try {
-        const userRecord = await admin.auth().getUserByEmail(normalizedEmail);
-        workerUid = userRecord.uid;
-      } catch (authError) {
-        if (authError.code === 'auth/user-not-found') {
-          throw new HttpsError('not-found', 'Worker account not found');
-        }
-        throw authError;
-      }
+      throw new HttpsError('invalid-argument', 'workerUid is required for edit/delete operations');
     }
 
     await verifyManagerAuth(request.auth, workerUid, companyId);
@@ -820,7 +833,7 @@ exports.manageWorker = onCall(async (request) => {
           throw deleteAuthError;
         }
       }
-      logger.info(`Deleted Authentication user for worker: ${normalizedEmail} (uid: ${workerUid})`);
+      logger.info(`Deleted Authentication user for worker: ${redactEmail(normalizedEmail)} (uid: ${workerUid})`);
 
       logger.info(`Starting user data delete for worker uid: ${workerUid}`);
       await deleteUserData(workerUid);
@@ -833,7 +846,7 @@ exports.manageWorker = onCall(async (request) => {
       await workerBatch.commit();
       logger.info(`Removed worker from company list: ${companyId}`);
 
-      await saveAuditLog(companyId, 'deleteWorker', request.auth.token.email);
+      await saveAuditLog(companyId, 'deleteWorker', request.auth.uid);
 
       return {
         success: true,
@@ -847,10 +860,14 @@ exports.manageWorker = onCall(async (request) => {
         throw new HttpsError('invalid-argument', 'At least one field must be provided for update');
       }
 
-      // Validate role if provided
+      // Validate role if provided — hard-whitelist to prevent privilege escalation
+      const EDITABLE_ROLES = ['worker', 'user', 'basic'];
       const newRole = request.data?.role ? toProfileRole(normalizeRole(request.data.role)) : null;
       if (request.data?.role && !newRole) {
         throw new HttpsError('invalid-argument', 'Invalid role value');
+      }
+      if (newRole && !EDITABLE_ROLES.includes(newRole)) {
+        throw new HttpsError('permission-denied', `Cannot assign role "${newRole}". Allowed roles: ${EDITABLE_ROLES.join(', ')}`);
       }
 
       // Read worker profile (using UID-based path)
@@ -873,7 +890,7 @@ exports.manageWorker = onCall(async (request) => {
       // Update Firebase Authentication
       if (Object.keys(authUpdates).length > 0) {
         await admin.auth().updateUser(workerUid, authUpdates);
-        logger.info(`Updated Authentication for worker: ${normalizedEmail}`, {
+        logger.info(`Updated Authentication for worker: ${redactEmail(normalizedEmail)}`, {
           updatedFields: Object.keys(authUpdates),
         });
       }
@@ -900,7 +917,7 @@ exports.manageWorker = onCall(async (request) => {
       // Update worker profile in Firestore
       if (Object.keys(firestoreUpdates).length > 0) {
         await workerProfileRef.set(firestoreUpdates, { merge: true });
-        logger.info(`Updated Firestore profile for worker: ${normalizedEmail} (uid: ${workerUid})`);
+        logger.info(`Updated Firestore profile for worker: ${redactEmail(normalizedEmail)} (uid: ${workerUid})`);
       }
 
       // Update company's worker list (canonical UID key)
@@ -934,7 +951,7 @@ exports.manageWorker = onCall(async (request) => {
         logger.info(`Updated worker in company list: ${companyId}`);
       }
 
-      await saveAuditLog(companyId, 'editWorker', request.auth.token.email);
+      await saveAuditLog(companyId, 'editWorker', request.auth.uid);
 
       return {
         success: true,
@@ -1124,6 +1141,12 @@ exports.createInviteV1 = onRequest({
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
   }
 
+  // P1-4: Rate limit invite creation per IP
+  const inviteIp = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  if (isRateLimited(`invite_${inviteIp}`)) {
+    return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
+  }
+
   try {
     const body = parseJsonBody(req);
     const auth = await resolveHttpAuth(req, body);
@@ -1185,6 +1208,12 @@ exports.joinCompanyV1 = onRequest({
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
+  }
+
+  // P1-4: Rate limit join attempts per IP
+  const joinIp = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  if (isRateLimited(`join_${joinIp}`)) {
+    return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
 
   try {
@@ -1460,10 +1489,12 @@ exports.generateDocumentV1 = onRequest({
  * HTTP Function: contactRequestV1
  * Canonical endpoint for public contact submissions.
  * Rate-limited per IP (S6).
+ * P1-2: Exempt from App Check (public endpoint).
  */
 exports.contactRequestV1 = onRequest({
   region: "us-central1",
   cors: true,
+  enforceAppCheck: false, // Public endpoint — no App Check required
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -2424,7 +2455,7 @@ exports.getInvoiceApproval = onCall({
         });
 
         // Save audit log for auto-refresh
-        await saveAuditLog(companyId, 'taxAuthorityTokenAutoRefreshed', request.auth.token.email);
+        await saveAuditLog(companyId, 'taxAuthorityTokenAutoRefreshed', request.auth.uid);
 
       } catch (refreshError) {
         logger.error('Failed to auto-refresh access token', {
@@ -3871,11 +3902,16 @@ exports.acceptJobV1 = onCall(async (request) => {
 
     const jobData = pendingSnap.data();
 
-    // Validate source status — only accept from valid transition states
-    const validSourceStatuses = ['pending', 'received', 'waiting'];
+    // Validate source status — only accept from valid transition states (canonical lifecycle)
+    const validSourceStatuses = ['pending', 'waiting'];
     if (jobData.status && !validSourceStatuses.includes(jobData.status)) {
-      throw new HttpsError('failed-precondition',
-        `Cannot accept job with status "${jobData.status}". Expected: ${validSourceStatuses.join(', ')}`);
+      // Allow legacy 'received' status by treating it as 'waiting'
+      if (jobData.status === 'received') {
+        logger.warn('acceptJobV1: Legacy "received" status encountered, treating as "waiting"', { companyId, jobId });
+      } else {
+        throw new HttpsError('failed-precondition',
+          `Cannot accept job with status "${jobData.status}". Expected: ${validSourceStatuses.join(', ')}`);
+      }
     }
 
     // Determine finished job ID
@@ -4011,6 +4047,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
     305: 1, 400: 1, 330: 1, 210: 1, 10: 1, 200: 1,
   };
 
+  // P1-1: Use transaction with create-if-absent to prevent concurrent registration race
   const dbRef = admin.firestore();
   const profileRole = toProfileRole(role);
 
@@ -4028,12 +4065,6 @@ exports.registerBusinessV1 = onCall(async (request) => {
   } else {
     // Solo scope — companyId = uid
     companyId = uid;
-  }
-
-  // Check if profile already exists (prevent re-registration)
-  const existingProfile = await dbRef.doc(userProfileDocPath(uid)).get();
-  if (existingProfile.exists && existingProfile.data()?.companyId) {
-    throw new HttpsError('already-exists', 'User is already registered with a company');
   }
 
   const now = new Date().toISOString();
@@ -4071,122 +4102,122 @@ exports.registerBusinessV1 = onCall(async (request) => {
     inventory: tier !== 'Basic',
   };
 
-  const batch = dbRef.batch();
+  // Transactional registration — prevents race where concurrent calls both pass precheck
+  await dbRef.runTransaction(async (tx) => {
+    const profileRef = dbRef.doc(userProfileDocPath(uid));
+    const existingProfile = await tx.get(profileRef);
 
-  // 1. Profile
-  batch.set(dbRef.doc(userProfileDocPath(uid)), {
-    uid,
-    email,
-    role: profileRole,
-    companyId,
-    accountType,
-    name,
-    phoneNumber,
-    createdAt: now,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
+    if (existingProfile.exists && existingProfile.data()?.companyId) {
+      throw new HttpsError('already-exists', 'User is already registered with a company');
+    }
 
-  // 2. User cache
-  batch.set(dbRef.doc(userCacheDocPath(uid)), {
-    profile: 1,
-    lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-
-  if (role === 'manager' && accountType === 'business') {
-    // 3. Company root doc
-    batch.set(dbRef.doc(`companies/${companyId}`), {
-      companyId,
-      createdBy: uid,
-      createdAt: now,
-      cid: 1,
-      wid: 1,
-      jid: 1,
-    });
-
-    // 4. Worker (manager) record
-    batch.set(dbRef.doc(companyWorkerDocPath(companyId, uid)), {
-      workerId: uid,
+    // 1. Profile
+    tx.set(profileRef, {
       uid,
-      role: profileRole,
       email,
+      role: profileRole,
+      companyId,
+      accountType,
       name,
       phoneNumber,
       createdAt: now,
-      updatedAt: now,
-    });
-
-    // 5. Business info
-    batch.set(dbRef.doc(`companies/${companyId}/business_data/business_info`), businessData);
-
-    // 6. Subscription
-    batch.set(dbRef.doc(`companies/${companyId}/business_data/subscription`), {
-      tier,
-      status: 'active',
-      enabledModules,
-      updatedAt: now,
-    });
-
-    // 7. Empty inventory (client counter uses cid on company root doc)
-    batch.set(dbRef.doc(`companies/${companyId}/business_data/inventory`), {
-      parts: [],
-      nextId: 1,
-      lastUpdated: now,
-    });
-
-    // 9. Company cache
-    batch.set(dbRef.doc(`companies/${companyId}/business_data/cache`), {
-      business_info: 1,
-      lastUpdated: now,
-    });
-  } else {
-    // Solo user — companyId = uid
-    // Company root doc (if not exists)
-    batch.set(dbRef.doc(`companies/${uid}`), {
-      companyId: uid,
-      createdBy: uid,
-      createdAt: now,
-      cid: 1,
-      jid: 1,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    // Business info
-    batch.set(dbRef.doc(`companies/${uid}/business_data/business_info`), businessData);
+    // 2. User cache
+    tx.set(dbRef.doc(userCacheDocPath(uid)), {
+      profile: 1,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
 
-    // Subscription
-    batch.set(dbRef.doc(`companies/${uid}/business_data/subscription`), {
-      tier,
-      status: 'active',
-      enabledModules,
-      updatedAt: now,
-    });
+    if (role === 'manager' && accountType === 'business') {
+      // 3. Company root doc
+      tx.set(dbRef.doc(`companies/${companyId}`), {
+        companyId,
+        createdBy: uid,
+        createdAt: now,
+        cid: 1,
+        wid: 1,
+        jid: 1,
+      });
 
-    // Worker record (self)
-    batch.set(dbRef.doc(companyWorkerDocPath(uid, uid)), {
-      workerId: uid,
-      uid,
-      role: profileRole,
-      email,
-      name,
-      phoneNumber,
-      createdAt: now,
-      updatedAt: now,
-    });
+      // 4. Worker (manager) record
+      tx.set(dbRef.doc(companyWorkerDocPath(companyId, uid)), {
+        workerId: uid,
+        uid,
+        role: profileRole,
+        email,
+        name,
+        phoneNumber,
+        createdAt: now,
+        updatedAt: now,
+      });
 
-    // Empty inventory (client counter uses cid on company root doc)
-    batch.set(dbRef.doc(`companies/${uid}/business_data/inventory`), {
-      parts: [],
-      nextId: 1,
-      lastUpdated: now,
-    });
+      // 5. Business info
+      tx.set(dbRef.doc(`companies/${companyId}/business_data/business_info`), businessData);
 
-    // Cache
-    batch.set(dbRef.doc(`companies/${uid}/business_data/cache`), {
-      business_info: 1,
-      lastUpdated: now,
-    });
-  }
+      // 6. Subscription
+      tx.set(dbRef.doc(`companies/${companyId}/business_data/subscription`), {
+        tier,
+        status: 'active',
+        enabledModules,
+        updatedAt: now,
+      });
 
-  await batch.commit();
+      // 7. Empty inventory
+      tx.set(dbRef.doc(`companies/${companyId}/business_data/inventory`), {
+        parts: [],
+        nextId: 1,
+        lastUpdated: now,
+      });
+
+      // 8. Company cache
+      tx.set(dbRef.doc(`companies/${companyId}/business_data/cache`), {
+        business_info: 1,
+        lastUpdated: now,
+      });
+    } else {
+      // Solo user — companyId = uid
+      tx.set(dbRef.doc(`companies/${uid}`), {
+        companyId: uid,
+        createdBy: uid,
+        createdAt: now,
+        cid: 1,
+        jid: 1,
+      }, { merge: true });
+
+      tx.set(dbRef.doc(`companies/${uid}/business_data/business_info`), businessData);
+
+      tx.set(dbRef.doc(`companies/${uid}/business_data/subscription`), {
+        tier,
+        status: 'active',
+        enabledModules,
+        updatedAt: now,
+      });
+
+      tx.set(dbRef.doc(companyWorkerDocPath(uid, uid)), {
+        workerId: uid,
+        uid,
+        role: profileRole,
+        email,
+        name,
+        phoneNumber,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      tx.set(dbRef.doc(`companies/${uid}/business_data/inventory`), {
+        parts: [],
+        nextId: 1,
+        lastUpdated: now,
+      });
+
+      tx.set(dbRef.doc(`companies/${uid}/business_data/cache`), {
+        business_info: 1,
+        lastUpdated: now,
+      });
+    }
+  });
 
   logger.info('registerBusinessV1: registered', { uid, companyId, role, accountType });
 
@@ -4287,6 +4318,415 @@ exports.createJobV1 = onCall(async (request) => {
   });
 
   return { success: true, jobId: result.jobId, jid: result.jid };
+});
+
+/**
+ * Callable Function: updateJobV1
+ * Updates a pending job via Cloud Function (replaces direct client writes).
+ * Workers can only update jobs assigned to them with field restrictions.
+ * Managers can update any field.
+ */
+exports.updateJobV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  if (!companyId || !jobId) {
+    throw new HttpsError('invalid-argument', 'companyId and jobId are required');
+  }
+
+  const { resolvedRole, isSoloScope } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: ['manager', 'worker', 'user', 'dev'],
+    allowSoloScope: true,
+  });
+
+  const dbRef = admin.firestore();
+
+  // Determine collection from jobId prefix
+  const isPending = jobId.startsWith('p_');
+  const collectionName = isPending ? 'PendingJobs' : 'finishedJobs';
+  const jobRef = dbRef.doc(`companies/${companyId}/${collectionName}/${jobId}`);
+  const jobSnap = await jobRef.get();
+
+  if (!jobSnap.exists) {
+    throw new HttpsError('not-found', 'Job not found');
+  }
+
+  const existingJob = jobSnap.data();
+
+  // Worker can only update their own assigned jobs
+  if (resolvedRole === 'worker') {
+    if (existingJob.workerId !== uid && existingJob.completedBy !== uid) {
+      throw new HttpsError('permission-denied', 'Workers can only update their own assigned jobs');
+    }
+  }
+
+  // Build update payload — strip immutable/metadata fields
+  const updates = { ...data };
+  delete updates.companyId;
+  delete updates.jobId;
+  // Immutable fields workers cannot change
+  if (resolvedRole === 'worker') {
+    delete updates.workerId;
+    delete updates.completedBy;
+    delete updates.createdBy;
+    delete updates.createdAt;
+    delete updates.id;
+    delete updates.jid;
+    // Workers cannot set status to finished or denied — must go through acceptJobV1
+    const CANONICAL_STATUSES = ['pending', 'waiting'];
+    if (updates.status && !CANONICAL_STATUSES.includes(updates.status)) {
+      throw new HttpsError('permission-denied', 'Workers cannot set status to ' + updates.status);
+    }
+  }
+
+  // Validate status is canonical if provided
+  const VALID_STATUSES = ['pending', 'waiting', 'finished', 'denied'];
+  if (updates.status && !VALID_STATUSES.includes(updates.status)) {
+    throw new HttpsError('invalid-argument', `Invalid status: ${updates.status}. Valid: ${VALID_STATUSES.join(', ')}`);
+  }
+
+  updates.updatedAt = new Date().toISOString();
+
+  await jobRef.update(updates);
+
+  logger.info('updateJobV1: job updated', { companyId, jobId, uid, role: resolvedRole });
+  return { success: true, jobId };
+});
+
+/**
+ * Callable Function: updateClientV1
+ * Updates a client document via Cloud Function.
+ * Replaces direct client writes to enforce validation.
+ */
+exports.updateClientV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const clientId = typeof data.clientId === 'string' ? data.clientId.trim() : '';
+  if (!companyId || !clientId) {
+    throw new HttpsError('invalid-argument', 'companyId and clientId are required');
+  }
+
+  const { resolvedRole } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+    allowSoloScope: true,
+  });
+
+  const dbRef = admin.firestore();
+  const clientRef = dbRef.doc(`companies/${companyId}/clients/${clientId}`);
+  const clientSnap = await clientRef.get();
+
+  if (!clientSnap.exists) {
+    throw new HttpsError('not-found', 'Client not found');
+  }
+
+  // Build update payload — strip metadata
+  const updates = {};
+  if (data.name !== undefined) updates.name = String(data.name || '').trim();
+  if (data.email !== undefined) {
+    const email = String(data.email || '').trim();
+    if (email && !isValidEmail(email)) {
+      throw new HttpsError('invalid-argument', 'Invalid email format');
+    }
+    updates.email = email;
+  }
+  if (data.phone !== undefined) updates.phone = String(data.phone || '').trim();
+  if (data.address !== undefined) updates.address = String(data.address || '').trim();
+  if (data.city !== undefined) updates.city = String(data.city || '').trim();
+  if (data.vatNumber !== undefined) updates.vatNumber = String(data.vatNumber || '').trim();
+  if (data.notes !== undefined) updates.notes = String(data.notes || '').trim();
+  updates.updatedAt = new Date().toISOString();
+
+  await clientRef.update(updates);
+
+  // Bump cache version
+  const isManagerRole = resolvedRole === 'manager';
+  const cacheRef = isManagerRole
+    ? dbRef.doc(`companies/${companyId}/business_data/cache`)
+    : dbRef.doc(`users/${uid}/data/cache`);
+  await cacheRef.set({
+    clients: admin.firestore.FieldValue.increment(1),
+    lastUpdated: new Date().toISOString(),
+  }, { merge: true });
+
+  logger.info('updateClientV1: client updated', { companyId, clientId, uid });
+  return { success: true, clientId };
+});
+
+/**
+ * Callable Function: updateInventoryV1
+ * Centralizes all inventory mutations via Cloud Function.
+ * action: 'addPart' | 'removePart' | 'togglePart' | 'updatePart' | 'pickParts'
+ * scope: 'company' | 'user'
+ */
+exports.updateInventoryV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const action = typeof data.action === 'string' ? data.action.trim() : '';
+  const scope = typeof data.scope === 'string' ? data.scope.trim() : '';
+  const targetUid = typeof data.targetUid === 'string' ? data.targetUid.trim() : uid;
+
+  if (!companyId || !action || !scope) {
+    throw new HttpsError('invalid-argument', 'companyId, action, and scope are required');
+  }
+
+  if (!['addPart', 'removePart', 'togglePart', 'updatePart', 'pickParts', 'replaceParts'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'Invalid action');
+  }
+
+  if (!['company', 'user'].includes(scope)) {
+    throw new HttpsError('invalid-argument', 'scope must be company or user');
+  }
+
+  // Access control
+  if (scope === 'company') {
+    await assertHttpCompanyAccess({
+      uid,
+      companyId,
+      allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
+      allowSoloScope: true,
+    });
+  } else {
+    // user scope: user can modify own inventory, manager can modify worker inventory
+    await assertHttpCompanyAccess({
+      uid,
+      companyId,
+      allowedRoles: ['manager', 'worker', 'user', 'dev'],
+      allowSoloScope: true,
+    });
+    if (targetUid !== uid) {
+      // Only manager/dev can modify another user's inventory
+      await assertHttpCompanyAccess({
+        uid,
+        companyId,
+        allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
+        allowSoloScope: false,
+      });
+    }
+  }
+
+  const dbRef = admin.firestore();
+  const invRef = scope === 'company'
+    ? dbRef.doc(`companies/${companyId}/business_data/inventory`)
+    : dbRef.doc(`users/${targetUid}/data/inventory`);
+
+  const result = await dbRef.runTransaction(async (tx) => {
+    const snap = await tx.get(invRef);
+    const invData = snap.exists ? (snap.data() || {}) : { parts: [], nextId: 1, lastUpdated: '' };
+    const parts = Array.isArray(invData.parts) ? invData.parts : [];
+    let nextId = invData.nextId || 1;
+    const now = new Date().toISOString();
+
+    if (action === 'addPart') {
+      const partName = typeof data.partName === 'string' ? data.partName.trim() : '';
+      if (!partName) throw new HttpsError('invalid-argument', 'partName is required');
+      const newPart = {
+        id: nextId,
+        name: partName,
+        active: data.active !== false,
+        quantity: typeof data.quantity === 'number' ? data.quantity : 0,
+        lowThreshold: typeof data.lowThreshold === 'number' ? data.lowThreshold : 0,
+        dateAdded: now,
+      };
+      tx.set(invRef, { parts: [...parts, newPart], nextId: nextId + 1, lastUpdated: now }, { merge: true });
+      return { partId: nextId };
+    }
+
+    if (action === 'removePart') {
+      const partId = data.partId;
+      if (typeof partId !== 'number') throw new HttpsError('invalid-argument', 'partId is required');
+      tx.update(invRef, { parts: parts.filter((p) => p.id !== partId), lastUpdated: now });
+      return { removed: partId };
+    }
+
+    if (action === 'togglePart') {
+      const partId = data.partId;
+      if (typeof partId !== 'number') throw new HttpsError('invalid-argument', 'partId is required');
+      const updatedParts = parts.map((p) => p.id === partId ? { ...p, active: !p.active } : p);
+      tx.update(invRef, { parts: updatedParts, lastUpdated: now });
+      return { toggled: partId };
+    }
+
+    if (action === 'updatePart') {
+      const partId = data.partId;
+      if (typeof partId !== 'number') throw new HttpsError('invalid-argument', 'partId is required');
+      const updatedParts = parts.map((p) => {
+        if (p.id !== partId) return p;
+        const updated = { ...p };
+        if (data.partName !== undefined) updated.name = String(data.partName).trim();
+        if (data.quantity !== undefined) updated.quantity = Number(data.quantity);
+        if (data.lowThreshold !== undefined) updated.lowThreshold = Number(data.lowThreshold);
+        if (data.active !== undefined) updated.active = !!data.active;
+        return updated;
+      });
+      tx.update(invRef, { parts: updatedParts, lastUpdated: now });
+      return { updated: partId };
+    }
+
+    if (action === 'pickParts') {
+      const partsToPick = data.partsToPick;
+      if (!Array.isArray(partsToPick) || partsToPick.length === 0) {
+        throw new HttpsError('invalid-argument', 'partsToPick array is required');
+      }
+      // For pick: read user inventory, add/merge picked parts
+      const userInvRef = dbRef.doc(`users/${targetUid}/data/inventory`);
+      const userSnap = await tx.get(userInvRef);
+      const userData = userSnap.exists ? (userSnap.data() || {}) : { parts: [], nextId: 1, lastUpdated: '' };
+      let userNextId = userData.nextId || 1;
+      const userParts = Array.isArray(userData.parts) ? [...userData.parts] : [];
+
+      for (const pick of partsToPick) {
+        const existing = userParts.find((p) => p.id === pick.id);
+        if (existing) {
+          existing.quantity = (existing.quantity || 0) + (pick.quantity || 0);
+        } else {
+          userParts.push({
+            id: userNextId,
+            name: pick.name || '',
+            quantity: pick.quantity || 0,
+            lowThreshold: 0,
+            dateAdded: now,
+          });
+          userNextId += 1;
+        }
+      }
+      tx.set(userInvRef, { parts: userParts, nextId: userNextId, lastUpdated: now }, { merge: true });
+      return { picked: partsToPick.length };
+    }
+
+    if (action === 'replaceParts') {
+      // Manager replaces the full parts array on a worker's inventory (e.g. EditJob adjustments)
+      const newParts = data.parts;
+      if (!Array.isArray(newParts)) throw new HttpsError('invalid-argument', 'parts array is required');
+      // Sanitize each part
+      const sanitized = newParts.map((p) => ({
+        id: typeof p.id === 'number' ? p.id : nextId++,
+        name: typeof p.name === 'string' ? p.name.trim() : '',
+        active: p.active !== false,
+        quantity: typeof p.quantity === 'number' ? Math.max(0, p.quantity) : 0,
+        lowThreshold: typeof p.lowThreshold === 'number' ? p.lowThreshold : 0,
+        dateAdded: typeof p.dateAdded === 'string' ? p.dateAdded : now,
+      }));
+      const maxId = sanitized.reduce((m, p) => Math.max(m, p.id), 0);
+      tx.set(invRef, { parts: sanitized, nextId: maxId + 1, lastUpdated: now }, { merge: true });
+      return { replaced: sanitized.length };
+    }
+
+    throw new HttpsError('invalid-argument', 'Unknown action');
+  });
+
+  // Bump cache version
+  const cacheRef = scope === 'company'
+    ? dbRef.doc(`companies/${companyId}/business_data/cache`)
+    : dbRef.doc(`users/${targetUid}/data/cache`);
+  await cacheRef.set({
+    inventory: admin.firestore.FieldValue.increment(1),
+    lastUpdated: new Date().toISOString(),
+  }, { merge: true });
+
+  logger.info('updateInventoryV1: inventory updated', { companyId, action, scope, uid });
+  return { success: true, ...result };
+});
+
+/**
+ * Callable Function: updateCacheV1
+ * Updates cache version fields via Cloud Function.
+ * Replaces direct client writes to cache documents.
+ */
+exports.updateCacheV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  const isCompanyCache = data.isCompanyCache === true;
+  const field = typeof data.field === 'string' ? data.field.trim() : '';
+  const action = typeof data.action === 'string' ? data.action.trim() : 'increment';
+
+  if (!field) {
+    throw new HttpsError('invalid-argument', 'field is required');
+  }
+
+  // Access control
+  if (isCompanyCache && companyId) {
+    await assertHttpCompanyAccess({
+      uid,
+      companyId,
+      allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
+      allowSoloScope: true,
+    });
+  }
+
+  const dbRef = admin.firestore();
+  const cacheRef = isCompanyCache && companyId
+    ? dbRef.doc(`companies/${companyId}/business_data/cache`)
+    : dbRef.doc(`users/${uid}/data/cache`);
+
+  if (action === 'delete') {
+    await cacheRef.update({
+      [field]: admin.firestore.FieldValue.delete(),
+      lastUpdated: new Date().toISOString(),
+    });
+  } else {
+    await cacheRef.set({
+      [field]: admin.firestore.FieldValue.increment(1),
+      lastUpdated: new Date().toISOString(),
+    }, { merge: true });
+  }
+
+  return { success: true };
+});
+
+/**
+ * Callable Function: clearPushTokenV1
+ * Clears the push token from the user's profile on logout.
+ * Prevents stale token delivery to wrong-account on shared devices.
+ */
+exports.clearPushTokenV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const profileRef = admin.firestore().doc(userProfileDocPath(uid));
+  const profileSnap = await profileRef.get();
+
+  if (profileSnap.exists) {
+    await profileRef.update({
+      pushToken: admin.firestore.FieldValue.delete(),
+      pushTokenUpdatedAt: admin.firestore.FieldValue.delete(),
+      pushTokenPlatform: admin.firestore.FieldValue.delete(),
+      pushTokenType: admin.firestore.FieldValue.delete(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+
+  logger.info('clearPushTokenV1: token cleared', { uid });
+  return { success: true };
 });
 
 /**

@@ -14,7 +14,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { getColors, shadows, spacing, borderRadius, typography, gradients } from '../theme';
-import { auth, signOut } from '../firebase';
+import { auth, signOut, functions, httpsCallable } from '../firebase';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
 import { GlobalHeader, ScrollableContainer } from '../components';
@@ -86,6 +86,13 @@ export default function Settings() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // P1-8: Clear push token on server before sign-out
+              try {
+                const clearPushTokenFn = httpsCallable(functions, 'clearPushTokenV1');
+                await clearPushTokenFn({});
+              } catch (tokenErr) {
+                console.warn('Failed to clear push token on logout:', tokenErr);
+              }
               // Clear cache on logout
               clearCache();
               // Firebase Web SDK modular auth signOut

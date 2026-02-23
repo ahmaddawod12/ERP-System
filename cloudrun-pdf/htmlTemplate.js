@@ -240,10 +240,15 @@ function generateDocumentHTML(documentData) {
   const vatAmount = formatCentsToAmount(vatCents);
   const grandTotal = formatCentsToAmount(grandTotalCents);
 
+  // P1-10: Locale-aware currency symbol
+  const currencySymbol = '₪'; // ILS — Israeli businesses
+  const dirAttr = isRTL ? 'rtl' : 'ltr';
+  const localeTag = effectiveLanguage === 'he' ? 'he-IL' : effectiveLanguage === 'ar' ? 'ar-IL' : 'en-IL';
+
   // Generate uniform HTML template for all document types
   return `
 <!DOCTYPE html>
-<html lang="he">
+<html lang="${effectiveLanguage}" dir="${dirAttr}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -262,7 +267,7 @@ function generateDocumentHTML(documentData) {
     
     body {
       font-family: 'Arial', 'Helvetica', sans-serif;
-      direction: rtl;
+      direction: ${dirAttr};
       background: white;
       color: #000;
       font-size: 11px;
@@ -614,7 +619,7 @@ function generateDocumentHTML(documentData) {
       </div>
       ${paymentMethod ? `
       <div class="info-row" style="margin-top: 8px;">
-        <span class="label" style="font-weight: bold;">אמצעי תשלום:</span>
+        <span class="label" style="font-weight: bold;">${t.paymentMethod}:</span>
         <span class="value">${sanitizeInput(paymentMethod)}</span>
       </div>` : ''}
     </div>` : ''}
@@ -623,11 +628,11 @@ function generateDocumentHTML(documentData) {
     <table>
       <thead>
         <tr>
-          ${sanitizedItems.some(item => item.partId) ? '<th style="width: 15%;">מזהה פריט</th>' : ''}
-          <th style="${sanitizedItems.some(item => item.partId) ? 'width: 35%;' : 'width: 50%;'}">תיאור</th>
-          <th style="width: 15%;">כמות</th>
-          <th style="width: 17.5%;">מחיר</th>
-          <th style="width: 17.5%;">סה"כ</th>
+          ${sanitizedItems.some(item => item.partId) ? `<th style="width: 15%;">${t.itemName || t.description}</th>` : ''}
+          <th style="${sanitizedItems.some(item => item.partId) ? 'width: 35%;' : 'width: 50%;'}">${t.description}</th>
+          <th style="width: 15%;">${t.quantity}</th>
+          <th style="width: 17.5%;">${t.price}</th>
+          <th style="width: 17.5%;">${t.total}</th>
         </tr>
       </thead>
       <tbody>
@@ -636,8 +641,8 @@ function generateDocumentHTML(documentData) {
           ${sanitizedItems.some(i => i.partId) ? `<td>${item.partId || '-'}</td>` : ''}
           <td>${item.description}</td>
           <td>${item.quantity}</td>
-          <td>₪${Number(item.price).toFixed(2)}</td>
-          <td>₪${formatCentsToAmount(item.totalCents)}</td>
+          <td>${currencySymbol}${Number(item.price).toFixed(2)}</td>
+          <td>${currencySymbol}${formatCentsToAmount(item.totalCents)}</td>
         </tr>
         `).join('')}
       </tbody>
@@ -646,30 +651,30 @@ function generateDocumentHTML(documentData) {
     <!-- Totals -->
     <div class="totals">
       <div class="row subtotal">
-        <span><strong>סכום ביניים:</strong></span>
-        <span>₪${subtotal}</span>
+        <span><strong>${t.subtotal}:</strong></span>
+        <span>${currencySymbol}${subtotal}</span>
       </div>
       <div class="row vat">
-        <span><strong>מע"מ (18%):</strong></span>
-        <span>₪${vatAmount}</span>
+        <span><strong>${t.vat}:</strong></span>
+        <span>${currencySymbol}${vatAmount}</span>
       </div>
       <div class="row grand-total">
-        <span><strong>${isReceipt ? 'סה"כ התקבל:' : isDeliveryNote ? 'סה"כ ערך המשלוח:' : 'סה"כ לתשלום:'}</strong></span>
-        <span class="amount">₪${grandTotal}</span>
+        <span><strong>${isReceipt ? (t.amountReceived || t.grandTotal) + ':' : isDeliveryNote ? t.grandTotal + ':' : t.grandTotal + ':'}</strong></span>
+        <span class="amount">${currencySymbol}${grandTotal}</span>
       </div>
     </div>
     
     ${sanitizedNotes ? `
     <!-- Notes -->
     <div class="notes">
-      <h3>הערות</h3>
+      <h3>${t.notes}</h3>
       <p>${sanitizedNotes}</p>
     </div>` : ''}
     
     <!-- Footer -->
     <div class="footer">
       <p><span class="brand">Smart-Job</span> - מערכת ניהול עבודות מקצועית</p>
-      <p>נוצר בתאריך: ${new Date().toLocaleString('he-IL', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+      <p>נוצר בתאריך: ${new Date().toLocaleString(localeTag, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
     </div>
   </div>
 </body>

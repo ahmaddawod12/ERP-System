@@ -331,11 +331,20 @@ export function setupNotificationListeners(onNotificationReceived, onNotificatio
   });
   unsubscribers.push(unsubscribeNotifee);
 
-  // 6. Token refresh listener
+  // 6. Token refresh listener — P1-8: save refreshed tokens to server
   const unsubscribeTokenRefresh = onTokenRefresh(messaging, async (newToken) => {
     console.log('🔄 FCM token refreshed:', newToken.substring(0, 30) + '...');
-    // Note: You should re-register the token here if you have access to user email
-    // This is typically handled by calling registerPushTokenForUser again on app resume
+    try {
+      const updatePushTokenFn = httpsCallable(functions, 'updatePushTokenV1');
+      await updatePushTokenFn({
+        pushToken: newToken,
+        pushTokenPlatform: Platform.OS,
+        pushTokenType: 'fcm',
+      });
+      console.log('✅ Refreshed FCM token saved to server');
+    } catch (err) {
+      console.error('Failed to save refreshed FCM token:', err);
+    }
   });
   unsubscribers.push(unsubscribeTokenRefresh);
 

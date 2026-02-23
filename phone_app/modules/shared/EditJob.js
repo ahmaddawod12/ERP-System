@@ -15,7 +15,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, doc, getDoc, updateDoc } from '../../firebase';
+import { db, doc, getDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -201,7 +201,9 @@ export default function EditJob() {
               });
             }
 
-            await updateDoc(doc(db, 'users', workerId, 'data', 'inventory'), { parts });
+            // P2-2: Route inventory mutation through Cloud Function
+            const updateInvFn = httpsCallable(functions, 'updateInventoryV1');
+            await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: workerId, parts });
           }
         }
       }
@@ -219,7 +221,9 @@ export default function EditJob() {
         signingPerson: editingJob.signingPerson || '',
         partsUsed: editingJob.partsUsed || [],
       };
-      await updateDoc(jobRef, jobUpdates);
+      // P2-2: Update the job document via Cloud Function
+      const updateJobFn = httpsCallable(functions, 'updateJobV1');
+      await updateJobFn({ companyId, jobId: editingJob.id, updates: jobUpdates });
       
       // Update cache with document-level versioning
       const isPending = statusLower !== 'finished';

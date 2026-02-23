@@ -89,7 +89,11 @@ export interface JobRecord {
   clientEmail?: string;
   clientAddress?: string;
   clientId?: string;
-  status: "pending" | "received" | "waiting" | "denied" | "finished";
+  /**
+   * Canonical statuses: pending → waiting → finished | denied
+   * 'received' is legacy — treat as 'waiting' in all new code.
+   */
+  status: "pending" | "waiting" | "denied" | "finished";
   workerId: string | null;
   name?: string;
   MName?: string;

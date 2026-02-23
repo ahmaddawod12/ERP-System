@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { httpsCallable } from "firebase/functions";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
@@ -14,24 +17,40 @@ import { useLocale } from "@/hooks/use-i18n";
 import { useTheme } from "@/components/providers/theme-provider";
 import type { Locale } from "@/lib/i18n/translations";
 
+const profileSchema = z.object({
+  name: z.string().min(1, "Name is required").max(120),
+  phone: z.string().max(40).optional().default(""),
+});
+
+type ProfileFormValues = z.infer<typeof profileSchema>;
+
 export default function SettingsPage() {
   const { uid, profile, subscription, refreshUserData } = useAppContext();
   const { toast } = useAppToast();
   const { locale, setLocale } = useLocale();
   const { theme, setTheme } = useTheme();
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<ProfileFormValues>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: { name: "", phone: "" },
+  });
 
   useEffect(() => {
-    setName(profile?.name ?? "");
-    setPhone(profile?.phoneNumber ?? "");
-  }, [profile?.name, profile?.phoneNumber]);
+    reset({
+      name: profile?.name ?? "",
+      phone: profile?.phoneNumber ?? "",
+    });
+  }, [profile?.name, profile?.phoneNumber, reset]);
 
-  const saveProfile = async () => {
+  const saveProfile = async (values: ProfileFormValues) => {
     if (!uid || !profile) return;
-    // Use updateProfileV1 Cloud Function instead of direct Firestore write
     const updateProfileFn = httpsCallable(functions, "updateProfileV1");
-    await updateProfileFn({ name, phoneNumber: phone });
+    await updateProfileFn({ name: values.name, phoneNumber: values.phone });
     await refreshUserData();
     toast({ title: "Settings saved", variant: "success" });
   };
@@ -49,13 +68,17 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        <Card className="grid gap-3">
-          <Input label="Full name" value={name} onChange={(event) => setName(event.target.value)} />
-          <Input label="Phone number" value={phone} onChange={(event) => setPhone(event.target.value)} />
-          <div className="flex gap-2">
-            <Button onClick={() => void saveProfile()}>Save profile</Button>
-          </div>
-        </Card>
+        <form onSubmit={handleSubmit(saveProfile)}>
+          <Card className="grid gap-3">
+            <Input label="Full name" {...register("name")} error={errors.name?.message} />
+            <Input label="Phone number" {...register("phone")} error={errors.phone?.message} />
+            <div className="flex gap-2">
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Saving…" : "Save profile"}
+              </Button>
+            </div>
+          </Card>
+        </form>
 
         <Card className="grid gap-3 md:grid-cols-2">
           <label className="flex flex-col gap-1.5">

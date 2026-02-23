@@ -36,13 +36,18 @@ export async function resolveRequestAuth(
 
   if (token) {
     try {
-      const decoded = await adminAuth().verifyIdToken(token);
+      // P1-3: Check token revocation to invalidate logged-out sessions
+      const decoded = await adminAuth().verifyIdToken(token, true /* checkRevoked */);
       return {
         uid: decoded.uid,
         token: decoded,
         source: "token",
       };
-    } catch {
+    } catch (error: unknown) {
+      const firebaseError = error as { code?: string };
+      if (firebaseError.code === "auth/id-token-revoked") {
+        throw new ApiRouteError(401, "token_revoked", "Token has been revoked. Please sign in again.");
+      }
       throw new ApiRouteError(401, "invalid_token", "Invalid or expired auth token");
     }
   }

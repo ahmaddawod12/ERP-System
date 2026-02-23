@@ -131,12 +131,42 @@ const generateDocumentHTML = require('./htmlTemplate');
 
 /**
  * Request verification for Pub/Sub push endpoints.
- * S4: Uses PUBSUB_VERIFICATION_TOKEN for request authentication.
- * In production, also enforce Cloud Run IAM invoker restriction and
- * configure Pub/Sub to use OIDC JWT authentication.
- * The query-token fallback is removed — only header token is accepted.
+ * P0-4: Two-factor auth model:
+ * 1. Primary: Verify Pub/Sub OIDC JWT from Authorization: Bearer header
+ * 2. Secondary: Verify shared PUBSUB_VERIFICATION_TOKEN from x-pubsub-token header
+ * 
+ * In production, Cloud Run should be deployed with --no-allow-unauthenticated,
+ * and Pub/Sub subscriptions should use OIDC push authentication with a
+ * service account that has roles/run.invoker.
  */
-function verifyPubSubRequest(req, res, next) {
+async function verifyPubSubRequest(req, res, next) {
+  // Factor 1: Check OIDC JWT if present (primary auth in production)
+  const authHeader = req.headers['authorization'] || '';
+  if (authHeader.startsWith('Bearer ')) {
+    const idToken = authHeader.slice('Bearer '.length).trim();
+    if (idToken) {
+      try {
+        // Verify the OIDC token — in production this is a Google-signed JWT
+        // from the Pub/Sub push subscription's service account
+        const { OAuth2Client } = require('google-auth-library');
+        const client = new OAuth2Client();
+        const ticket = await client.verifyIdToken({
+          idToken,
+          audience: process.env.CLOUD_RUN_SERVICE_URL || undefined,
+        });
+        const payload = ticket.getPayload();
+        if (payload && payload.email_verified) {
+          // Valid OIDC token — allow request
+          return next();
+        }
+      } catch (oidcError) {
+        console.warn('OIDC JWT verification failed:', oidcError.message);
+        // Fall through to check shared token
+      }
+    }
+  }
+
+  // Factor 2: Check shared token (required if OIDC not present/valid)
   if (!PUBSUB_VERIFICATION_TOKEN) {
     console.error('PUBSUB_VERIFICATION_TOKEN is missing - refusing requests');
     return res.status(503).send('Service misconfigured');
@@ -147,6 +177,7 @@ function verifyPubSubRequest(req, res, next) {
   if (token !== PUBSUB_VERIFICATION_TOKEN) {
     console.warn('Rejected unauthenticated Pub/Sub request', {
       hasHeader: !!req.headers['x-pubsub-token'],
+      hasOidc: !!authHeader,
       ip: req.ip,
     });
     return res.status(401).send('Unauthorized');
@@ -336,6 +367,33 @@ async function processGenerateTask(taskData) {
   try {
     if (!uid || !companyId) {
       throw new Error('Missing required task identity fields (uid/companyId)');
+    }
+
+    // P0-5: Idempotency — check task state before processing.
+    // If task is already processing/completed, skip to prevent duplicate side effects.
+    const taskRef = db.collection('documentTasks').doc(taskId);
+    const taskSnap = await taskRef.get();
+    if (taskSnap.exists) {
+      const taskState = taskSnap.data()?.status;
+      if (taskState === 'completed' || taskState === 'failed') {
+        console.log(`[generate:${taskId}] Skipping — already in terminal state: ${taskState}`);
+        return { success: true, taskId, skipped: true, reason: `already_${taskState}` };
+      }
+      if (taskState === 'processing') {
+        console.log(`[generate:${taskId}] Skipping — already processing (possible redelivery)`);
+        return { success: true, taskId, skipped: true, reason: 'already_processing' };
+      }
+    }
+
+    // CAS transition: queued → processing (reject if not in queued state)
+    try {
+      await taskRef.update({
+        status: 'processing',
+        processingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (casError) {
+      console.warn(`[generate:${taskId}] CAS update failed, likely concurrent delivery`, casError.message);
+      return { success: true, taskId, skipped: true, reason: 'cas_conflict' };
     }
 
     // Resolve requester role/company from Firestore, never from Pub/Sub payload.

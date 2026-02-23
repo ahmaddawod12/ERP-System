@@ -117,11 +117,29 @@ export const useCache = () => {
   return context;
 };
 
+// P2-4: Scope prefix for MMKV keys — prevents cross-user cache leaks
+let _mmkvScopePrefix = '';
+
+/**
+ * Set the MMKV scope prefix (called on auth state change).
+ * After calling this, all cache reads/writes are namespaced by uid:companyId.
+ */
+function setMmkvScope(uid, companyId) {
+  _mmkvScopePrefix = (uid && companyId) ? `${uid}:${companyId}:` : uid ? `${uid}:` : '';
+}
+
+/** Resolve a cache key to its scoped form. Identity keys (UID, COMPANY_ID, USER_ROLE) are not scoped. */
+const IDENTITY_KEYS = new Set([CACHE_KEYS.UID, CACHE_KEYS.COMPANY_ID, CACHE_KEYS.USER_ROLE]);
+function scopedKey(key) {
+  if (IDENTITY_KEYS.has(key)) return key; // identity is global
+  return _mmkvScopePrefix + key;
+}
+
 // Helper functions for MMKV
 const mmkvHelpers = {
   getString: (key) => {
     try {
-      return storage.getString(key) || null;
+      return storage.getString(scopedKey(key)) || null;
     } catch (e) {
       console.error(`MMKV getString error for ${key}:`, e);
       return null;
@@ -130,7 +148,7 @@ const mmkvHelpers = {
   
   setString: (key, value) => {
     try {
-      storage.set(key, value);
+      storage.set(scopedKey(key), value);
       return true;
     } catch (e) {
       console.error(`MMKV setString error for ${key}:`, e);
@@ -140,7 +158,7 @@ const mmkvHelpers = {
   
   getObject: (key) => {
     try {
-      const str = storage.getString(key);
+      const str = storage.getString(scopedKey(key));
       return str ? JSON.parse(str) : null;
     } catch (e) {
       console.error(`MMKV getObject error for ${key}:`, e);
@@ -150,7 +168,7 @@ const mmkvHelpers = {
   
   setObject: (key, value) => {
     try {
-      storage.set(key, JSON.stringify(value));
+      storage.set(scopedKey(key), JSON.stringify(value));
       return true;
     } catch (e) {
       console.error(`MMKV setObject error for ${key}:`, e);
@@ -160,7 +178,7 @@ const mmkvHelpers = {
   
   delete: (key) => {
     try {
-      storage.remove(key);
+      storage.remove(scopedKey(key));
       return true;
     } catch (e) {
       console.error(`MMKV delete error for ${key}:`, e);
@@ -395,6 +413,10 @@ export function CacheProvider({ children }) {
     const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
     const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
     const cachedCompanyId = mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID);
+
+    // P2-4: Set scope BEFORE reading any scoped keys
+    setMmkvScope(cachedUid, cachedCompanyId);
+
     const cachedProfile = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
     const cachedInventory = mmkvHelpers.getObject(CACHE_KEYS.INVENTORY);
     const cachedPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS);
@@ -1166,6 +1188,9 @@ export function CacheProvider({ children }) {
         if (uid) mmkvHelpers.setString(CACHE_KEYS.UID, uid);
         if (role) mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, role);
         if (companyId) mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, companyId);
+
+        // P2-4: Set MMKV scope so all subsequent reads/writes are user-namespaced
+        setMmkvScope(uid, companyId);
       }
       
       console.log(`?? Cache init: ${uid} (${role}) @ ${companyId}`);
@@ -2069,6 +2094,9 @@ export function CacheProvider({ children }) {
     
     // Clear MMKV storage
     mmkvHelpers.clearAll();
+    
+    // P2-4: Reset scope prefix
+    _mmkvScopePrefix = '';
     
     // Reset state
     setProfile(null);

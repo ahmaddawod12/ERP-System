@@ -2,17 +2,15 @@
 
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  limit,
   orderBy,
   query,
-  runTransaction,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
+  startAfter,
   where,
+  type DocumentSnapshot,
   type QueryConstraint,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
@@ -105,22 +103,46 @@ export async function updateWorkerRole(companyId: string, workerId: string, role
 
 /* ─── Jobs (company-scoped — used for both team and solo) ─── */
 
-export async function listJobs(companyId: string, opts?: { role?: Role; uid?: string }) {
-  let constraints: QueryConstraint[] = [orderBy("createdAt", "desc")];
+const DEFAULT_PAGE_SIZE = 50;
+
+export async function listJobs(
+  companyId: string,
+  opts?: {
+    role?: Role;
+    uid?: string;
+    pageSize?: number;
+    lastPendingDoc?: DocumentSnapshot;
+    lastFinishedDoc?: DocumentSnapshot;
+  },
+) {
+  const pageSize = opts?.pageSize || DEFAULT_PAGE_SIZE;
+  let pendingConstraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
+  let finishedConstraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
+
   if (opts?.role === "worker" && opts.uid) {
     // Worker queries use completedBy (canonical field matching phone app + trigger)
-    constraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc")];
+    pendingConstraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc"), limit(pageSize)];
+    finishedConstraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc"), limit(pageSize)];
   }
-  const pendingSnap = await getDocs(query(companyPendingJobsCollection(companyId), ...constraints));
-  const finishedConstraints =
-    opts?.role === "worker" && opts.uid
-      ? [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc")]
-      : [orderBy("createdAt", "desc")];
+
+  // Cursor-based pagination
+  if (opts?.lastPendingDoc) {
+    pendingConstraints.push(startAfter(opts.lastPendingDoc));
+  }
+  if (opts?.lastFinishedDoc) {
+    finishedConstraints.push(startAfter(opts.lastFinishedDoc));
+  }
+
+  const pendingSnap = await getDocs(query(companyPendingJobsCollection(companyId), ...pendingConstraints));
   const finishedSnap = await getDocs(query(companyFinishedJobsCollection(companyId), ...finishedConstraints));
 
   return {
     pending: pendingSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<JobRecord, "id">) })),
     finished: finishedSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<JobRecord, "id">) })),
+    lastPendingDoc: pendingSnap.docs[pendingSnap.docs.length - 1] ?? null,
+    lastFinishedDoc: finishedSnap.docs[finishedSnap.docs.length - 1] ?? null,
+    hasMorePending: pendingSnap.docs.length === pageSize,
+    hasMoreFinished: finishedSnap.docs.length === pageSize,
   };
 }
 
@@ -152,7 +174,6 @@ export async function createFinishedJob(
 
 export async function updateJob(companyId: string, jobId: string, payload: Partial<JobRecord>) {
   // When marking as finished, ONLY use acceptJobV1 Cloud Function for atomic move.
-  // Never set status='finished' on the pending doc client-side (leaves invalid state if CF fails).
   if (payload.status === "finished") {
     const acceptJobFn = httpsCallable<
       Record<string, unknown>,
@@ -162,12 +183,12 @@ export async function updateJob(companyId: string, jobId: string, payload: Parti
     return;
   }
 
-  const pendingRef = doc(db, "companies", companyId, "PendingJobs", jobId);
-  const pendingSnap = await getDoc(pendingRef);
-  if (!pendingSnap.exists()) return;
-
-  const merged = { ...pendingSnap.data(), ...payload, updatedAt: new Date().toISOString() };
-  await updateDoc(pendingRef, merged);
+  // All other job updates go through updateJobV1 Cloud Function
+  const updateJobFn = httpsCallable<
+    Record<string, unknown>,
+    { success: boolean; jobId: string }
+  >(functions, "updateJobV1");
+  await updateJobFn({ companyId, jobId, ...payload });
 }
 
 /** Delete a job via deleteJobV1 Cloud Function (enforces isCert check). */
@@ -180,6 +201,7 @@ export async function deleteJob(companyId: string, jobId: string) {
 }
 
 /* ─── Company Inventory (single-doc with parts array) ─── */
+/* All mutations via updateInventoryV1 Cloud Function */
 
 export async function getCompanyInventory(companyId: string): Promise<InventoryDoc> {
   const snap = await getDoc(companyInventoryRef(companyId));
@@ -191,52 +213,24 @@ export async function addCompanyInventoryPart(
   companyId: string,
   part: Omit<InventoryPart, "id" | "dateAdded">,
 ) {
-  const invRef = companyInventoryRef(companyId);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invRef);
-    const data = snap.exists() ? (snap.data() as InventoryDoc) : { parts: [], nextId: 1, lastUpdated: "" };
-    const newPart: InventoryPart = {
-      id: data.nextId,
-      name: part.name,
-      active: part.active ?? true,
-      dateAdded: new Date().toISOString(),
-    };
-    tx.set(
-      invRef,
-      {
-        parts: [...data.parts, newPart],
-        nextId: data.nextId + 1,
-        lastUpdated: new Date().toISOString(),
-      },
-      { merge: true },
-    );
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({
+    companyId,
+    action: "addPart",
+    scope: "company",
+    partName: part.name,
+    active: part.active ?? true,
   });
 }
 
 export async function toggleCompanyInventoryPart(companyId: string, partId: number) {
-  const invRef = companyInventoryRef(companyId);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invRef);
-    if (!snap.exists()) return;
-    const data = snap.data() as InventoryDoc;
-    const updatedParts = data.parts.map((p) =>
-      p.id === partId ? { ...p, active: !p.active } : p,
-    );
-    tx.update(invRef, { parts: updatedParts, lastUpdated: new Date().toISOString() });
-  });
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({ companyId, action: "togglePart", scope: "company", partId });
 }
 
 export async function removeCompanyInventoryPart(companyId: string, partId: number) {
-  const invRef = companyInventoryRef(companyId);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invRef);
-    if (!snap.exists()) return;
-    const data = snap.data() as InventoryDoc;
-    tx.update(invRef, {
-      parts: data.parts.filter((p) => p.id !== partId),
-      lastUpdated: new Date().toISOString(),
-    });
-  });
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({ companyId, action: "removePart", scope: "company", partId });
 }
 
 /* ─── Personal / User Inventory (single-doc with parts array) ─── */
@@ -250,27 +244,17 @@ export async function getUserInventory(uid: string): Promise<InventoryDoc> {
 export async function addUserInventoryPart(
   uid: string,
   part: Omit<InventoryPart, "id" | "dateAdded">,
+  companyId?: string,
 ) {
-  const invRef = userInventoryRef(uid);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invRef);
-    const data = snap.exists() ? (snap.data() as InventoryDoc) : { parts: [], nextId: 1, lastUpdated: "" };
-    const newPart: InventoryPart = {
-      id: data.nextId,
-      name: part.name,
-      quantity: part.quantity ?? 0,
-      lowThreshold: part.lowThreshold ?? 0,
-      dateAdded: new Date().toISOString(),
-    };
-    tx.set(
-      invRef,
-      {
-        parts: [...data.parts, newPart],
-        nextId: data.nextId + 1,
-        lastUpdated: new Date().toISOString(),
-      },
-      { merge: true },
-    );
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({
+    companyId: companyId || uid,
+    action: "addPart",
+    scope: "user",
+    targetUid: uid,
+    partName: part.name,
+    quantity: part.quantity ?? 0,
+    lowThreshold: part.lowThreshold ?? 0,
   });
 }
 
@@ -278,29 +262,29 @@ export async function updateUserInventoryPart(
   uid: string,
   partId: number,
   updates: Partial<Pick<InventoryPart, "name" | "quantity" | "lowThreshold">>,
+  companyId?: string,
 ) {
-  const invRef = userInventoryRef(uid);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invRef);
-    if (!snap.exists()) return;
-    const data = snap.data() as InventoryDoc;
-    const updatedParts = data.parts.map((p) =>
-      p.id === partId ? { ...p, ...updates } : p,
-    );
-    tx.update(invRef, { parts: updatedParts, lastUpdated: new Date().toISOString() });
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({
+    companyId: companyId || uid,
+    action: "updatePart",
+    scope: "user",
+    targetUid: uid,
+    partId,
+    partName: updates.name,
+    quantity: updates.quantity,
+    lowThreshold: updates.lowThreshold,
   });
 }
 
-export async function removeUserInventoryPart(uid: string, partId: number) {
-  const invRef = userInventoryRef(uid);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invRef);
-    if (!snap.exists()) return;
-    const data = snap.data() as InventoryDoc;
-    tx.update(invRef, {
-      parts: data.parts.filter((p) => p.id !== partId),
-      lastUpdated: new Date().toISOString(),
-    });
+export async function removeUserInventoryPart(uid: string, partId: number, companyId?: string) {
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({
+    companyId: companyId || uid,
+    action: "removePart",
+    scope: "user",
+    targetUid: uid,
+    partId,
   });
 }
 
@@ -313,56 +297,49 @@ export async function pickCompanyParts(
   uid: string,
   partsToPick: Array<{ id: number; name: string; quantity: number }>,
 ) {
-  const userInvRef = userInventoryRef(uid);
-
-  await runTransaction(db, async (tx) => {
-    const userSnap = await tx.get(userInvRef);
-    const userData = userSnap.exists()
-      ? (userSnap.data() as InventoryDoc)
-      : { parts: [], nextId: 1, lastUpdated: "" };
-
-    let nextId = userData.nextId;
-    const updatedParts = [...userData.parts];
-
-    for (const pick of partsToPick) {
-      const existing = updatedParts.find((p) => p.id === pick.id);
-      if (existing) {
-        existing.quantity = (existing.quantity ?? 0) + pick.quantity;
-      } else {
-        updatedParts.push({
-          id: nextId,
-          name: pick.name,
-          quantity: pick.quantity,
-          lowThreshold: 0,
-          dateAdded: new Date().toISOString(),
-        });
-        nextId += 1;
-      }
-    }
-
-    tx.set(
-      userInvRef,
-      { parts: updatedParts, nextId, lastUpdated: new Date().toISOString() },
-      { merge: true },
-    );
+  const fn = httpsCallable(functions, "updateInventoryV1");
+  await fn({
+    companyId,
+    action: "pickParts",
+    scope: "company",
+    targetUid: uid,
+    partsToPick,
   });
 }
 
 /* ─── Clients (always company-scoped) ─── */
 
-export async function listClients(companyId: string): Promise<ClientRecord[]> {
-  const snap = await getDocs(companyClientsCollection(companyId));
+export async function listClients(
+  companyId: string,
+  opts?: { pageSize?: number; lastDoc?: DocumentSnapshot },
+): Promise<{
+  clients: ClientRecord[];
+  lastDoc: DocumentSnapshot | null;
+  hasMore: boolean;
+}> {
+  const pageSize = opts?.pageSize || 100;
+  const constraints: QueryConstraint[] = [limit(pageSize)];
+  if (opts?.lastDoc) {
+    constraints.push(startAfter(opts.lastDoc));
+  }
+
+  const snap = await getDocs(query(companyClientsCollection(companyId), ...constraints));
   const clients = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<ClientRecord, "id">) }));
   // Sort by numeric document ID — matches phone app behaviour where doc ID = String(cid)
   clients.sort((a, b) => parseInt(a.id) - parseInt(b.id));
-  return clients;
+  return {
+    clients,
+    lastDoc: snap.docs[snap.docs.length - 1] ?? null,
+    hasMore: snap.docs.length === pageSize,
+  };
 }
 
 export async function updateClient(companyId: string, clientId: string, payload: Partial<ClientRecord>) {
-  await updateDoc(doc(db, "companies", companyId, "clients", clientId), {
-    ...payload,
-    updatedAt: new Date().toISOString(),
-  });
+  const fn = httpsCallable<
+    Record<string, unknown>,
+    { success: boolean; clientId: string }
+  >(functions, "updateClientV1");
+  await fn({ companyId, clientId, ...payload });
 }
 
 /* ─── Certifications ─── */

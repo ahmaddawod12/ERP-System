@@ -129,6 +129,10 @@ eas build --platform android
 6. **Use `uid` not `username`** — all user references use Firebase Auth UID
 7. **Use `companyId` not `companyName`** — all company references use the company identifier
 8. **Screens live in `modules/`** — `app/` files are thin wrappers with `withGate` HOC
+9. **Never write directly to Firestore** for profile, cache, inventory, or job documents — use Cloud Functions (`updateJobV1`, `updateInventoryV1`, `updateCacheV1`, `updateProfileV1`, etc.)
+10. **Valid job statuses**: `pending`, `waiting`, `finished`, `denied` — never use `in_progress`, `completed`, or `received`
+11. **Push token lifecycle**: Token refresh auto-saves via `updatePushTokenV1`; logout calls `clearPushTokenV1`
+12. **MMKV keys are user-scoped** — namespaced by `uid:companyId:` prefix to prevent cross-user cache leaks
 
 
 

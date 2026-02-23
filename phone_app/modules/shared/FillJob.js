@@ -639,11 +639,12 @@ export default function FillJob() {
           await decreaseInventoryParts(uid);
         }
       } else {
-        console.log('💾 FillJob: Updating worker pending job in Firestore...', jobId);
+        console.log('💾 FillJob: Updating worker pending job via Cloud Function...', jobId);
         
-        // Worker mode: update existing job
+        // Worker mode: update existing job via Cloud Function (P2-2)
         // Note: Firestore trigger will automatically send push notification to manager when status changes to 'waiting'
-        await updateDoc(doc(db, 'companies', companyId, 'PendingJobs', jobId), jobToSave);
+        const updateJobFn = httpsCallable(functions, 'updateJobV1');
+        await updateJobFn({ companyId, jobId, updates: jobToSave });
         
         console.log('✅ FillJob: Worker job updated in Firestore');
         

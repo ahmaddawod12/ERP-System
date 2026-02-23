@@ -7,12 +7,14 @@ const uidFallbackSchema = z
   .max(128, "uid is too long")
   .optional();
 
+// P0-6: Accept both canonical backend IDs (slug-based, uid-based)
+// and legacy numeric-only IDs for backward compatibility.
 const companyIdSchema = z
   .string()
   .trim()
   .min(1, "companyId is required")
-  .max(20, "companyId is too long")
-  .regex(/^\d+$/, "companyId must only contain numbers");
+  .max(128, "companyId is too long")
+  .regex(/^[a-z0-9_-]+$/i, "companyId contains invalid characters");
 
 const optionalText = (max = 400) =>
   z

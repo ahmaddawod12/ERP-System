@@ -120,55 +120,50 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── user cache: owner can read/write, manager can write worker cache ──
+    // ── user cache: READ-ONLY from client. Writes via Cloud Function (updateCacheV1) ──
     match /users/{uid}/data/cache {
-      allow read, write: if isAdmin() || (
-        signedIn() && request.auth.uid == uid
-      );
-      // manager can write to worker's cache (same company)
-      allow write: if canManagerAccessWorkerData(uid);
-    }
-
-    // ── user inventory: owner can read/write/update/delete ──
-    // manager can read/write worker inventory (same company)
-    match /users/{uid}/data/inventory {
-      allow read, write: if isAdmin() || (
+      allow read: if isAdmin() || (
         signedIn() && request.auth.uid == uid
       ) || canManagerAccessWorkerData(uid);
+
+      // Cache writes now handled by Cloud Functions (updateCacheV1)
+      allow create, update, delete: if false;
     }
 
-    // Legacy paths — keep existing access
+    // ── user inventory: READ-ONLY from client. Writes via Cloud Function (updateInventoryV1) ──
+    match /users/{uid}/data/inventory {
+      allow read: if isAdmin() || (
+        signedIn() && request.auth.uid == uid
+      ) || canManagerAccessWorkerData(uid);
+
+      // Inventory writes now handled by Cloud Functions (updateInventoryV1)
+      allow create, update, delete: if false;
+    }
+
+    // ── Legacy paths — DENIED (deprecated, migration complete) ──
     match /users/{uid}/jobs/{jobId} {
-      allow read, write: if isAdmin() || (
-        signedIn() &&
-        request.auth.uid == uid &&
-        currentRole() != "basic"
-      );
+      allow read, write: if false;
     }
 
     match /users/{uid}/personal_inventory/{itemId} {
-      allow read, write: if isAdmin() || (
-        signedIn() &&
-        request.auth.uid == uid &&
-        currentRole() != "basic"
-      );
+      allow read, write: if false;
     }
 
     match /users/{uid}/clients/{clientId} {
-      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow read, write: if false;
     }
 
     // ── Company root document (cid, wid, jid fields) ──
-    // manager/user/basic can read and update (for counter increments).
-    // Create only by the company creator. No delete from client.
+    // Members can read. Create only by company creator.
+    // No client update or delete — Cloud Functions handle counter increments.
     match /companies/{companyId} {
       allow read: if canReadCompany(companyId);
       allow create: if isAdmin() || (
         signedIn() &&
         request.resource.data.createdBy == request.auth.uid
       );
-      allow update: if isAdmin() || isManagerUserBasic(companyId);
-      allow delete: if false;
+      // Counter increments (cid, wid, jid) are handled by Cloud Functions only
+      allow update, delete: if false;
     }
 
     // ── Business Info: READ-ONLY from client ──
@@ -176,30 +171,29 @@ service cloud.firestore {
     // Cannot delete or write from client.
     match /companies/{companyId}/business_data/business_info {
       allow read: if canReadCompany(companyId);
-      allow create: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
-      allow update, delete: if false;
+      // All writes (create/update/delete) via Cloud Functions only
+      allow create, update, delete: if false;
     }
 
     // ── Subscription: READ-ONLY from client ──
     // All company members can read. Write/update/delete via Cloud Function only.
     match /companies/{companyId}/business_data/subscription {
       allow read: if canReadCompany(companyId);
-      allow create: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
-      allow update, delete: if false;
+      // All writes via Cloud Functions only (registerBusinessV1)
+      allow create, update, delete: if false;
     }
 
-    // ── Company Inventory (single doc with parts array) ──
-    // worker + manager can read. manager can write/update/delete.
+    // ── Company Inventory (single doc with parts array): READ-ONLY from client ──
+    // Writes via Cloud Function (updateInventoryV1).
     match /companies/{companyId}/business_data/inventory {
       allow read: if canReadCompany(companyId);
-      allow write: if canManageCompany(companyId);
+      allow create, update, delete: if false;
     }
 
-    // ── company cache: manager can read/write/update/delete ──
+    // ── company cache: READ-ONLY from client. Writes via Cloud Function (updateCacheV1) ──
     match /companies/{companyId}/business_data/cache {
-      allow read, write: if canManageCompany(companyId);
-      // Workers and users can read company cache (for cache invalidation)
       allow read: if canReadCompany(companyId);
+      allow create, update, delete: if false;
     }
 
     // ── Token: NO client access ──
@@ -212,7 +206,7 @@ service cloud.firestore {
     match /companies/{companyId}/workers/{workerId} {
       allow read: if canReadCompany(companyId);
       // create/update/delete handled by Cloud Functions (manageWorker, joinCompanyV1)
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if false;
     }
 
     // ── Clients ──
@@ -248,6 +242,8 @@ service cloud.firestore {
       allow create: if isAdmin() || canManageCompany(companyId);
 
       // S2: worker updates are field-constrained — cannot change assignment, creator, or status
+      // S2: worker updates are field-constrained — cannot change assignment, creator, or status
+      // P0-8: Canonical statuses only: pending, waiting (no 'received')
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "worker" &&
@@ -257,7 +253,7 @@ service cloud.firestore {
         request.resource.data.completedBy == resource.data.completedBy &&
         request.resource.data.createdBy == resource.data.createdBy &&
         // workers cannot jump to 'finished' or 'denied' — must go through callable
-        request.resource.data.status in ["pending", "received", "waiting"]
+        request.resource.data.status in ["pending", "waiting"]
       );
 
       // Delete via Cloud Function only (deleteJobV1 / acceptJobV1)
@@ -278,12 +274,7 @@ service cloud.firestore {
         resource.data.workerId == request.auth.uid
       );
 
-      allow create: if isAdmin() || canManageCompany(companyId) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) == "user" &&
-        request.resource.data.workerId == request.auth.uid
-      );
-
+      // Update allowed for manager/user (field-pinned for user)
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "user" &&
@@ -291,22 +282,21 @@ service cloud.firestore {
         request.resource.data.workerId == resource.data.workerId
       );
 
-      // Delete via Cloud Function only (deleteJobV1)
-      allow delete: if false;
+      // Create and delete via Cloud Function only (createJobV1, deleteJobV1, acceptJobV1)
+      allow create, delete: if false;
     }
 
     // ── Certifications ──
-    // basic/user/manager can READ. Write via Cloud Function (publishGenerateTask).
-    // manager can delete. No create or update from client.
+    // basic/user/manager can READ. All writes via Cloud Function only.
     match /companies/{companyId}/certifications/{id} {
       allow read: if isAdmin() || isManagerUserBasic(companyId) || isSoloScope(companyId);
-      allow delete: if isAdmin() || canManageCompany(companyId) || isSoloScope(companyId);
-      allow create, update: if false;
+      allow create, update, delete: if false;
     }
 
-    // ── Invites ──
+    // ── Invites: READ-ONLY from client. CRUD via Cloud Function (createInviteV1) ──
     match /companies/{companyId}/invites/{inviteId} {
-      allow read, create, update, delete: if canManageCompany(companyId);
+      allow read: if canManageCompany(companyId);
+      allow create, update, delete: if false;
     }
 
     // ── Inventory Picks ──

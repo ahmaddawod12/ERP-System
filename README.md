@@ -34,7 +34,7 @@ companies/{companyId}/
   business_data/subscription  → { tier, status, enabledModules: { team, solojob, documents, ... } }
   business_data/inventory     → { parts: [...], nextId, lastUpdated }   (single doc)
   business_data/cache         → company cache version tracking
-  workers/{uid}               → { workerId, uid, role, email, name, phoneNumber, createdAt }
+  workers/{workerId}               → { workerId, uid, role, email, name, phoneNumber, createdAt }
   clients/{clientId}          → { numericId, name, email, phone, address, notes, ... }
   PendingJobs/{p_XXXXX}       → active jobs      (p_ prefix IDs)
   finishedJobs/{f_XXXXX}      → completed jobs   (f_ prefix IDs)
@@ -49,7 +49,6 @@ contact_requests/{id}         → public contact form submissions
 
 | Rule | Detail |
 |------|--------|
-| **Solo users** | `companyId = uid` — all data stored under `companies/{uid}/*` |
 | **Inventory** | Single document with `parts` array + `nextId` counter (NOT a subcollection) |
 | **Job IDs** | Sequential `jid` counter on company doc. `p_{jid}` (pending), `f_{jid}` (finished), `c_XXXXX` (certification). Always server-generated via `createJobV1`. |
 | **Job statuses** | `pending` → `waiting` → `finished` (or `denied`) |
@@ -68,48 +67,60 @@ contact_requests/{id}         → public contact form submissions
 
 ## Cloud Functions
 
-All functions are in `functions/index.js` (Firebase Functions v7, Node 22).
+All functions are in `functions/index.js` (Firebase Functions v7, Node 22). App Check is enforced globally (except `contactRequestV1`).
 
 | Function | Type | Region | Purpose |
 |----------|------|--------|---------|
-| `createClientV1` | onRequest | us-central1 | Idempotent client creation with auto-increment ID |
+| `addClientV1` | onCall | us-central1 | Idempotent client creation with auto-increment ID |
+| `deleteClientV1` | onCall | us-central1 | Delete a client record |
+| `updateClientV1` | onCall | us-central1 | Update client fields + bump cache |
 | `generateDocumentV1` | onRequest | us-central1 | **Deprecated** — legacy document generation (use Pub/Sub tasks) |
 | `publishPreviewTask` | onCall | us-central1 | Pub/Sub preview PDF task |
 | `publishGenerateTask` | onCall | us-central1 | Pub/Sub generate PDF task |
 | `getInvoiceApproval` | onCall | me-west1 | Tax Authority invoice approval + PDF task |
-| `createInvite` | onCall | us-central1 | Generate invite code for worker onboarding |
-| `joinCompanyWithInvite` | onCall | us-central1 | Worker joins company using invite code |
-| `onFinishedJobCreated` | Firestore trigger | us-central1 | Cleanup pending job on finish |
+| `createInviteV1` | onRequest | us-central1 | Generate invite code for worker onboarding |
+| `joinCompanyV1` | onRequest | us-central1 | Worker joins company using invite code |
 | `onJobAssignTrigger` | Firestore trigger | us-central1 | Push notification on job assignment |
-| `sendNotification` | onCall | us-central1 | Push notifications via FCM |
-| `submitUpgradeRequest` | onCall | us-central1 | Submit subscription upgrade request |
-| `contactRequestV1` | onRequest | us-central1 | Public contact form (rate-limited) |
-| `requestPermit` | onRequest | me-west1 | Israeli Tax Authority integration |
-| `fetchPermit` | onRequest | me-west1 | Israeli Tax Authority permit fetch |
-| `reportDocument` | onRequest | me-west1 | Report document to tax authority |
+| `onJobSubmitTrigger` | Firestore trigger | us-central1 | Push notification on job submission |
+| `onTaskCompleted` | Firestore trigger | us-central1 | Cleanup on document task completion |
+| `contactRequestV1` | onRequest | us-central1 | Public contact form (rate-limited, no App Check) |
+| `requestUpgradeV1` | onRequest | us-central1 | Submit subscription upgrade request |
+| `startTaxAuthorityAuth` | onCall | us-central1 | Start Israeli Tax Authority OAuth flow |
+| `taxAuthorityCallback` | onRequest | us-central1 | Tax Authority OAuth callback |
 | `updateProfileV1` | onCall | us-central1 | Update name/phoneNumber on profile |
 | `updatePushTokenV1` | onCall | us-central1 | Update FCM push token on profile |
+| `clearPushTokenV1` | onCall | us-central1 | Clear push token on logout |
 | `updateBusinessInfoV1` | onCall | us-central1 | Update business_info (except vat_number/document_numbers) |
-| `manageWorker` | onCall | us-central1 | Add/edit/remove workers (supports role changes) |
+| `manageWorker` | onCall | us-central1 | Add/edit/remove workers (role whitelist: worker/user/basic) |
 | `deleteJobV1` | onCall | us-central1 | Delete pending or finished job (role-checked) |
 | `acceptJobV1` | onCall | us-central1 | Atomic: pending→finished + delete + deduct worker inventory |
 | `registerBusinessV1` | onCall | us-central1 | Atomic onboarding: profile + company + subscription + counters + inventory |
 | `createJobV1` | onCall | us-central1 | Create job with sequential jid (atomic counter) |
+| `updateJobV1` | onCall | us-central1 | Update job fields (status/assignment/details) |
+| `updateInventoryV1` | onCall | us-central1 | Transactional inventory mutations (add/remove/toggle/update/pick) |
+| `updateCacheV1` | onCall | us-central1 | Bump cache version for a given key |
 
 ## Security Model
 
-Firestore security rules enforce **read-only client access** for sensitive documents. All mutations go through Cloud Functions (Admin SDK bypasses rules).
+Firestore security rules enforce **read-only client access** for sensitive documents. All mutations go through Cloud Functions (Admin SDK bypasses rules). App Check is enforced on all callable/HTTP functions except `contactRequestV1`. Token revocation is checked server-side.
 
 | Document | Client Access | Mutation Method |
 |----------|--------------|----------------|
-| `users/{uid}/data/profile` | Read only | `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1` |
+| `users/{uid}/data/profile` | Read only | `registerBusinessV1`, `updateProfileV1`, `updatePushTokenV1`, `clearPushTokenV1` |
+| `users/{uid}/data/cache` | Read only | `updateCacheV1` |
+| `users/{uid}/data/inventory` | Read only | `updateInventoryV1` |
 | `business_data/business_info` | Read only | `registerBusinessV1`, `updateBusinessInfoV1` |
 | `business_data/subscription` | Read only | `registerBusinessV1` |
+| `business_data/inventory` | Read only | `updateInventoryV1` |
+| `business_data/cache` | Read only | `updateCacheV1` |
 | `business_data/token` | No access | Cloud Functions only |
-| `counters/*` | Read only | Cloud Functions only |
-| `PendingJobs/*` | manager: create/read/update. worker: read/update own. | Delete via `deleteJobV1`/`acceptJobV1` |
-| `finishedJobs/*` | manager/user: create/read/update. | Delete via `deleteJobV1` |
-| `certifications/*` | Read + manager delete | Create/update via Cloud Functions |
+| `counters/*` | No access | Cloud Functions only |
+| `workers/*` | Read only | `manageWorker` |
+| `invites/*` | Read only | `createInviteV1` |
+| `PendingJobs/*` | Read only (role-scoped) | Create: `createJobV1`. Update: `updateJobV1`. Delete: `deleteJobV1`/`acceptJobV1` |
+| `finishedJobs/*` | Read + update (manager/user) | Create/delete via Cloud Functions |
+| `clients/*` | Read + update (manager/user/basic) | Create: `addClientV1`. Delete: `deleteClientV1` |
+| `certifications/*` | Read only | Create/update/delete via Cloud Functions |
 | `documentTasks/*` | Read own | Cloud Functions only |
 
 ## Tech Stack Comparison

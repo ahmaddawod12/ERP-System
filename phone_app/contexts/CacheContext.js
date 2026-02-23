@@ -2001,8 +2001,9 @@ export function CacheProvider({ children }) {
     if (!companyId) throw new Error('Company name not found');
 
     try {
-      const clientRef = doc(db, 'companies', companyId, 'clients', clientId);
-      await updateDoc(clientRef, { ...updates, updatedAt: new Date().toISOString() });
+      // Use Cloud Function for validation and consistent cache bumping
+      const updateClientFn = httpsCallable(functions, 'updateClientV1');
+      await updateClientFn({ companyId, clientId, ...updates });
 
       // Update local cache
       const updatedClients = clients.map(c => 
@@ -2011,17 +2012,14 @@ export function CacheProvider({ children }) {
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
       setClients(updatedClients); // Update state immediately
       
-      // Increment clients cache version based on role
-      const role = getUserRole();
-      const isCompanyCache = role === 'manager';
-      await incrementCacheVersion('clients', isCompanyCache);
+      // Cache version is already bumped by the Cloud Function
       
       console.log(`? Client ${clientId} updated`);
     } catch (error) {
       console.error('Error updating client:', error);
       throw error;
     }
-  }, [getCompanyId, getUserRole, clients, saveToLocalCache, incrementCacheVersion]);
+  }, [getCompanyId, clients, saveToLocalCache]);
 
   /**
    * Delete a client via the deleteClientV1 Cloud Function.

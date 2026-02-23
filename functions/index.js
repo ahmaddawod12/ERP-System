@@ -94,6 +94,12 @@ setGlobalOptions({
   enforceAppCheck: true, // Reject requests without valid App Check token
 });
 
+// Allowed CORS origins for HTTP functions (restrict from wildcard `true`)
+// Add your production domain(s) here. Falls back to `true` if not configured.
+const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS
+  ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : true; // Default to open in development; set env var in production
+
 // ── Simple in-memory rate limiter for unauthenticated endpoints ───────────
 const _rateLimitMap = new Map(); // key → { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
@@ -175,6 +181,21 @@ function normalizeAccountType(accountType) {
   if (raw === 'solo') return 'solo';
   if (raw === 'business') return 'business';
   return '';
+}
+
+/**
+ * Validate companyId format — must be a non-empty alphanumeric string (Firebase UID format).
+ * Prevents path traversal (e.g. "../../other") and malformed document paths.
+ */
+function validateCompanyId(companyId) {
+  if (!companyId || typeof companyId !== 'string') {
+    throw new HttpsError('invalid-argument', 'companyId is required');
+  }
+  // Firebase UIDs are alphanumeric, max 128 chars. Also allow company IDs with hyphens/underscores.
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(companyId)) {
+    throw new HttpsError('invalid-argument', 'Invalid companyId format');
+  }
+  return companyId;
 }
 
 function userDataDocPath(uid, docId) {
@@ -543,8 +564,9 @@ async function verifyManagerAuth(auth, targetWorkerUid, companyId) {
     const workerData = workerProfile.data();
     const workerRole = normalizeRole(workerData.role);
 
-    if (workerRole !== 'worker') {
-      throw new HttpsError('permission-denied', 'Target user is not a worker');
+    // Prevent managers from managing other managers (except dev can manage anyone)
+    if (['manager', 'dev'].includes(workerRole) && managerRole !== 'dev') {
+      throw new HttpsError('permission-denied', 'Cannot manage a user with manager or dev role');
     }
 
     if (workerData.companyId !== companyId) {
@@ -847,6 +869,32 @@ exports.manageWorker = onCall(async (request) => {
       await workerBatch.commit();
       logger.info(`Removed worker from company list: ${companyId}`);
 
+      // Cleanup pending jobs assigned to the deleted worker
+      try {
+        const pendingJobsRef = admin.firestore().collection(`companies/${companyId}/PendingJobs`);
+        const assignedJobsSnap = await pendingJobsRef.where('workerId', '==', workerUid).get();
+        if (!assignedJobsSnap.empty) {
+          const cleanupBatch = admin.firestore().batch();
+          let cleanupCount = 0;
+          assignedJobsSnap.docs.forEach((doc) => {
+            // Unassign the worker from the job rather than deleting it
+            cleanupBatch.update(doc.ref, {
+              workerId: admin.firestore.FieldValue.delete(),
+              workerName: admin.firestore.FieldValue.delete(),
+              assignedTo: admin.firestore.FieldValue.delete(),
+              status: 'pending',
+              updatedAt: new Date().toISOString(),
+            });
+            cleanupCount++;
+          });
+          await cleanupBatch.commit();
+          logger.info(`Unassigned ${cleanupCount} pending jobs from deleted worker: ${workerUid}`);
+        }
+      } catch (cleanupErr) {
+        // Log but don't fail the entire delete operation
+        logger.warn('Failed to cleanup pending jobs for deleted worker', { workerUid, error: cleanupErr.message });
+      }
+
       await saveAuditLog(companyId, 'deleteWorker', request.auth.uid);
 
       return {
@@ -1057,19 +1105,18 @@ exports.addClientV1 = onCall(async (request) => {
     tx.set(companyRef, { cid: cid + 1 }, { merge: true });
     tx.set(clientRef, clientDoc);
 
+    // Bump cache version inside transaction for atomicity
+    const isManagerRole = resolvedRole === 'manager';
+    const cacheRef = isManagerRole
+      ? db.doc(`companies/${companyId}/business_data/cache`)
+      : db.doc(`users/${uid}/data/cache`);
+    tx.set(cacheRef, {
+      clients: admin.firestore.FieldValue.increment(1),
+      lastUpdated: new Date().toISOString(),
+    }, { merge: true });
+
     return { id: clientId, ...clientDoc };
   });
-
-  // Bump cache version so other devices detect the change and refetch
-  // Manager → company cache; everyone else → their own user cache
-  const isManagerRole = resolvedRole === 'manager';
-  const cacheRef = isManagerRole
-    ? db.doc(`companies/${companyId}/business_data/cache`)
-    : db.doc(`users/${uid}/data/cache`);
-  await cacheRef.set({
-    clients: admin.firestore.FieldValue.increment(1),
-    lastUpdated: new Date().toISOString(),
-  }, { merge: true });
 
   logger.info('addClientV1: client created', { companyId, clientId: newClient.id, uid });
   return { success: true, client: newClient };
@@ -1136,7 +1183,7 @@ exports.deleteClientV1 = onCall(async (request) => {
  */
 exports.createInviteV1 = onRequest({
   region: "us-central1",
-  cors: true,
+  cors: CORS_ALLOWED_ORIGINS,
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -1205,7 +1252,7 @@ exports.createInviteV1 = onRequest({
  */
 exports.joinCompanyV1 = onRequest({
   region: "us-central1",
-  cors: true,
+  cors: CORS_ALLOWED_ORIGINS,
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -1347,7 +1394,7 @@ exports.joinCompanyV1 = onRequest({
  */
 exports.requestUpgradeV1 = onRequest({
   region: "us-central1",
-  cors: true,
+  cors: CORS_ALLOWED_ORIGINS,
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -1396,7 +1443,7 @@ exports.requestUpgradeV1 = onRequest({
  */
 exports.generateDocumentV1 = onRequest({
   region: "us-central1",
-  cors: true,
+  cors: CORS_ALLOWED_ORIGINS,
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -1652,6 +1699,8 @@ exports.onJobAssignTrigger = onDocumentCreated({
         jobTitle,
         companyId,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        // TTL: auto-expire after 30 days (configure Firestore TTL policy on this field)
+        expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         messageId: notificationResult.messageId || null,
         duration: Date.now() - startTime
       });
@@ -1797,6 +1846,8 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
         jobTitle,
         companyId,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        // TTL: auto-expire after 30 days (configure Firestore TTL policy on this field)
+        expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         messageId: notificationResult.messageId || null,
         duration: Date.now() - startTime
       });
@@ -2019,7 +2070,7 @@ exports.startTaxAuthorityAuth = onCall({
  */
 exports.taxAuthorityCallback = onRequest({
   region: "me-west1",
-  cors: true,
+  cors: CORS_ALLOWED_ORIGINS,
   timeoutSeconds: 30,
   memory: "512MiB",
 }, async (req, res) => {
@@ -3736,9 +3787,7 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
-  if (!companyId) {
-    throw new HttpsError('invalid-argument', 'companyId is required');
-  }
+  validateCompanyId(companyId);
 
   await assertHttpCompanyAccess({
     uid,
@@ -3807,10 +3856,11 @@ exports.deleteJobV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
   const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
 
-  if (!companyId || !jobId) {
-    throw new HttpsError('invalid-argument', 'companyId and jobId are required');
+  if (!jobId) {
+    throw new HttpsError('invalid-argument', 'jobId is required');
   }
 
   const { resolvedRole } = await assertHttpCompanyAccess({
@@ -3887,11 +3937,12 @@ exports.acceptJobV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
   const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
   const finishedJobId = typeof data.finishedJobId === 'string' ? data.finishedJobId.trim() : '';
 
-  if (!companyId || !jobId) {
-    throw new HttpsError('invalid-argument', 'companyId and jobId are required');
+  if (!jobId) {
+    throw new HttpsError('invalid-argument', 'jobId is required');
   }
 
   // Only manager/dev can accept jobs
@@ -3960,8 +4011,9 @@ exports.acceptJobV1 = onCall(async (request) => {
         const currentParts = Array.isArray(invData.parts) ? invData.parts : [];
 
         const updatedParts = currentParts.map((p) => {
+          // Match by ID only — name-based matching risks collisions
           const usedPart = partsUsed.find(
-            (u) => u.id === p.id || u.name === p.name
+            (u) => u.id === p.id
           );
           if (usedPart && typeof usedPart.quantity === 'number') {
             const newQty = Math.max(0, (p.quantity || 0) - usedPart.quantity);
@@ -4259,9 +4311,7 @@ exports.createJobV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
-  if (!companyId) {
-    throw new HttpsError('invalid-argument', 'companyId is required');
-  }
+  validateCompanyId(companyId);
 
   // type: 'pending' | 'finished' — determines which collection
   const jobType = typeof data.type === 'string' ? data.type.trim() : 'pending';
@@ -4300,10 +4350,20 @@ exports.createJobV1 = onCall(async (request) => {
 
     const now = new Date().toISOString();
 
-    // Build job document from provided payload (strip metadata)
-    const jobPayload = { ...data };
-    delete jobPayload.companyId;
-    delete jobPayload.type;
+    // Build job document from provided payload — explicit whitelist to prevent field injection
+    const ALLOWED_JOB_FIELDS = [
+      'title', 'description', 'name', 'clientName', 'clientId',
+      'workerId', 'completedBy', 'MUser', 'MName',
+      'parts', 'partsUsed', 'notes', 'priority', 'dueDate',
+      'location', 'address', 'category', 'tags', 'images',
+      'workerName', 'assignedTo', 'assignedBy',
+    ];
+    const jobPayload = {};
+    for (const key of ALLOWED_JOB_FIELDS) {
+      if (data[key] !== undefined) {
+        jobPayload[key] = data[key];
+      }
+    }
 
     const jobDoc = {
       ...jobPayload,
@@ -4348,6 +4408,7 @@ exports.updateJobV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
   const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
   if (!companyId || !jobId) {
     throw new HttpsError('invalid-argument', 'companyId and jobId are required');
@@ -4465,17 +4526,19 @@ exports.updateClientV1 = onCall(async (request) => {
   if (data.notes !== undefined) updates.notes = String(data.notes || '').trim();
   updates.updatedAt = new Date().toISOString();
 
-  await clientRef.update(updates);
-
-  // Bump cache version
+  // Atomic batch: update client + bump cache version
   const isManagerRole = resolvedRole === 'manager';
   const cacheRef = isManagerRole
     ? dbRef.doc(`companies/${companyId}/business_data/cache`)
     : dbRef.doc(`users/${uid}/data/cache`);
-  await cacheRef.set({
+
+  const batch = dbRef.batch();
+  batch.update(clientRef, updates);
+  batch.set(cacheRef, {
     clients: admin.firestore.FieldValue.increment(1),
     lastUpdated: new Date().toISOString(),
   }, { merge: true });
+  await batch.commit();
 
   logger.info('updateClientV1: client updated', { companyId, clientId, uid });
   return { success: true, clientId };
@@ -4496,12 +4559,13 @@ exports.updateInventoryV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
   const action = typeof data.action === 'string' ? data.action.trim() : '';
   const scope = typeof data.scope === 'string' ? data.scope.trim() : '';
   const targetUid = typeof data.targetUid === 'string' ? data.targetUid.trim() : uid;
 
-  if (!companyId || !action || !scope) {
-    throw new HttpsError('invalid-argument', 'companyId, action, and scope are required');
+  if (!action || !scope) {
+    throw new HttpsError('invalid-argument', 'action and scope are required');
   }
 
   if (!['addPart', 'removePart', 'togglePart', 'updatePart', 'pickParts', 'replaceParts'].includes(action)) {
@@ -4605,6 +4669,34 @@ exports.updateInventoryV1 = onCall(async (request) => {
       if (!Array.isArray(partsToPick) || partsToPick.length === 0) {
         throw new HttpsError('invalid-argument', 'partsToPick array is required');
       }
+
+      // Validate company inventory stock and deduct picked quantities
+      if (scope === 'company') {
+        // invRef is already the company inventory ref; parts is the current company parts
+        const insufficientParts = [];
+        for (const pick of partsToPick) {
+          const companyPart = parts.find((p) => p.id === pick.id);
+          if (!companyPart) {
+            insufficientParts.push({ id: pick.id, name: pick.name, requested: pick.quantity, available: 0 });
+          } else if ((companyPart.quantity || 0) < (pick.quantity || 0)) {
+            insufficientParts.push({ id: pick.id, name: companyPart.name, requested: pick.quantity, available: companyPart.quantity || 0 });
+          }
+        }
+        if (insufficientParts.length > 0) {
+          throw new HttpsError('failed-precondition', `Insufficient stock for parts: ${insufficientParts.map(p => `${p.name} (need ${p.requested}, have ${p.available})`).join(', ')}`);
+        }
+
+        // Deduct picked quantities from company inventory
+        const updatedCompanyParts = parts.map((p) => {
+          const pick = partsToPick.find((pk) => pk.id === p.id);
+          if (pick && typeof pick.quantity === 'number') {
+            return { ...p, quantity: Math.max(0, (p.quantity || 0) - pick.quantity) };
+          }
+          return p;
+        });
+        tx.update(invRef, { parts: updatedCompanyParts, lastUpdated: now });
+      }
+
       // For pick: read user inventory, add/merge picked parts
       const userInvRef = dbRef.doc(`users/${targetUid}/data/inventory`);
       const userSnap = await tx.get(userInvRef);
@@ -4651,9 +4743,11 @@ exports.updateInventoryV1 = onCall(async (request) => {
     }
 
     throw new HttpsError('invalid-argument', 'Unknown action');
-  });
+  }, /* end transaction callback */);
 
-  // Bump cache version
+  // Cache bump is outside transaction intentionally — uses FieldValue.increment
+  // which is idempotent and safe for eventual consistency. Moving inside transaction
+  // would require reading the cache doc first, adding contention.
   const cacheRef = scope === 'company'
     ? dbRef.doc(`companies/${companyId}/business_data/cache`)
     : dbRef.doc(`users/${targetUid}/data/cache`);
@@ -4661,6 +4755,15 @@ exports.updateInventoryV1 = onCall(async (request) => {
     inventory: admin.firestore.FieldValue.increment(1),
     lastUpdated: new Date().toISOString(),
   }, { merge: true });
+
+  // For pickParts with company scope, also bump user cache since they received parts
+  if (result.picked && scope === 'company') {
+    const userCacheRef = dbRef.doc(`users/${targetUid}/data/cache`);
+    await userCacheRef.set({
+      inventory: admin.firestore.FieldValue.increment(1),
+      lastUpdated: new Date().toISOString(),
+    }, { merge: true });
+  }
 
   logger.info('updateInventoryV1: inventory updated', { companyId, action, scope, uid });
   return { success: true, ...result };
@@ -4681,6 +4784,7 @@ exports.updateCacheV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  if (companyId) validateCompanyId(companyId);
   const isCompanyCache = data.isCompanyCache === true;
   const field = typeof data.field === 'string' ? data.field.trim() : '';
   const action = typeof data.action === 'string' ? data.action.trim() : 'increment';
@@ -4778,10 +4882,11 @@ exports.deleteCertificationV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
   const certificationId = typeof data.certificationId === 'string' ? data.certificationId.trim() : '';
 
-  if (!companyId || !certificationId) {
-    throw new HttpsError('invalid-argument', 'companyId and certificationId are required');
+  if (!certificationId) {
+    throw new HttpsError('invalid-argument', 'certificationId is required');
   }
 
   await assertHttpCompanyAccess({

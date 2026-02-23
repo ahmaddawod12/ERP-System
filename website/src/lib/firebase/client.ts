@@ -4,6 +4,11 @@ import { initializeApp, getApp, getApps } from "firebase/app";
 import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
 import { connectFunctionsEmulator, getFunctions, type Functions } from "firebase/functions";
+import {
+  initializeAppCheck,
+  ReCaptchaEnterpriseProvider,
+  type AppCheck,
+} from "firebase/app-check";
 
 function readRequiredPublicEnv(name: string, fallback: string) {
   const value = process.env[name];
@@ -56,6 +61,30 @@ export const functions: Functions = isBrowser ? getFunctions(app) : ({} as Funct
 export const middleEastFunctions: Functions = isBrowser
   ? getFunctions(app, "me-west1")
   : ({} as Functions);
+
+// Initialize App Check — required for callable Cloud Functions with enforceAppCheck
+let appCheck: AppCheck | null = null;
+if (isBrowser) {
+  const recaptchaSiteKey = process.env.NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY;
+  if (recaptchaSiteKey) {
+    appCheck = initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } else if (process.env.NODE_ENV !== "production") {
+    // In dev without a site key, enable debug mode
+    // Set FIREBASE_APPCHECK_DEBUG_TOKEN=true in .env.local for emulator usage
+    if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+      appCheck = initializeAppCheck(app, {
+        provider: new ReCaptchaEnterpriseProvider("placeholder-debug-key"),
+        isTokenAutoRefreshEnabled: true,
+      });
+    }
+  }
+}
+export { appCheck };
 
 let emulatorsConnected = false;
 

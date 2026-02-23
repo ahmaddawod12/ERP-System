@@ -598,17 +598,10 @@ async function processGenerateTask(taskData) {
         downloadURL,
         storagePath: filePath,
       });
-      const documentNumberField = documentType ? `document_numbers.${documentType}` : null;
-      if (documentNumberField) {
-        // Update business_info document numbers (always in company path)
-        let businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
-        await businessInfoRef.update({
-          [documentNumberField]: admin.firestore.FieldValue.increment(1),
-          last_updated: new Date().toISOString()
-        });
-        
-        console.log(`[generate:${taskId}] Document counter incremented `, { documentType, documentNumber, userRole });
-      }
+      // NOTE: document_numbers counter is already incremented transactionally
+      // in publishGenerateTask Cloud Function. Do NOT increment here again
+      // to avoid double-counting.
+      console.log(`[generate:${taskId}] Document saved (counter already incremented by CF)`, { documentType, documentNumber, userRole });
     } else {
       await certificationRef.update({
         downloadURL,

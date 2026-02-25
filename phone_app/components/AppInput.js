@@ -25,6 +25,7 @@ const AppInput = forwardRef(function AppInput(
   const { language } = useLanguageContext();
   const palette = colors || getColors(isDarkMode);
   const isRTL = language === 'he' || language === 'ar' || I18nManager.isRTL;
+  const isSecureField = Boolean(props.secureTextEntry);
   const [isFocused, setIsFocused] = useState(false);
 
   const borderColor = useMemo(() => {
@@ -69,8 +70,8 @@ const AppInput = forwardRef(function AppInput(
             styles.input,
             {
               color: palette.textPrimary,
-              textAlign: props.textAlign || (isRTL ? 'right' : 'left'),
-              writingDirection: isRTL ? 'rtl' : 'ltr',
+              textAlign: props.textAlign || (isSecureField ? 'left' : (isRTL ? 'right' : 'left')),
+              writingDirection: isSecureField ? 'ltr' : (isRTL ? 'rtl' : 'ltr'),
             },
             inputStyle,
           ]}

@@ -1,80 +1,138 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Modal,
-  Image,
-  Platform,
-} from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
+import React, { memo, useEffect, useMemo, useState } from 'react';
+import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, FieldValue, doc, setDoc, getDoc, updateDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
-import { useLanguageContext } from '../../contexts/LanguageContext';
-import { useThemeContext } from '../../contexts/ThemeContext';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { auth, functions, httpsCallable } from '../../firebase';
+import {
+  borderRadius,
+  getColors,
+  gradients,
+  shadows,
+  spacing,
+} from '../../theme';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../components';
+import { useLanguageContext } from '../../contexts/LanguageContext';
+import { useThemeContext } from '../../contexts/ThemeContext';
+import {
+  AppButton,
+  AppCard,
+  AppChip,
+  AppEmptyState,
+  AppText,
+  GlobalHeader,
+  LoadingSpinner,
+  ViewJobDetails,
+} from '../../components';
 import { convertToFinishedJobId } from '../../utils/helpers';
 
-export default function ManageJobs() {
-  const router = useRouter();
-  const { jobId } = useLocalSearchParams();
-  const { language } = useLanguageContext();
-  const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
-  const {
-    getCompanyId,
-    getUid,
-    companyPendingJobs: cachedPendingJobs,
-    cachedWorkersList,
-    moveJobToFinished,
-    updateJob,
-  } = useCache();
-  const themeColors = getColors(isDarkMode);
-  const [loading, setLoading] = useState(true);
-  const [pendingJobs, setPendingJobs] = useState([]);
-  const [selectedJobDetails, setSelectedJobDetails] = useState(null);
-  const [highlightedJobId, setHighlightedJobId] = useState(null);
-  const insets = useSafeAreaInsets();
+const JobCard = memo(function JobCard({
+  job,
+  palette,
+  t,
+  statusColor,
+  statusLabel,
+  highlighted,
+  onOpenDetails,
+  onAccept,
+  onDeny,
+}) {
+  const isWaiting = String(job.status || '').toLowerCase() === 'waiting';
 
-  const t = language === 'en' ? {
+  return (
+    <TouchableOpacity activeOpacity={0.9} onPress={() => onOpenDetails(job)} style={styles.cardTouchable}>
+      <AppCard
+        style={[
+          styles.jobCard,
+          highlighted && [styles.highlightedCard, { borderColor: palette.secondary }],
+          { backgroundColor: palette.surface, borderColor: palette.border },
+        ]}
+      >
+        <View style={styles.topRow}>
+          <View style={styles.titleWrap}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <View style={styles.metaWrap}>
+              <AppText variant="heading" numberOfLines={1}>
+                {job.title || t.untitled}
+              </AppText>
+              <AppText variant="caption" color={palette.textSecondary} numberOfLines={1}>
+                {t.worker}: {job.workerName || t.unknownWorker}
+              </AppText>
+              {job.clientName ? (
+                <AppText variant="caption" color={palette.textSecondary} numberOfLines={1}>
+                  {t.clientName}: {job.clientName}
+                </AppText>
+              ) : null}
+              {job.location ? (
+                <AppText variant="caption" color={palette.textLight} numberOfLines={1}>
+                  {t.location}: {job.location}
+                </AppText>
+              ) : null}
+              {job.createdAt ? (
+                <AppText variant="caption" color={palette.textLight} numberOfLines={1}>
+                  {t.createdAt}: {new Date(job.createdAt).toLocaleDateString()}
+                </AppText>
+              ) : null}
+            </View>
+          </View>
+          <AppChip label={statusLabel} status={job.status} color={statusColor} />
+        </View>
+
+        {isWaiting ? (
+          <View style={styles.waitingActions}>
+            <AppButton
+              title={t.accept}
+              iconLeft={{ name: 'checkmark-circle-outline' }}
+              onPress={() => onAccept(job)}
+              style={styles.actionButton}
+            />
+            <AppButton
+              title={t.deny}
+              variant="destructive"
+              iconLeft={{ name: 'close-circle-outline' }}
+              onPress={() => onDeny(job)}
+              style={styles.actionButton}
+            />
+          </View>
+        ) : null}
+      </AppCard>
+    </TouchableOpacity>
+  );
+});
+
+const translateMap = {
+  en: {
     title: 'Manage Jobs',
-    subtitle: 'Assign new jobs to workers',
-    createJob: 'Create Job',
+    subtitle: 'Approve worker submissions',
     assignJob: 'Assign New Job',
     noJobs: 'No pending jobs',
     pending: 'Pending',
-    received: 'Received',
-    waiting: 'Waiting for Approval',
+    waiting: 'Waiting',
     finished: 'Finished',
+    denied: 'Denied',
     jobDetails: 'Job Details',
     close: 'Close',
     accept: 'Accept',
     deny: 'Deny',
-    worker: 'worker',
-    createdAt: 'Created At',
+    worker: 'Worker',
+    unknownWorker: 'Unknown worker',
+    createdAt: 'Created',
     status: 'Status',
-    title: 'Title',
+    titleLabel: 'Title',
     description: 'Description',
     location: 'Location',
     photos: 'Photos',
-    noPhotos: 'No photos available',
+    noPhotos: 'No photos',
     signature: 'Signature',
-    noSignature: 'No signature available',
-    timeWorked: 'Time Worked',
-    clientName: 'Client Name',
-    clientPhone: 'Client Phone',
-    partsUsed: 'Parts Used',
-    noParts: 'No parts used',
-    travelDistance: 'Travel Distance',
-    km: 'km',
+    noSignature: 'No signature',
+    timeWorked: 'Time worked',
+    clientName: 'Client',
+    clientPhone: 'Client phone',
+    partsUsed: 'Parts used',
+    noParts: 'No parts',
     acceptSuccess: 'Job accepted successfully',
     denySuccess: 'Job denied',
     confirmAccept: 'Accept Job',
@@ -83,366 +141,172 @@ export default function ManageJobs() {
     confirmDenyMessage: 'Are you sure you want to deny this job?',
     cancel: 'Cancel',
     loading: 'Loading jobs...',
-  } : language === 'he' ? {
-    title: 'ניהול משימות',
-    subtitle: 'הקצאת משימות חדשות לעובדים',
-    createJob: 'יצירת משימה',
-    assignJob: 'הקצאת משימה חדשה',
-    noJobs: 'אין משימות ממתינות',
-    pending: 'ממתין',
-    received: 'התקבל',
-    waiting: 'ממתין לאישור',
-    finished: 'הושלם',
-    jobDetails: 'פרטי משימה',
-    close: 'סגור',
-    accept: 'אשר',
-    deny: 'דחה',
-    worker: 'עובד',
-    createdAt: 'נוצר ב',
-    status: 'סטטוס',
-    title: 'כותרת',
-    description: 'תיאור',
-    location: 'מיקום',
-    photos: 'תמונות',
-    noPhotos: 'אין תמונות זמינות',
-    signature: 'חתימה',
-    noSignature: 'אין חתימה זמינה',
-    timeWorked: 'זמן עבודה',
-    clientName: 'שם הלקוח',
-    clientPhone: 'טלפון הלקוח',
-    partsUsed: 'חלקים בשימוש',
-    noParts: 'אין חלקים בשימוש',
-    travelDistance: 'מרחק נסיעה',
-    km: 'ק"מ',
-    acceptSuccess: 'המשימה אושרה בהצלחה',
-    denySuccess: 'המשימה נדחתה',
-    confirmAccept: 'אישור משימה',
-    confirmAcceptMessage: 'האם אתה בטוח שברצונך לאשר את המשימה?',
-    confirmDeny: 'דחיית משימה',
-    confirmDenyMessage: 'האם אתה בטוח שברצונך לדחות את המשימה?',
-    cancel: 'ביטול',
-    loading: 'טוען משימות...',
-  } : {
-    title: 'إدارة المهام',
-    subtitle: 'تعيين مهام جديدة للعمال',
-    createJob: 'إنشاء مهمة',
-    assignJob: 'تعيين مهمة جديدة',
-    noJobs: 'لا توجد مهام معلقة',
-    pending: 'قيد الانتظار',
-    received: 'مستلم',
-    waiting: 'في انتظار الموافقة',
-    finished: 'مكتمل',
-    jobDetails: 'تفاصيل المهمة',
-    close: 'إغلاق',
-    accept: 'قبول',
-    deny: 'رفض',
-    worker: 'العامل',
-    createdAt: 'تم الإنشاء في',
-    status: 'الحالة',
-    title: 'العنوان',
-    description: 'الوصف',
-    location: 'الموقع',
-    photos: 'الصور',
-    noPhotos: 'لا توجد صور متاحة',
-    signature: 'التوقيع',
-    noSignature: 'لا يوجد توقيع متاح',
-    timeWorked: 'وقت العمل',
-    clientName: 'اسم العميل',
-    clientPhone: 'هاتف العميل',
-    partsUsed: 'القطع المستخدمة',
-    noParts: 'لا توجد قطع مستخدمة',
-    travelDistance: 'مسافة السفر',
-    km: 'كم',
-    acceptSuccess: 'تم قبول المهمة بنجاح',
-    denySuccess: 'تم رفض المهمة',
-    confirmAccept: 'قبول المهمة',
-    confirmAcceptMessage: 'هل أنت متأكد أنك تريد قبول هذه المهمة؟',
-    confirmDeny: 'رفض المهمة',
-    confirmDenyMessage: 'هل أنت متأكد أنك تريد رفض هذه المهمة؟',
-    cancel: 'إلغاء',
-    loading: 'جاري تحميل المهام...',
-  };
+    untitled: 'Untitled Job',
+  },
+};
 
-  // Helper to resolve worker UID to display name
-  const getWorkerDisplayName = (uid) => {
-    if (!uid) return 'Unknown Worker';
-    if (cachedWorkersList && cachedWorkersList.length > 0) {
-      const worker = cachedWorkersList.find(w => w.uid === uid);
-      if (worker) return worker.name || worker.email;
+export default function ManageJobs() {
+  const router = useRouter();
+  const { jobId } = useLocalSearchParams();
+  const { language } = useLanguageContext();
+  const { isDarkMode } = useThemeContext();
+  const alert = useAlert();
+  const insets = useSafeAreaInsets();
+  const {
+    companyPendingJobs: cachedPendingJobs,
+    cachedWorkersList,
+    getCompanyId,
+    getUid,
+    moveJobToFinished,
+    updateJob,
+  } = useCache();
+
+  const palette = getColors(isDarkMode);
+  const t = translateMap[language] || translateMap.en;
+  const [loading, setLoading] = useState(true);
+  const [jobs, setJobs] = useState([]);
+  const [selectedJobDetails, setSelectedJobDetails] = useState(null);
+  const [highlightedJobId, setHighlightedJobId] = useState(null);
+
+  const workerNameByUid = useMemo(() => {
+    const source = cachedWorkersList || {};
+    if (Array.isArray(source)) {
+      return source.reduce((acc, worker) => {
+        if (worker?.uid) acc[worker.uid] = worker.name || worker.email || worker.uid;
+        return acc;
+      }, {});
     }
-    return 'Unknown Worker';
-  };
+    return Object.keys(source).reduce((acc, uid) => {
+      const worker = source[uid] || {};
+      acc[uid] = worker.name || worker.email || uid;
+      return acc;
+    }, {});
+  }, [cachedWorkersList]);
 
-  // Load pending jobs from cache - CacheContext already has listeners for real-time updates
   useEffect(() => {
-    const loadJobsFromCache = () => {
-      try {
-        const user = auth.currentUser;
-        if (!user) {
-          setLoading(false);
-          return;
-        }
+    const list = Array.isArray(cachedPendingJobs) ? [...cachedPendingJobs] : [];
+    list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    setJobs(
+      list.map((job) => ({
+        ...job,
+        workerName:
+          job.name ||
+          workerNameByUid[job.completedBy] ||
+          workerNameByUid[job.assignedTo] ||
+          workerNameByUid[job.workerId],
+      }))
+    );
+    setLoading(false);
+  }, [cachedPendingJobs, workerNameByUid]);
 
-        const companyId = getCompanyId();
-        
-        if (!companyId) {
-          console.error('CompanyId not found in cache');
-          setLoading(false);
-          return;
-        }
-        
-        // Use cached pending jobs - CacheContext handles real-time updates
-        if (cachedPendingJobs && cachedPendingJobs.length > 0) {
-          console.log('📦 [CACHE READ] ManageJobs - pending jobs from cache:', cachedPendingJobs.length);
-          const jobsList = cachedPendingJobs.map((job) => ({
-            ...job,
-            workerName: job.name || getWorkerDisplayName(job.completedBy || job.assignedTo),
-          }));
-          
-          // Sort by creation date - newest first
-          jobsList.sort((a, b) => {
-            const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return dateB - dateA;
-          });
-          
-          setPendingJobs(jobsList);
-        } else {
-          setPendingJobs([]);
-        }
-        
-        setLoading(false);
-      } catch (error) {
-        console.error('Error loading jobs from cache:', error);
-        setLoading(false);
-      }
-    };
-
-    loadJobsFromCache();
-  }, [cachedPendingJobs]); // Re-run when cache updates
-
-  // Highlight job when navigating with jobId
   useEffect(() => {
-    if (jobId && !loading) {
-      setHighlightedJobId(jobId);
-      
-      const timer = setTimeout(() => {
-        setHighlightedJobId(null);
-      }, 2500);
-      
-      return () => clearTimeout(timer);
-    }
+    if (!jobId || loading) return;
+    setHighlightedJobId(String(jobId));
+    const timer = setTimeout(() => setHighlightedJobId(null), 2400);
+    return () => clearTimeout(timer);
   }, [jobId, loading]);
 
   const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'pending': return '#f59e0b';
-      case 'received': return '#3b82f6';
-      case 'waiting': return '#8b5cf6';
-      case 'finished': return '#10b981';
-      default: return '#6b7280';
-    }
+    const key = String(status || '').toLowerCase();
+    if (key === 'pending') return '#F59E0B';
+    if (key === 'waiting') return '#8B5CF6';
+    if (key === 'finished') return '#10B981';
+    if (key === 'denied') return '#DC2626';
+    return '#64748B';
   };
 
-  const getStatusText = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'pending': return t.pending;
-      case 'received': return t.received;
-      case 'waiting': return t.waiting;
-      case 'finished': return t.finished || 'Finished';
-      default: return status || 'unknown';
-    }
+  const getStatusLabel = (status) => {
+    const key = String(status || '').toLowerCase();
+    if (key === 'pending') return t.pending;
+    if (key === 'waiting') return t.waiting;
+    if (key === 'finished') return t.finished;
+    if (key === 'denied') return t.denied;
+    return status || '-';
   };
 
-  const handleAcceptJob = async (job) => {
-    alert.confirm(
-      t.confirmAccept,
-      t.confirmAcceptMessage,
-      [
-        {
-          text: t.cancel,
-          style: 'cancel',
-          onPress: () => {}
-        },
-        {
-          text: t.accept,
-          style: 'primary',
-          onPress: async () => {
-            try {
-              const companyId = getCompanyId();
-              
-              if (!companyId) {
-                alert.error('Error', 'Company ID not found in profile');
-                return;
-              }
-
-              const workerId = job.workerId || job.completedBy || job.assignedTo;
-              
-              // Convert pending job ID (p_) to finished job ID (f_)
-              const finishedJobId = convertToFinishedJobId(job.id);
-
-              // Use acceptJobV1 Cloud Function for atomic accept
-              // Handles: move pending→finished, delete pending, deduct worker inventory
-              console.log('🔥 ManageJobs: Calling acceptJobV1...');
-              const acceptJobFn = httpsCallable(functions, 'acceptJobV1');
-              await acceptJobFn({
-                companyId,
-                jobId: job.id,
-                finishedJobId,
-              });
-
-              // Update local cache
-              const finishedJobData = {
-                ...job,
-                id: finishedJobId,
-                status: 'finished',
-                isCert: false,
-                finishedAt: new Date().toISOString(),
-                approvedBy: getUid() || auth.currentUser.uid,
-              };
-              console.log('📦 ManageJobs: Updating local cache...');
-              await moveJobToFinished(job.id, finishedJobData, workerId);
-              
-              console.log('✅ ManageJobs: Job accepted successfully');
-
-              alert.success('Success', t.acceptSuccess);
-              setSelectedJobDetails(null);
-            } catch (error) {
-              console.error('Error accepting job:', error);
-              alert.error('Error', 'Failed to accept job: ' + error.message);
+  const handleAcceptJob = (job) => {
+    alert.confirm(t.confirmAccept, t.confirmAcceptMessage, [
+      { text: t.cancel, style: 'cancel', onPress: () => {} },
+      {
+        text: t.accept,
+        style: 'primary',
+        onPress: async () => {
+          try {
+            const companyId = getCompanyId();
+            if (!companyId) {
+              alert.error('Error', 'Company ID not found in profile.');
+              return;
             }
-          }
-        }
-      ]
-    );
-  };
 
-  const handleDenyJob = async (job) => {
-    alert.confirm(
-      t.confirmDeny,
-      t.confirmDenyMessage,
-      [
-        {
-          text: t.cancel,
-          style: 'cancel',
-          onPress: () => {}
+            const workerId = job.workerId || job.completedBy || job.assignedTo;
+            const finishedJobId = convertToFinishedJobId(job.id);
+            const acceptJobFn = httpsCallable(functions, 'acceptJobV1');
+
+            await acceptJobFn({ companyId, jobId: job.id, finishedJobId });
+
+            const finishedJobData = {
+              ...job,
+              id: finishedJobId,
+              status: 'finished',
+              isCert: false,
+              finishedAt: new Date().toISOString(),
+              approvedBy: getUid() || auth.currentUser?.uid,
+            };
+            await moveJobToFinished(job.id, finishedJobData, workerId);
+
+            setSelectedJobDetails(null);
+            alert.success('Success', t.acceptSuccess);
+          } catch (error) {
+            console.error('ManageJobs accept error:', error);
+            alert.error('Error', `Failed to accept job: ${error.message}`);
+          }
         },
-        {
-          text: t.deny,
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const companyId = getCompanyId();
-              
-              if (!companyId) {
-                alert.error('Error', 'Company ID not found in profile');
-                return;
-              }
-
-              const currentUid = getUid();
-
-              // Update job status to denied via Cloud Function
-              const updateJobFn = httpsCallable(functions, 'updateJobV1');
-              await updateJobFn({
-                companyId,
-                jobId: job.id,
-                status: 'denied',
-                deniedAt: new Date().toISOString(),
-                deniedBy: currentUid || auth.currentUser.uid,
-              });
-
-              // Update job in cache with document-level versioning
-              await updateJob(job.id, {
-                status: 'denied',
-                deniedAt: new Date().toISOString(),
-                deniedBy: currentUid || auth.currentUser.uid,
-              }, true);
-
-              alert.success('Success', t.denySuccess);
-              setSelectedJobDetails(null);
-            } catch (error) {
-              console.error('Error denying job:', error);
-              alert.error('Error', 'Failed to deny job: ' + error.message);
-            }
-          }
-        }
-      ]
-    );
+      },
+    ]);
   };
 
-  const JobCard = ({ job }) => {
-    const displayName = job.workerName || job.name || getWorkerDisplayName(job.completedBy || job.assignedTo);
-    const isHighlighted = highlightedJobId === job.id;
-    const isWaiting = job.status?.toLowerCase() === 'waiting';
-    const statusColor = getStatusColor(job.status);
-    
-    return (
-      <TouchableOpacity onPress={() => setSelectedJobDetails(job)}>
-        <View 
-          style={[
-            styles.jobCard,
-            { backgroundColor: themeColors.surface },
-            isHighlighted && styles.highlightedJobCard
-          ]}
-        >
-          <View style={styles.jobHeader}>
-            <View style={styles.jobLeft}>
-              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              <View style={styles.jobHeaderContent}>
-                <Text style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</Text>
-                <Text style={[styles.jobWorker, { color: themeColors.textSecondary }]}>👤 {displayName}</Text>
-                {job.createdAt && (
-                  <Text style={[styles.jobDate, { color: themeColors.textSecondary }]}>
-                    📅 {new Date(job.createdAt).toLocaleDateString()}
-                  </Text>
-                )}
-              </View>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-              <Text style={styles.statusText}>{getStatusText(job.status)}</Text>
-            </View>
-          </View>
-          
-          {isWaiting && (
-            <View style={styles.actionsRow}>
-              <TouchableOpacity 
-                style={styles.acceptButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleAcceptJob(job);
-                }}
-              >
-                <LinearGradient colors={gradients.greenBox} style={styles.actionButtonGradient}>
-                  <Ionicons name="checkmark-circle" size={20} color="white" />
-                  <Text style={styles.actionButtonText}>{t.accept}</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.denyButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleDenyJob(job);
-                }}
-              >
-                <LinearGradient colors={gradients.redBox} style={styles.actionButtonGradient}>
-                  <Ionicons name="close-circle" size={20} color="white" />
-                  <Text style={styles.actionButtonText}>{t.deny}</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
+  const handleDenyJob = (job) => {
+    alert.confirm(t.confirmDeny, t.confirmDenyMessage, [
+      { text: t.cancel, style: 'cancel', onPress: () => {} },
+      {
+        text: t.deny,
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const companyId = getCompanyId();
+            if (!companyId) {
+              alert.error('Error', 'Company ID not found in profile.');
+              return;
+            }
+
+            const deniedBy = getUid() || auth.currentUser?.uid;
+            const payload = {
+              status: 'denied',
+              deniedAt: new Date().toISOString(),
+              deniedBy,
+            };
+
+            const updateJobFn = httpsCallable(functions, 'updateJobV1');
+            await updateJobFn({ companyId, jobId: job.id, ...payload });
+            await updateJob(job.id, payload, true);
+
+            setSelectedJobDetails(null);
+            alert.success('Success', t.denySuccess);
+          } catch (error) {
+            console.error('ManageJobs deny error:', error);
+            alert.error('Error', `Failed to deny job: ${error.message}`);
+          }
+        },
+      },
+    ]);
   };
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: themeColors.background }]}>
-        <StatusBar style={isDarkMode ? "light" : "dark"} />
-        <View style={styles.loadingContainer}>
-          <Text style={[styles.loadingText, { color: themeColors.textPrimary }]}>{t.loading}</Text>
+      <View style={[styles.container, { backgroundColor: palette.background }]}>
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+        <View style={styles.centered}>
+          <LoadingSpinner text={t.loading} />
         </View>
         <GlobalHeader />
       </View>
@@ -450,68 +314,89 @@ export default function ManageJobs() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: themeColors.background }]}>
-      <StatusBar style={isDarkMode ? "light" : "dark"} />
+    <View style={[styles.container, { backgroundColor: palette.background }]}>
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
-      {/* Create Job Button */}
-      <View style={styles.createJobContainer}>
-        <TouchableOpacity onPress={() => router.push('/CreateJob')}>
-          <LinearGradient colors={gradients.indigoBox} style={styles.createJobButton}>
-            <MaterialCommunityIcons name="clipboard-plus" size={24} color="white" />
-            <Text style={styles.createJobText}>{t.assignJob}</Text>
+      <View style={[styles.topCtaWrap, { paddingTop: Platform.OS === 'ios' ? 108 : 96 }]}>
+        <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/CreateJob')}>
+          <LinearGradient colors={gradients.indigoBox} style={styles.ctaGradient}>
+            <MaterialCommunityIcons name="clipboard-plus-outline" size={22} color="#FFFFFF" />
+            <AppText variant="bodyStrong" color="#FFFFFF">
+              {t.assignJob}
+            </AppText>
+            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
           </LinearGradient>
         </TouchableOpacity>
       </View>
 
-      {/* Jobs List */}
-      <ScrollableContainer 
-        style={styles.content}
-        contentContainerStyle={{ paddingBottom: Platform.OS === 'android' ? 120 + insets.bottom : 30 + insets.bottom }}
-      >
-        {pendingJobs.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="clipboard-text-off" size={64} color={themeColors.textSecondary} />
-            <Text style={[styles.emptyText, { color: themeColors.textSecondary }]}>{t.noJobs}</Text>
-          </View>
-        ) : (
-          pendingJobs.map((job) => <JobCard key={job.id} job={job} />)
+      <FlatList
+        data={jobs}
+        keyExtractor={(item) => String(item.id)}
+        contentContainerStyle={{
+          paddingHorizontal: spacing.lg,
+          paddingBottom: insets.bottom + 110,
+          paddingTop: spacing.sm,
+          flexGrow: jobs.length === 0 ? 1 : 0,
+        }}
+        renderItem={({ item }) => (
+          <JobCard
+            job={item}
+            palette={palette}
+            t={t}
+            statusColor={getStatusColor(item.status)}
+            statusLabel={getStatusLabel(item.status)}
+            highlighted={highlightedJobId === String(item.id)}
+            onOpenDetails={setSelectedJobDetails}
+            onAccept={handleAcceptJob}
+            onDeny={handleDenyJob}
+          />
         )}
-      </ScrollableContainer>
+        ListEmptyComponent={
+          <AppEmptyState
+            icon="clipboard-text-off-outline"
+            title={t.noJobs}
+            subtitle={t.subtitle}
+            action={
+              <AppButton
+                title={t.assignJob}
+                onPress={() => router.push('/CreateJob')}
+                iconLeft={{ name: 'add-circle-outline' }}
+                style={{ marginTop: spacing.md }}
+              />
+            }
+          />
+        }
+      />
 
-      {/* Job Details Modal */}
       <ViewJobDetails
         visible={!!selectedJobDetails}
         job={selectedJobDetails}
         onClose={() => setSelectedJobDetails(null)}
         translations={{
           jobDetails: t.jobDetails,
-          jobTitle: t.title,
+          title: t.titleLabel,
           description: t.description,
           location: t.location,
           clientName: t.clientName,
           clientPhone: t.clientPhone,
-          clientInfo: t.clientName,
           createdAt: t.createdAt,
-          finishedAt: t.finishedAt || t.createdAt,
+          finishedAt: t.finished,
           status: t.status,
-          timeStatus: t.timeWorked,
           photos: t.photos,
           noPhotos: t.noPhotos,
           signature: t.signature,
           noSignature: t.noSignature,
-          signingPerson: t.signingPerson || t.clientName,
-          close: t.close,
-          timeWorked: t.timeWorked,
           partsUsed: t.partsUsed,
           noParts: t.noParts,
-          assignedBy: t.assignedBy || t.createdAt,
+          close: t.close,
+          timeWorked: t.timeWorked,
+          assignedBy: t.worker,
         }}
         getStatusColor={getStatusColor}
-        onImagePress={(photo) => {/* Can add image modal if needed */}}
+        onImagePress={() => {}}
         isDarkMode={isDarkMode}
       />
 
-      {/* Fixed GlobalHeader */}
       <GlobalHeader />
     </View>
   );
@@ -521,150 +406,62 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  loadingContainer: {
+  centered: {
     flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  loadingText: {
-    fontSize: typography.lg,
-    marginTop: spacing.md,
-  },
-  header: {
-    paddingTop: 60,
-    paddingBottom: spacing.lg,
+  topCtaWrap: {
     paddingHorizontal: spacing.lg,
-    borderBottomWidth: 1,
-    ...shadows.card,
+    paddingBottom: spacing.sm,
   },
-  headerCenter: {
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: typography.xxl,
-    fontWeight: typography.bold,
-    marginBottom: spacing.xs,
-  },
-  subtitle: {
-    fontSize: typography.base,
-  },
-  createJobContainer: {
-    paddingHorizontal: spacing.lg,
+  ctaGradient: {
+    borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
-    paddingTop: 110,
-  },
-  createJobButton: {
+    paddingHorizontal: spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.md + 4,
-    borderRadius: borderRadius.lg,
     gap: spacing.sm,
-    ...shadows.floating,
+    ...shadows.primary,
   },
-  createJobText: {
-    color: 'white',
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: spacing.lg,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: spacing.xxl * 2,
-  },
-  emptyText: {
-    fontSize: typography.lg,
-    marginTop: spacing.md,
+  cardTouchable: {
+    marginBottom: spacing.md,
   },
   jobCard: {
-    borderRadius: 12,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    ...shadows.sm,
+    borderWidth: 1,
+    ...shadows.card,
   },
-  highlightedJobCard: {
-    borderWidth: 3,
-    borderColor: '#FFD700',
-    shadowColor: '#FFD700',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 12,
-    elevation: 8,
-    transform: [{ scale: 1.02 }],
+  highlightedCard: {
+    borderWidth: 2,
+    transform: [{ scale: 1.01 }],
   },
-  jobHeader: {
+  topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.sm,
+    gap: spacing.sm,
   },
-  jobLeft: {
+  titleWrap: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
     flex: 1,
+    gap: spacing.sm,
   },
   statusDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    marginRight: 12,
-    marginTop: 6,
+    marginTop: 8,
   },
-  jobHeaderContent: {
+  metaWrap: {
     flex: 1,
+    gap: 2,
   },
-  jobTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  jobWorker: {
-    fontSize: typography.base,
-    marginBottom: spacing.xs,
-  },
-  jobDate: {
-    fontSize: typography.sm,
-  },
-  statusBadge: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.md,
-    ...shadows.sm,
-  },
-  statusText: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  actionsRow: {
+  waitingActions: {
+    marginTop: spacing.md,
     flexDirection: 'row',
     gap: spacing.sm,
-    marginTop: spacing.md,
   },
-  acceptButton: {
+  actionButton: {
     flex: 1,
-  },
-  denyButton: {
-    flex: 1,
-  },
-  actionButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm + 4,
-    borderRadius: borderRadius.md,
-    gap: spacing.xs,
-  },
-  actionButtonText: {
-    color: 'white',
-    fontSize: typography.base,
-    fontWeight: typography.bold,
   },
 });

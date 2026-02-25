@@ -14,11 +14,19 @@
       },
       "oauth_client": [
         {
-          "client_id": "603811502451-2ecqturqs4r04jp04ca4vv9mh1sfud7r.apps.googleusercontent.com",
+          "client_id": "603811502451-09utfodl50b66e3g62btjg36aitm44dk.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "erpsystem.app",
-            "certificate_hash": "fa1ef1cf5061e2de6fd61f88bbd23921cdc60e0c"
+            "certificate_hash": "1a91409160d64386e9b0aa98296e2ee5a9aca200"
+          }
+        },
+        {
+          "client_id": "603811502451-grv7lbku0loo2ssnvv4f498oh408iqhs.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "erpsystem.app",
+            "certificate_hash": "281ac7f27a3b7a226efdd2d731b3db36f1920aa1"
           }
         },
         {

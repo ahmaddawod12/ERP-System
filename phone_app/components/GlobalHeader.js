@@ -15,6 +15,7 @@ export function GlobalHeader() {
   const { headerAnimatedValue } = useHeader();
   const colors = getColors(isDarkMode);
   const [menuVisible, setMenuVisible] = useState(false);
+  const isRTL = language === 'he' || language === 'ar';
 
   // Header height for translation calculation
   const HEADER_HEIGHT = Platform.OS === 'ios' ? 120 : 110;
@@ -82,18 +83,31 @@ export function GlobalHeader() {
             onPress={() => router.back()}
             activeOpacity={0.7}
             hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            accessibilityRole="button"
+            accessibilityLabel={language === 'en' ? 'Go back' : language === 'he' ? 'חזור' : 'رجوع'}
           >
-            <Ionicons name="arrow-back" size={22} color="white" />
+            <Ionicons
+              name="arrow-back"
+              size={22}
+              color="white"
+              style={isRTL ? { transform: [{ scaleX: -1 }] } : null}
+            />
           </TouchableOpacity>
         )}
 
         {/* Show Menu Button Only in Homepage */}
         {isHomepage && (
           <TouchableOpacity 
-            style={[styles.menuButton, { backgroundColor: colors.secondary }]} 
+            style={[
+              styles.menuButton,
+              isRTL ? styles.menuButtonRtl : styles.menuButtonLtr,
+              { backgroundColor: colors.secondary },
+            ]} 
             onPress={() => setMenuVisible(true)}
             activeOpacity={0.7}
             hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            accessibilityRole="button"
+            accessibilityLabel={t.menu}
           >
             <Ionicons name="menu" size={22} color="white" />
           </TouchableOpacity>
@@ -115,7 +129,12 @@ export function GlobalHeader() {
           <View 
             style={[
               styles.menuDropdown, 
-              { backgroundColor: colors.surface, top: Platform.OS === 'ios' ? 105 : 95 }
+              {
+                backgroundColor: colors.surface,
+                top: Platform.OS === 'ios' ? 105 : 95,
+                right: isRTL ? undefined : 16,
+                left: isRTL ? 16 : undefined,
+              }
             ]}
             onStartShouldSetResponder={() => true}
           >
@@ -125,7 +144,7 @@ export function GlobalHeader() {
               onPress={() => handleMenuItemPress(() => router.push('/Settings'))}
             >
               <Ionicons name="settings-outline" size={20} color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.textPrimary }]}>
+              <Text style={[styles.menuItemText, { color: colors.textPrimary, textAlign: isRTL ? 'right' : 'left' }]}>
                 {t.settings}
               </Text>
             </TouchableOpacity>
@@ -136,7 +155,7 @@ export function GlobalHeader() {
               onPress={() => handleMenuItemPress(() => router.push('/SupportChat'))}
             >
               <MaterialCommunityIcons name="chat-question-outline" size={20} color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.textPrimary }]}>
+              <Text style={[styles.menuItemText, { color: colors.textPrimary, textAlign: isRTL ? 'right' : 'left' }]}>
                 {t.support}
               </Text>
             </TouchableOpacity>
@@ -188,7 +207,6 @@ const styles = StyleSheet.create({
   menuButton: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 60 : 50,
-    right: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: borderRadius.lg,
@@ -198,13 +216,18 @@ const styles = StyleSheet.create({
     elevation: 9999,
     ...shadows.floating,
   },
+  menuButtonLtr: {
+    right: 16,
+  },
+  menuButtonRtl: {
+    left: 16,
+  },
   menuOverlay: {
     flex: 1,
     backgroundColor: 'transparent',
   },
   menuDropdown: {
     position: 'absolute',
-    right: 16,
     minWidth: 200,
     borderRadius: borderRadius.lg,
     ...shadows.floating,
@@ -213,6 +236,7 @@ const styles = StyleSheet.create({
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderBottomWidth: 0.5,

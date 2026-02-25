@@ -1,10 +1,9 @@
-/**
- * Theme Context Provider for Smart-Job App
- * Manages dark/light mode state globally with AsyncStorage persistence
- */
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Appearance } from 'react-native';
+import { createMMKV } from 'react-native-mmkv';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+const THEME_KEY = 'app_theme';
+const themeStorage = createMMKV({ id: 'smart-job-preferences' });
 
 const ThemeContext = createContext();
 
@@ -21,26 +20,25 @@ export const ThemeProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    loadThemePreference();
-  }, []);
-
-  const loadThemePreference = async () => {
     try {
-      const savedTheme = await AsyncStorage.getItem('app_theme');
-      if (savedTheme) {
+      const savedTheme = themeStorage.getString(THEME_KEY);
+      if (savedTheme === 'dark' || savedTheme === 'light') {
         setIsDarkModeState(savedTheme === 'dark');
+      } else {
+        setIsDarkModeState(Appearance.getColorScheme() === 'dark');
       }
     } catch (error) {
       console.error('Error loading theme preference:', error);
+      setIsDarkModeState(Appearance.getColorScheme() === 'dark');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const setTheme = async (isDark) => {
+  const setTheme = (isDark) => {
     try {
-      await AsyncStorage.setItem('app_theme', isDark ? 'dark' : 'light');
-      setIsDarkModeState(isDark);
+      themeStorage.set(THEME_KEY, isDark ? 'dark' : 'light');
+      setIsDarkModeState(!!isDark);
     } catch (error) {
       console.error('Error saving theme preference:', error);
     }
@@ -50,16 +48,15 @@ export const ThemeProvider = ({ children }) => {
     setTheme(!isDarkMode);
   };
 
-  const value = {
-    isDarkMode,
-    setTheme,
-    toggleTheme,
-    isLoading,
-  };
-
-  return (
-    <ThemeContext.Provider value={value}>
-      {children}
-    </ThemeContext.Provider>
+  const value = useMemo(
+    () => ({
+      isDarkMode,
+      setTheme,
+      toggleTheme,
+      isLoading,
+    }),
+    [isDarkMode, isLoading]
   );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 };

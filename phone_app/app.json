@@ -11,14 +11,19 @@
       "resizeMode": "contain",
       "backgroundColor": "#1e3a8a"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "googleServicesFile": "./GoogleService-Info.plist",
       "supportsTablet": true,
       "bundleIdentifier": "erpsystem.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["remote-notification", "fetch"]
+        "UIBackgroundModes": [
+          "remote-notification",
+          "fetch"
+        ]
       },
       "entitlements": {
         "aps-environment": "development"
@@ -49,13 +54,19 @@
       [
         "expo-build-properties",
         {
-      "ios": {
-        "useFrameworks": "static",
-        "forceStaticLinking": ["RNFBApp", "RNFBMessaging"],
-        "extraPods": [
-          { "name": "GoogleUtilities", "modular_headers": true }
-        ]
-      },
+          "ios": {
+            "useFrameworks": "static",
+            "forceStaticLinking": [
+              "RNFBApp",
+              "RNFBMessaging"
+            ],
+            "extraPods": [
+              {
+                "name": "GoogleUtilities",
+                "modular_headers": true
+              }
+            ]
+          },
           "android": {
             "compileSdkVersion": 35,
             "targetSdkVersion": 35,
@@ -63,7 +74,6 @@
           }
         }
       ],
-      
       [
         "expo-camera",
         {
@@ -75,7 +85,8 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location for job documentation."
         }
-      ]
+      ],
+      "expo-font"
     ],
     "scheme": "erpsystem",
     "extra": {

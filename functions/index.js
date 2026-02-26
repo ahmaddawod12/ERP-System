@@ -94,11 +94,18 @@ setGlobalOptions({
   enforceAppCheck: true, // Reject requests without valid App Check token
 });
 
-// Allowed CORS origins for HTTP functions (restrict from wildcard `true`)
-// Add your production domain(s) here. Falls back to `true` if not configured.
-const CORS_ALLOWED_ORIGINS = process.env.CORS_ALLOWED_ORIGINS
-  ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : true; // Default to open in development; set env var in production
+// Allowed CORS origins for HTTP functions.
+// Production should always set CORS_ALLOWED_ORIGINS explicitly.
+const _configuredCorsOrigins = process.env.CORS_ALLOWED_ORIGINS
+  ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : [];
+const CORS_ALLOWED_ORIGINS = _configuredCorsOrigins.length > 0
+  ? _configuredCorsOrigins
+  : (
+    isFunctionsEmulator()
+      ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+      : []
+  );
 
 // ── Simple in-memory rate limiter for unauthenticated endpoints ───────────
 const _rateLimitMap = new Map(); // key → { count, resetAt }
@@ -345,6 +352,18 @@ async function getUserProfileOrThrow(uid) {
   return snap.data() || {};
 }
 
+async function assertTargetUserInCompany(targetUid, companyId) {
+  const targetProfile = await getUserProfileOrThrow(targetUid);
+  if (String(targetProfile.companyId || '') !== companyId) {
+    throw new HttpsError('permission-denied', 'Target user is not in this company');
+  }
+
+  const membershipSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, targetUid)).get();
+  if (!membershipSnap.exists) {
+    throw new HttpsError('permission-denied', 'Target user membership record not found');
+  }
+}
+
 async function assertHttpCompanyAccess(params) {
   const {
     uid,
@@ -405,6 +424,11 @@ function toDocumentDocId(documentId) {
   if (raw.startsWith('d_')) return raw;
   if (raw.startsWith('c_')) return `d_${raw.slice(2)}`;
   return `d_${raw}`;
+}
+
+function getClientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || req.ip || 'unknown';
 }
 
 function toBaseDocumentId(documentId) {
@@ -948,6 +972,7 @@ exports.manageWorker = onCall(async (request) => {
       }
 
       // Prepare Firestore updates
+      const existingRole = toProfileRole(workerProfile.data()?.role || 'worker') || 'worker';
       const firestoreUpdates = {};
       if (name !== undefined) {
         firestoreUpdates.name = String(name || '').trim();
@@ -983,7 +1008,7 @@ exports.manageWorker = onCall(async (request) => {
         updateData.Wid = numericWorkerId;
         updateData.wid = numericWorkerId;
       }
-      updateData.role = newRole || 'worker';
+      updateData.role = newRole || existingRole;
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
       if (name !== undefined) {
         updateData.name = String(name || '').trim();
@@ -1193,7 +1218,7 @@ exports.createInviteV1 = onRequest({
   }
 
   // P1-4: Rate limit invite creation per IP
-  const inviteIp = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  const inviteIp = getClientIp(req);
   if (isRateLimited(`invite_${inviteIp}`)) {
     return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
@@ -1202,7 +1227,7 @@ exports.createInviteV1 = onRequest({
     const body = parseJsonBody(req);
     const auth = await resolveHttpAuth(req, body);
 
-    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const companyId = validateCompanyId(requireNonEmptyString(body.companyId, 'companyId', 3, 80));
     const rawTargetRole = String(body.targetRole || 'worker').trim();
     const targetRole = toProfileRole(rawTargetRole);
     if (!['worker', 'user', 'basic'].includes(targetRole)) {
@@ -1262,7 +1287,7 @@ exports.joinCompanyV1 = onRequest({
   }
 
   // P1-4: Rate limit join attempts per IP
-  const joinIp = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  const joinIp = getClientIp(req);
   if (isRateLimited(`join_${joinIp}`)) {
     return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
@@ -1271,7 +1296,7 @@ exports.joinCompanyV1 = onRequest({
     const body = parseJsonBody(req);
     const auth = await resolveHttpAuth(req, body);
 
-    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const companyId = validateCompanyId(requireNonEmptyString(body.companyId, 'companyId', 3, 80));
     const inviteCode = requireNonEmptyString(body.inviteCode, 'inviteCode', 4, 80).toUpperCase();
     const email = requireNonEmptyString(body.email, 'email', 3, 320).toLowerCase();
     const name = optionalTrimmedString(body.name, 120);
@@ -1456,7 +1481,7 @@ exports.generateDocumentV1 = onRequest({
     const body = parseJsonBody(req);
     const auth = await resolveHttpAuth(req, body);
 
-    const companyId = requireNonEmptyString(body.companyId, 'companyId', 3, 80);
+    const companyId = validateCompanyId(requireNonEmptyString(body.companyId, 'companyId', 3, 80));
     const type = requireNonEmptyString(body.type, 'type', 2, 100);
     const jobId = optionalTrimmedString(body.jobId, 120) || 'manual';
 
@@ -1544,7 +1569,7 @@ exports.generateDocumentV1 = onRequest({
  */
 exports.contactRequestV1 = onRequest({
   region: "us-central1",
-  cors: true,
+  cors: CORS_ALLOWED_ORIGINS,
   enforceAppCheck: false, // Public endpoint — no App Check required
 }, async (req, res) => {
   if (req.method !== 'POST') {
@@ -1552,7 +1577,7 @@ exports.contactRequestV1 = onRequest({
   }
 
   // S6: IP-based rate limiting
-  const clientIp = req.headers['x-forwarded-for'] || req.ip || 'unknown';
+  const clientIp = getClientIp(req);
   if (isRateLimited(`contact_${clientIp}`)) {
     return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
@@ -3251,7 +3276,7 @@ async function publishGenerateTaskHelper({
       documentData: completeDocumentData,
       uid: uid,
       companyId: companyId,
-      documentData: documentData,  // Existing document data for taxInvoice
+      legacyDocumentData: documentData || null,
       userRole: userRole || null,
       // Pass confirmation number at top level for easy access in Cloud Run
       confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
@@ -4445,10 +4470,16 @@ exports.updateJobV1 = onCall(async (request) => {
     }
   }
 
+  // Backward compatibility: old clients may send { updates: {...} }.
+  const nestedUpdates = (data.updates && typeof data.updates === 'object' && !Array.isArray(data.updates))
+    ? data.updates
+    : null;
+
   // Build update payload — strip immutable/metadata fields
-  const updates = { ...data };
+  const updates = nestedUpdates ? { ...nestedUpdates } : { ...data };
   delete updates.companyId;
   delete updates.jobId;
+  delete updates.updates;
   // Immutable fields workers cannot change
   if (resolvedRole === 'worker') {
     delete updates.workerId;
@@ -4603,6 +4634,7 @@ exports.updateInventoryV1 = onCall(async (request) => {
         allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
         allowSoloScope: false,
       });
+      await assertTargetUserInCompany(targetUid, companyId);
     }
   }
 
@@ -4708,18 +4740,26 @@ exports.updateInventoryV1 = onCall(async (request) => {
       const userParts = Array.isArray(userData.parts) ? [...userData.parts] : [];
 
       for (const pick of partsToPick) {
-        const existing = userParts.find((p) => p.id === pick.id);
+        const pickId = typeof pick.id === 'number' ? pick.id : null;
+        const existing = userParts.find((p) => {
+          if (pickId === null) return false;
+          return p.id === pickId || p.sourcePartId === pickId;
+        });
         if (existing) {
           existing.quantity = (existing.quantity || 0) + (pick.quantity || 0);
         } else {
+          const partId = pickId !== null ? pickId : userNextId;
+          if (partId >= userNextId) {
+            userNextId = partId + 1;
+          }
           userParts.push({
-            id: userNextId,
+            id: partId,
+            sourcePartId: pickId,
             name: pick.name || '',
             quantity: pick.quantity || 0,
             lowThreshold: 0,
             dateAdded: now,
           });
-          userNextId += 1;
         }
       }
       tx.set(userInvRef, { parts: userParts, nextId: userNextId, lastUpdated: now }, { merge: true });
@@ -4818,6 +4858,7 @@ exports.updateCacheV1 = onCall(async (request) => {
       allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
       allowSoloScope: false,
     });
+    await assertTargetUserInCompany(targetUid, companyId);
   }
 
   const resolvedUid = targetUid || uid;

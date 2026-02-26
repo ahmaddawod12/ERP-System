@@ -137,7 +137,6 @@ export default function WorkersPage() {
                       onChange={(event) => void handleRoleChange(row.workerId, event.target.value as Role)}
                       className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                     >
-                      <option value="manager">manager</option>
                       <option value="worker">worker</option>
                       <option value="user">user</option>
                       <option value="basic">basic</option>

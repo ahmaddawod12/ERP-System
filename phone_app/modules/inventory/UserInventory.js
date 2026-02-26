@@ -11,7 +11,7 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, doc, runTransaction } from '../../firebase';
+import { auth, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -38,6 +38,7 @@ export default function UserInventory() {
   const {
     inventory: cachedInventory,
     getUid,
+    getCompanyId,
     updateInventory,
     isLoading: cacheLoading
   } = useCache();
@@ -209,44 +210,43 @@ export default function UserInventory() {
 
     try {
       const user = auth.currentUser;
+      if (!user) {
+        alert.error('Error', 'User not authenticated');
+        return;
+      }
+
       const targetUid = getUid() || user.uid;
-      const userDocRef = doc(db, 'users', targetUid, 'data', 'inventory');
+      const companyId = getCompanyId() || targetUid;
+      const quantity = parseInt(newPart.quantity, 10);
+      const lowThreshold = parseInt(newPart.lowThreshold, 10);
+      if (!quantity || quantity <= 0 || Number.isNaN(lowThreshold) || lowThreshold < 0) {
+        alert.warning(t.invalidAmount, t.amountMustBePositive);
+        return;
+      }
 
-      let updatedParts = [];
-
-      // Use Firestore transaction to safely get/increment nextId
-      await runTransaction(db, async (transaction) => {
-        const docSnap = await transaction.get(userDocRef);
-        let currentParts = [];
-        let nextId = 1;
-
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          currentParts = Array.isArray(data.parts) ? data.parts : [];
-          nextId = typeof data.nextId === 'number'
-            ? data.nextId
-            : (currentParts.length > 0 ? Math.max(...currentParts.map(p => p.id)) + 1 : 1);
-        }
-
-        const part = {
-          id: nextId,
-          name: newPart.name.trim(),
-          quantity: parseInt(newPart.quantity),
-          lowThreshold: parseInt(newPart.lowThreshold),
-          dateAdded: new Date().toISOString(),
-        };
-
-        updatedParts = [...currentParts, part];
-        transaction.set(userDocRef, {
-          parts: updatedParts,
-          nextId: nextId + 1,
-          lastUpdated: new Date().toISOString(),
-        });
+      const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
+      const response = await updateInventoryFn({
+        companyId,
+        action: 'addPart',
+        scope: 'user',
+        targetUid,
+        partName: newPart.name.trim(),
+        quantity,
+        lowThreshold,
       });
 
-      // Update local state and sync cache
-      setInventory(updatedParts);
-      await updateInventory(updatedParts);
+      const createdId = Number(response?.data?.partId);
+      const partId = Number.isFinite(createdId)
+        ? createdId
+        : (inventory.length > 0 ? Math.max(...inventory.map((p) => Number(p.id) || 0)) + 1 : 1);
+      const createdPart = {
+        id: partId,
+        name: newPart.name.trim(),
+        quantity,
+        lowThreshold,
+        dateAdded: new Date().toISOString(),
+      };
+      setInventory((prev) => [...prev, createdPart]);
 
       alert.success(t.partAddedSuccess, `${newPart.name} ${t.partAddedMessage}`);
       setNewPart({ name: '', quantity: '', lowThreshold: '' });

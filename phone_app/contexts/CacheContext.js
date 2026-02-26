@@ -1474,23 +1474,31 @@ export function CacheProvider({ children }) {
    */
   const updateInventory = useCallback(async (newInventory) => {
     const uid = getUid();
+    const companyId = getCompanyId() || uid;
     if (!uid) {
       console.error('Cannot update inventory: no uid');
+      return;
+    }
+    if (!companyId) {
+      console.error('Cannot update inventory: no companyId');
       return;
     }
     
     // 1. Update local cache FIRST
     saveToLocalCache(CACHE_KEYS.INVENTORY, newInventory);
     
-    // 2. Save to Firebase directly
-    const invRef = doc(db, `users/${uid}/data/inventory`);
-    await setDoc(invRef, { parts: newInventory, lastUpdated: new Date().toISOString() }, { merge: true });
+    // 2. Save via Cloud Function (server-authoritative inventory mutation path)
+    const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
+    await updateInventoryFn({
+      companyId,
+      action: 'replaceParts',
+      scope: 'user',
+      targetUid: uid,
+      parts: Array.isArray(newInventory) ? newInventory : [],
+    });
     
-    // 3. Increment cache version (triggers other devices to refresh)
-    await incrementCacheVersion('inventory', false);
-    
-    console.log('? Inventory updated: cache, Firebase, and version incremented');
-  }, [saveToLocalCache, incrementCacheVersion, getUid]);
+    console.log('? Inventory updated via Cloud Function');
+  }, [saveToLocalCache, getUid, getCompanyId]);
 
   /**
    * Update worker's cache when manager assigns a job

@@ -643,7 +643,7 @@ export default function FillJob() {
         // Worker mode: update existing job via Cloud Function (P2-2)
         // Note: Firestore trigger will automatically send push notification to manager when status changes to 'waiting'
         const updateJobFn = httpsCallable(functions, 'updateJobV1');
-        await updateJobFn({ companyId, jobId, updates: jobToSave });
+        await updateJobFn({ companyId, jobId, ...jobToSave });
         
         console.log('✅ FillJob: Worker job updated in Firestore');
         

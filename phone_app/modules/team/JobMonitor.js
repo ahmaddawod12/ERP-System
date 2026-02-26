@@ -41,7 +41,6 @@ export default function JobMonitor() {
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState({
     pending: [],
-    received: [],
     waiting: [],
     finished: [],
   });
@@ -251,7 +250,6 @@ export default function JobMonitor() {
         
         // Process pending jobs from cache (always within cache range since they're current)
         const pendingJobsList = [];
-        const receivedJobsList = [];
         const waitingJobsList = [];
         
         if (cachedPendingJobs && cachedPendingJobs.length > 0) {
@@ -268,9 +266,7 @@ export default function JobMonitor() {
               const status = jobData.status?.toLowerCase();
               if (status === 'pending') {
                 pendingJobsList.push(jobData);
-              } else if (status === 'received') {
-                receivedJobsList.push(jobData);
-              } else if (status === 'waiting') {
+              } else if (status === 'waiting' || status === 'received') {
                 waitingJobsList.push(jobData);
               }
             }
@@ -280,7 +276,6 @@ export default function JobMonitor() {
         // Sort pending jobs lists
         const sortByDate = (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
         pendingJobsList.sort(sortByDate);
-        receivedJobsList.sort(sortByDate);
         waitingJobsList.sort(sortByDate);
         
         // Get finished jobs using smart date filtering from CacheContext
@@ -316,7 +311,6 @@ export default function JobMonitor() {
         
         setJobs({
           pending: pendingJobsList,
-          received: receivedJobsList,
           waiting: waitingJobsList,
           finished: finishedJobsList,
         });
@@ -345,7 +339,6 @@ export default function JobMonitor() {
       
       setJobs(prevJobs => ({
         pending: filterByClient(prevJobs.pending),
-        received: filterByClient(prevJobs.received),
         waiting: filterByClient(prevJobs.waiting),
         finished: filterByClient(prevJobs.finished),
       }));
@@ -370,7 +363,7 @@ export default function JobMonitor() {
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending': return '#f59e0b';
-      case 'received': return '#3b82f6';
+      case 'received': return '#8b5cf6';
       case 'waiting': return '#8b5cf6';
       case 'finished': return '#10b981';
       default: return '#6b7280';
@@ -380,7 +373,7 @@ export default function JobMonitor() {
   const getStatusText = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending': return t.pending;
-      case 'received': return t.received;
+      case 'received': return t.waiting;
       case 'waiting': return t.waiting;
       case 'finished': return t.finished;
       default: return status || 'unknown';
@@ -392,7 +385,6 @@ export default function JobMonitor() {
     if (activeFilter === 'all') {
       allJobs = [
         ...jobs.pending,
-        ...jobs.received,
         ...jobs.waiting,
         ...jobs.finished,
       ];
@@ -672,7 +664,7 @@ export default function JobMonitor() {
             style={styles.filterButtonInner}
           >
             <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
-              {t.all} ({jobs.pending.length + jobs.received.length + jobs.waiting.length + jobs.finished.length})
+              {t.all} ({jobs.pending.length + jobs.waiting.length + jobs.finished.length})
             </AppText>
           </LinearGradient>
         </TouchableOpacity>
@@ -687,20 +679,6 @@ export default function JobMonitor() {
           >
             <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
               {t.pending} ({jobs.pending.length})
-            </AppText>
-          </LinearGradient>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.filterButton, activeFilter === 'received' && styles.filterButtonActive]}
-          onPress={() => setActiveFilter('received')}
-        >
-          <LinearGradient 
-            colors={activeFilter === 'received' ? gradients.blueBox : ['#F3F4F6', '#F3F4F6']} 
-            style={styles.filterButtonInner}
-          >
-            <AppText style={[styles.filterText, activeFilter === 'received' && styles.filterTextActive]}>
-              {t.received} ({jobs.received.length})
             </AppText>
           </LinearGradient>
         </TouchableOpacity>

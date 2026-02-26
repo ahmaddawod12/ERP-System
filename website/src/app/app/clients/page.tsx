@@ -54,7 +54,8 @@ export default function ClientsPage() {
       return;
     }
     setLoading(true);
-    setClients(await listClients(scopeId));
+    const { clients: nextClients } = await listClients(scopeId);
+    setClients(nextClients);
     setLoading(false);
   }, [scopeId]);
 

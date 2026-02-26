@@ -394,7 +394,7 @@ export default function WorkersMonitor() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'pending': return '#D97706';    // Amber (matches yellowBox)
-      case 'received': return '#2563EB';   // Blue (matches blueBox)
+      case 'received': return '#7C3AED';   // Legacy value mapped to waiting
       case 'waiting': return '#7C3AED';    // Violet (matches purpleBox)
       case 'accepted': return '#059669';   // Emerald (matches greenBox)
       case 'denied': return '#DC2626';     // Red (matches redBox)
@@ -406,7 +406,7 @@ export default function WorkersMonitor() {
   const getStatusText = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending': return t.pending;
-      case 'received': return t.received || 'Received';
+      case 'received': return t.waiting;
       case 'waiting': return t.waiting;
       case 'accepted': return t.accepted;
       case 'denied': return t.denied;

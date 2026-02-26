@@ -160,7 +160,7 @@ export default function Workerjob() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'pending': return '#f59e0b';
-      case 'received': return '#3b82f6';
+      case 'received': return '#8b5cf6';
       case 'waiting': return '#8b5cf6';
       case 'accepted': return '#10b981';
       case 'denied': return '#ef4444';
@@ -341,7 +341,7 @@ export default function Workerjob() {
       await updateJob(job.id, updates, true);
 
       alert.success('Success',
-        language === 'en' ? 'Job marked as received'
+        language === 'en' ? 'Job moved to waiting'
           : language === 'he' ? 'המשימה סומנה כהתקבלה'
           : 'تم وضع علامة كمستلم'
       );
@@ -552,7 +552,7 @@ export default function Workerjob() {
                       <MaterialCommunityIcons name="check-circle" size={24} color="white" />
                     </TouchableOpacity>
                   )}
-                  {(job.status === 'received' || job.status === 'denied') && (
+                  {job.status === 'denied' && (
                     <TouchableOpacity
                       style={[styles.iconButton, styles.fillIconButton, !canEditJob(job) && styles.disabledIconButton]}
                       onPress={(e) => {
@@ -569,7 +569,7 @@ export default function Workerjob() {
                       <MaterialCommunityIcons name="pencil-box" size={24} color="white" />
                     </TouchableOpacity>
                   )}
-                  {job.status === 'waiting' && (
+                  {(job.status === 'waiting' || job.status === 'received') && (
                     <TouchableOpacity
                       style={[styles.iconButton, styles.editIconButton, !canEditJob(job) && styles.disabledIconButton]}
                       onPress={(e) => {
@@ -617,7 +617,7 @@ export default function Workerjob() {
               {/* Status + Quick Actions Row */}
               <View style={styles.statusAndWazeRow}>
                 <View style={[styles.statusBadge, { backgroundColor: getStatusColor(job.status) }]}>
-                  <AppText style={styles.statusText}>{job.status || t.pending}</AppText>
+                  <AppText style={styles.statusText}>{job.status === 'received' ? 'waiting' : (job.status || t.pending)}</AppText>
                 </View>
                 {job.location && (
                   <TouchableOpacity

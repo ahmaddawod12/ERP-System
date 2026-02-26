@@ -51,11 +51,26 @@ service firebase.storage {
     }
     
     // Helper function to check if user owns the company
+    function isCompanyMember(companyId) {
+      return isAuthenticated() &&
+             profileExists(getUid()) &&
+             (
+               firestore.exists(/databases/(default)/documents/companies/$(companyId)/workers/$(request.auth.uid)) ||
+               (
+                 'accountType' in getProfile(getUid()) &&
+                 getProfile(getUid()).accountType == 'solo' &&
+                 getUid() == companyId
+               )
+             );
+    }
+
+    // Helper function to check if user belongs to company scope
     function ownsCompany(companyId) {
       return isAuthenticated() && 
              profileExists(getUid()) &&
              'companyId' in getProfile(getUid()) &&
-             getProfile(getUid()).companyId == companyId;
+             getProfile(getUid()).companyId == companyId &&
+             isCompanyMember(companyId);
     }
     
     // user job photos and signatures

@@ -46,6 +46,10 @@ const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_CONCURRENT_TABS = 2; // Shared between preview and generate
 const TAB_WAIT_TIMEOUT = 10000; // 10 seconds
 const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
+const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCOUNTS || '')
+  .split(',')
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
 
 
 function toBaseDocumentId(documentId) {
@@ -141,9 +145,11 @@ const generateDocumentHTML = require('./htmlTemplate');
  * service account that has roles/run.invoker.
  */
 async function verifyPubSubRequest(req, res, next) {
+  const expectedAudience = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
+
   // Factor 1: Check OIDC JWT if present (primary auth in production)
   const authHeader = req.headers['authorization'] || '';
-  if (authHeader.startsWith('Bearer ')) {
+  if (expectedAudience && authHeader.startsWith('Bearer ')) {
     const idToken = authHeader.slice('Bearer '.length).trim();
     if (idToken) {
       try {
@@ -153,18 +159,34 @@ async function verifyPubSubRequest(req, res, next) {
         const client = new OAuth2Client();
         const ticket = await client.verifyIdToken({
           idToken,
-          audience: process.env.CLOUD_RUN_SERVICE_URL || undefined,
+          audience: expectedAudience,
         });
         const payload = ticket.getPayload();
-        if (payload && payload.email_verified) {
+        const issuer = String(payload?.iss || '');
+        const email = String(payload?.email || '').toLowerCase();
+        const issuerValid = issuer === 'https://accounts.google.com' || issuer === 'accounts.google.com';
+        const emailValid = Boolean(payload?.email_verified) && email.length > 0;
+        const serviceAccountAllowed =
+          PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length > 0 &&
+          PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
+
+        if (issuerValid && emailValid && serviceAccountAllowed) {
           // Valid OIDC token — allow request
           return next();
         }
+
+        console.warn('OIDC JWT rejected by claim validation', {
+          issuer,
+          email,
+          hasAllowlist: PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length > 0,
+        });
       } catch (oidcError) {
         console.warn('OIDC JWT verification failed:', oidcError.message);
         // Fall through to check shared token
       }
     }
+  } else if (!expectedAudience) {
+    console.warn('CLOUD_RUN_SERVICE_URL is not set; OIDC auth is disabled, using shared token fallback only');
   }
 
   // Factor 2: Check shared token (required if OIDC not present/valid)

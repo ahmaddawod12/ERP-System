@@ -13,7 +13,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, doc, getDoc, onSnapshot, setDoc } from '../../firebase';
+import { auth, db, doc, getDoc, onSnapshot, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -297,14 +297,24 @@ export default function WorkerInventory() {
     if (!user) return;
 
     const targetUid = workerId || getUid() || user.uid;
+    const companyId = getCompanyId();
+    if (!companyId) {
+      throw new Error('Company ID not found');
+    }
 
     // 1. Update local cache first (if viewing own inventory)
     if (!workerId) {
       await updateInventory(updatedInventory);
     } else {
-      // For worker inventory (manager viewing), write directly
-      const invRef = doc(db, `users/${targetUid}/data/inventory`);
-      await setDoc(invRef, { parts: updatedInventory, lastUpdated: new Date().toISOString() }, { merge: true });
+      // Manager editing worker inventory goes through protected Cloud Function.
+      const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
+      await updateInventoryFn({
+        companyId,
+        action: 'replaceParts',
+        scope: 'user',
+        targetUid,
+        parts: Array.isArray(updatedInventory) ? updatedInventory : [],
+      });
     }
   };
 

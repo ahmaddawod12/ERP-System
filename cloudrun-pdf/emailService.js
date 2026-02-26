@@ -114,8 +114,9 @@ class AmazonSESEmailService {
     const command = new SendEmailCommand({
       Source: fromAddress,
       Destination: {
-        ToAddresses: [recipientEmail,senderEmail]
+        ToAddresses: [recipientEmail]
       },
+      ReplyToAddresses: [senderEmail],
       Message: {
         Subject: {
           Data: `${documentTitle} - Smart-Job`,

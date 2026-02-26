@@ -222,7 +222,7 @@ export default function EditJob() {
       };
       // P2-2: Update the job document via Cloud Function
       const updateJobFn = httpsCallable(functions, 'updateJobV1');
-      await updateJobFn({ companyId, jobId: editingJob.id, updates: jobUpdates });
+      await updateJobFn({ companyId, jobId: editingJob.id, ...jobUpdates });
       
       // Update cache with document-level versioning
       const isPending = statusLower !== 'finished';

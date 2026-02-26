@@ -146,7 +146,8 @@ export default function DocumentsPage() {
       return;
     }
     try {
-      setClients(await listClients(companyScopeId));
+      const { clients: nextClients } = await listClients(companyScopeId);
+      setClients(nextClients);
     } catch {
       // silent
     }

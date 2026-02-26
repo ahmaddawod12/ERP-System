@@ -91,7 +91,7 @@ export default function CompanyInventory() {
       return;
     }
 
-    const inventoryRef = doc(db, 'companies', companyId, 'business_data', 'inventory');
+    const inventoryRef = doc(db, 'companies', companyId, 'data', 'inventory');
 
     const unsubscribe = onSnapshot(
       inventoryRef,

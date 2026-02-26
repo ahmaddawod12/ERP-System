@@ -139,10 +139,10 @@ async function migrateCompanies(params) {
     stats.companiesVisited += 1;
 
     // 1) Legacy company inventory -> canonical single-doc model (parts array).
-    //    Canonical path: companies/{companyId}/business_data/inventory = { parts: [...], nextId, lastUpdated }
+    //    Canonical path: companies/{companyId}/data/inventory = { parts: [...], nextId, lastUpdated }
     //    NOTE: This script was previously writing to a subcollection model which contradicts
     //    the canonical app types. It now writes/ensures the single-doc format.
-    const legacyInventoryRef = companyRef.collection("business_data").doc("inventory");
+    const legacyInventoryRef = companyRef.collection("data").doc("inventory");
     const legacyInventorySnap = await legacyInventoryRef.get();
     const existingData = legacyInventorySnap.data() || {};
     const legacyParts = Array.isArray(existingData.parts)

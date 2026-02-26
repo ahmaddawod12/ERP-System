@@ -273,7 +273,7 @@ export default function WorkerInventory() {
     if (!companyId) return;
 
     setIsLoadingCompanyParts(true);
-    const companyInvRef = doc(db, 'companies', companyId, 'business_data', 'inventory');
+    const companyInvRef = doc(db, 'companies', companyId, 'data', 'inventory');
 
     try {
       const docSnap = await getDoc(companyInvRef);

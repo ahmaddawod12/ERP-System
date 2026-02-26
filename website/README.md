@@ -61,10 +61,10 @@ users/{uid}/data/profile                              → user profile
 users/{uid}/data/cache                                → user cache versioning
 users/{uid}/data/inventory                            → { parts: [...], nextId, lastUpdated } (single doc)
 
-companies/{companyId}/business_data/subscription      → { tier, status, enabledModules }
-companies/{companyId}/business_data/business_info     → { he_name, en_name, vat_number, city, ... }
-companies/{companyId}/business_data/inventory         → { parts: [...], nextId, lastUpdated } (single doc)
-companies/{companyId}/business_data/cache             → company cache versioning
+companies/{companyId}/data/subscription      → { tier, status, enabledModules }
+companies/{companyId}/data/business_info     → { he_name, en_name, vat_number, city, ... }
+companies/{companyId}/data/inventory         → { parts: [...], nextId, lastUpdated } (single doc)
+companies/{companyId}/data/cache             → company cache versioning
 companies/{companyId}/workers/{uid}                   → worker membership + role
 companies/{companyId}/clients/{clientId}              → client records
 companies/{companyId}/counters/clients                → auto-increment counter
@@ -137,7 +137,7 @@ npm run migrate:user-paths
 
 Copies legacy data:
 - `users/{uid}/profile/data` → `users/{uid}/data/profile`
-- `users/{uid}/subscription/data` → `companies/{companyId}/business_data/subscription`
+- `users/{uid}/subscription/data` → `companies/{companyId}/data/subscription`
 - legacy top-level `{uid}/{profile|cache|inventory}` → `users/{uid}/data/{profile|cache|inventory}`
 
 ```bash

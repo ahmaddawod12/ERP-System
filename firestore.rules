@@ -171,7 +171,7 @@ service cloud.firestore {
     // ── Business Info: READ-ONLY from client ──
     // basic/user/manager can read. Updates via Cloud Function only.
     // Cannot delete or write from client.
-    match /companies/{companyId}/business_data/business_info {
+    match /companies/{companyId}/data/business_info {
       allow read: if canReadCompany(companyId);
       // All writes (create/update/delete) via Cloud Functions only
       allow create, update, delete: if false;
@@ -179,7 +179,7 @@ service cloud.firestore {
 
     // ── Subscription: READ-ONLY from client ──
     // All company members can read. Write/update/delete via Cloud Function only.
-    match /companies/{companyId}/business_data/subscription {
+    match /companies/{companyId}/data/subscription {
       allow read: if canReadCompany(companyId);
       // All writes via Cloud Functions only (registerBusinessV1)
       allow create, update, delete: if false;
@@ -187,20 +187,20 @@ service cloud.firestore {
 
     // ── Company Inventory (single doc with parts array): READ-ONLY from client ──
     // Writes via Cloud Function (updateInventoryV1).
-    match /companies/{companyId}/business_data/inventory {
+    match /companies/{companyId}/data/inventory {
       allow read: if canReadCompany(companyId);
       allow create, update, delete: if false;
     }
 
     // ── company cache: managers can write directly ──
-    match /companies/{companyId}/business_data/cache {
+    match /companies/{companyId}/data/cache {
       allow read: if canReadCompany(companyId);
       allow create, update, delete: if canManageCompany(companyId);
     }
 
     // ── Token: NO client access ──
     // Tax Authority OAuth tokens — Cloud Functions only via Admin SDK.
-    match /companies/{companyId}/business_data/token {
+    match /companies/{companyId}/data/token {
       allow read, write: if false;
     }
 

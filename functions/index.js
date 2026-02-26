@@ -1111,7 +1111,7 @@ exports.addClientV1 = onCall(async (request) => {
     // Bump cache version inside transaction for atomicity
     const isManagerRole = resolvedRole === 'manager';
     const cacheRef = isManagerRole
-      ? db.doc(`companies/${companyId}/business_data/cache`)
+      ? db.doc(`companies/${companyId}/data/cache`)
       : db.doc(`users/${uid}/data/cache`);
     tx.set(cacheRef, {
       clients: admin.firestore.FieldValue.increment(1),
@@ -1165,7 +1165,7 @@ exports.deleteClientV1 = onCall(async (request) => {
   // Manager → company cache; everyone else → their own user cache
   const isManagerRole = resolvedRole === 'manager';
   const cacheRef = isManagerRole
-    ? db.doc(`companies/${companyId}/business_data/cache`)
+    ? db.doc(`companies/${companyId}/data/cache`)
     : db.doc(`users/${uid}/data/cache`);
 
   const batch = db.batch();
@@ -1300,7 +1300,7 @@ exports.joinCompanyV1 = onRequest({
     const inviteDocRef = inviteQuery.docs[0].ref;
     const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, auth.uid));
     const profileRef = admin.firestore().doc(userProfileDocPath(auth.uid));
-    const companyCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
+    const companyCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
 
     const result = await admin.firestore().runTransaction(async (tx) => {
       const [inviteSnap, workerSnap, profileSnap] = await Promise.all([
@@ -2223,7 +2223,7 @@ exports.taxAuthorityCallback = onRequest({
 
       // Save tokens directly to company settings in Firebase (if company known)
       if (companyId) {
-        const companySettingsRef = admin.firestore().doc(`companies/${companyId}/business_data/token`);
+        const companySettingsRef = admin.firestore().doc(`companies/${companyId}/data/token`);
         await companySettingsRef.set({
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
@@ -2379,7 +2379,7 @@ exports.getInvoiceApproval = onCall({
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
-    const businessRegRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+    const businessRegRef = admin.firestore().doc(`companies/${companyId}/data/business_info`);
 
     // CRITICAL FIX: Use transaction to atomically read + increment document number
     // This prevents two concurrent requests from getting the same invoice number
@@ -2427,7 +2427,7 @@ exports.getInvoiceApproval = onCall({
     const totalWithVat = totalBeforeVat + vatAmount;
 
     // Get access token from Firestore
-    const tokenRef = admin.firestore().doc(`companies/${companyId}/business_data/token`);
+    const tokenRef = admin.firestore().doc(`companies/${companyId}/data/token`);
     const tokenDoc = await tokenRef.get();
 
     if (!tokenDoc.exists || !tokenDoc.data().accessToken) {
@@ -2920,7 +2920,7 @@ exports.getInvoiceApproval = onCall({
         
         // Determine cache path based on user role
         const isManager = role === 'manager';
-        const cachePath = isManager ? `companies/${companyId}/business_data/cache` : userCacheDocPath(uid);
+        const cachePath = isManager ? `companies/${companyId}/data/cache` : userCacheDocPath(uid);
         const cacheRef = admin.firestore().doc(cachePath);
         batch.update(cacheRef, {
           ...cacheUpdates,
@@ -2957,7 +2957,7 @@ exports.getInvoiceApproval = onCall({
     // Document counter was already atomically incremented in the transaction above.
     // Only bump the business_info cache version so clients detect the change.
     try {
-      const businessCacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
+      const businessCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
       await businessCacheRef.set({
         business_info: admin.firestore.FieldValue.increment(1),
         lastUpdated: new Date().toISOString()
@@ -3349,7 +3349,7 @@ exports.publishPreviewTask = onCall({
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
-    const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+    const businessInfoRef = admin.firestore().doc(`companies/${companyId}/data/business_info`);
     const businessInfoDoc = await businessInfoRef.get();
     if (!businessInfoDoc.exists) {
       throw new HttpsError('failed-precondition', 'Business information not found. Please complete business registration.');
@@ -3538,7 +3538,7 @@ exports.publishGenerateTask = onCall({
 
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
-    const businessInfoRef2 = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+    const businessInfoRef2 = admin.firestore().doc(`companies/${companyId}/data/business_info`);
     const businessInfoDoc2 = await businessInfoRef2.get();
     if (!businessInfoDoc2.exists) {
       throw new HttpsError('failed-precondition', 'Business information not found. Please complete business registration.');
@@ -3602,7 +3602,7 @@ exports.publishGenerateTask = onCall({
       
       // Atomically read + increment document number to prevent race conditions
       const docNumResult = await admin.firestore().runTransaction(async (tx) => {
-        const bizRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+        const bizRef = admin.firestore().doc(`companies/${companyId}/data/business_info`);
         const bizSnap = await tx.get(bizRef);
         const bizData = bizSnap.data() || {};
         const docNums = bizData.document_numbers || {};
@@ -3799,7 +3799,7 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
     allowSoloScope: true,
   });
 
-  const businessInfoRef = admin.firestore().doc(`companies/${companyId}/business_data/business_info`);
+  const businessInfoRef = admin.firestore().doc(`companies/${companyId}/data/business_info`);
   const bizSnap = await businessInfoRef.get();
   if (!bizSnap.exists) {
     throw new HttpsError('not-found', 'Business info not found');
@@ -3833,7 +3833,7 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
   await businessInfoRef.update(updates);
 
   // Bump cache
-  const cacheRef = admin.firestore().doc(`companies/${companyId}/business_data/cache`);
+  const cacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
   await cacheRef.set({
     business_info: admin.firestore.FieldValue.increment(1),
     lastUpdated: new Date().toISOString(),
@@ -4222,10 +4222,10 @@ exports.registerBusinessV1 = onCall(async (request) => {
       });
 
       // 5. Business info
-      tx.set(dbRef.doc(`companies/${companyId}/business_data/business_info`), businessData);
+      tx.set(dbRef.doc(`companies/${companyId}/data/business_info`), businessData);
 
       // 6. Subscription
-      tx.set(dbRef.doc(`companies/${companyId}/business_data/subscription`), {
+      tx.set(dbRef.doc(`companies/${companyId}/data/subscription`), {
         tier,
         status: 'active',
         enabledModules,
@@ -4233,14 +4233,14 @@ exports.registerBusinessV1 = onCall(async (request) => {
       });
 
       // 7. Empty inventory
-      tx.set(dbRef.doc(`companies/${companyId}/business_data/inventory`), {
+      tx.set(dbRef.doc(`companies/${companyId}/data/inventory`), {
         parts: [],
         nextId: 1,
         lastUpdated: now,
       });
 
       // 8. Company cache
-      tx.set(dbRef.doc(`companies/${companyId}/business_data/cache`), {
+      tx.set(dbRef.doc(`companies/${companyId}/data/cache`), {
         business_info: 1,
         lastUpdated: now,
       });
@@ -4254,9 +4254,9 @@ exports.registerBusinessV1 = onCall(async (request) => {
         jid: 1,
       }, { merge: true });
 
-      tx.set(dbRef.doc(`companies/${uid}/business_data/business_info`), businessData);
+      tx.set(dbRef.doc(`companies/${uid}/data/business_info`), businessData);
 
-      tx.set(dbRef.doc(`companies/${uid}/business_data/subscription`), {
+      tx.set(dbRef.doc(`companies/${uid}/data/subscription`), {
         tier,
         status: 'active',
         enabledModules,
@@ -4274,13 +4274,13 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: now,
       });
 
-      tx.set(dbRef.doc(`companies/${uid}/business_data/inventory`), {
+      tx.set(dbRef.doc(`companies/${uid}/data/inventory`), {
         parts: [],
         nextId: 1,
         lastUpdated: now,
       });
 
-      tx.set(dbRef.doc(`companies/${uid}/business_data/cache`), {
+      tx.set(dbRef.doc(`companies/${uid}/data/cache`), {
         business_info: 1,
         lastUpdated: now,
       });
@@ -4532,7 +4532,7 @@ exports.updateClientV1 = onCall(async (request) => {
   // Atomic batch: update client + bump cache version
   const isManagerRole = resolvedRole === 'manager';
   const cacheRef = isManagerRole
-    ? dbRef.doc(`companies/${companyId}/business_data/cache`)
+    ? dbRef.doc(`companies/${companyId}/data/cache`)
     : dbRef.doc(`users/${uid}/data/cache`);
 
   const batch = dbRef.batch();
@@ -4608,7 +4608,7 @@ exports.updateInventoryV1 = onCall(async (request) => {
 
   const dbRef = admin.firestore();
   const invRef = scope === 'company'
-    ? dbRef.doc(`companies/${companyId}/business_data/inventory`)
+    ? dbRef.doc(`companies/${companyId}/data/inventory`)
     : dbRef.doc(`users/${targetUid}/data/inventory`);
 
   const result = await dbRef.runTransaction(async (tx) => {
@@ -4752,7 +4752,7 @@ exports.updateInventoryV1 = onCall(async (request) => {
   // which is idempotent and safe for eventual consistency. Moving inside transaction
   // would require reading the cache doc first, adding contention.
   const cacheRef = scope === 'company'
-    ? dbRef.doc(`companies/${companyId}/business_data/cache`)
+    ? dbRef.doc(`companies/${companyId}/data/cache`)
     : dbRef.doc(`users/${targetUid}/data/cache`);
   await cacheRef.set({
     inventory: admin.firestore.FieldValue.increment(1),
@@ -4824,7 +4824,7 @@ exports.updateCacheV1 = onCall(async (request) => {
 
   const dbRef = admin.firestore();
   const cacheRef = isCompanyCache && companyId
-    ? dbRef.doc(`companies/${companyId}/business_data/cache`)
+    ? dbRef.doc(`companies/${companyId}/data/cache`)
     : dbRef.doc(`users/${resolvedUid}/data/cache`);
 
   if (action === 'delete') {

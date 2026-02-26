@@ -45,7 +45,7 @@ export const docs: DocEntry[] = [
     title: "Inventory",
     summary: "Track company and personal inventory as single documents with parts arrays.",
     body: [
-      "Team accounts store inventory as a single doc at companies/{companyId}/business_data/inventory.",
+      "Team accounts store inventory as a single doc at companies/{companyId}/data/inventory.",
       "The doc contains a parts array, nextId counter, and lastUpdated timestamp.",
       "Solo users store personal items at users/{uid}/data/inventory in the same format.",
       "Workers can pick parts from company inventory, which adds them to their personal inventory.",

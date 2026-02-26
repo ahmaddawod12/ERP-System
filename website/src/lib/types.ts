@@ -23,7 +23,7 @@ export interface UserProfile {
   pushTokenType?: string;
 }
 
-/** Matches phone app subscription at companies/{id}/business_data/subscription */
+/** Matches phone app subscription at companies/{id}/data/subscription */
 export interface UserSubscription {
   tier: Tier;
   status: SubscriptionStatus;
@@ -41,7 +41,7 @@ export interface EnabledModules {
   inventory: boolean;
 }
 
-/** Matches phone app business_info at companies/{id}/business_data/business_info */
+/** Matches phone app business_info at companies/{id}/data/business_info */
 export interface BusinessInfo {
   he_name: string;
   en_name: string;
@@ -134,7 +134,7 @@ export interface InventoryPart {
 
 /**
  * The inventory document stored at:
- *   companies/{companyId}/business_data/inventory  (company inventory)
+ *   companies/{companyId}/data/inventory  (company inventory)
  *   users/{uid}/data/inventory                     (personal inventory)
  */
 export interface InventoryDoc {

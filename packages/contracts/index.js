@@ -81,10 +81,10 @@ const paths = {
 
   // Company-scoped  (companyId = uid for solo users)
   companyRoot:        (cid) => `companies/${cid}`,
-  businessInfo:       (cid) => `companies/${cid}/business_data/business_info`,
-  subscription:       (cid) => `companies/${cid}/business_data/subscription`,
-  companyInventory:   (cid) => `companies/${cid}/business_data/inventory`,
-  companyCache:       (cid) => `companies/${cid}/business_data/cache`,
+  businessInfo:       (cid) => `companies/${cid}/data/business_info`,
+  subscription:       (cid) => `companies/${cid}/data/subscription`,
+  companyInventory:   (cid) => `companies/${cid}/data/inventory`,
+  companyCache:       (cid) => `companies/${cid}/data/cache`,
   worker:             (cid, uid) => `companies/${cid}/workers/${uid}`,
   workers:            (cid) => `companies/${cid}/workers`,
   client:             (cid, clientId) => `companies/${cid}/clients/${clientId}`,

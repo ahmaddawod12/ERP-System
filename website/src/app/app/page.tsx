@@ -39,7 +39,7 @@ export default function AppOverviewPage() {
       // Inventory parts count from single-doc
       const useCompanyInventory = profile.role === "manager" || profile.role === "dev";
       const invRef = useCompanyInventory
-        ? doc(db, "companies", scopeId, "business_data", "inventory")
+        ? doc(db, "companies", scopeId, "data", "inventory")
         : doc(db, "users", uid, "data", "inventory");
       const invSnap = await getDoc(invRef);
       const invData = invSnap.exists() ? (invSnap.data() as InventoryDoc) : null;

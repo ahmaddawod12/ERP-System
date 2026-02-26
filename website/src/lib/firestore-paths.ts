@@ -13,17 +13,17 @@ export const userCacheRef = (uid: string) => doc(db, "users", uid, "data", "cach
 /* ── Company-scoped refs ── */
 
 export const companyBusinessInfoRef = (companyId: string) =>
-  doc(db, "companies", companyId, "business_data", "business_info");
+  doc(db, "companies", companyId, "data", "business_info");
 
 export const companySubscriptionRef = (companyId: string) =>
-  doc(db, "companies", companyId, "business_data", "subscription");
+  doc(db, "companies", companyId, "data", "subscription");
 
 /** Single-document company inventory (parts array inside). Matches phone app. */
 export const companyInventoryRef = (companyId: string) =>
-  doc(db, "companies", companyId, "business_data", "inventory");
+  doc(db, "companies", companyId, "data", "inventory");
 
 export const companyCacheRef = (companyId: string) =>
-  doc(db, "companies", companyId, "business_data", "cache");
+  doc(db, "companies", companyId, "data", "cache");
 
 export const companyWorkersCollection = (companyId: string) =>
   collection(db, "companies", companyId, "workers");

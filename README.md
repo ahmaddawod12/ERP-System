@@ -72,10 +72,10 @@ users/{uid}/
   data/inventory
 
 companies/{companyId}/
-  business_data/business_info
-  business_data/subscription
-  business_data/cache
-  business_data/inventory
+  data/business_info
+  data/subscription
+  data/cache
+  data/inventory
   workers/{workerId}
   clients/{clientId}
   PendingJobs/{p_XXXXX}

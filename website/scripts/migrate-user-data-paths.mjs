@@ -82,7 +82,7 @@ async function migrateUserSubcollectionDocs(db) {
         );
       } else {
         batch.set(
-          db.collection("companies").doc(companyIdForSubscription).collection("business_data").doc("subscription"),
+          db.collection("companies").doc(companyIdForSubscription).collection("data").doc("subscription"),
           oldSubscription.data(),
           { merge: true },
         );
@@ -96,7 +96,7 @@ async function migrateUserSubcollectionDocs(db) {
       console.log(`migrated users/${uid}/profile/data -> users/${uid}/data/profile`);
       if (oldSubscription.exists && companyIdForSubscription) {
         console.log(
-          `migrated users/${uid}/subscription/data -> companies/${companyIdForSubscription}/business_data/subscription`,
+          `migrated users/${uid}/subscription/data -> companies/${companyIdForSubscription}/data/subscription`,
         );
       }
     }
@@ -149,7 +149,7 @@ async function migrateLegacyTopLevelUidCollections(db) {
         );
       } else {
         batch.set(
-          db.collection("companies").doc(companyIdForSubscription).collection("business_data").doc("subscription"),
+          db.collection("companies").doc(companyIdForSubscription).collection("data").doc("subscription"),
           legacySubscription.data(),
           { merge: true },
         );
@@ -182,7 +182,7 @@ async function migrate() {
   console.log("Migration complete.");
   console.log(`users/{uid}/profile/data migrated for: ${migratedUserSubcollections} users`);
   console.log(
-    "users/{uid}/subscription/data migrated to companies/{companyId}/business_data/subscription when present",
+    "users/{uid}/subscription/data migrated to companies/{companyId}/data/subscription when present",
   );
   console.log(`legacy top-level uid collections migrated for: ${migratedLegacyUidCollections} users`);
 }

@@ -408,7 +408,7 @@ export default function OnboardingPage() {
                         <code>{profileDocPath}</code> + <code>{userCacheDocPath}</code> are initialized.
                       </li>
                       <li>
-                        <code>{companyRootDocPath}</code> + `business_data/business_info` + `business_data/cache` are initialized.
+                        <code>{companyRootDocPath}</code> + `data/business_info` + `data/cache` are initialized.
                       </li>
                     </>
                   )}

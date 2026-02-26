@@ -299,7 +299,7 @@ export default function CreateDocument() {
 
     const fetchCompanyInventory = async () => {
       try {
-        const invRef = doc(db, 'companies', cn, 'business_data', 'inventory');
+        const invRef = doc(db, 'companies', cn, 'data', 'inventory');
         const invDoc = await getDoc(invRef);
         if (invDoc.exists()) {
           const data = invDoc.data();

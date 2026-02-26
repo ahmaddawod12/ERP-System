@@ -51,7 +51,7 @@ async function seed() {
   await db
     .collection("companies")
     .doc(companyId)
-    .collection("business_data")
+    .collection("data")
     .doc("business_info")
     .set(
       {
@@ -122,7 +122,7 @@ async function seed() {
     { merge: true },
   );
 
-  await db.collection("companies").doc(companyId).collection("business_data").doc("subscription").set(
+  await db.collection("companies").doc(companyId).collection("data").doc("subscription").set(
     {
       tier: "Team",
       status: "active",
@@ -140,7 +140,7 @@ async function seed() {
   );
 
   // Seed inventory as a single doc with parts array (matches phone app structure)
-  await db.collection("companies").doc(companyId).collection("business_data").doc("inventory").set(
+  await db.collection("companies").doc(companyId).collection("data").doc("inventory").set(
     {
       parts: [
         { id: 1, name: "Air Filter 20x25", active: true, dateAdded: new Date().toISOString() },

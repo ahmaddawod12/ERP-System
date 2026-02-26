@@ -12,7 +12,7 @@
  * 
  * Example cache documents:
  * - User cache ({uid}/cache): { profile: 1, inventory: 50, f_ABC12: 1, f_XYZ99: 2 }
- * - Company cache (companies/{companyId}/business_data/cache): 
+ * - Company cache (companies/{companyId}/data/cache): 
  *   { workers: 2, business_info: 1, p_ABC12: 1, f_XYZ99: 2, d_QWE45: 1 }
  * 
  * Document Type Detection:
@@ -33,7 +33,7 @@
  * 
  * Firestore Cache Docs:
  * - Manager personal: {uid}/cache (profile, inventory)
- * - Company: companies/{companyId}/business_data/cache (workers, business_info, clients, all jobs/documents)
+ * - Company: companies/{companyId}/data/cache (workers, business_info, clients, all jobs/documents)
  * - Worker: {uid}/cache (profile, inventory, clients, pendingJobs, finishedJobs)
  * - User: {uid}/cache (profile, inventory, clients, finishedJobs, business_info, documents)
  * - Basic: {uid}/cache (profile, clients, business_info, documents) - NO inventory, NO jobs
@@ -370,7 +370,7 @@ export function CacheProvider({ children }) {
         // Determine which cache doc to update based on role
         if (role === 'manager') {
           // Manager: delete from company cache
-          const companyCacheRef = doc(db, 'companies', companyId, 'business_data', 'cache');
+          const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
           const deleteFields = {};
           expiredIds.forEach(id => {
             deleteFields[id] = FieldValue.delete();
@@ -568,7 +568,7 @@ export function CacheProvider({ children }) {
         
         case 'subscription': {
           if (!companyId) return null;
-          const subRef = doc(db, 'companies', companyId, 'business_data', 'subscription');
+          const subRef = doc(db, 'companies', companyId, 'data', 'subscription');
           const subSnap = await getDoc(subRef);
           return subSnap.exists() ? subSnap.data() : null;
         }
@@ -975,7 +975,7 @@ export function CacheProvider({ children }) {
     // because their cache is updated directly when jobs are assigned/changed
     // =====================================================
     if (role === 'manager' && companyId) {
-      const companyCacheRef = doc(db, 'companies', companyId, 'business_data', 'cache');
+      const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
       companyUnsubscribeRef.current = onSnapshot(companyCacheRef, async (snapshot) => {
         if (!snapshot.exists()) return;
         
@@ -1216,7 +1216,7 @@ export function CacheProvider({ children }) {
       if (!existingFlag && role !== 'worker' && role !== 'dev' && companyId) {
         console.log(`?? HAS_BUSINESS_INFO flag missing (migration), checking Firestore...`);
         try {
-          const bizRef = doc(db, 'companies', companyId, 'business_data', 'business_info');
+          const bizRef = doc(db, 'companies', companyId, 'data', 'business_info');
           const bizDoc = await getDoc(bizRef);
           const exists = bizDoc.exists();
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, exists ? 'true' : 'false');
@@ -1258,7 +1258,7 @@ export function CacheProvider({ children }) {
       // Fetch subscription for all roles
       if (companyId) {
         try {
-          const subRef = doc(db, 'companies', companyId, 'business_data', 'subscription');
+          const subRef = doc(db, 'companies', companyId, 'data', 'subscription');
           const subSnap = await getDoc(subRef);
           if (subSnap.exists()) {
             const subData = subSnap.data();
@@ -1292,7 +1292,7 @@ export function CacheProvider({ children }) {
       // Don't cache the data - Cloud Functions fetch it directly for security
       if (role !== 'worker' && role !== 'dev' && companyId) {
         try {
-          const bizRef = doc(db, 'companies', companyId, 'business_data', 'business_info');
+          const bizRef = doc(db, 'companies', companyId, 'data', 'business_info');
           const bizDoc = await getDoc(bizRef);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, bizDoc.exists() ? 'true' : 'false');
         } catch (e) {
@@ -1359,7 +1359,7 @@ export function CacheProvider({ children }) {
       
       // Fetch company cache doc (for managers)
       if (role === 'manager' && companyId) {
-        const companyCacheRef = doc(db, 'companies', companyId, 'business_data', 'cache');
+        const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
         const companyCacheSnap = await getDoc(companyCacheRef);
         if (companyCacheSnap.exists()) {
           const companyCacheData = companyCacheSnap.data();
@@ -1411,7 +1411,7 @@ export function CacheProvider({ children }) {
       
       // STEP 2: Then update Firebase directly
       const cacheRef = isCompanyCache
-        ? doc(db, `companies/${companyId}/business_data/cache`)
+        ? doc(db, `companies/${companyId}/data/cache`)
         : doc(db, `users/${uid}/data/cache`);
       await updateDoc(cacheRef, { [fieldOrDocId]: FieldValue.increment(1) });
       
@@ -1443,7 +1443,7 @@ export function CacheProvider({ children }) {
       
       // Delete field from Firebase cache doc directly
       const cacheRef = isCompanyCache
-        ? doc(db, `companies/${companyId}/business_data/cache`)
+        ? doc(db, `companies/${companyId}/data/cache`)
         : doc(db, `users/${uid}/data/cache`);
       await updateDoc(cacheRef, { [fieldOrDocId]: FieldValue.delete() });
       
@@ -2031,7 +2031,7 @@ export function CacheProvider({ children }) {
     if (!companyId) throw new Error('Company name not found');
 
     try {
-      // CF deletes the Firestore doc and bumps companies/{companyId}/business_data/cache.clients
+      // CF deletes the Firestore doc and bumps companies/{companyId}/data/cache.clients
       const deleteClientFn = httpsCallable(functions, 'deleteClientV1');
       await deleteClientFn({ companyId, clientId });
 

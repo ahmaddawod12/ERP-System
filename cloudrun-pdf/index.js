@@ -559,11 +559,11 @@ async function processGenerateTask(taskData) {
     const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
     
     // Determine cache path based on user role
-    // manager: companies/{companyId}/business_data/cache
+    // manager: companies/{companyId}/data/cache
     // user/basic/dev: users/{uid}/data/cache
     const getCachePath = () => {
       if (userRole === 'manager') {
-        return `companies/${companyId}/business_data/cache`;
+        return `companies/${companyId}/data/cache`;
       } else {
         return `users/${uid}/data/cache`;
       }

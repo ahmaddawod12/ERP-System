@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   TouchableOpacity,
   StyleSheet,
-  Platform,
   SafeAreaView,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -17,7 +15,7 @@ import { getColors, shadows, spacing, borderRadius, typography, gradients } from
 import { auth, signOut, functions, httpsCallable } from '../firebase';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
-import { GlobalHeader, ScrollableContainer } from '../components';
+import { AppButton, AppText, GlobalHeader, ScrollableContainer } from '../components';
 
 
 export default function Settings() {
@@ -126,16 +124,16 @@ export default function Settings() {
           end={{ x: 1, y: 1 }}
           style={styles.header}
         >
-          <Text style={styles.headerTitle}>{t.title}</Text>
+          <AppText style={styles.headerTitle}>{t.title}</AppText>
         </LinearGradient>
 
         {/* Theme Section */}
-        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.sectionHeader}>
             <Ionicons name="color-palette-outline" size={24} color={colors.primary} />
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>
               {t.theme}
-            </Text>
+            </AppText>
           </View>
           <View style={styles.optionsContainer}>
             <TouchableOpacity
@@ -153,12 +151,12 @@ export default function Settings() {
                 size={24} 
                 color={!isDarkMode ? 'white' : colors.textSecondary} 
               />
-              <Text style={[
+              <AppText style={[
                 styles.optionText,
                 { color: !isDarkMode ? 'white' : colors.textSecondary }
               ]}>
                 {t.lightMode}
-              </Text>
+              </AppText>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -176,23 +174,23 @@ export default function Settings() {
                 size={24} 
                 color={isDarkMode ? 'white' : colors.textSecondary} 
               />
-              <Text style={[
+              <AppText style={[
                 styles.optionText,
                 { color: isDarkMode ? 'white' : colors.textSecondary }
               ]}>
                 {t.darkMode}
-              </Text>
+              </AppText>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Language Section */}
-        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.sectionHeader}>
             <MaterialCommunityIcons name="translate" size={24} color={colors.primary} />
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>
               {t.language}
-            </Text>
+            </AppText>
           </View>
           <View style={styles.optionsContainer}>
             <TouchableOpacity
@@ -210,12 +208,12 @@ export default function Settings() {
                 size={24} 
                 color={language === 'en' ? 'white' : colors.textSecondary} 
               />
-              <Text style={[
+              <AppText style={[
                 styles.optionText,
                 { color: language === 'en' ? 'white' : colors.textSecondary }
               ]}>
                 English
-              </Text>
+              </AppText>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -233,12 +231,12 @@ export default function Settings() {
                 size={24} 
                 color={language === 'he' ? 'white' : colors.textSecondary} 
               />
-              <Text style={[
+              <AppText style={[
                 styles.optionText,
                 { color: language === 'he' ? 'white' : colors.textSecondary }
               ]}>
                 עברית
-              </Text>
+              </AppText>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -256,28 +254,28 @@ export default function Settings() {
                 size={24} 
                 color={language === 'ar' ? 'white' : colors.textSecondary} 
               />
-              <Text style={[
+              <AppText style={[
                 styles.optionText,
                 { color: language === 'ar' ? 'white' : colors.textSecondary }
               ]}>
                 العربية
-              </Text>
+              </AppText>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Dev Inbox Section (only for dev role) */}
         {userRole === 'dev' && (
-          <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <TouchableOpacity
               style={[styles.menuItem, { borderColor: colors.border }]}
               onPress={() => router.push('/DevInbox')}
             >
               <View style={styles.menuItemLeft}>
                 <MaterialCommunityIcons name="inbox" size={24} color={colors.secondary} />
-                <Text style={[styles.menuItemText, { color: colors.textPrimary }]}>
+                <AppText style={[styles.menuItemText, { color: colors.textPrimary }]}>
                   {t.devInbox}
-                </Text>
+                </AppText>
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -285,13 +283,14 @@ export default function Settings() {
         )}
 
         {/* Logout Button */}
-        <TouchableOpacity
-          style={[styles.logoutButton, { backgroundColor: colors.error }]}
+        <AppButton
+          title={t.logout}
+          variant="destructive"
+          iconLeft={{ name: 'log-out-outline' }}
+          size="lg"
           onPress={handleLogout}
-        >
-          <Ionicons name="log-out-outline" size={24} color="white" />
-          <Text style={styles.logoutText}>{t.logout}</Text>
-        </TouchableOpacity>
+          style={styles.logoutButton}
+        />
       </ScrollableContainer>
 
       <GlobalHeader />
@@ -307,25 +306,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    paddingTop: spacing.md,
     paddingBottom: spacing.xl,
   },
   header: {
     paddingVertical: spacing.xxl,
     paddingHorizontal: spacing.lg,
+    marginHorizontal: spacing.md,
+    borderRadius: borderRadius.xl,
     marginBottom: spacing.lg,
+    ...shadows.floating,
   },
   headerTitle: {
     fontSize: typography.xxl,
     fontWeight: typography.bold,
     color: 'white',
     textAlign: 'center',
+    letterSpacing: 0.2,
   },
   section: {
     marginHorizontal: spacing.md,
     marginBottom: spacing.md,
     padding: spacing.lg,
-    borderRadius: borderRadius.lg,
-    ...shadows.medium,
+    borderRadius: borderRadius.xl,
+    borderWidth: 1,
+    ...shadows.card,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -347,9 +352,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.lg,
     borderWidth: 1,
     gap: spacing.sm,
+    minHeight: 50,
+    ...shadows.xs,
   },
   optionText: {
     fontSize: 16,
@@ -371,19 +378,8 @@ const styles = StyleSheet.create({
     fontWeight: typography.medium,
   },
   logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     marginHorizontal: spacing.md,
     marginTop: spacing.lg,
-    paddingVertical: spacing.lg,
-    borderRadius: borderRadius.md,
-    gap: spacing.sm,
-    ...shadows.medium,
-  },
-  logoutText: {
-    fontSize: typography.lg,
-    fontWeight: typography.semibold,
-    color: 'white',
   },
 });
+

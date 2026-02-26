@@ -1,32 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { auth } from '../firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../theme';
+import { getColors, spacing, borderRadius, typography, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
-import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
 import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
-import { useAuth } from '../hooks';
-import { GlobalHeader, ScrollableContainer } from '../components';
+import { AppText, GlobalHeader, ScrollableContainer } from '../components';
 
 export default function ManagerHomepage() {
   const router = useRouter();
   const { tab } = useLocalSearchParams();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
-  const { uid } = useAuth();
   const { subscription } = useCache();
   const [activeTab, setActiveTab] = useState('management');
   const insets = useSafeAreaInsets();
@@ -162,12 +155,12 @@ export default function ManagerHomepage() {
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
         <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
           <Ionicons name="time-outline" size={72} color={colors.error} />
-          <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
+          <AppText style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
             {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
-          </Text>
-          <Text style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
+          </AppText>
+          <AppText style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
             {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
-          </Text>
+          </AppText>
         </View>
         <GlobalHeader />
       </View>
@@ -194,8 +187,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.workersMonitor}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.workersMonitorDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.workersMonitor}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.workersMonitorDesc}</AppText>
               </TouchableOpacity>
 
               {/* Workers Users Card */}
@@ -206,8 +199,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.workersUsers}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.workersUsersDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.workersUsers}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.workersUsersDesc}</AppText>
               </TouchableOpacity>
 
               {/* Company Parts Card */}
@@ -218,8 +211,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.companyParts}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.companyPartsDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.companyParts}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.companyPartsDesc}</AppText>
               </TouchableOpacity>
             </>
           ) : activeTab === 'jobMonitor' && hasTeam ? (
@@ -232,8 +225,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.jobMonitor}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.jobMonitorDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.jobMonitor}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.jobMonitorDesc}</AppText>
               </TouchableOpacity>
 
               {/* Manage Jobs Card */}
@@ -244,8 +237,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.manageJobs}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.manageJobsDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.manageJobs}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.manageJobsDesc}</AppText>
               </TouchableOpacity>
             </>
           ) : activeTab === 'documents' && hasDocs ? (
@@ -258,8 +251,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.generateTaxInvoice}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.generateTaxInvoiceDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.generateTaxInvoice}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.generateTaxInvoiceDesc}</AppText>
               </TouchableOpacity>
 
               {/* General Documents Card */}
@@ -270,8 +263,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.generalDocuments}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.generalDocumentsDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.generalDocuments}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.generalDocumentsDesc}</AppText>
               </TouchableOpacity>
 
               {/* Document History Card */}
@@ -282,8 +275,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</AppText>
               </TouchableOpacity>
             </>
           ) : activeTab === 'work' && hasSoloJob ? (
@@ -296,8 +289,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.myJobs}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.myJobsDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.myJobs}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.myJobsDesc}</AppText>
               </TouchableOpacity>
 
               {/* Inventory Card */}
@@ -308,8 +301,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.inventory}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.inventory}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</AppText>
               </TouchableOpacity>
 
               {/* Client Book Card */}
@@ -320,8 +313,8 @@ export default function ManagerHomepage() {
                   </View>
                   <Feather name="chevron-right" size={24} color={colors.secondary} />
                 </View>
-                <Text style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.clientBook}</Text>
-                <Text style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</Text>
+                <AppText style={[styles.simpleCardTitle, { color: colors.textPrimary }]}>{t.clientBook}</AppText>
+                <AppText style={[styles.simpleCardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</AppText>
               </TouchableOpacity>
             </>
           ) : null}
@@ -348,12 +341,12 @@ export default function ManagerHomepage() {
               color={activeTab === 'management' ? 'white' : colors.textSecondary} 
             />
           </View>
-          <Text style={[styles.bottomTabText, { 
+          <AppText style={[styles.bottomTabText, { 
             color: activeTab === 'management' ? colors.primary : colors.textSecondary,
             fontWeight: activeTab === 'management' ? typography.bold : typography.semibold,
           }]}>
             {t.managementTab}
-          </Text>
+          </AppText>
         </TouchableOpacity>
         )}
         
@@ -371,12 +364,12 @@ export default function ManagerHomepage() {
               color={activeTab === 'jobMonitor' ? 'white' : colors.textSecondary} 
             />
           </View>
-          <Text style={[styles.bottomTabText, { 
+          <AppText style={[styles.bottomTabText, { 
             color: activeTab === 'jobMonitor' ? colors.primary : colors.textSecondary,
             fontWeight: activeTab === 'jobMonitor' ? typography.bold : typography.semibold,
           }]}>
             {t.jobMonitorTab}
-          </Text>
+          </AppText>
         </TouchableOpacity>
         )}
         
@@ -394,12 +387,12 @@ export default function ManagerHomepage() {
               color={activeTab === 'work' ? 'white' : colors.textSecondary} 
             />
           </View>
-          <Text style={[styles.bottomTabText, { 
+          <AppText style={[styles.bottomTabText, { 
             color: activeTab === 'work' ? colors.primary : colors.textSecondary,
             fontWeight: activeTab === 'work' ? typography.bold : typography.semibold,
           }]}>
             {t.workTab}
-          </Text>
+          </AppText>
         </TouchableOpacity>
         )}
         
@@ -417,12 +410,12 @@ export default function ManagerHomepage() {
               color={activeTab === 'documents' ? 'white' : colors.textSecondary} 
             />
           </View>
-          <Text style={[styles.bottomTabText, { 
+          <AppText style={[styles.bottomTabText, { 
             color: activeTab === 'documents' ? colors.primary : colors.textSecondary,
             fontWeight: activeTab === 'documents' ? typography.bold : typography.semibold,
           }]}>
             {t.documentsTab}
-          </Text>
+          </AppText>
         </TouchableOpacity>
         )}
       </View>
@@ -472,6 +465,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: spacing.xl,
   },
   cardsContainer: {
     paddingHorizontal: spacing.lg,
@@ -481,9 +475,9 @@ const styles = StyleSheet.create({
   simpleCard: {
     borderRadius: borderRadius.xl,
     padding: spacing.xl,
-    marginBottom: spacing.md + 4,
-    borderWidth: 1.5,
-    ...shadows.card,
+    marginBottom: spacing.md + 6,
+    borderWidth: 1,
+    ...shadows.floating,
   },
   simpleCardHeader: {
     flexDirection: 'row',
@@ -492,21 +486,24 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   simpleIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 62,
+    height: 62,
+    borderRadius: borderRadius.full,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(13, 138, 232, 0.25)',
   },
   simpleCardTitle: {
     fontSize: typography.xxl,
     fontWeight: typography.bold,
     marginBottom: spacing.xs,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   simpleCardDescription: {
     fontSize: typography.base,
     lineHeight: 22,
+    letterSpacing: 0.15,
   },
   // Old gradient card styles (kept for backwards compatibility)
   colorfulCard: {
@@ -549,9 +546,11 @@ const styles = StyleSheet.create({
   },
   bottomTabContainer: {
     flexDirection: 'row',
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
     paddingHorizontal: spacing.md,
     borderTopWidth: 1,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
     ...shadows.floating,
   },
   bottomTab: {
@@ -560,15 +559,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   iconContainer: {
-    width: 52,
-    height: 52,
+    width: 50,
+    height: 50,
     borderRadius: borderRadius.lg,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(13, 138, 232, 0.18)',
   },
   bottomTabText: {
     fontSize: typography.xs,
     letterSpacing: 0.2,
   },
 });
+

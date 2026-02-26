@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { borderRadius, getColors, spacing } from '../theme';
+import { borderRadius, getColors, shadows, spacing } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import AppText from './AppText';
 
@@ -21,7 +21,7 @@ export default function AppListItem({
   const baseStyle = [
     styles.item,
     {
-      backgroundColor: palette.surface,
+      backgroundColor: palette.surfaceAlt,
       borderColor: palette.border,
     },
     style,
@@ -74,10 +74,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
-    minHeight: 56,
+    minHeight: 62,
+    ...shadows.xs,
   },
   left: {
     marginRight: spacing.md,

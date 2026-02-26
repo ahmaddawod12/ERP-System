@@ -1,179 +1,202 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal, Animated } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import {
+  Animated,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, usePathname } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useThemeContext } from '../contexts/ThemeContext';
-import { getColors, shadows, borderRadius, spacing, typography } from '../theme';
+import { getColors, borderRadius, shadows, spacing } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useHeader } from '../contexts/HeaderContext';
+import AppText from './AppText';
+
+const HOME_PATHS = new Set([
+  '/',
+  '/ManagerHomepage',
+  '/UserHomepage',
+  '/WorkerHomepage',
+  '/BasicHomepage',
+]);
+
+const translations = {
+  en: {
+    settings: 'Settings',
+    support: 'Support & Feedback',
+    menu: 'Menu',
+    back: 'Go back',
+  },
+  he: {
+    settings: 'הגדרות',
+    support: 'תמיכה ומשוב',
+    menu: 'תפריט',
+    back: 'חזרה',
+  },
+  ar: {
+    settings: 'الإعدادات',
+    support: 'الدعم والملاحظات',
+    menu: 'القائمة',
+    back: 'رجوع',
+  },
+};
+
+function MenuRow({ icon, iconLibrary, label, onPress, palette, isRTL }) {
+  const IconSet = iconLibrary === 'material' ? MaterialCommunityIcons : Ionicons;
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.menuItem,
+        { borderBottomColor: palette.borderLight, opacity: pressed ? 0.86 : 1 },
+      ]}
+      onPress={onPress}
+    >
+      <View style={[styles.menuItemLeft, isRTL && styles.menuItemLeftRtl]}>
+        <IconSet name={icon} size={20} color={palette.secondary} />
+        <AppText variant="bodyStrong" color={palette.textPrimary}>
+          {label}
+        </AppText>
+      </View>
+      <Ionicons
+        name={isRTL ? 'chevron-back' : 'chevron-forward'}
+        size={18}
+        color={palette.textLight}
+      />
+    </Pressable>
+  );
+}
 
 export function GlobalHeader() {
   const router = useRouter();
   const pathname = usePathname();
+  const insets = useSafeAreaInsets();
   const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
   const { headerAnimatedValue } = useHeader();
-  const colors = getColors(isDarkMode);
   const [menuVisible, setMenuVisible] = useState(false);
+  const palette = getColors(isDarkMode);
   const isRTL = language === 'he' || language === 'ar';
+  const isHomepage = HOME_PATHS.has(pathname);
+  const t = translations[language] || translations.en;
 
-  // Header height for translation calculation
-  const HEADER_HEIGHT = Platform.OS === 'ios' ? 120 : 110;
+  const HEADER_HEIGHT = useMemo(() => insets.top + 66, [insets.top]);
 
-  // Animated transform - moves header up when hidden
   const headerTranslateY = headerAnimatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -HEADER_HEIGHT],
     extrapolate: 'clamp',
   });
 
-  // Animated opacity for smooth fade
   const headerOpacity = headerAnimatedValue.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [1, 0.5, 0],
+    inputRange: [0, 0.65, 1],
+    outputRange: [1, 0.35, 0],
     extrapolate: 'clamp',
   });
 
-  // Check if current page is a homepage
-  const isHomepage =  pathname === '/'||
-                      pathname === '/ManagerHomepage' || 
-                      pathname === '/UserHomepage' || 
-                      pathname === '/WorkerHomepage' ||
-                      pathname === '/BasicHomepage';
-
-  const t = language === 'en' ? {
-    settings: 'Settings',
-    support: 'Support & Feedback',
-    menu: 'Menu',
-  } : language === 'he' ? {
-    settings: 'הגדרות',
-    support: 'תמיכה ומשוב',
-    menu: 'תפריט',
-  } : {
-    settings: 'الإعدادات',
-    support: 'الدعم والملاحظات',
-    menu: 'القائمة',
-  };
-
-  const handleMenuItemPress = (action) => {
+  const closeMenuAndNavigate = (to) => {
     setMenuVisible(false);
-    // Small delay to ensure menu closes before navigation
-    setTimeout(() => {
-      action();
-    }, 100);
+    setTimeout(() => router.push(to), 80);
   };
 
   return (
     <>
-      {/* Animated Header Container */}
       <Animated.View
+        pointerEvents="box-none"
         style={[
           styles.headerContainer,
           {
+            paddingTop: insets.top + 8,
             transform: [{ translateY: headerTranslateY }],
             opacity: headerOpacity,
           },
         ]}
-        pointerEvents="box-none"
       >
-        {/* Back Button - Show on all pages except homepages */}
-        {!isHomepage && (
-          <TouchableOpacity 
-            style={[styles.backButton, { backgroundColor: colors.secondary }]} 
+        {!isHomepage ? (
+          <Pressable
             onPress={() => router.back()}
-            activeOpacity={0.7}
-            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
             accessibilityRole="button"
-            accessibilityLabel={language === 'en' ? 'Go back' : language === 'he' ? 'חזור' : 'رجوع'}
+            accessibilityLabel={t.back}
+            style={({ pressed }) => [
+              styles.iconButton,
+              isRTL ? styles.alignEnd : styles.alignStart,
+              {
+                backgroundColor: palette.surfaceAlt,
+                borderColor: palette.border,
+                opacity: pressed ? 0.86 : 1,
+              },
+            ]}
           >
             <Ionicons
               name="arrow-back"
-              size={22}
-              color="white"
-              style={isRTL ? { transform: [{ scaleX: -1 }] } : null}
+              size={21}
+              color={palette.primary}
+              style={isRTL ? styles.rtlFlipped : null}
             />
-          </TouchableOpacity>
-        )}
-
-        {/* Show Menu Button Only in Homepage */}
-        {isHomepage && (
-          <TouchableOpacity 
-            style={[
-              styles.menuButton,
-              isRTL ? styles.menuButtonRtl : styles.menuButtonLtr,
-              { backgroundColor: colors.secondary },
-            ]} 
+          </Pressable>
+        ) : (
+          <Pressable
             onPress={() => setMenuVisible(true)}
-            activeOpacity={0.7}
-            hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
             accessibilityRole="button"
             accessibilityLabel={t.menu}
+            style={({ pressed }) => [
+              styles.iconButton,
+              isRTL ? styles.alignStart : styles.alignEnd,
+              {
+                backgroundColor: palette.surfaceAlt,
+                borderColor: palette.border,
+                opacity: pressed ? 0.86 : 1,
+              },
+            ]}
           >
-            <Ionicons name="menu" size={22} color="white" />
-          </TouchableOpacity>
+            <Ionicons name="menu" size={22} color={palette.primary} />
+          </Pressable>
         )}
       </Animated.View>
 
-      {/* Menu Dropdown */}
       <Modal
         visible={menuVisible}
-        transparent={true}
+        transparent
         animationType="fade"
         onRequestClose={() => setMenuVisible(false)}
       >
-        <TouchableOpacity 
-          style={styles.menuOverlay}
-          activeOpacity={1}
+        <Pressable
+          style={[styles.menuOverlay, { backgroundColor: palette.overlaySoft }]}
           onPress={() => setMenuVisible(false)}
         >
-          <View 
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
             style={[
-              styles.menuDropdown, 
+              styles.menuDropdown,
               {
-                backgroundColor: colors.surface,
-                top: Platform.OS === 'ios' ? 105 : 95,
-                right: isRTL ? undefined : 16,
-                left: isRTL ? 16 : undefined,
-              }
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+                top: insets.top + (Platform.OS === 'ios' ? 60 : 52),
+                right: isRTL ? undefined : spacing.lg,
+                left: isRTL ? spacing.lg : undefined,
+              },
             ]}
-            onStartShouldSetResponder={() => true}
           >
-            {/* Settings Option */}
-            <TouchableOpacity
-              style={[styles.menuItem, { borderBottomColor: colors.border }]}
-              onPress={() => handleMenuItemPress(() => router.push('/Settings'))}
-            >
-              <Ionicons name="settings-outline" size={20} color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.textPrimary, textAlign: isRTL ? 'right' : 'left' }]}>
-                {t.settings}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Support & Feedback Option */}
-            <TouchableOpacity
-              style={[styles.menuItem, { borderBottomColor: colors.border }]}
-              onPress={() => handleMenuItemPress(() => router.push('/SupportChat'))}
-            >
-              <MaterialCommunityIcons name="chat-question-outline" size={20} color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.textPrimary, textAlign: isRTL ? 'right' : 'left' }]}>
-                {t.support}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Add more menu items here in the future */}
-            {/* Example:
-            <TouchableOpacity
-              style={[styles.menuItem, { borderBottomColor: colors.border }]}
-              onPress={() => handleMenuItemPress(() => router.push('/Profile'))}
-            >
-              <Ionicons name="person-outline" size={20} color={colors.primary} />
-              <Text style={[styles.menuItemText, { color: colors.textPrimary }]}>
-                Profile
-              </Text>
-            </TouchableOpacity>
-            */}
-          </View>
-        </TouchableOpacity>
+            <MenuRow
+              icon="settings-outline"
+              label={t.settings}
+              onPress={() => closeMenuAndNavigate('/Settings')}
+              palette={palette}
+              isRTL={isRTL}
+            />
+            <MenuRow
+              icon="chat-question-outline"
+              iconLibrary="material"
+              label={t.support}
+              onPress={() => closeMenuAndNavigate('/SupportChat')}
+              palette={palette}
+              isRTL={isRTL}
+            />
+          </Pressable>
+        </Pressable>
       </Modal>
     </>
   );
@@ -189,61 +212,52 @@ const styles = StyleSheet.create({
     elevation: 9999,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 60 : 50,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
   },
-  backButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  alignStart: {
+    alignSelf: 'flex-start',
+  },
+  alignEnd: {
+    alignSelf: 'flex-end',
+  },
+  rtlFlipped: {
+    transform: [{ scaleX: -1 }],
+  },
+  iconButton: {
+    width: 46,
+    height: 46,
     borderRadius: borderRadius.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 9999,
-    elevation: 9999,
+    borderWidth: 1,
     ...shadows.floating,
-  },
-  menuButton: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 60 : 50,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 9999,
-    elevation: 9999,
-    ...shadows.floating,
-  },
-  menuButtonLtr: {
-    right: 16,
-  },
-  menuButtonRtl: {
-    left: 16,
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: 'transparent',
   },
   menuDropdown: {
     position: 'absolute',
-    minWidth: 200,
-    borderRadius: borderRadius.lg,
-    ...shadows.floating,
+    minWidth: 236,
+    borderRadius: borderRadius.xl,
+    borderWidth: 1,
     overflow: 'hidden',
+    ...shadows.floating,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderBottomWidth: 0.5,
-    gap: 16,
+    justifyContent: 'space-between',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  menuItemText: {
-    fontSize: 16,
-    fontWeight: '500',
+  menuItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  menuItemLeftRtl: {
+    flexDirection: 'row-reverse',
   },
 });

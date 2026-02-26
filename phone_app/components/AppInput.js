@@ -1,6 +1,6 @@
-import React, { forwardRef, useMemo, useState } from 'react';
-import { I18nManager, StyleSheet, TextInput, View } from 'react-native';
-import { borderRadius, getColors, spacing, typography } from '../theme';
+import React, { forwardRef, useMemo, useRef, useState } from 'react';
+import { I18nManager, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { borderRadius, getColors, shadows, spacing, typography } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import AppText from './AppText';
@@ -21,6 +21,7 @@ const AppInput = forwardRef(function AppInput(
   },
   ref
 ) {
+  const inputRef = useRef(null);
   const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
   const palette = colors || getColors(isDarkMode);
@@ -34,6 +35,25 @@ const AppInput = forwardRef(function AppInput(
     return palette.border;
   }, [error, isFocused, palette]);
 
+  const setInputRef = (node) => {
+    inputRef.current = node;
+    if (typeof ref === 'function') {
+      ref(node);
+    } else if (ref && typeof ref === 'object') {
+      ref.current = node;
+    }
+  };
+
+  const focusStyle = isFocused
+    ? {
+        shadowColor: palette.secondary,
+        shadowOpacity: 0.2,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 10,
+        elevation: 3,
+      }
+    : shadows.none;
+
   return (
     <View style={containerStyle}>
       {label ? (
@@ -42,20 +62,23 @@ const AppInput = forwardRef(function AppInput(
         </AppText>
       ) : null}
 
-      <View
+      <Pressable
+        onPress={() => inputRef.current?.focus?.()}
+        onPressIn={() => inputRef.current?.focus?.()}
         style={[
           styles.inputWrap,
           {
-            backgroundColor: palette.surface,
+            backgroundColor: palette.surfaceAlt,
             borderColor,
             minHeight,
           },
+          focusStyle,
           style,
         ]}
       >
         {leftIcon ? <View style={styles.icon}>{leftIcon}</View> : null}
         <TextInput
-          ref={ref}
+          ref={setInputRef}
           {...props}
           onFocus={(event) => {
             setIsFocused(true);
@@ -72,12 +95,13 @@ const AppInput = forwardRef(function AppInput(
               color: palette.textPrimary,
               textAlign: props.textAlign || (isSecureField ? 'left' : (isRTL ? 'right' : 'left')),
               writingDirection: isSecureField ? 'ltr' : (isRTL ? 'rtl' : 'ltr'),
+              textAlignVertical: props.multiline ? 'top' : 'center',
             },
             inputStyle,
           ]}
         />
         {rightIcon ? <View style={styles.icon}>{rightIcon}</View> : null}
-      </View>
+      </Pressable>
 
       {error ? (
         <AppText variant="caption" color={palette.error} style={styles.helper}>
@@ -94,11 +118,12 @@ const AppInput = forwardRef(function AppInput(
 
 const styles = StyleSheet.create({
   label: {
-    marginBottom: spacing.xs,
+    marginBottom: spacing.xs + 2,
+    letterSpacing: 0.2,
   },
   inputWrap: {
-    borderRadius: borderRadius.md,
-    borderWidth: 1.5,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.25,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
@@ -106,13 +131,14 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: typography.base,
-    paddingVertical: spacing.sm,
+    fontWeight: typography.regular,
+    paddingVertical: spacing.sm + 2,
   },
   icon: {
     marginHorizontal: spacing.xs,
   },
   helper: {
-    marginTop: spacing.xs,
+    marginTop: spacing.xs + 2,
   },
 });
 

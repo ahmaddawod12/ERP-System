@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Modal } from 'react-native';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { shadows } from '../theme';
+import { borderRadius, getColors, shadows, spacing } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
+import AppText from './AppText';
 
 /**
  * LoadingOverlay - Global loading overlay for document operations
@@ -16,6 +17,7 @@ import { useThemeContext } from '../contexts/ThemeContext';
 export default function LoadingOverlay({ visible = false, message, type = 'preview' }) {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
+  const colors = getColors(isDarkMode);
 
   // Translations
   const t = language === 'en' ? {
@@ -52,12 +54,12 @@ export default function LoadingOverlay({ visible = false, message, type = 'previ
   const getGradientColors = () => {
     switch (type) {
       case 'generate':
-        return ['#10B981', '#059669']; // Green
+        return ['#0EA892', '#0D8AE8'];
       case 'download':
-        return ['#3b82f6', '#2563eb']; // Blue
+        return ['#0D8AE8', '#2563EB'];
       case 'preview':
       default:
-        return ['#8b5cf6', '#7c3aed']; // Purple
+        return ['#0C3A66', '#0D8AE8'];
     }
   };
 
@@ -65,7 +67,7 @@ export default function LoadingOverlay({ visible = false, message, type = 'previ
 
   return (
     <View style={styles.overlay} pointerEvents="box-none">
-      <View style={styles.loadingCard}>
+      <View style={[styles.loadingCard, { borderColor: colors.border }]}>
         <LinearGradient
           colors={getGradientColors()}
           start={{ x: 0, y: 0 }}
@@ -85,46 +87,47 @@ export default function LoadingOverlay({ visible = false, message, type = 'previ
           <ActivityIndicator size="large" color="white" style={styles.spinner} />
 
           {/* Loading Text */}
-          <Text style={styles.loadingText}>
+          <AppText variant="heading" color="#FFFFFF" align="center" style={styles.loadingText}>
             {message || t[type]}
-          </Text>
+          </AppText>
 
           {/* Subtext */}
-          <Text style={styles.loadingSubtext}>
+          <AppText variant="caption" color="rgba(255,255,255,0.88)" align="center" style={styles.loadingSubtext}>
             {t.pleaseWait}
-            </Text>
+          </AppText>
 
-            {/* Animated dots */}
-            <View style={styles.dotsContainer}>
-              <View style={[styles.dot, styles.dot1]} />
-              <View style={[styles.dot, styles.dot2]} />
-              <View style={[styles.dot, styles.dot3]} />
-            </View>
-          </LinearGradient>
-        </View>
+          {/* Animated dots */}
+          <View style={styles.dotsContainer}>
+            <View style={[styles.dot, styles.dot1]} />
+            <View style={[styles.dot, styles.dot2]} />
+            <View style={[styles.dot, styles.dot3]} />
+          </View>
+        </LinearGradient>
       </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(2, 8, 20, 0.74)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 9999,
     elevation: 9999,
   },
   loadingCard: {
-    borderRadius: 28,
+    borderRadius: borderRadius.xl,
+    borderWidth: 1,
     overflow: 'hidden',
     ...shadows.xl,
     width: '85%',
-    maxWidth: 360,
+    maxWidth: 340,
   },
   gradientContainer: {
-    padding: 40,
-    paddingVertical: 50,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xxl,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -138,28 +141,19 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   spinner: {
-    marginVertical: 20,
+    marginVertical: spacing.lg,
   },
   loadingText: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: '700',
-    marginTop: 12,
-    textAlign: 'center',
-    letterSpacing: 0.3,
+    marginTop: spacing.sm,
   },
   loadingSubtext: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 14,
-    marginTop: 10,
-    textAlign: 'center',
-    lineHeight: 20,
+    marginTop: spacing.sm,
   },
   dotsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
+    marginTop: spacing.lg,
     gap: 8,
   },
   dot: {

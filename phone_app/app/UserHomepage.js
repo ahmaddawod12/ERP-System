@@ -1,31 +1,24 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { auth } from '../firebase';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../theme';
+import { getColors, spacing, borderRadius, typography, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
-import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
 import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
-import { useAuth } from '../hooks';
-import { GlobalHeader, ScrollableContainer } from '../components';
+import { AppText, GlobalHeader, ScrollableContainer } from '../components';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function UserHomepage() {
   const router = useRouter();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
-  const { uid } = useAuth();
   const { subscription } = useCache();
   const [activeTab, setActiveTab] = useState('work');
   const colors = getColors(isDarkMode);
@@ -42,7 +35,7 @@ export default function UserHomepage() {
   ];
 
   // Auto-select first available tab if current is no longer available
-  React.useEffect(() => {
+  useEffect(() => {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
       setActiveTab(availableTabs[0]);
     }
@@ -110,12 +103,12 @@ export default function UserHomepage() {
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
         <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
           <Ionicons name="time-outline" size={72} color={colors.error} />
-          <Text style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
+          <AppText style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
             {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
-          </Text>
-          <Text style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
+          </AppText>
+          <AppText style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
             {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
-          </Text>
+          </AppText>
         </View>
         <GlobalHeader />
       </View>
@@ -143,8 +136,8 @@ export default function UserHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.createJob}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.createJobDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.createJob}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.createJobDesc}</AppText>
                 </View>
               </TouchableOpacity>
 
@@ -157,8 +150,8 @@ export default function UserHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.inventory}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.inventory}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</AppText>
                 </View>
               </TouchableOpacity>
 
@@ -171,8 +164,8 @@ export default function UserHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.clientBook}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.clientBook}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</AppText>
                 </View>
               </TouchableOpacity>
             </>
@@ -190,8 +183,8 @@ export default function UserHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.generalDocs}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.generalDocsDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.generalDocs}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.generalDocsDesc}</AppText>
                 </View>
               </TouchableOpacity>
 
@@ -204,8 +197,8 @@ export default function UserHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.taxInvoice}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.taxInvoiceDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.taxInvoice}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.taxInvoiceDesc}</AppText>
                 </View>
               </TouchableOpacity>
 
@@ -218,8 +211,8 @@ export default function UserHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</AppText>
                 </View>
               </TouchableOpacity>
             </>
@@ -238,12 +231,12 @@ export default function UserHomepage() {
             size={24} 
             color={activeTab === 'work' ? colors.secondary : colors.textSecondary} 
           />
-          <Text style={[
+          <AppText style={[
             styles.tabText, 
             { color: activeTab === 'work' ? colors.secondary : colors.textSecondary }
           ]}>
             {t.workTab}
-          </Text>
+          </AppText>
           {activeTab === 'work' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
         </TouchableOpacity>
         )}
@@ -258,12 +251,12 @@ export default function UserHomepage() {
             size={24} 
             color={activeTab === 'documents' ? colors.secondary : colors.textSecondary} 
           />
-          <Text style={[
+          <AppText style={[
             styles.tabText, 
             { color: activeTab === 'documents' ? colors.secondary : colors.textSecondary }
           ]}>
             {t.documentsTab}
-          </Text>
+          </AppText>
           {activeTab === 'documents' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
         </TouchableOpacity>
         )}
@@ -281,15 +274,17 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    paddingTop: 20,
+    paddingTop: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderBottomWidth: 1,
-    ...shadows.sm,
+    borderTopWidth: 1,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    ...shadows.floating,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     position: 'relative',
   },
   activeTab: {
@@ -299,12 +294,13 @@ const styles = StyleSheet.create({
     fontSize: typography.sm,
     fontWeight: typography.semibold,
     marginTop: spacing.xs,
+    letterSpacing: 0.2,
   },
   activeTabIndicator: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: -spacing.sm,
+    left: spacing.md,
+    right: spacing.md,
     height: 3,
     borderTopLeftRadius: 3,
     borderTopRightRadius: 3,
@@ -314,6 +310,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
   },
   themeButton: {
     position: 'absolute',
@@ -352,9 +349,9 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: borderRadius.xl,
     padding: spacing.xl,
-    marginBottom: spacing.md + 4,
-    borderWidth: 1.5,
-    ...shadows.card,
+    marginBottom: spacing.md + 6,
+    borderWidth: 1,
+    ...shadows.floating,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -363,24 +360,27 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   cardIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 62,
+    height: 62,
+    borderRadius: borderRadius.full,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(13, 138, 232, 0.25)',
   },
   cardChevron: {
-    opacity: 0.7,
+    opacity: 0.75,
   },
   cardTitle: {
     fontSize: typography.xxl,
     fontWeight: typography.bold,
     marginBottom: spacing.xs,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   cardDescription: {
     fontSize: typography.base,
     lineHeight: 22,
-    letterSpacing: 0.1,
+    letterSpacing: 0.15,
   },
 });
+

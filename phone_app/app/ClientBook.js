@@ -12,7 +12,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
-  Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -34,7 +33,7 @@ import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
-import { GlobalHeader, ScrollableContainer } from '../components';
+import { AppText, GlobalHeader, ScrollableContainer } from '../components';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -500,15 +499,15 @@ export default function ClientBook() {
     <View style={[styles.dataCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <View style={styles.dataCardHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.dataCardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
+          <AppText style={[styles.dataCardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
             {item.title || item.jobTitle || item.description || '—'}
-          </Text>
+          </AppText>
         </View>
         {item.status && (
           <View style={[styles.statusBadge, { backgroundColor: '#10B981' + '20' }]}>
-            <Text style={[styles.statusBadgeText, { color: '#10B981' }]}>
+            <AppText style={[styles.statusBadgeText, { color: '#10B981' }]}>
               {item.status}
-            </Text>
+            </AppText>
           </View>
         )}
       </View>
@@ -516,24 +515,24 @@ export default function ClientBook() {
       <View style={styles.dataCardDetails}>
         <View style={styles.dataDetailRow}>
           <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
-          <Text style={[styles.dataDetailText, { color: colors.textSecondary }]}>
+          <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]}>
             {t.completedOn}: {formatDate(item.finishedAt || item.completedAt)}
-          </Text>
+          </AppText>
         </View>
         {item.location && (
           <View style={styles.dataDetailRow}>
             <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
-            <Text style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
+            <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
               {item.location}
-            </Text>
+            </AppText>
           </View>
         )}
         {item.parts && Array.isArray(item.parts) && item.parts.length > 0 && (
           <View style={styles.dataDetailRow}>
             <Ionicons name="construct-outline" size={14} color={colors.textSecondary} />
-            <Text style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
+            <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
               {t.partsUsed}: {item.parts.map(p => p.partName || p.name).filter(Boolean).join(', ')}
-            </Text>
+            </AppText>
           </View>
         )}
       </View>
@@ -550,37 +549,37 @@ export default function ClientBook() {
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
               <View style={[styles.docTypeBadge, { backgroundColor: typeColor + '20' }]}>
-                <Text style={[styles.docTypeBadgeText, { color: typeColor }]}>
+                <AppText style={[styles.docTypeBadgeText, { color: typeColor }]}>
                   {getDocTypeLabel(item.type)}
-                </Text>
+                </AppText>
               </View>
               {item.documentNumber && (
-                <Text style={[styles.docNumberText, { color: colors.textSecondary }]}>
+                <AppText style={[styles.docNumberText, { color: colors.textSecondary }]}>
                   #{item.documentNumber}
-                </Text>
+                </AppText>
               )}
             </View>
           </View>
           {total > 0 && (
-            <Text style={[styles.amountText, { color: colors.primary }]}>
+            <AppText style={[styles.amountText, { color: colors.primary }]}>
               ₪{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </Text>
+            </AppText>
           )}
         </View>
 
         <View style={styles.dataCardDetails}>
           <View style={styles.dataDetailRow}>
             <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
-            <Text style={[styles.dataDetailText, { color: colors.textSecondary }]}>
+            <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]}>
               {t.createdOn}: {formatDate(item.createdAt)}
-            </Text>
+            </AppText>
           </View>
           {item.clientName && (
             <View style={styles.dataDetailRow}>
               <Ionicons name="person-outline" size={14} color={colors.textSecondary} />
-              <Text style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
+              <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
                 {item.clientName}
-              </Text>
+              </AppText>
             </View>
           )}
         </View>
@@ -601,43 +600,43 @@ export default function ClientBook() {
         </View>
         <View style={styles.clientCardInfo}>
           <View style={styles.clientNameRow}>
-            <Text style={[styles.clientName, { color: colors.textPrimary }]} numberOfLines={1}>
+            <AppText style={[styles.clientName, { color: colors.textPrimary }]} numberOfLines={1}>
               {client.name}
-            </Text>
+            </AppText>
             <View style={[styles.idBadge, { backgroundColor: colors.secondary + '15' }]}>
-              <Text style={[styles.idBadgeText, { color: colors.secondary }]}>#{client.id}</Text>
+              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{client.id}</AppText>
             </View>
           </View>
           {client.phone ? (
             <View style={styles.detailRow}>
               <Ionicons name="call-outline" size={13} color={colors.textSecondary} />
-              <Text style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
+              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
                 {client.phone}
-              </Text>
+              </AppText>
             </View>
           ) : null}
           {client.email ? (
             <View style={styles.detailRow}>
               <Ionicons name="mail-outline" size={13} color={colors.textSecondary} />
-              <Text style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
+              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
                 {client.email}
-              </Text>
+              </AppText>
             </View>
           ) : null}
           {client.address || client.city ? (
             <View style={styles.detailRow}>
               <Ionicons name="location-outline" size={13} color={colors.textSecondary} />
-              <Text style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
+              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
                 {[client.address, client.city].filter(Boolean).join(', ')}
-              </Text>
+              </AppText>
             </View>
           ) : null}
           {client.vatNumber ? (
             <View style={styles.detailRow}>
               <MaterialCommunityIcons name="file-document-outline" size={13} color={colors.textSecondary} />
-              <Text style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
+              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
                 {client.vatNumber}
-              </Text>
+              </AppText>
             </View>
           ) : null}
         </View>
@@ -653,12 +652,12 @@ export default function ClientBook() {
         size={72}
         color={colors.textLight}
       />
-      <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+      <AppText style={[styles.emptyTitle, { color: colors.textPrimary }]}>
         {searchQuery ? t.noResults : t.noClients}
-      </Text>
-      <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+      </AppText>
+      <AppText style={[styles.emptyDesc, { color: colors.textSecondary }]}>
         {searchQuery ? t.noResultsDesc : t.noClientsDesc}
-      </Text>
+      </AppText>
     </View>
   );
 
@@ -680,10 +679,10 @@ export default function ClientBook() {
         >
           <View style={styles.headerContent}>
             <View>
-              <Text style={styles.headerTitle}>{t.title}</Text>
-              <Text style={styles.headerSubtitle}>
+              <AppText style={styles.headerTitle}>{t.title}</AppText>
+              <AppText style={styles.headerSubtitle}>
                 {cachedClients.length} {t.totalClients}
-              </Text>
+              </AppText>
             </View>
             <TouchableOpacity
               style={styles.addButton}
@@ -752,12 +751,12 @@ export default function ClientBook() {
                     <View style={styles.optionsHeaderContent}>
                       <MaterialCommunityIcons name="account-circle" size={32} color="white" />
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.optionsHeaderTitle} numberOfLines={1}>
+                        <AppText style={styles.optionsHeaderTitle} numberOfLines={1}>
                           {selectedClient?.name}
-                        </Text>
-                        <Text style={styles.optionsHeaderSubtitle}>
+                        </AppText>
+                        <AppText style={styles.optionsHeaderSubtitle}>
                           {t.clientOptions}
-                        </Text>
+                        </AppText>
                       </View>
                       <TouchableOpacity onPress={() => setShowOptionsModal(false)}>
                         <Ionicons name="close-circle" size={28} color="rgba(255,255,255,0.8)" />
@@ -778,9 +777,9 @@ export default function ClientBook() {
                       <MaterialCommunityIcons name="briefcase-check" size={24} color="#10B981" />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
                         {t.finishedJobs}
-                      </Text>
+                      </AppText>
                     </View>
                     <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
                   </TouchableOpacity>
@@ -795,9 +794,9 @@ export default function ClientBook() {
                       <MaterialCommunityIcons name="file-certificate" size={24} color="#3B82F6" />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
                         {t.certifications}
-                      </Text>
+                      </AppText>
                     </View>
                     <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
                   </TouchableOpacity>
@@ -812,9 +811,9 @@ export default function ClientBook() {
                       <MaterialCommunityIcons name="account-edit" size={24} color="#F59E0B" />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
                         {t.editOrRemove}
-                      </Text>
+                      </AppText>
                     </View>
                     <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
                   </TouchableOpacity>
@@ -844,12 +843,12 @@ export default function ClientBook() {
               <Ionicons name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={styles.dataModalTitle} numberOfLines={1}>
+              <AppText style={styles.dataModalTitle} numberOfLines={1}>
                 {dataViewType === 'finishedJobs' ? t.jobsFor : t.certsFor}
-              </Text>
-              <Text style={styles.dataModalSubtitle} numberOfLines={1}>
+              </AppText>
+              <AppText style={styles.dataModalSubtitle} numberOfLines={1}>
                 {selectedClient?.name}
-              </Text>
+              </AppText>
             </View>
           </LinearGradient>
 
@@ -863,9 +862,9 @@ export default function ClientBook() {
             </TouchableOpacity>
             <View style={styles.monthNavCenter}>
               <Ionicons name="calendar-outline" size={18} color={colors.primary} style={{ marginRight: spacing.xs }} />
-              <Text style={[styles.monthNavText, { color: colors.textPrimary }]}>
+              <AppText style={[styles.monthNavText, { color: colors.textPrimary }]}>
                 {formatMonth(selectedMonth)}
-              </Text>
+              </AppText>
             </View>
             <TouchableOpacity
               onPress={() => handleMonthChange(1)}
@@ -901,9 +900,9 @@ export default function ClientBook() {
                     size={64}
                     color={colors.textLight}
                   />
-                  <Text style={[styles.dataEmptyText, { color: colors.textSecondary }]}>
+                  <AppText style={[styles.dataEmptyText, { color: colors.textSecondary }]}>
                     {t.noDataFound}
-                  </Text>
+                  </AppText>
                 </View>
               }
               showsVerticalScrollIndicator={false}
@@ -941,9 +940,9 @@ export default function ClientBook() {
                     size={28}
                     color="white"
                   />
-                  <Text style={styles.modalTitle}>
+                  <AppText style={styles.modalTitle}>
                     {editingClient ? t.editClient : t.addClient}
-                  </Text>
+                  </AppText>
                 </LinearGradient>
               </View>
 
@@ -957,9 +956,9 @@ export default function ClientBook() {
                 <View style={styles.formField}>
                   <View style={styles.fieldLabelRow}>
                     <Ionicons name="person" size={16} color={colors.secondary} />
-                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                       {t.name} *
-                    </Text>
+                    </AppText>
                   </View>
                   <TextInput
                     style={[styles.formInput, {
@@ -979,9 +978,9 @@ export default function ClientBook() {
                 <View style={styles.formField}>
                   <View style={styles.fieldLabelRow}>
                     <Ionicons name="call" size={16} color={colors.secondary} />
-                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                       {t.phone}
-                    </Text>
+                    </AppText>
                   </View>
                   <TextInput
                     style={[styles.formInput, {
@@ -1001,9 +1000,9 @@ export default function ClientBook() {
                 <View style={styles.formField}>
                   <View style={styles.fieldLabelRow}>
                     <Ionicons name="mail" size={16} color={colors.secondary} />
-                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                       {t.email}
-                    </Text>
+                    </AppText>
                   </View>
                   <TextInput
                     style={[styles.formInput, {
@@ -1024,9 +1023,9 @@ export default function ClientBook() {
                 <View style={styles.formField}>
                   <View style={styles.fieldLabelRow}>
                     <Ionicons name="location" size={16} color={colors.secondary} />
-                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                       {t.address}
-                    </Text>
+                    </AppText>
                   </View>
                   <TextInput
                     style={[styles.formInput, {
@@ -1045,9 +1044,9 @@ export default function ClientBook() {
                 <View style={styles.formField}>
                   <View style={styles.fieldLabelRow}>
                     <MaterialCommunityIcons name="city" size={16} color={colors.secondary} />
-                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                       {t.city}
-                    </Text>
+                    </AppText>
                   </View>
                   <TextInput
                     style={[styles.formInput, {
@@ -1066,9 +1065,9 @@ export default function ClientBook() {
                 <View style={styles.formField}>
                   <View style={styles.fieldLabelRow}>
                     <MaterialCommunityIcons name="file-document-outline" size={16} color={colors.secondary} />
-                    <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                       {t.vatNumber}
-                    </Text>
+                    </AppText>
                   </View>
                   <TextInput
                     style={[styles.formInput, {
@@ -1102,7 +1101,7 @@ export default function ClientBook() {
                     resetForm();
                   }}
                 >
-                  <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
+                  <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.saveButtonWrapper, { flex: 1 }]}
@@ -1118,7 +1117,7 @@ export default function ClientBook() {
                     ) : (
                       <>
                         <Ionicons name="checkmark" size={20} color="white" />
-                        <Text style={styles.saveButtonText}>{t.save}</Text>
+                        <AppText style={styles.saveButtonText}>{t.save}</AppText>
                       </>
                     )}
                   </LinearGradient>
@@ -1571,3 +1570,4 @@ const styles = StyleSheet.create({
     color: 'white',
   },
 });
+

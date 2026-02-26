@@ -1,5 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { borderRadius, getColors, shadows, spacing } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import AppIcon from './AppIcon';
@@ -7,40 +8,37 @@ import AppText from './AppText';
 
 const getVariantStyles = (palette) => ({
   primary: {
-    container: {
-      backgroundColor: palette.secondary,
-      borderColor: palette.secondaryDark,
-    },
-    text: {
-      color: palette.textWhite,
-    },
+    backgroundColor: palette.secondary,
+    borderColor: palette.secondaryDark,
+    textColor: palette.textWhite,
+    gradient: [palette.secondary, palette.secondaryDark],
+    shadow: shadows.primary,
   },
   secondary: {
-    container: {
-      backgroundColor: palette.surface,
-      borderColor: palette.borderDark,
-    },
-    text: {
-      color: palette.textPrimary,
-    },
+    backgroundColor: palette.surfaceAlt,
+    borderColor: palette.border,
+    textColor: palette.textPrimary,
+    shadow: shadows.sm,
   },
   ghost: {
-    container: {
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-    },
-    text: {
-      color: palette.secondary,
-    },
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    textColor: palette.secondary,
+    shadow: null,
   },
   destructive: {
-    container: {
-      backgroundColor: palette.error,
-      borderColor: palette.error,
-    },
-    text: {
-      color: palette.textWhite,
-    },
+    backgroundColor: palette.error,
+    borderColor: palette.error,
+    textColor: palette.textWhite,
+    gradient: [palette.error, '#B91C1C'],
+    shadow: shadows.danger,
+  },
+  success: {
+    backgroundColor: palette.success,
+    borderColor: palette.success,
+    textColor: palette.textWhite,
+    gradient: [palette.success, '#0F766E'],
+    shadow: shadows.success,
   },
 });
 
@@ -56,6 +54,7 @@ export default function AppButton({
   style,
   textStyle,
   accessibilityLabel,
+  size = 'md',
   minHeight = 48,
   hitSlop = 8,
 }) {
@@ -63,6 +62,40 @@ export default function AppButton({
   const palette = getColors(isDarkMode);
   const variantStyles = getVariantStyles(palette)[variant] || getVariantStyles(palette).primary;
   const isDisabled = disabled || loading;
+  const sizeStyle = size === 'sm' ? styles.sizeSm : size === 'lg' ? styles.sizeLg : styles.sizeMd;
+  const currentMinHeight = typeof minHeight === 'number' ? minHeight : sizeStyle.minHeight;
+
+  const content = loading ? (
+    <ActivityIndicator color={variantStyles.textColor} />
+  ) : (
+    <View style={styles.content}>
+      {iconLeft ? (
+        <AppIcon
+          name={iconLeft.name}
+          library={iconLeft.library}
+          size={iconLeft.size || 18}
+          color={iconLeft.color || variantStyles.textColor}
+          directionAware={iconLeft.directionAware}
+        />
+      ) : null}
+      {title ? (
+        <AppText variant="bodyStrong" color={variantStyles.textColor} style={[styles.text, textStyle]}>
+          {title}
+        </AppText>
+      ) : (
+        children
+      )}
+      {iconRight ? (
+        <AppIcon
+          name={iconRight.name}
+          library={iconRight.library}
+          size={iconRight.size || 18}
+          color={iconRight.color || variantStyles.textColor}
+          directionAware={iconRight.directionAware}
+        />
+      ) : null}
+    </View>
+  );
 
   return (
     <Pressable
@@ -74,62 +107,61 @@ export default function AppButton({
       accessibilityLabel={accessibilityLabel || title}
       style={({ pressed }) => [
         styles.base,
-        variantStyles.container,
-        { minHeight, opacity: pressed && !isDisabled ? 0.88 : isDisabled ? 0.6 : 1 },
-        variant !== 'ghost' && shadows.sm,
+        sizeStyle,
+        {
+          minHeight: currentMinHeight,
+          backgroundColor: variantStyles.backgroundColor,
+          borderColor: variantStyles.borderColor,
+          opacity: isDisabled ? 0.58 : 1,
+          transform: [{ scale: pressed && !isDisabled ? 0.985 : 1 }],
+        },
+        variant !== 'ghost' && (variantStyles.shadow || shadows.sm),
         style,
       ]}
     >
-      {loading ? (
-        <ActivityIndicator color={variantStyles.text.color} />
-      ) : (
-        <View style={styles.content}>
-          {iconLeft ? (
-            <AppIcon
-              name={iconLeft.name}
-              library={iconLeft.library}
-              size={iconLeft.size || 18}
-              color={iconLeft.color || variantStyles.text.color}
-              directionAware={iconLeft.directionAware}
-            />
-          ) : null}
-          {title ? (
-            <AppText variant="bodyStrong" color={variantStyles.text.color} style={[styles.text, textStyle]}>
-              {title}
-            </AppText>
-          ) : (
-            children
-          )}
-          {iconRight ? (
-            <AppIcon
-              name={iconRight.name}
-              library={iconRight.library}
-              size={iconRight.size || 18}
-              color={iconRight.color || variantStyles.text.color}
-              directionAware={iconRight.directionAware}
-            />
-          ) : null}
-        </View>
-      )}
+      {variantStyles.gradient && variant !== 'ghost' ? (
+        <LinearGradient
+          colors={variantStyles.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFillObject}
+        />
+      ) : null}
+      {content}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.lg,
     borderWidth: 1,
     paddingHorizontal: spacing.lg,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  sizeSm: {
+    minHeight: 42,
+    paddingHorizontal: spacing.md,
+  },
+  sizeMd: {
+    minHeight: 50,
+  },
+  sizeLg: {
+    minHeight: 56,
+    paddingHorizontal: spacing.xl,
   },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   text: {
     textAlign: 'center',
+    letterSpacing: 0.2,
   },
 });

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   StyleSheet,
   ScrollView,
@@ -11,7 +10,7 @@ import {
   Linking,
   ActivityIndicator,
   SafeAreaView,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -22,7 +21,7 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
+import { AppText, GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
 import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -684,7 +683,7 @@ export default function DocumentHistory() {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[styles.loadingText, { color: colors.textPrimary }]}>Loading documents...</Text>
+        <AppText style={[styles.loadingText, { color: colors.textPrimary }]}>Loading documents...</AppText
       </View>
     );
   }
@@ -700,7 +699,7 @@ export default function DocumentHistory() {
         {/* Filters Section */}
         <View style={[styles.filtersContainer, { backgroundColor: colors.surface }]}>
           {/* Document Type Filter */}
-          <Text style={[styles.filterLabel, { color: colors.textPrimary }]}>{t.filterByType}</Text>
+          <AppText style={[styles.filterLabel, { color: colors.textPrimary }]}>{t.filterByType}</AppText
           <TouchableOpacity
             style={[styles.dropdownButton, { 
               backgroundColor: colors.background, 
@@ -731,9 +730,9 @@ export default function DocumentHistory() {
                   />
                 );
               })()}
-              <Text style={[styles.dropdownText, { color: colors.textPrimary }]}>
+              <AppText style={[styles.dropdownText, { color: colors.textPrimary }]}>
                 {documentTypes.find(t => t.id === selectedDocType)?.label || t.all}
-              </Text>
+              </AppText
             </View>
             <MaterialCommunityIcons 
               name={dropdownOpen ? "chevron-up" : "chevron-down"} 
@@ -767,12 +766,12 @@ export default function DocumentHistory() {
                       color={type.color} 
                     />
                   </View>
-                  <Text style={[styles.optionTitle, { 
+                  <AppText style={[styles.optionTitle, { 
                     color: selectedDocType === type.id ? type.color : colors.textPrimary,
                     fontWeight: selectedDocType === type.id ? 'bold' : '500'
                   }]}>
                     {type.label}
-                  </Text>
+                  </AppText
                   {selectedDocType === type.id && (
                     <MaterialCommunityIcons 
                       name="check-circle" 
@@ -786,7 +785,7 @@ export default function DocumentHistory() {
           )}
 
           {/* Date Filter */}
-          <Text style={[styles.filterLabel, { color: colors.textPrimary, marginTop: spacing.md }]}>{t.filterByDate}</Text>
+          <AppText style={[styles.filterLabel, { color: colors.textPrimary, marginTop: spacing.md }]}>{t.filterByDate}</AppText
           <View style={styles.filtersRow}>
             {/* Date Filter Button */}
             <TouchableOpacity 
@@ -795,9 +794,9 @@ export default function DocumentHistory() {
             >
               <LinearGradient colors={gradients.blueBox} style={styles.dateFilterGradient}>
                 <Ionicons name="calendar-outline" size={20} color="white" />
-                <Text style={styles.dateFilterText}>
+                <AppText style={styles.dateFilterText}>
                   {dateFilter.label || t.filterByDate}
-                </Text>
+                </AppText
               </LinearGradient>
             </TouchableOpacity>
 
@@ -807,12 +806,12 @@ export default function DocumentHistory() {
               onPress={() => setShowClientSelector(true)}
             >
               <Ionicons name="person-outline" size={20} color={colors.textSecondary} />
-              <Text 
+              <AppText 
                 style={[styles.clientInput, { color: clientFilter ? colors.textPrimary : colors.textSecondary }]}
                 numberOfLines={1}
               >
                 {clientFilter || t.filterByClient}
-              </Text>
+              </AppText
               {clientFilter.length > 0 && (
                 <TouchableOpacity onPress={(e) => {
                   e.stopPropagation();
@@ -832,7 +831,7 @@ export default function DocumentHistory() {
             >
               <LinearGradient colors={gradients.redBox} style={styles.clearDatesGradient}>
                 <Ionicons name="close-circle-outline" size={18} color="white" />
-                <Text style={styles.clearDatesText}>{t.clearDate}</Text>
+                <AppText style={styles.clearDatesText}>{t.clearDate}</AppText
               </LinearGradient>
             </TouchableOpacity>
           )}
@@ -843,7 +842,7 @@ export default function DocumentHistory() {
           {filteredDocuments.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialCommunityIcons name="file-document-outline" size={64} color={colors.textSecondary} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t.noDocuments}</Text>
+              <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>{t.noDocuments}</AppText
             </View>
           ) : (
             filteredDocuments.map((doc) => (
@@ -856,12 +855,12 @@ export default function DocumentHistory() {
                       color={getDocTypeColor(doc.type)}
                     />
                     <View style={styles.documentTitleInfo}>
-                      <Text style={[styles.documentType, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.documentType, { color: colors.textPrimary }]}>
                         {documentTypes.find(t => t.id === doc.type)?.label || String(doc.type || 'Document')}
-                      </Text>
-                      <Text style={[styles.documentDate, { color: colors.textSecondary }]}>
+                      </AppText
+                      <AppText style={[styles.documentDate, { color: colors.textSecondary }]}>
                         {t.createdOn}: {formatDate(doc.createdAt)}
-                      </Text>
+                      </AppText
                     </View>
                   </View>
                 </View>
@@ -870,31 +869,31 @@ export default function DocumentHistory() {
                   {doc.clientName && (
                     <View style={styles.detailRow}>
                       <Ionicons name="person-outline" size={16} color={colors.textSecondary} />
-                      <Text style={[styles.detailText, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.detailText, { color: colors.textPrimary }]}>
                         {t.client}: {String(doc.clientName || '')}
-                      </Text>
+                      </AppText
                     </View>
                   )}
                   {(doc.createdByName || doc.createdByUid) && (
                     <View style={styles.detailRow}>
                       <Ionicons name="person-circle-outline" size={16} color={colors.textSecondary} />
-                      <Text style={[styles.detailText, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.detailText, { color: colors.textPrimary }]}>
                         {t.createdBy}: {String(doc.createdByName || doc.createdByUid || '')}
-                      </Text>
+                      </AppText
                     </View>
                   )}
                   {doc.total != null && (
                     <View style={styles.detailRow}>
                       <Ionicons name="cash-outline" size={16} color={colors.textSecondary} />
-                      <Text style={[styles.detailText, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.detailText, { color: colors.textPrimary }]}>
                         {t.total}: {formatAmount(doc.total)}
-                      </Text>
+                      </AppText
                     </View>
                   )}
                   {doc.description && (
-                    <Text style={[styles.documentDescription, { color: colors.textSecondary }]} numberOfLines={2}>
+                    <AppText style={[styles.documentDescription, { color: colors.textSecondary }]} numberOfLines={2}>
                       {doc.description}
-                    </Text>
+                    </AppText
                   )}
                 </View>
 
@@ -905,7 +904,7 @@ export default function DocumentHistory() {
                     onPress={() => handleView(doc)}
                   >
                     <Ionicons name="eye-outline" size={18} color="white" />
-                    <Text style={styles.actionButtonText}>{t.view}</Text>
+                    <AppText style={styles.actionButtonText}>{t.view}</AppText
                   </TouchableOpacity>
 
                   {/* Download Button - Downloads PDF to device */}
@@ -919,7 +918,7 @@ export default function DocumentHistory() {
                     ) : (
                       <>
                         <Ionicons name="download-outline" size={18} color="white" />
-                        <Text style={styles.actionButtonText}>{t.download}</Text>
+                        <AppText style={styles.actionButtonText}>{t.download}</AppText
                       </>
                     )}
                   </TouchableOpacity>
@@ -935,7 +934,7 @@ export default function DocumentHistory() {
                     ) : (
                       <>
                         <Ionicons name="share-social-outline" size={18} color="white" />
-                        <Text style={styles.actionButtonText}>{t.share}</Text>
+                        <AppText style={styles.actionButtonText}>{t.share}</AppText
                       </>
                     )}
                   </TouchableOpacity>
@@ -956,7 +955,7 @@ export default function DocumentHistory() {
         <View style={styles.modalContainer}>
           <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{t.documentDetails}</Text>
+              <AppText style={[styles.modalTitle, { color: colors.textPrimary }]}>{t.documentDetails}</AppText
               <TouchableOpacity onPress={() => setShowPreviewModal(false)}>
                 <Ionicons name="close" size={28} color={colors.textPrimary} />
               </TouchableOpacity>
@@ -966,43 +965,43 @@ export default function DocumentHistory() {
               {selectedDocument && (
                 <View>
                   <View style={styles.previewRow}>
-                    <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.type}:</Text>
-                    <Text style={[styles.previewValue, { color: colors.textPrimary }]}>
+                    <AppText style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.type}:</AppText
+                    <AppText style={[styles.previewValue, { color: colors.textPrimary }]}>
                       {documentTypes.find(t => t.id === selectedDocument.type)?.label || selectedDocument.type}
-                    </Text>
+                    </AppText
                   </View>
 
                   <View style={styles.previewRow}>
-                    <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.date}:</Text>
-                    <Text style={[styles.previewValue, { color: colors.textPrimary }]}>
+                    <AppText style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.date}:</AppText
+                    <AppText style={[styles.previewValue, { color: colors.textPrimary }]}>
                       {formatDate(selectedDocument.createdAt)}
-                    </Text>
+                    </AppText
                   </View>
 
                   {selectedDocument.clientName && (
                     <View style={styles.previewRow}>
-                      <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.client}:</Text>
-                      <Text style={[styles.previewValue, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.client}:</AppText
+                      <AppText style={[styles.previewValue, { color: colors.textPrimary }]}>
                         {selectedDocument.clientName}
-                      </Text>
+                      </AppText
                     </View>
                   )}
 
                   {selectedDocument.total && (
                     <View style={styles.previewRow}>
-                      <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.total}:</Text>
-                      <Text style={[styles.previewValue, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.total}:</AppText
+                      <AppText style={[styles.previewValue, { color: colors.textPrimary }]}>
                         {formatAmount(selectedDocument.total)}
-                      </Text>
+                      </AppText
                     </View>
                   )}
 
                   {selectedDocument.description && (
                     <View style={styles.previewRow}>
-                      <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.description}:</Text>
-                      <Text style={[styles.previewValue, { color: colors.textPrimary }]}>
+                      <AppText style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.description}:</AppText
+                      <AppText style={[styles.previewValue, { color: colors.textPrimary }]}>
                         {selectedDocument.description}
-                      </Text>
+                      </AppText
                     </View>
                   )}
                 </View>
@@ -1013,7 +1012,7 @@ export default function DocumentHistory() {
               style={[styles.closeButton, { backgroundColor: colors.primary }]}
               onPress={() => setShowPreviewModal(false)}
             >
-              <Text style={styles.closeButtonText}>{t.close}</Text>
+              <AppText style={styles.closeButtonText}>{t.close}</AppText
             </TouchableOpacity>
           </View>
         </View>
@@ -1331,3 +1330,8 @@ const styles = StyleSheet.create({
     padding: spacing.xs,
   },
 });
+
+
+
+
+

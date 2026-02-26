@@ -8,7 +8,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
-  Text,
   TextInput,
   TouchableOpacity,
   FlatList,
@@ -31,6 +30,7 @@ import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../theme';
+import { AppText } from '../components';
 
 export default function DevInbox() {
   const router = useRouter();
@@ -370,9 +370,9 @@ export default function DevInbox() {
             colors={gradients.primary}
             style={styles.avatar}
           >
-            <Text style={styles.avatarText}>
+            <AppText style={styles.avatarText}>
               {displayName.charAt(0).toUpperCase()}
-            </Text>
+            </AppText>
           </LinearGradient>
         </View>
         <View style={styles.conversationContent}>
@@ -384,21 +384,21 @@ export default function DevInbox() {
                 <MaterialCommunityIcons name={categoryIcon.icon} size={18} color={categoryIcon.color} />
               )}
             </View>
-            <Text style={[styles.conversationUserName, { color: colors.textPrimary }]} numberOfLines={1}>
+            <AppText style={[styles.conversationUserName, { color: colors.textPrimary }]} numberOfLines={1}>
               {displayName}
-            </Text>
+            </AppText>
             {item.unreadForDev > 0 && (
               <View style={[styles.unreadBadge, { backgroundColor: colors.error }]}>
-                <Text style={styles.unreadBadgeText}>{item.unreadForDev}</Text>
+                <AppText style={styles.unreadBadgeText}>{item.unreadForDev}</AppText>
               </View>
             )}
           </View>
-          <Text style={[styles.conversationMessage, { color: colors.textSecondary }]} numberOfLines={2}>
+          <AppText style={[styles.conversationMessage, { color: colors.textSecondary }]} numberOfLines={2}>
             {item.lastMessage || '(No messages)'}
-          </Text>
-          <Text style={[styles.conversationDate, { color: colors.textSecondary }]}>
+          </AppText>
+          <AppText style={[styles.conversationDate, { color: colors.textSecondary }]}>
             {formatDate(item.lastMessageAt)}
-          </Text>
+          </AppText>
         </View>
         <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
@@ -419,12 +419,12 @@ export default function DevInbox() {
             ? [styles.devBubble, { backgroundColor: colors.primary }]
             : [styles.userBubble, { backgroundColor: colors.backgroundLight }],
         ]}>
-          <Text style={[
+          <AppText style={[
             styles.messageText,
             { color: isDev ? 'white' : colors.textPrimary }
           ]}>
             {item.text}
-          </Text>
+          </AppText>
         </View>
       </View>
     );
@@ -452,16 +452,16 @@ export default function DevInbox() {
         end={{ x: 1, y: 1 }}
         style={styles.header}
       >
-        <Text style={styles.headerTitle}>{t.inboxTitle}</Text>
+        <AppText style={styles.headerTitle}>{t.inboxTitle}</AppText>
         <View style={styles.headerRight}>
           <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeText}>{conversations.length}</Text>
+            <AppText style={styles.headerBadgeText}>{conversations.length}</AppText>
           </View>
           <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
             <MaterialCommunityIcons name="logout" size={26} color="white" />
-            <Text style={styles.logoutText}>
+            <AppText style={styles.logoutText}>
               {language === 'en' ? 'Logout' : language === 'he' ? 'יציאה' : 'خروج'}
-            </Text>
+            </AppText>
           </TouchableOpacity>
         </View>
       </LinearGradient>
@@ -470,9 +470,9 @@ export default function DevInbox() {
       {conversations.length === 0 ? (
         <View style={styles.emptyContainer}>
           <MaterialCommunityIcons name="inbox-outline" size={64} color={colors.textSecondary} />
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>
             {t.noOpenConversations}
-          </Text>
+          </AppText>
         </View>
       ) : (
         <FlatList
@@ -509,18 +509,18 @@ export default function DevInbox() {
               <Ionicons name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
             <View style={styles.modalTitleContainer}>
-              <Text style={styles.modalTitle} numberOfLines={1}>
+              <AppText style={styles.modalTitle} numberOfLines={1}>
                 {selectedConversation?.userName || selectedConversation?.userId || 'user'}
-              </Text>
+              </AppText>
             </View>
             <TouchableOpacity 
               onPress={handleCloseConversation} 
               style={styles.closeConvButton}
             >
               <Ionicons name="checkmark-done" size={20} color="white" />
-              <Text style={styles.closeConvText}>
+              <AppText style={styles.closeConvText}>
                 {language === 'en' ? 'Close' : language === 'he' ? 'סגור' : 'إغلاق'}
-              </Text>
+              </AppText>
             </TouchableOpacity>
           </LinearGradient>
           
@@ -536,9 +536,9 @@ export default function DevInbox() {
             ) : messages.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <MaterialCommunityIcons name="chat-outline" size={64} color={colors.textSecondary} />
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>
                   No messages
-                </Text>
+                </AppText>
               </View>
             ) : (
               <FlatList
@@ -816,3 +816,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 });
+

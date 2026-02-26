@@ -1,6 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { spacing } from '../theme';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { borderRadius, getColors, shadows, spacing, typography } from '../theme';
+
+const palette = getColors(false);
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -29,13 +31,23 @@ export class ErrorBoundary extends React.Component {
     }
 
     return (
-      <View style={styles.container}>
-        <View style={styles.card}>
-          <Text style={styles.title}>Something went wrong</Text>
-          <Text style={styles.message}>{this.state.errorMessage}</Text>
-          <TouchableOpacity style={styles.button} onPress={this.resetError}>
+      <View style={[styles.container, { backgroundColor: palette.background }]}>
+        <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+          <Text style={[styles.title, { color: palette.error }]}>Something went wrong</Text>
+          <Text style={[styles.message, { color: palette.textSecondary }]}>{this.state.errorMessage}</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.button,
+              {
+                backgroundColor: palette.secondary,
+                borderColor: palette.secondaryDark,
+                opacity: pressed ? 0.86 : 1,
+              },
+            ]}
+            onPress={this.resetError}
+          >
             <Text style={styles.buttonText}>Try again</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       </View>
     );
@@ -48,39 +60,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.lg,
-    backgroundColor: '#F5F7FA',
   },
   card: {
     width: '100%',
-    borderWidth: 1,
-    borderRadius: 16,
+    maxWidth: 460,
+    borderWidth: 1.2,
+    borderRadius: borderRadius.xl,
     padding: spacing.lg,
     gap: spacing.md,
-    borderColor: '#D7DEE8',
-    backgroundColor: '#FFFFFF',
+    ...shadows.card,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#DC2626',
+    fontSize: typography.xxl,
+    fontWeight: typography.bold,
+    letterSpacing: -0.2,
   },
   message: {
     marginBottom: spacing.sm,
-    fontSize: 16,
-    color: '#334155',
+    fontSize: typography.base,
+    lineHeight: 22,
   },
   button: {
-    minHeight: 46,
-    borderRadius: 12,
-    backgroundColor: '#0EA5E9',
+    minHeight: 48,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
+    ...shadows.primary,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 16,
+    fontWeight: typography.semibold,
+    fontSize: typography.base,
   },
 });

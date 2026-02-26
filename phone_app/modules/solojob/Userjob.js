@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  View,
+import { View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   Platform,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -16,7 +15,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db, storage, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../theme';
-import { GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
+import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -583,7 +582,7 @@ export default function Userjob() {
       {!isOnline && (
         <View style={styles.offlineBanner}>
           <MaterialCommunityIcons name="wifi-off" size={20} color="#fff" />
-          <Text style={styles.offlineBannerText}>{t.offlineMode}</Text>
+          <AppText style={styles.offlineBannerText}>{t.offlineMode}</AppText
         </View>
       )}
 
@@ -591,9 +590,9 @@ export default function Userjob() {
       {isOnline && pendingJobCount > 0 && (
         <View style={styles.pendingJobsBanner}>
           <MaterialCommunityIcons name="cloud-upload" size={20} color="#fff" />
-          <Text style={styles.pendingJobsText}>
+          <AppText style={styles.pendingJobsText}>
             {t.pendingJobs}: {pendingJobCount}
-          </Text>
+          </AppText
         </View>
       )}
 
@@ -610,7 +609,7 @@ export default function Userjob() {
           style={styles.createButton}
           onPress={() => router.push({ pathname: '/FillJob', params: { mode: 'user' } })}
         >
-          <Text style={styles.createButtonText}>{t.createJob}</Text>
+          <AppText style={styles.createButtonText}>{t.createJob}</AppText
         </TouchableOpacity>
 
         {/* Filters Row */}
@@ -624,7 +623,7 @@ export default function Userjob() {
               style={styles.dateFilterButton}
             >
               <Ionicons name="calendar-outline" size={22} color="#fff" />
-              <Text style={styles.dateFilterButtonText}>{dateFilter.label}</Text>
+              <AppText style={styles.dateFilterButtonText}>{dateFilter.label}</AppText
             </LinearGradient>
           </TouchableOpacity>
 
@@ -635,9 +634,9 @@ export default function Userjob() {
             activeOpacity={0.7}
           >
             <Ionicons name="person-outline" size={20} color={colors.textSecondary} />
-            <Text style={[styles.clientFilterInput, { color: clientFilter ? colors.textPrimary : colors.textSecondary }]}>
+            <AppText style={[styles.clientFilterInput, { color: clientFilter ? colors.textPrimary : colors.textSecondary }]}>
               {clientFilter || t.filterByClient}
-            </Text>
+            </AppText
             {clientFilter.length > 0 ? (
               <TouchableOpacity onPress={(e) => { e.stopPropagation(); setClientFilter(''); }}>
                 <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
@@ -650,7 +649,7 @@ export default function Userjob() {
 
         {/* Jobs List */}
         {jobs.length === 0 ? (
-          <Text style={styles.emptyText}>{t.noJobs}</Text>
+          <AppText style={styles.emptyText}>{t.noJobs}</AppText
         ) : (
           jobs.map((job) => (
             <TouchableOpacity
@@ -662,12 +661,12 @@ export default function Userjob() {
               {/* Title Row */}
               <View style={styles.jobTitleRow}>
                 <View style={styles.titleContainer}>
-                  <Text style={[styles.jobTitle, { color: colors.primary }]}>{job.title}</Text>
+                  <AppText style={[styles.jobTitle, { color: colors.primary }]}>{job.title}</AppText
                   {isJobNew(job) && (
                     <View style={styles.newBadge}>
-                      <Text style={styles.newBadgeText}>
+                      <AppText style={styles.newBadgeText}>
                         {language === 'en' ? 'NEW' : language === 'he' ? 'חדש' : 'جديد'}
-                      </Text>
+                      </AppText
                     </View>
                   )}
                 </View>
@@ -690,18 +689,18 @@ export default function Userjob() {
               </View>
 
               {/* Job Info */}
-              <Text style={[styles.jobDescription, { color: colors.textSecondary }]}>{job.description}</Text>
-              <Text style={[styles.jobDetails, { color: colors.textSecondary }]}>
+              <AppText style={[styles.jobDescription, { color: colors.textSecondary }]}>{job.description}</AppText
+              <AppText style={[styles.jobDetails, { color: colors.textSecondary }]}>
                 {formatDate(job.finishedAt) || 'No date'} | {job.timeFrom} - {job.timeTo}
-              </Text>
-              <Text style={[styles.jobLocation, { color: colors.textSecondary }]}>
-                <Text style={styles.locationLabel}>{t.location}: </Text>{job.location}
-              </Text>
+              </AppText
+              <AppText style={[styles.jobLocation, { color: colors.textSecondary }]}>
+                <AppText style={styles.locationLabel}>{t.location}: </AppText{job.location}
+              </AppText
               {job.clientName && (
-                <Text style={[styles.jobCustomer, { color: colors.textSecondary }]}>
+                <AppText style={[styles.jobCustomer, { color: colors.textSecondary }]}>
                   {t.clientName}: {job.clientName}
                   {job.clientPhone && `   ${t.clientPhone}: ${job.clientPhone}`}
-                </Text>
+                </AppText
               )}
             </TouchableOpacity>
           ))
@@ -713,16 +712,16 @@ export default function Userjob() {
         <View style={styles.syncingOverlay}>
           <View style={styles.syncingContainer}>
             <ActivityIndicator size="large" color="#fff" />
-            <Text style={styles.syncingText}>
+            <AppText style={styles.syncingText}>
               {language === 'en' ? 'Syncing pending jobs...'
                 : language === 'he' ? 'מסנכרן משימות ממתינות...'
                 : 'مزامنة المهام المعلقة...'}
-            </Text>
-            <Text style={styles.syncingSubtext}>
+            </AppText
+            <AppText style={styles.syncingSubtext}>
               {language === 'en' ? 'Please wait, do not close the app'
                 : language === 'he' ? 'אנא המתן, אל תסגור את האפליקציה'
                 : 'يرجى الانتظار، لا تغلق التطبيق'}
-            </Text>
+            </AppText
           </View>
         </View>
       )}
@@ -1058,3 +1057,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
+
+
+
+

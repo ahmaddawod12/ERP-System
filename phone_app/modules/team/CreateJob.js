@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
   TextInput,
   Platform,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { auth, db, collection, doc, getDocs, setDoc, functions, httpsCallable } from '../../firebase';
 import { colors, spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
-import { SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../components';
+import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -314,7 +313,7 @@ export default function CreateJob() {
       >
         {/* Workers List */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: themeColors.textPrimary }]}>{t.selectWorker}</Text>
+          <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary }]}>{t.selectWorker}</AppText
           
           {!selectedWorker && (
             <SearchInput
@@ -377,24 +376,24 @@ export default function CreateJob() {
                         />
                       </View>
                       <View style={styles.workerInfo}>
-                        <Text style={[styles.workerName, { color: themeColors.textPrimary }]}>
+                        <AppText style={[styles.workerName, { color: themeColors.textPrimary }]}>
                           {worker.name || worker.email}
-                        </Text>
-                        <Text style={[styles.workerEmail, { color: themeColors.textSecondary }]}>
+                        </AppText
+                        <AppText style={[styles.workerEmail, { color: themeColors.textSecondary }]}>
                           {worker.email}
-                        </Text>
+                        </AppText
                         {worker.phoneNumber && (
-                          <Text style={[styles.workerPhone, { color: themeColors.textLight }]}>
+                          <AppText style={[styles.workerPhone, { color: themeColors.textLight }]}>
                             📞 {worker.phoneNumber}
-                          </Text>
+                          </AppText
                         )}
                       </View>
                       {isSelected ? (
                         <View style={styles.selectedWorkerActions}>
                           <Ionicons name="checkmark-circle" size={32} color={themeColors.secondary} />
-                          <Text style={[styles.tapToChangeText, { color: themeColors.textLight }]}>
+                          <AppText style={[styles.tapToChangeText, { color: themeColors.textLight }]}>
                             {language === 'en' ? 'Tap to change' : language === 'he' ? 'לחץ לשינוי' : 'اضغط للتغيير'}
-                          </Text>
+                          </AppText
                         </View>
                       ) : (
                         <Ionicons name="chevron-forward" size={24} color={themeColors.textLight} />
@@ -411,9 +410,9 @@ export default function CreateJob() {
           <View style={styles.section}>
             <View style={styles.jobDetailsHeader}>
               <MaterialCommunityIcons name="clipboard-text" size={24} color={themeColors.secondary} />
-              <Text style={[styles.sectionTitle, { color: themeColors.textPrimary, marginBottom: 0, marginLeft: 8 }]}>
+              <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary, marginBottom: 0, marginLeft: 8 }]}>
                 {t.jobDetails}
-              </Text>
+              </AppText
             </View>
             
             <View style={[styles.formContainer, { backgroundColor: themeColors.surface }]}>
@@ -421,9 +420,9 @@ export default function CreateJob() {
               <View style={styles.assignedToBadge}>
                 <LinearGradient colors={gradients.secondary} style={styles.assignedToBadgeGradient}>
                   <MaterialCommunityIcons name="account-check" size={20} color="white" />
-                  <Text style={styles.assignedToBadgeText}>
+                  <AppText style={styles.assignedToBadgeText}>
                     {t.assignedTo}: {selectedWorkerName}
-                  </Text>
+                  </AppText
                 </LinearGradient>
               </View>
 
@@ -431,9 +430,9 @@ export default function CreateJob() {
               <View style={[styles.clientSection, { backgroundColor: themeColors.backgroundLight, borderColor: themeColors.border }]}>
                 <View style={styles.inputLabelRow}>
                   <Ionicons name="person" size={20} color={themeColors.secondary} />
-                  <Text style={[styles.inputLabel, { color: themeColors.textSecondary, fontWeight: 'bold' }]}>
+                  <AppText style={[styles.inputLabel, { color: themeColors.textSecondary, fontWeight: 'bold' }]}>
                     {t.clientName}
-                  </Text>
+                  </AppText
                 </View>
 
                 {/* Embedded client selector (search + dropdown) */}
@@ -511,9 +510,9 @@ export default function CreateJob() {
               <View style={styles.inputWrapper}>
                 <View style={styles.inputLabelRow}>
                   <MaterialCommunityIcons name="format-title" size={20} color={themeColors.secondary} />
-                  <Text style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
+                  <AppText style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
                     {t.jobTitle} *
-                  </Text>
+                  </AppText
                 </View>
                 <TextInput
                   style={[styles.input, { 
@@ -531,9 +530,9 @@ export default function CreateJob() {
               <View style={styles.inputWrapper}>
                 <View style={styles.inputLabelRow}>
                   <MaterialCommunityIcons name="text" size={20} color={themeColors.secondary} />
-                  <Text style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
+                  <AppText style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
                     {t.description} *
-                  </Text>
+                  </AppText
                 </View>
                 <TextInput
                   style={[styles.input, styles.textArea, { 
@@ -553,9 +552,9 @@ export default function CreateJob() {
               <View style={styles.inputWrapper}>
                 <View style={styles.inputLabelRow}>
                   <MaterialCommunityIcons name="map-marker" size={20} color={themeColors.secondary} />
-                  <Text style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
+                  <AppText style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
                     {t.location} *
-                  </Text>
+                  </AppText
                 </View>
                 <TextInput
                   style={[styles.input, { 
@@ -583,7 +582,7 @@ export default function CreateJob() {
                 >
                   <View style={[styles.cancelButton, { borderColor: themeColors.border, backgroundColor: themeColors.background }]}>
                     <Ionicons name="close-circle-outline" size={20} color={themeColors.textSecondary} />
-                    <Text style={[styles.cancelButtonText, { color: themeColors.textPrimary }]}>{t.cancel}</Text>
+                    <AppText style={[styles.cancelButtonText, { color: themeColors.textPrimary }]}>{t.cancel}</AppText
                   </View>
                 </TouchableOpacity>
                 
@@ -593,7 +592,7 @@ export default function CreateJob() {
                 >
                   <LinearGradient colors={gradients.indigoBox} style={styles.submitButton}>
                     <Ionicons name="checkmark-circle" size={20} color="white" />
-                    <Text style={styles.submitButtonText}>{t.submit}</Text>
+                    <AppText style={styles.submitButtonText}>{t.submit}</AppText
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
@@ -774,3 +773,8 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 });
+
+
+
+
+

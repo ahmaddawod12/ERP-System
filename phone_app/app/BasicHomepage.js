@@ -1,28 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../theme';
+import { getColors, spacing, borderRadius, typography, shadows } from '../theme';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
-import { useAlert } from '../contexts/AlertContext';
 import { useCache } from '../contexts/CacheContext';
 import { isSubscriptionActive, isModuleEnabled } from '../modules/shared';
-import { GlobalHeader, LoadingSpinner, ScrollableContainer } from '../components';
+import { AppText, GlobalHeader, ScrollableContainer } from '../components';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function BasicHomepage() {
   const router = useRouter();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
   const { businessInfo, subscription } = useCache();
   const [activeTab, setActiveTab] = useState('business');
   const colors = getColors(isDarkMode);
@@ -38,7 +34,7 @@ export default function BasicHomepage() {
   ];
 
   // Auto-select first available tab if current is no longer available
-  React.useEffect(() => {
+  useEffect(() => {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
       setActiveTab(availableTabs[0]);
     }
@@ -144,8 +140,8 @@ export default function BasicHomepage() {
     if (!value) return null;
     return (
       <View style={styles.infoRow}>
-        <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{label}</Text>
-        <Text style={[styles.infoValue, { color: colors.textPrimary }]}>{value}</Text>
+        <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{label}</AppText>
+        <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{value}</AppText>
       </View>
     );
   };
@@ -170,8 +166,8 @@ export default function BasicHomepage() {
                     <MaterialCommunityIcons name="domain" size={32} color={colors.primary} />
                   </View>
                 </View>
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.businessInfoTitle}</Text>
-                <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.businessInfoDesc}</Text>
+                <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.businessInfoTitle}</AppText>
+                <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.businessInfoDesc}</AppText>
                 
                 {businessInfo ? (
                   <View style={styles.businessInfoContent}>
@@ -200,7 +196,7 @@ export default function BasicHomepage() {
                     {(businessInfo.accountantName || businessInfo.accountantEmail || businessInfo.accountantPhone) && (
                       <>
                         <View style={[styles.separator, { borderTopColor: colors.border }]} />
-                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.accountantSection}</Text>
+                        <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.accountantSection}</AppText>
                         {renderInfoRow(t.accountantName, businessInfo.accountantName)}
                         {renderInfoRow(t.accountantEmail, businessInfo.accountantEmail)}
                         {renderInfoRow(t.accountantPhone, businessInfo.accountantPhone)}
@@ -210,9 +206,9 @@ export default function BasicHomepage() {
                 ) : (
                   <View style={styles.noBusinessInfo}>
                     <MaterialCommunityIcons name="alert-circle-outline" size={48} color={colors.textSecondary} />
-                    <Text style={[styles.noBusinessInfoText, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.noBusinessInfoText, { color: colors.textSecondary }]}>
                       {t.noBusinessInfo}
-                    </Text>
+                    </AppText>
                   </View>
                 )}
               </View>
@@ -231,8 +227,8 @@ export default function BasicHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.generalDocs}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.generalDocsDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.generalDocs}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.generalDocsDesc}</AppText>
                 </View>
               </TouchableOpacity>
 
@@ -245,8 +241,8 @@ export default function BasicHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</AppText>
                 </View>
               </TouchableOpacity>
 
@@ -259,8 +255,8 @@ export default function BasicHomepage() {
                     </View>
                     <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
                   </View>
-                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.clientBook}</Text>
-                  <Text style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</Text>
+                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.clientBook}</AppText>
+                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</AppText>
                 </View>
               </TouchableOpacity>
             </>
@@ -279,12 +275,12 @@ export default function BasicHomepage() {
             size={24} 
             color={activeTab === 'business' ? colors.primary : colors.textSecondary} 
           />
-          <Text style={[
+          <AppText style={[
             styles.tabText, 
             { color: activeTab === 'business' ? colors.primary : colors.textSecondary }
           ]}>
             {t.businessTab}
-          </Text>
+          </AppText>
           {activeTab === 'business' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.primary }]} />}
         </TouchableOpacity>
 
@@ -298,12 +294,12 @@ export default function BasicHomepage() {
             size={24} 
             color={activeTab === 'documents' ? colors.secondary : colors.textSecondary} 
           />
-          <Text style={[
+          <AppText style={[
             styles.tabText, 
             { color: activeTab === 'documents' ? colors.secondary : colors.textSecondary }
           ]}>
             {t.documentsTab}
-          </Text>
+          </AppText>
           {activeTab === 'documents' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
         </TouchableOpacity>
         )}
@@ -321,15 +317,17 @@ const styles = StyleSheet.create({
   },
   tabContainer: {
     flexDirection: 'row',
-    paddingTop: 20,
+    paddingTop: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderBottomWidth: 1,
-    ...shadows.sm,
+    borderTopWidth: 1,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    ...shadows.floating,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     position: 'relative',
   },
   activeTab: {
@@ -339,12 +337,13 @@ const styles = StyleSheet.create({
     fontSize: typography.sm,
     fontWeight: typography.semibold,
     marginTop: spacing.xs,
+    letterSpacing: 0.2,
   },
   activeTabIndicator: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: -spacing.sm,
+    left: spacing.md,
+    right: spacing.md,
     height: 3,
     borderTopLeftRadius: 3,
     borderTopRightRadius: 3,
@@ -354,6 +353,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
   },
   cardsContainer: {
     paddingHorizontal: spacing.lg,
@@ -363,9 +363,9 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: borderRadius.xl,
     padding: spacing.xl,
-    marginBottom: spacing.md + 4,
-    borderWidth: 1.5,
-    ...shadows.card,
+    marginBottom: spacing.md + 6,
+    borderWidth: 1,
+    ...shadows.floating,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -374,32 +374,34 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   cardIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 62,
+    height: 62,
+    borderRadius: borderRadius.full,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(13, 138, 232, 0.25)',
   },
   cardChevron: {
-    opacity: 0.7,
+    opacity: 0.75,
   },
   cardTitle: {
     fontSize: typography.xxl,
     fontWeight: typography.bold,
     marginBottom: spacing.xs,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   cardDescription: {
     fontSize: typography.base,
     lineHeight: 22,
-    letterSpacing: 0.1,
+    letterSpacing: 0.15,
   },
   // Business Info specific styles
   businessInfoContent: {
     marginTop: spacing.lg,
     paddingTop: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
+    borderTopColor: 'rgba(87, 111, 138, 0.22)',
   },
   infoRow: {
     flexDirection: 'row',
@@ -438,3 +440,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+

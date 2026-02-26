@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   TouchableOpacity,
   StyleSheet,
@@ -10,14 +9,14 @@ import {
   Image,
   Platform,
   TextInput,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { auth, db, doc, getDoc } from '../../firebase';
 import { colors, gradients, spacing, borderRadius, typography, shadows, getColors } from '../../theme';
-import { SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer } from '../../components';
+import { AppText, SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -552,30 +551,30 @@ export default function JobMonitor() {
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <View style={styles.jobHeaderContent}>
                 <View style={styles.jobTitleRow}>
-                  <Text style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</Text>
+                  <AppText style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</AppText
                   {isJobNew(job) && (
                     <View style={styles.newBadge}>
-                      <Text style={styles.newBadgeText}>NEW</Text>
+                      <AppText style={styles.newBadgeText}>NEW</AppText
                     </View>
                   )}
                 </View>
-                <Text style={[styles.jobWorker, { color: themeColors.textSecondary }]}>
+                <AppText style={[styles.jobWorker, { color: themeColors.textSecondary }]}>
                   👤 {displayName}
-                </Text>
+                </AppText
                 {job.createdAt && (
-                  <Text style={[styles.jobDate, { color: themeColors.textSecondary }]}>
+                  <AppText style={[styles.jobDate, { color: themeColors.textSecondary }]}>
                     📅 {new Date(job.createdAt).toLocaleDateString()}
-                  </Text>
+                  </AppText
                 )}
                 {job.status?.toLowerCase() === 'finished' && job.finishedAt && (
-                  <Text style={[styles.jobFinishedDate, { color: themeColors.textSecondary }]}>
+                  <AppText style={[styles.jobFinishedDate, { color: themeColors.textSecondary }]}>
                     ✓ {t.finishedAt || 'Finished'}: {new Date(job.finishedAt).toLocaleDateString()} {new Date(job.finishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
+                  </AppText
                 )}
               </View>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-              <Text style={styles.statusText}>{getStatusText(job.status)}</Text>
+              <AppText style={styles.statusText}>{getStatusText(job.status)}</AppText
             </View>
           </View>
           
@@ -590,7 +589,7 @@ export default function JobMonitor() {
             }}
           >
             <Ionicons name="create-outline" size={18} color={themeColors.secondary} />
-            <Text style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</Text>
+            <AppText style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</AppText
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -601,7 +600,7 @@ export default function JobMonitor() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.secondary} />
-        <Text style={styles.loadingText}>{t.loading}</Text>
+        <AppText style={styles.loadingText}>{t.loading}</AppText
       </View>
     );
   }
@@ -613,8 +612,8 @@ export default function JobMonitor() {
       {/* Header */}
       <View style={[styles.header, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border }]}>
         <View style={styles.headerCenter}>
-          <Text style={[styles.title, { color: themeColors.textPrimary }]}>{t.title}</Text>
-          <Text style={[styles.subtitle, { color: themeColors.textSecondary }]}>{t.subtitle}</Text>
+          <AppText style={[styles.title, { color: themeColors.textPrimary }]}>{t.title}</AppText
+          <AppText style={[styles.subtitle, { color: themeColors.textSecondary }]}>{t.subtitle}</AppText
         </View>
       </View>
 
@@ -632,9 +631,9 @@ export default function JobMonitor() {
             style={styles.dateFilterButton}
           >
             <Ionicons name="calendar-outline" size={20} color="#fff" />
-            <Text style={styles.dateFilterButtonTextSmall}>
+            <AppText style={styles.dateFilterButtonTextSmall}>
               {dateFilter.label}
-            </Text>
+            </AppText
           </LinearGradient>
         </TouchableOpacity>
 
@@ -672,9 +671,9 @@ export default function JobMonitor() {
             colors={activeFilter === 'all' ? gradients.indigoBox : ['#F3F4F6', '#F3F4F6']} 
             style={styles.filterButtonInner}
           >
-            <Text style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
+            <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
               {t.all} ({jobs.pending.length + jobs.received.length + jobs.waiting.length + jobs.finished.length})
-            </Text>
+            </AppText
           </LinearGradient>
         </TouchableOpacity>
         
@@ -686,9 +685,9 @@ export default function JobMonitor() {
             colors={activeFilter === 'pending' ? gradients.yellowBox : ['#F3F4F6', '#F3F4F6']} 
             style={styles.filterButtonInner}
           >
-            <Text style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
+            <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
               {t.pending} ({jobs.pending.length})
-            </Text>
+            </AppText
           </LinearGradient>
         </TouchableOpacity>
         
@@ -700,9 +699,9 @@ export default function JobMonitor() {
             colors={activeFilter === 'received' ? gradients.blueBox : ['#F3F4F6', '#F3F4F6']} 
             style={styles.filterButtonInner}
           >
-            <Text style={[styles.filterText, activeFilter === 'received' && styles.filterTextActive]}>
+            <AppText style={[styles.filterText, activeFilter === 'received' && styles.filterTextActive]}>
               {t.received} ({jobs.received.length})
-            </Text>
+            </AppText
           </LinearGradient>
         </TouchableOpacity>
         
@@ -714,9 +713,9 @@ export default function JobMonitor() {
             colors={activeFilter === 'waiting' ? gradients.purpleBox : ['#F3F4F6', '#F3F4F6']} 
             style={styles.filterButtonInner}
           >
-            <Text style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
+            <AppText style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
               {t.waiting} ({jobs.waiting.length})
-            </Text>
+            </AppText
           </LinearGradient>
         </TouchableOpacity>
         
@@ -728,9 +727,9 @@ export default function JobMonitor() {
             colors={activeFilter === 'finished' ? gradients.greenBox : ['#F3F4F6', '#F3F4F6']} 
             style={styles.filterButtonInner}
           >
-            <Text style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
+            <AppText style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
               {t.finished} ({jobs.finished.length})
-            </Text>
+            </AppText
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
@@ -742,7 +741,7 @@ export default function JobMonitor() {
       >
         {filteredJobs.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>{t.noJobs}</Text>
+            <AppText style={styles.emptyText}>{t.noJobs}</AppText
           </View>
         ) : (
           filteredJobs.map((job) => <JobCard key={`${job.workerId}-${job.id}`} job={job} />)
@@ -1458,3 +1457,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
+
+
+
+

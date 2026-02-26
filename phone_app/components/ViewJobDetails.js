@@ -38,9 +38,9 @@ const getPhotoUri = (photo) => {
 
 const normalizeStatus = (status) => String(status || '').toLowerCase();
 
-const DetailRow = ({ label, value }) => (
+const DetailRow = ({ label, value, labelColor }) => (
   <View style={styles.detailRow}>
-    <AppText variant="label" color="#64748B" style={styles.detailLabel}>
+    <AppText variant="label" color={labelColor} style={styles.detailLabel}>
       {label}
     </AppText>
     <AppText variant="body" style={styles.detailValue}>
@@ -75,7 +75,7 @@ export default function ViewJobDetails({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
-        <View style={[styles.sheet, { backgroundColor: palette.background }]}>
+        <View style={[styles.sheet, { backgroundColor: palette.backgroundElevated }]}>
           <View style={styles.headerRow}>
             <AppText variant="title" style={styles.title}>
               {translations.jobDetails || translations.title || 'Job Details'}
@@ -101,21 +101,30 @@ export default function ViewJobDetails({
                 <AppChip label={status || '-'} status={status} color={statusColor} />
               </View>
               <AppDivider />
-              <DetailRow label={translations.description || 'Description'} value={descriptionText} />
-              <DetailRow label={translations.location || 'Location'} value={job.location} />
-              <DetailRow label={translations.clientName || 'Client'} value={job.clientName} />
-              <DetailRow label={translations.clientPhone || 'Phone'} value={job.clientPhone} />
-              <DetailRow label={translations.assignedBy || 'Assigned By'} value={job.assignedBy || job.MName} />
-              <DetailRow label={translations.createdAt || 'Created'} value={formatDate(job.createdAt)} />
-              <DetailRow label={translations.finishedAt || 'Finished'} value={formatDate(job.finishedAt)} />
+              <DetailRow
+                label={translations.description || 'Description'}
+                value={descriptionText}
+                labelColor={palette.textSecondary}
+              />
+              <DetailRow label={translations.location || 'Location'} value={job.location} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.clientName || 'Client'} value={job.clientName} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.clientPhone || 'Phone'} value={job.clientPhone} labelColor={palette.textSecondary} />
+              <DetailRow
+                label={translations.assignedBy || 'Assigned By'}
+                value={job.assignedBy || job.MName}
+                labelColor={palette.textSecondary}
+              />
+              <DetailRow label={translations.createdAt || 'Created'} value={formatDate(job.createdAt)} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.finishedAt || 'Finished'} value={formatDate(job.finishedAt)} labelColor={palette.textSecondary} />
               <DetailRow
                 label={translations.timeWorked || translations.timeStatus || 'Time'}
                 value={
                   job.timeWorked ||
                   (job.timeFrom || job.timeTo ? `${job.timeFrom || '--'} - ${job.timeTo || '--'}` : '-')
                 }
+                labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.signingPerson || 'Signed By'} value={job.signingPerson} />
+              <DetailRow label={translations.signingPerson || 'Signed By'} value={job.signingPerson} labelColor={palette.textSecondary} />
             </AppCard>
 
             <AppCard>

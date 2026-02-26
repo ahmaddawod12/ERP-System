@@ -10,16 +10,24 @@ export default function AppCard({
   onPress,
   bordered = true,
   elevated = true,
+  tone = 'default',
   padding = spacing.lg,
   accessibilityLabel,
 }) {
   const { isDarkMode } = useThemeContext();
   const palette = getColors(isDarkMode);
+  const toneColors =
+    tone === 'muted'
+      ? { backgroundColor: palette.surfaceAlt, borderColor: palette.borderLight }
+      : tone === 'highlight'
+      ? { backgroundColor: palette.surface, borderColor: palette.secondary }
+      : { backgroundColor: palette.surface, borderColor: palette.border };
+
   const baseStyle = [
     styles.base,
     {
-      backgroundColor: palette.surface,
-      borderColor: bordered ? palette.border : 'transparent',
+      backgroundColor: toneColors.backgroundColor,
+      borderColor: bordered ? toneColors.borderColor : 'transparent',
       borderWidth: bordered ? 1 : 0,
       padding,
     },
@@ -49,6 +57,6 @@ export default function AppCard({
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.xl,
   },
 });

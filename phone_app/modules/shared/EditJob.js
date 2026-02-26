@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   TextInput,
   TouchableOpacity,
@@ -10,14 +9,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { db, doc, getDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
-import { GlobalHeader, ScrollableContainer } from '../../components';
+import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -262,14 +261,14 @@ export default function EditJob() {
         <ScrollableContainer style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
           {/* Header */}
           <View style={[styles.header, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
+            <AppText style={[styles.headerTitle, { color: colors.textPrimary }]}>
               {t.editJob}
-            </Text>
+            </AppText
           </View>
 
           {/* Form Fields */}
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.title}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.title}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.title}
@@ -278,7 +277,7 @@ export default function EditJob() {
               placeholderTextColor={colors.textSecondary}
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.description}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.description}</AppText
             <TextInput
               style={[styles.input, styles.textArea, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.description}
@@ -289,7 +288,7 @@ export default function EditJob() {
               numberOfLines={4}
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.location}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.location}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.location}
@@ -298,7 +297,7 @@ export default function EditJob() {
               placeholderTextColor={colors.textSecondary}
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.timeFrom}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.timeFrom}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.timeFrom}
@@ -307,7 +306,7 @@ export default function EditJob() {
               placeholderTextColor={colors.textSecondary}
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.timeTo}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.timeTo}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.timeTo}
@@ -316,7 +315,7 @@ export default function EditJob() {
               placeholderTextColor={colors.textSecondary}
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.clientName}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.clientName}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.clientName}
@@ -325,7 +324,7 @@ export default function EditJob() {
               placeholderTextColor={colors.textSecondary}
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.clientPhone}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.clientPhone}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.clientPhone}
@@ -335,7 +334,7 @@ export default function EditJob() {
               keyboardType="phone-pad"
             />
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>{t.signingPerson}</Text>
+            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.signingPerson}</AppText
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               value={editingJob.signingPerson}
@@ -351,7 +350,7 @@ export default function EditJob() {
               style={[styles.button, styles.cancelButton]}
               onPress={() => router.back()}
             >
-              <Text style={styles.cancelButtonText}>{t.cancel}</Text>
+              <AppText style={styles.cancelButtonText}>{t.cancel}</AppText
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -366,7 +365,7 @@ export default function EditJob() {
                 end={{ x: 1, y: 0 }}
               >
                 <MaterialCommunityIcons name="content-save" size={20} color="white" />
-                <Text style={styles.saveButtonText}>{t.save}</Text>
+                <AppText style={styles.saveButtonText}>{t.save}</AppText
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -465,3 +464,8 @@ const styles = StyleSheet.create({
     fontWeight: typography.semibold,
   },
 });
+
+
+
+
+

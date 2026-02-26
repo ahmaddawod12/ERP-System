@@ -1,23 +1,63 @@
-import React, { useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Modal,
-  Animated,
-  Dimensions,
-} from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Animated, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../theme';
+import { borderRadius, getColors, gradients, shadows, spacing } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
+import AppButton from './AppButton';
+import AppText from './AppText';
 
-const { width } = Dimensions.get('window');
+const resolveVariant = (style) => {
+  if (style === 'destructive') return 'destructive';
+  if (style === 'cancel') return 'secondary';
+  return 'primary';
+};
+
+const resolveTypeGradient = (type, palette) => {
+  switch (type) {
+    case 'success':
+      return gradients.success;
+    case 'error':
+    case 'failed':
+    case 'confirm':
+      return gradients.danger;
+    case 'waiting':
+      return [palette.warning, '#B45309'];
+    default:
+      return gradients.secondary;
+  }
+};
+
+const resolveIconConfig = (type, icon, palette) => {
+  if (icon) {
+    if (typeof icon === 'string') {
+      return { name: icon, library: 'Ionicons', color: palette.textWhite };
+    }
+    return {
+      name: icon.name || 'information-circle',
+      library: icon.library || 'Ionicons',
+      color: icon.color || palette.textWhite,
+    };
+  }
+
+  switch (type) {
+    case 'success':
+      return { name: 'checkmark', library: 'Ionicons', color: palette.textWhite };
+    case 'error':
+    case 'failed':
+      return { name: 'close', library: 'Ionicons', color: palette.textWhite };
+    case 'waiting':
+      return { name: 'warning', library: 'Ionicons', color: palette.textWhite };
+    case 'confirm':
+      return { name: 'alert-circle', library: 'Ionicons', color: palette.textWhite };
+    default:
+      return { name: 'information-circle', library: 'Ionicons', color: palette.textWhite };
+  }
+};
 
 export default function CustomAlert({
   visible,
-  type = 'info', // 'info', 'success', 'waiting', 'error', 'failed', 'confirm'
+  type = 'info',
   title,
   message,
   buttons = [],
@@ -25,206 +65,149 @@ export default function CustomAlert({
   icon,
 }) {
   const { isDarkMode } = useThemeContext();
-  const colors = getColors(isDarkMode);
-  const scaleAnim = useRef(new Animated.Value(0)).current;
+  const palette = getColors(isDarkMode);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
   useEffect(() => {
     if (visible) {
       Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 190,
+          useNativeDriver: true,
+        }),
         Animated.spring(scaleAnim, {
           toValue: 1,
-          tension: 50,
-          friction: 7,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 200,
+          tension: 80,
+          friction: 8,
           useNativeDriver: true,
         }),
       ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(scaleAnim, {
-          toValue: 0,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      return;
     }
-  }, [visible]);
 
-  const getIconConfig = () => {
-    if (icon) return icon;
-    
-    switch (type) {
-      case 'success':
-        return { name: 'checkmark', color: '#FFFFFF', library: 'Ionicons' };
-      case 'error':
-      case 'failed':
-        return { name: 'close', color: '#FFFFFF', library: 'Ionicons' };
-      case 'waiting':
-        return { name: 'warning', color: '#FFFFFF', library: 'Ionicons' };
-      case 'confirm':
-        return { name: 'alert-circle', color: '#FFFFFF', library: 'Ionicons' };
-      default:
-        return { name: 'information-circle', color: '#3b82f6', library: 'Ionicons' };
-    }
-  };
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 0.96,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [fadeAnim, scaleAnim, visible]);
 
-  const getGradient = () => {
-    switch (type) {
-      case 'success':
-        return ['#4ade80', '#22c55e']; // Clean bright green
-      case 'error':
-      case 'failed':
-        return ['#f87171', '#ef4444']; // Clean bright red
-      case 'waiting':
-        return ['#fbbf24', '#f59e0b']; // Clean bright amber
-      case 'confirm':
-        return ['#f87171', '#ef4444']; // Red for confirmations (destructive actions)
-      default:
-        return ['#60a5fa', '#3b82f6']; // Clean blue
-    }
-  };
+  const iconConfig = useMemo(
+    () => resolveIconConfig(type, icon, palette),
+    [icon, palette, type]
+  );
+  const gradientColors = useMemo(
+    () => resolveTypeGradient(type, palette),
+    [palette, type]
+  );
+  const IconSet =
+    iconConfig.library === 'MaterialCommunityIcons'
+      ? MaterialCommunityIcons
+      : Ionicons;
 
-  const iconConfig = getIconConfig();
-  const IconComponent = iconConfig.library === 'MaterialCommunityIcons' 
-    ? MaterialCommunityIcons 
-    : Ionicons;
-
-  const defaultButtons = buttons.length > 0 ? buttons : [
-    {
-      text: 'OK',
-      onPress: () => {
-        if (onDismiss) onDismiss();
-      },
-      style: 'primary'
-    }
-  ];
+  const resolvedButtons =
+    buttons.length > 0
+      ? buttons
+      : [
+          {
+            text: 'OK',
+            onPress: () => {},
+            style: 'primary',
+          },
+        ];
 
   return (
     <Modal
       visible={visible}
       transparent
       animationType="none"
-      onRequestClose={() => {
-        if (onDismiss) onDismiss();
-      }}
+      onRequestClose={() => onDismiss?.()}
     >
-      <Animated.View 
+      <Animated.View
         style={[
           styles.overlay,
           {
             opacity: fadeAnim,
-          }
+            backgroundColor: palette.overlaySoft,
+          },
         ]}
       >
-        <TouchableOpacity
-          style={styles.overlayTouchable}
-          activeOpacity={1}
-          onPress={() => {
-            if (onDismiss) onDismiss();
-          }}
-        />
-        
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => onDismiss?.()} />
+
         <Animated.View
           style={[
             styles.alertContainer,
             {
-              transform: [
-                { scale: scaleAnim },
-                {
-                  translateY: scaleAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [50, 0],
-                  }),
-                },
-              ],
+              transform: [{ scale: scaleAnim }],
             },
           ]}
         >
-          <View style={[styles.alertCard, { backgroundColor: colors.surface }]}>
-            {/* Icon Header with Gradient */}
+          <View
+            style={[
+              styles.alertCard,
+              {
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+              },
+            ]}
+          >
             <LinearGradient
-              colors={getGradient()}
+              colors={gradientColors}
               style={styles.iconHeader}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
             >
               <View style={styles.iconCircle}>
-                <IconComponent 
-                  name={iconConfig.name} 
-                  size={52} 
-                  color="white"
-                  style={{ fontWeight: 'bold' }}
-                />
+                <IconSet name={iconConfig.name} size={46} color={iconConfig.color} />
               </View>
             </LinearGradient>
 
-            {/* Content */}
             <View style={styles.contentContainer}>
-              {title && (
-                <Text style={[styles.title, { color: colors.textPrimary }]}>
+              {title ? (
+                <AppText variant="heading" align="center">
                   {title}
-                </Text>
-              )}
-              {message && (
-                <Text style={[styles.message, { color: colors.textSecondary }]}>
+                </AppText>
+              ) : null}
+              {message ? (
+                <AppText
+                  variant="body"
+                  color={palette.textSecondary}
+                  align="center"
+                  style={title ? styles.messageWithTitle : null}
+                >
                   {message}
-                </Text>
-              )}
+                </AppText>
+              ) : null}
             </View>
 
-            {/* Buttons */}
-            <View style={[
-              styles.buttonsContainer,
-              defaultButtons.length === 3 && styles.buttonsContainerColumn
-            ]}>
-              {defaultButtons.map((button, index) => {
-                const isDestructive = button.style === 'destructive';
-                const isCancel = button.style === 'cancel';
-                const isPrimary = button.style === 'primary' || button.style === 'default';
-                
-                let buttonGradient = ['#3b82f6', '#2563eb']; // Clean blue
-                if (isDestructive) buttonGradient = ['#ef4444', '#dc2626']; // Clean red
-                if (isCancel) buttonGradient = ['#6b7280', '#4b5563']; // Clean gray
-                
-                return (
-                  <TouchableOpacity
-                    key={index}
-                    style={[
-                      styles.button,
-                      defaultButtons.length === 1 && styles.buttonSingle,
-                      defaultButtons.length === 2 && styles.buttonHalf,
-                      defaultButtons.length === 3 && styles.buttonThird,
-                      defaultButtons.length === 2 && index === 0 && styles.buttonBorderRight,
-                      defaultButtons.length === 3 && index < 2 && styles.buttonBorderBottom,
-                    ]}
-                    onPress={() => {
-                      if (button.onPress) button.onPress();
-                      // Always dismiss the alert after button press
-                      if (onDismiss) onDismiss();
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <LinearGradient
-                      colors={buttonGradient}
-                      style={styles.buttonGradient}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                    >
-                      <Text style={styles.buttonText}>{button.text}</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                );
-              })}
+            <View
+              style={[
+                styles.buttonsContainer,
+                resolvedButtons.length > 2 ? styles.buttonsColumn : styles.buttonsRow,
+              ]}
+            >
+              {resolvedButtons.map((button, index) => (
+                <AppButton
+                  key={`${button.text || 'btn'}-${index}`}
+                  title={button.text || 'OK'}
+                  variant={resolveVariant(button.style)}
+                  size="sm"
+                  onPress={() => {
+                    button.onPress?.();
+                    onDismiss?.();
+                  }}
+                  style={resolvedButtons.length > 2 ? styles.buttonFull : styles.buttonSplit}
+                />
+              ))}
             </View>
           </View>
         </Animated.View>
@@ -236,103 +219,56 @@ export default function CustomAlert({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
     alignItems: 'center',
-  },
-  overlayTouchable: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
   },
   alertContainer: {
-    width: width - spacing.xl * 2,
-    maxWidth: 380,
+    width: '100%',
+    maxWidth: 390,
   },
   alertCard: {
-    borderRadius: 24,
+    borderWidth: 1,
+    borderRadius: borderRadius.xl,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 15,
+    ...shadows.floating,
   },
   iconHeader: {
-    paddingVertical: spacing.xxl,
+    paddingVertical: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconCircle: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 88,
+    height: 88,
+    borderRadius: borderRadius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 6,
   },
   contentContainer: {
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xl,
-    alignItems: 'center',
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    gap: spacing.sm,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-    letterSpacing: -0.3,
-  },
-  message: {
-    fontSize: 15,
-    textAlign: 'center',
-    lineHeight: 21,
-    opacity: 0.8,
-    fontWeight: '400',
+  messageWithTitle: {
+    marginTop: spacing.xs,
   },
   buttonsContainer: {
-    flexDirection: 'row',
-    borderTopWidth: 0,
+    padding: spacing.md,
+    gap: spacing.sm,
   },
-  buttonsContainerColumn: {
+  buttonsRow: {
+    flexDirection: 'row',
+  },
+  buttonsColumn: {
     flexDirection: 'column',
   },
-  button: {
-    overflow: 'hidden',
-  },
-  buttonSingle: {
+  buttonSplit: {
     flex: 1,
   },
-  buttonHalf: {
-    flex: 1,
-  },
-  buttonBorderRight: {
-    borderRightWidth: 1,
-    borderRightColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  buttonThird: {
+  buttonFull: {
     width: '100%',
-  },
-  buttonBorderBottom: {
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.15)',
-  },
-  buttonGradient: {
-    paddingVertical: spacing.md + 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.5,
   },
 });

@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
   Platform,
   ActivityIndicator,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { auth, db, doc, runTransaction } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
-import { GlobalHeader, ScrollableContainer } from '../../components';
+import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -353,13 +352,13 @@ export default function UserInventory() {
               />
             )}
             <View style={[styles.idBadge, { backgroundColor: colors.secondary + '20' }]}>
-              <Text style={[styles.idBadgeText, { color: colors.secondary }]}>#{part.id}</Text>
+              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{part.id}</AppText
             </View>
-            <Text style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</Text>
+            <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText
           </View>
-          <Text style={[styles.partQuantity, { color: colors.textSecondary }]}>
+          <AppText style={[styles.partQuantity, { color: colors.textSecondary }]}>
             {t.quantity}: {part.quantity} ({t.alert}: {part.lowThreshold || 0})
-          </Text>
+          </AppText
         </View>
 
         <View style={styles.partActions}>
@@ -371,7 +370,7 @@ export default function UserInventory() {
             }]}
             onPress={() => { setShowAddQuantity(part.id); setShowUsePart(null); }}
           >
-            <Text style={[styles.actionButtonText, { color: colors.secondary }]}>+ {t.add}</Text>
+            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>+ {t.add}</AppText
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, {
@@ -381,7 +380,7 @@ export default function UserInventory() {
             }]}
             onPress={() => { setShowUsePart(part.id); setShowAddQuantity(null); }}
           >
-            <Text style={[styles.actionButtonText, { color: colors.secondary }]}>- {t.use}</Text>
+            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>- {t.use}</AppText
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, {
@@ -400,7 +399,7 @@ export default function UserInventory() {
               );
             }}
           >
-            <Text style={[styles.actionButtonText, { color: '#ef4444' }]}>🗑</Text>
+            <AppText style={[styles.actionButtonText, { color: '#ef4444' }]}>🗑</AppText
           </TouchableOpacity>
         </View>
       </View>
@@ -422,13 +421,13 @@ export default function UserInventory() {
           />
           <View style={styles.buttonRow}>
             <TouchableOpacity onPress={() => handleUsePart(part.id)} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
-              <Text style={styles.confirmButtonText}>{t.confirm}</Text>
+              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { setShowUsePart(null); setUseAmount(''); }}
               style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
             >
-              <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
+              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText
             </TouchableOpacity>
           </View>
         </View>
@@ -451,13 +450,13 @@ export default function UserInventory() {
           />
           <View style={styles.buttonRow}>
             <TouchableOpacity onPress={() => handleAddQuantityToPart(part.id)} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
-              <Text style={styles.confirmButtonText}>{t.confirm}</Text>
+              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { setShowAddQuantity(null); setAddAmount(''); }}
               style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
             >
-              <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
+              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText
             </TouchableOpacity>
           </View>
         </View>
@@ -483,10 +482,10 @@ export default function UserInventory() {
             <View style={styles.warningBoxContent}>
               <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#ef4444" style={styles.warningBoxIcon} />
               <View style={styles.warningBoxText}>
-                <Text style={[styles.warningTitle, { color: '#ef4444' }]}>{t.lowStockWarning}</Text>
-                <Text style={[styles.warningDescription, { color: isDarkMode ? colors.textSecondary : '#7f1d1d' }]}>
+                <AppText style={[styles.warningTitle, { color: '#ef4444' }]}>{t.lowStockWarning}</AppText
+                <AppText style={[styles.warningDescription, { color: isDarkMode ? colors.textSecondary : '#7f1d1d' }]}>
                   {lowStockParts.length} {lowStockParts.length === 1 ? t.partLowStock : t.partsLowStock}
-                </Text>
+                </AppText
               </View>
             </View>
           </View>
@@ -495,16 +494,16 @@ export default function UserInventory() {
         {/* Add New Part Button */}
         <TouchableOpacity onPress={() => setShowAddPart(!showAddPart)}>
           <LinearGradient colors={gradients.secondary} style={styles.addButton}>
-            <Text style={styles.addButtonText}>+ {t.addNewPart}</Text>
+            <AppText style={styles.addButtonText}>+ {t.addNewPart}</AppText
           </LinearGradient>
         </TouchableOpacity>
 
         {showAddPart && (
           <View style={[styles.formCard, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.formTitle, { color: colors.textPrimary }]}>{t.addNewPart}</Text>
+            <AppText style={[styles.formTitle, { color: colors.textPrimary }]}>{t.addNewPart}</AppText
 
             <View style={styles.inputGroup}>
-              <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.partName}</Text>
+              <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.partName}</AppText
               <TextInput
                 style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
                 value={newPart.name}
@@ -515,7 +514,7 @@ export default function UserInventory() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.initialQuantity}</Text>
+              <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.initialQuantity}</AppText
               <TextInput
                 style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
                 value={newPart.quantity}
@@ -527,7 +526,7 @@ export default function UserInventory() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={[styles.formLabel, { color: colors.textSecondary }]}>{t.lowStockAlert}</Text>
+              <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.lowStockAlert}</AppText
               <TextInput
                 style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
                 value={newPart.lowThreshold}
@@ -540,13 +539,13 @@ export default function UserInventory() {
 
             <View style={styles.formButtonRow}>
               <TouchableOpacity onPress={handleAddPartUser} style={[styles.formPrimaryButton, { backgroundColor: colors.secondary }]}>
-                <Text style={styles.formPrimaryButtonText}>{t.add}</Text>
+                <AppText style={styles.formPrimaryButtonText}>{t.add}</AppText
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setShowAddPart(false)}
                 style={[styles.formSecondaryButton, { backgroundColor: colors.background, borderColor: colors.border }]}
               >
-                <Text style={[styles.formSecondaryButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
+                <AppText style={[styles.formSecondaryButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText
               </TouchableOpacity>
             </View>
           </View>
@@ -556,13 +555,13 @@ export default function UserInventory() {
         {isLoadingInventory || cacheLoading ? (
           <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
             <ActivityIndicator size="large" color={colors.secondary} />
-            <Text style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>Loading inventory...</Text>
+            <AppText style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>Loading inventory...</AppText
           </View>
         ) : inventory.length === 0 ? (
           <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
             <MaterialCommunityIcons name="package-variant" size={48} color={colors.textLight} style={{ marginBottom: 12 }} />
-            <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t.noPartsYet}</Text>
-            <Text style={[styles.emptySubtitle, { color: colors.textLight }]}>{t.addFirstPart}</Text>
+            <AppText style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t.noPartsYet}</AppText
+            <AppText style={[styles.emptySubtitle, { color: colors.textLight }]}>{t.addFirstPart}</AppText
           </View>
         ) : (
           <>
@@ -587,7 +586,7 @@ export default function UserInventory() {
 
             {filteredLowStockParts.length === 0 && filteredNormalStockParts.length === 0 && (
               <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
-                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t.noResults}</Text>
+                <AppText style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t.noResults}</AppText
               </View>
             )}
           </>
@@ -830,3 +829,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+
+
+
+
+

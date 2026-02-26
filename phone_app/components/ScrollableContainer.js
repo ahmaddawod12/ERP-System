@@ -7,7 +7,8 @@ const ScrollableContainer = forwardRef(function ScrollableContainer(
     children,
     onScroll,
     scrollEventThrottle = 16,
-    keyboardShouldPersistTaps = 'handled',
+    keyboardShouldPersistTaps = 'always',
+    keyboardDismissMode = 'none',
     ...props
   },
   ref
@@ -29,6 +30,7 @@ const ScrollableContainer = forwardRef(function ScrollableContainer(
       onScroll={handleScroll}
       scrollEventThrottle={scrollEventThrottle}
       keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+      keyboardDismissMode={keyboardDismissMode}
       showsVerticalScrollIndicator={false}
     >
       {children}

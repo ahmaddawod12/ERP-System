@@ -5,14 +5,13 @@
  * Always includes <GlobalHeader /> per project rules.
  */
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { getColors, spacing, borderRadius, typography } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useLanguageContext } from '../../contexts/LanguageContext';
-import { GlobalHeader } from '../../components';
+import { AppButton, AppText, GlobalHeader } from '../../components';
 
 const translations = {
   en: {
@@ -59,16 +58,18 @@ export default function NotAvailableScreen({ reason = 'default' }) {
         <View style={[styles.iconContainer, { backgroundColor: colors.surface }]}>
           <Ionicons name={iconMap[reason] || iconMap.default} size={64} color={colors.textSecondary} />
         </View>
-        <Text style={[styles.title, { color: colors.text }]}>{content.title}</Text>
-        <Text style={[styles.message, { color: colors.textSecondary }]}>{content.message}</Text>
-        <TouchableOpacity
-          style={[styles.backButton, { backgroundColor: colors.primary }]}
+        <AppText variant="title" style={[styles.title, { color: colors.text }]}>
+          {content.title}
+        </AppText>
+        <AppText variant="body" style={[styles.message, { color: colors.textSecondary }]}>
+          {content.message}
+        </AppText>
+        <AppButton
+          title={t.goBack}
+          iconLeft={{ name: 'arrow-back' }}
           onPress={() => router.back()}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="arrow-back" size={20} color="#fff" />
-          <Text style={styles.backButtonText}>{t.goBack}</Text>
-        </TouchableOpacity>
+          style={styles.backButton}
+        />
       </View>
       <GlobalHeader />
     </View>
@@ -100,22 +101,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   message: {
-    fontSize: typography.sizes.md,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: spacing.xl,
   },
   backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: borderRadius.md,
-    gap: spacing.xs,
-  },
-  backButtonText: {
-    color: '#fff',
-    fontSize: typography.sizes.md,
-    fontWeight: typography.weights.semiBold,
+    minWidth: 150,
   },
 });

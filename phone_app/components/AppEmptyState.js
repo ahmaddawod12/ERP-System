@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { getColors, spacing } from '../theme';
+import { borderRadius, getColors, shadows, spacing } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import AppText from './AppText';
 
@@ -16,7 +16,9 @@ export default function AppEmptyState({
   const palette = getColors(isDarkMode);
   return (
     <View style={[styles.container, style]}>
-      <MaterialCommunityIcons name={icon} size={54} color={palette.textLight} />
+      <View style={[styles.iconWrap, { backgroundColor: palette.surfaceAlt, borderColor: palette.borderLight }]}>
+        <MaterialCommunityIcons name={icon} size={42} color={palette.textLight} />
+      </View>
       {title ? (
         <AppText variant="heading" color={palette.textSecondary} style={styles.title}>
           {title}
@@ -38,6 +40,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: spacing.xxxl,
     paddingHorizontal: spacing.lg,
+  },
+  iconWrap: {
+    width: 82,
+    height: 82,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.xs,
   },
   title: {
     marginTop: spacing.md,

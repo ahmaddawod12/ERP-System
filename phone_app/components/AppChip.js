@@ -14,13 +14,23 @@ export default function AppChip({
   style,
   textStyle,
   size = 'md',
+  emphasis = 'soft',
 }) {
   const { isDarkMode } = useThemeContext();
   const palette = getColors(isDarkMode);
   const statusPalette = getStatusColors(isDarkMode);
   const statusKey = normalizeStatus(status);
   const resolvedColor = color || statusPalette[statusKey] || palette.textLight;
-  const resolvedTextColor = textColor || palette.textWhite;
+  const softBackground =
+    typeof resolvedColor === 'string' && resolvedColor.startsWith('#') && resolvedColor.length === 7
+      ? `${resolvedColor}26`
+      : resolvedColor;
+  const softBorderColor =
+    typeof resolvedColor === 'string' && resolvedColor.startsWith('#') && resolvedColor.length === 7
+      ? `${resolvedColor}55`
+      : resolvedColor;
+  const isSoft = emphasis === 'soft';
+  const resolvedTextColor = textColor || (isSoft ? resolvedColor : palette.textWhite);
   const compact = size === 'sm';
 
   return (
@@ -28,7 +38,9 @@ export default function AppChip({
       style={[
         styles.chip,
         {
-          backgroundColor: resolvedColor,
+          backgroundColor: isSoft ? softBackground : resolvedColor,
+          borderWidth: isSoft ? 1 : 0,
+          borderColor: isSoft ? softBorderColor : 'transparent',
           paddingVertical: compact ? spacing.xs : spacing.xs + 1,
           paddingHorizontal: compact ? spacing.sm : spacing.md,
         },

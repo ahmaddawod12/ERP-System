@@ -8,7 +8,6 @@ import { useCache } from '../contexts/CacheContext';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
-  Text,
   TextInput,
   TouchableOpacity,
   FlatList,
@@ -31,7 +30,7 @@ import { useLanguageContext } from '../contexts/LanguageContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../theme';
-import { GlobalHeader } from '../components';
+import { AppText, GlobalHeader } from '../components';
 
 export default function SupportChat() {
   const router = useRouter();
@@ -655,12 +654,12 @@ export default function SupportChat() {
             ? [styles.userBubble, { backgroundColor: colors.primary }]
             : [styles.devBubble, { backgroundColor: colors.surface }],
         ]}>
-          <Text style={[
+          <AppText style={[
             styles.messageText,
             { color: isUser ? 'white' : colors.textPrimary }
           ]}>
             {item.text}
-          </Text>
+          </AppText>
         </View>
       </View>
     );
@@ -704,27 +703,27 @@ export default function SupportChat() {
                   <MaterialCommunityIcons name={categoryIcon.icon} size={20} color={categoryIcon.color} />
                 )}
               </View>
-              <Text style={[styles.historyItemMessage, { color: colors.textPrimary }]} numberOfLines={2}>
+              <AppText style={[styles.historyItemMessage, { color: colors.textPrimary }]} numberOfLines={2}>
                 {item.lastMessage || t.emptyState}
-              </Text>
+              </AppText>
               {(item.unreadForUser || 0) > 0 && (
                 <View style={[styles.unreadBadge, { backgroundColor: colors.error }]}>
                   <MaterialCommunityIcons name="message-badge" size={16} color="white" />
-                  <Text style={styles.unreadBadgeText}>{item.unreadForUser}</Text>
+                  <AppText style={styles.unreadBadgeText}>{item.unreadForUser}</AppText>
                 </View>
               )}
               <View style={[
                 styles.statusBadge,
                 { backgroundColor: isOpen ? colors.success : colors.textSecondary }
               ]}>
-                <Text style={styles.statusBadgeText}>
+                <AppText style={styles.statusBadgeText}>
                   {isOpen ? (language === 'en' ? 'Open' : language === 'he' ? 'פתוח' : 'مفتوح') : (language === 'en' ? 'Closed' : language === 'he' ? 'סגור' : 'مغلق')}
-                </Text>
+                </AppText>
               </View>
             </View>
-            <Text style={[styles.historyItemDate, { color: colors.textSecondary }]}>
+            <AppText style={[styles.historyItemDate, { color: colors.textSecondary }]}>
               {formatDate(item.lastMessageAt)}
-            </Text>
+            </AppText>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -764,11 +763,11 @@ export default function SupportChat() {
         >
           <TouchableOpacity onPress={toggleHistory} style={styles.historyBackButton}>
             <Ionicons name="arrow-back" size={24} color="white" />
-            <Text style={styles.historyBackText}>
+            <AppText style={styles.historyBackText}>
               {language === 'en' ? 'Back' : language === 'he' ? 'חזור' : 'رجوع'}
-            </Text>
+            </AppText>
           </TouchableOpacity>
-          <Text style={styles.historyHeaderTitle}>{t.history}</Text>
+          <AppText style={styles.historyHeaderTitle}>{t.history}</AppText>
           <View style={{ width: 80 }} />
         </LinearGradient>
         
@@ -779,9 +778,9 @@ export default function SupportChat() {
         ) : closedConversations.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="chat-outline" size={64} color={colors.textSecondary} />
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>
               {t.noHistory}
-            </Text>
+            </AppText>
           </View>
         ) : (
           <FlatList
@@ -806,10 +805,10 @@ export default function SupportChat() {
         end={{ x: 1, y: 1 }}
         style={styles.header}
       >
-        <Text style={styles.headerTitle}>{t.title}</Text>
+        <AppText style={styles.headerTitle}>{t.title}</AppText>
         <TouchableOpacity onPress={toggleHistory} style={styles.historyButton}>
           <MaterialCommunityIcons name="history" size={22} color="white" />
-          <Text style={styles.historyButtonText}>{t.history}</Text>
+          <AppText style={styles.historyButtonText}>{t.history}</AppText>
         </TouchableOpacity>
       </LinearGradient>
       
@@ -841,20 +840,20 @@ export default function SupportChat() {
                     {selectedCategory === 'suggestion' && <Ionicons name="bulb-outline" size={20} color="#FF9800" />}
                     {selectedCategory === 'support' && <MaterialCommunityIcons name="account-tie-outline" size={20} color={colors.primary} />}
                     {selectedCategory === 'freeChat' && <Ionicons name="chatbubbles-outline" size={20} color="#4CAF50" />}
-                    <Text style={[styles.categoryDropdownText, { color: colors.textPrimary }]}>
+                    <AppText style={[styles.categoryDropdownText, { color: colors.textPrimary }]}>
                       {selectedCategory === 'bug' ? t.reportBug :
                        selectedCategory === 'opinion' ? t.opinion :
                        selectedCategory === 'suggestion' ? t.suggestion :
                        selectedCategory === 'support' ? t.technicalSupport :
                        t.freeChat}
-                    </Text>
+                    </AppText>
                   </>
                 ) : (
                   <>
                     <MaterialCommunityIcons name="format-list-bulleted" size={20} color={colors.textSecondary} />
-                    <Text style={[styles.categoryDropdownText, { color: colors.textSecondary }]}>
+                    <AppText style={[styles.categoryDropdownText, { color: colors.textSecondary }]}>
                       {t.selectCategory}
-                    </Text>
+                    </AppText>
                   </>
                 )}
               </View>
@@ -876,9 +875,9 @@ export default function SupportChat() {
                   }}
                 >
                   <Ionicons name="bug-outline" size={20} color={colors.error} />
-                  <Text style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
                     {t.reportBug}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -890,9 +889,9 @@ export default function SupportChat() {
                   }}
                 >
                   <MaterialCommunityIcons name="comment-text-outline" size={20} color="#9C27B0" />
-                  <Text style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
                     {t.opinion}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -904,9 +903,9 @@ export default function SupportChat() {
                   }}
                 >
                   <Ionicons name="bulb-outline" size={20} color="#FF9800" />
-                  <Text style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
                     {t.suggestion}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -918,9 +917,9 @@ export default function SupportChat() {
                   }}
                 >
                   <MaterialCommunityIcons name="account-tie-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
                     {t.technicalSupport}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
@@ -932,9 +931,9 @@ export default function SupportChat() {
                   }}
                 >
                   <Ionicons name="chatbubbles-outline" size={20} color="#4CAF50" />
-                  <Text style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.categoryDropdownItemText, { color: colors.textPrimary }]}>
                     {t.freeChat}
-                  </Text>
+                  </AppText>
                 </TouchableOpacity>
               </View>
             )}
@@ -942,16 +941,16 @@ export default function SupportChat() {
           
           {/* Open Conversations Section */}
           <View style={styles.openConversationsSection}>
-            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>
               {t.openChats}
-            </Text>
+            </AppText>
             
             {openConversations.filter(conv => conv.lastMessage && conv.lastMessage.trim()).length === 0 ? (
               <View style={styles.noOpenChatsContainer}>
                 <MaterialCommunityIcons name="chat-outline" size={48} color={colors.textSecondary} />
-                <Text style={[styles.noOpenChatsText, { color: colors.textSecondary }]}>
+                <AppText style={[styles.noOpenChatsText, { color: colors.textSecondary }]}>
                   {t.noOpenChats}
-                </Text>
+                </AppText>
               </View>
             ) : (
               <View>
@@ -975,17 +974,17 @@ export default function SupportChat() {
           <View style={[styles.templateFormFullContainer, { backgroundColor: colors.background }]}>
             <View style={[styles.templateFormHeader, { backgroundColor: colors.surface }]}>
               <MaterialCommunityIcons name="form-textbox" size={24} color={colors.primary} />
-              <Text style={[styles.templateFormTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.templateFormTitle, { color: colors.textPrimary }]}>
                 {t.fillTemplate}
-              </Text>
+              </AppText>
             </View>
             
             <ScrollView style={styles.templateFormFullScroll} showsVerticalScrollIndicator={false}>
               {getTemplateQuestions(selectedCategory).map((question, index) => (
                 <View key={index} style={styles.templateQuestionContainer}>
-                  <Text style={[styles.templateQuestion, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.templateQuestion, { color: colors.textPrimary }]}>
                     {question}
-                  </Text>
+                  </AppText>
                   <TextInput
                     style={[styles.templateInput, { 
                       backgroundColor: colors.surface, 
@@ -1014,7 +1013,7 @@ export default function SupportChat() {
                 ) : (
                   <>
                     <Ionicons name="send" size={20} color="white" />
-                    <Text style={styles.templateActionButtonText}>{t.sendMessage}</Text>
+                    <AppText style={styles.templateActionButtonText}>{t.sendMessage}</AppText>
                   </>
                 )}
               </TouchableOpacity>
@@ -1023,9 +1022,9 @@ export default function SupportChat() {
         ) : messages.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="chat-processing-outline" size={64} color={colors.textSecondary} />
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>
               {t.emptyState}
-            </Text>
+            </AppText>
           </View>
         ) : (
           <FlatList
@@ -1519,3 +1518,4 @@ const styles = StyleSheet.create({
     fontWeight: typography.semibold,
   },
 });
+

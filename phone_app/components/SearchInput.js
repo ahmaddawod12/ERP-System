@@ -1,6 +1,6 @@
-import React from 'react';
-import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import { getColors, spacing, typography } from '../theme';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { borderRadius, getColors, shadows, spacing, typography } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import AppIcon from './AppIcon';
 
@@ -16,9 +16,29 @@ export default function SearchInput({
   const { isDarkMode } = useThemeContext();
   const palette = colors || getColors(isDarkMode);
   const canClear = !!value;
+  const [isFocused, setIsFocused] = useState(false);
+  const focusStyle = isFocused
+    ? {
+        shadowColor: palette.secondary,
+        shadowOpacity: 0.2,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 10,
+        elevation: 3,
+      }
+    : shadows.none;
 
   return (
-    <View style={[styles.container, { backgroundColor: palette.surface, borderColor: palette.border }, style]}>
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: palette.surfaceAlt,
+          borderColor: isFocused ? palette.secondary : palette.border,
+        },
+        focusStyle,
+        style,
+      ]}
+    >
       <AppIcon name="search-outline" size={18} color={palette.textLight} />
       <TextInput
         value={value}
@@ -29,19 +49,21 @@ export default function SearchInput({
         autoCapitalize="none"
         autoCorrect={false}
         editable={editable}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
       />
       {canClear ? (
-        <TouchableOpacity
+        <Pressable
           onPress={() => {
             onChangeText?.('');
             onClear?.();
           }}
           accessibilityRole="button"
           accessibilityLabel="Clear search"
-          style={styles.clearButton}
+          style={({ pressed }) => [styles.clearButton, { opacity: pressed ? 0.72 : 1 }]}
         >
           <AppIcon name="close-circle" size={18} color={palette.textLight} />
-        </TouchableOpacity>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -49,18 +71,19 @@ export default function SearchInput({
 
 const styles = StyleSheet.create({
   container: {
-    borderWidth: 1.3,
-    borderRadius: 14,
-    minHeight: 48,
+    borderWidth: 1.2,
+    borderRadius: borderRadius.lg,
+    minHeight: 50,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    ...shadows.xs,
   },
   input: {
     flex: 1,
     fontSize: typography.base,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.sm + 2,
   },
   clearButton: {
     padding: spacing.xs,

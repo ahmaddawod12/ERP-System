@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   StyleSheet,
   ScrollView,
@@ -12,7 +11,7 @@ import {
   Platform,
   Linking,
   Alert as RNAlert,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -29,7 +28,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { useDocumentTask } from '../../hooks';
-import { GlobalHeader, LoadingOverlay, ScrollableContainer, InventoryItemSearch } from '../../components';
+import { AppText, GlobalHeader, LoadingOverlay, ScrollableContainer, InventoryItemSearch } from '../../components';
 
 export default function GenerateReceipt() {
   const router = useRouter();
@@ -1306,12 +1305,12 @@ export default function GenerateReceipt() {
         {loading ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>{t.loading}</Text>
+            <AppText style={[styles.loadingText, { color: colors.textSecondary }]}>{t.loading}</AppText
           </View>
         ) : filteredJobs.length === 0 ? (
           <View style={styles.centerContainer}>
             <MaterialCommunityIcons name="file-document-outline" size={64} color={colors.textSecondary} />
-            <Text style={[styles.noJobsText, { color: colors.textSecondary }]}>{t.noJobs}</Text>
+            <AppText style={[styles.noJobsText, { color: colors.textSecondary }]}>{t.noJobs}</AppText
           </View>
         ) : (
           filteredJobs.map((job) => {
@@ -1337,9 +1336,9 @@ export default function GenerateReceipt() {
                     color={isSelected ? colors.primary : colors.textSecondary} 
                   />
                   <MaterialCommunityIcons name="briefcase-check" size={24} color={colors.primary} />
-                  <Text style={[styles.jobTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                  <AppText style={[styles.jobTitle, { color: colors.textPrimary }]} numberOfLines={1}>
                     {job.title || 'Untitled Job'}
-                  </Text>
+                  </AppText
                 </View>
               </View>
 
@@ -1347,59 +1346,59 @@ export default function GenerateReceipt() {
               <View style={styles.jobDetails}>
                 <View style={styles.detailRow}>
                   <MaterialCommunityIcons name="account" size={18} color={colors.textSecondary} />
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.worker}:</Text>
-                  <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{job.workerName || 'N/A'}</Text>
+                  <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.worker}:</AppText
+                  <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.workerName || 'N/A'}</AppText
                 </View>
 
                 {job.clientName && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="account-tie" size={18} color={colors.textSecondary} />
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.customer}:</Text>
-                    <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{job.clientName}</Text>
+                    <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.customer}:</AppText
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.clientName}</AppText
                   </View>
                 )}
 
                 {job.clientPhone && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="phone" size={18} color={colors.textSecondary} />
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.phone || 'Phone'}:</Text>
-                    <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{job.clientPhone}</Text>
+                    <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.phone || 'Phone'}:</AppText
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.clientPhone}</AppText
                   </View>
                 )}
 
                 {job.location && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="map-marker" size={18} color={colors.textSecondary} />
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.location}:</Text>
-                    <Text style={[styles.detailValue, { color: colors.textPrimary }]} numberOfLines={1}>
+                    <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.location}:</AppText
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]} numberOfLines={1}>
                       {job.location}
-                    </Text>
+                    </AppText
                   </View>
                 )}
 
                 {job.timeWorked && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="clock-outline" size={18} color={colors.textSecondary} />
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.timeWorked}:</Text>
-                    <Text style={[styles.detailValue, { color: colors.textPrimary }]}>{job.timeWorked}</Text>
+                    <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.timeWorked}:</AppText
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.timeWorked}</AppText
                   </View>
                 )}
 
                 <View style={styles.detailRow}>
                   <MaterialCommunityIcons name="calendar-check" size={18} color={colors.textSecondary} />
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.completedOn}:</Text>
-                  <Text style={[styles.detailValue, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.completedOn}:</AppText
+                  <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>
                     {formatDate(job.finishedAt)}
-                  </Text>
+                  </AppText
                 </View>
 
                 {job.partsUsed && job.partsUsed.length > 0 && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="package-variant" size={18} color={colors.textSecondary} />
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.parts}:</Text>
-                    <Text style={[styles.detailValue, { color: colors.textPrimary }]}>
+                    <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.parts}:</AppText
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>
                       {job.partsUsed.length} items
-                    </Text>
+                    </AppText
                   </View>
                 )}
               </View>
@@ -1414,11 +1413,11 @@ export default function GenerateReceipt() {
         <View style={[styles.selectionBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: insets.bottom + 10 }]}>
           <View style={styles.selectionBarContent}>
             <View style={styles.selectionInfo}>
-              <Text style={[styles.selectionCountText, { color: colors.primary }]}>
+              <AppText style={[styles.selectionCountText, { color: colors.primary }]}>
                 {selectedJobs.length} {t.jobsSelected}
-              </Text>
+              </AppText
               <TouchableOpacity onPress={() => setSelectedJobs([])}>
-                <Text style={[styles.deselectText, { color: colors.error }]}>{t.deselectAll}</Text>
+                <AppText style={[styles.deselectText, { color: colors.error }]}>{t.deselectAll}</AppText
               </TouchableOpacity>
             </View>
             <TouchableOpacity
@@ -1431,7 +1430,7 @@ export default function GenerateReceipt() {
                 end={{ x: 1, y: 0 }}
               >
                 <MaterialCommunityIcons name="receipt" size={20} color="white" />
-                <Text style={styles.generateButtonText}>{t.generateFromSelected}</Text>
+                <AppText style={styles.generateButtonText}>{t.generateFromSelected}</AppText
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -1460,9 +1459,9 @@ export default function GenerateReceipt() {
                 <Ionicons name="close" size={28} color={colors.textPrimary} />
               </TouchableOpacity>
               <View style={styles.stepHeaderCenter}>
-                <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                <AppText style={[styles.modalTitle, { color: colors.textPrimary }]}>
                   {currentStep === 1 ? t.step1Title : t.step2Title}
-                </Text>
+                </AppText
                 {/* Step Indicator Dots */}
                 <View style={styles.stepIndicator}>
                   <View style={[styles.stepDot, currentStep === 1 && { backgroundColor: colors.primary }]} />
@@ -1484,22 +1483,22 @@ export default function GenerateReceipt() {
                   {selectedClientObj && (
                     <View style={[styles.clientSourceBadge, { backgroundColor: colors.success + '15', borderColor: colors.success + '40' }]}>
                       <Ionicons name="checkmark-circle" size={18} color={colors.success} />
-                      <Text style={[styles.clientSourceText, { color: colors.success }]}>
+                      <AppText style={[styles.clientSourceText, { color: colors.success }]}>
                         {t.clientFromBook}
-                      </Text>
+                      </AppText
                     </View>
                   )}
 
                   {/* Customer Details Section */}
                   <View style={[styles.formSection, { backgroundColor: colors.surface }]}>
-                    <Text style={[styles.sectionTitle, { color: colors.primary }]}>
+                    <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                       {t.customerDetails}
-                    </Text>
+                    </AppText
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.customerName} <Text style={styles.requiredStar}>*</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.customerName} <AppText style={styles.requiredStar}>*</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.customerName}
@@ -1510,9 +1509,9 @@ export default function GenerateReceipt() {
                     </View>
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.customerVatNumber} <Text style={styles.requiredStar}>*</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.customerVatNumber} <AppText style={styles.requiredStar}>*</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.customerVatNumber}
@@ -1524,9 +1523,9 @@ export default function GenerateReceipt() {
                     </View>
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.customerEmail} <Text style={styles.optionalText}>({t.optional})</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.customerEmail} <AppText style={styles.optionalText}>({t.optional})</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.customerEmail}
@@ -1538,9 +1537,9 @@ export default function GenerateReceipt() {
                     </View>
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.customerAddress} <Text style={styles.optionalText}>({t.optional})</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.customerAddress} <AppText style={styles.optionalText}>({t.optional})</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.customerAddress}
@@ -1551,9 +1550,9 @@ export default function GenerateReceipt() {
                     </View>
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.customerCity} <Text style={styles.optionalText}>({t.optional})</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.customerCity} <AppText style={styles.optionalText}>({t.optional})</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.customerCity}
@@ -1564,9 +1563,9 @@ export default function GenerateReceipt() {
                     </View>
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.customerPhone} <Text style={styles.optionalText}>({t.optional})</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.customerPhone} <AppText style={styles.optionalText}>({t.optional})</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.customerPhone}
@@ -1580,19 +1579,19 @@ export default function GenerateReceipt() {
 
                   {/* Matching Price Proposals */}
                   <View style={[styles.formSection, { backgroundColor: colors.surface }]}>
-                    <Text style={[styles.sectionTitle, { color: colors.primary }]}>
+                    <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                       {t.priceProposals}
-                    </Text>
-                    <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+                    </AppText
+                    <AppText style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
                       {t.selectProposal}
-                    </Text>
+                    </AppText
 
                     {matchingProposals.length === 0 ? (
                       <View style={[styles.noProposalsContainer, { backgroundColor: colors.backgroundLight }]}>
                         <MaterialCommunityIcons name="file-document-outline" size={32} color={colors.textSecondary} />
-                        <Text style={[styles.noProposalsText, { color: colors.textSecondary }]}>
+                        <AppText style={[styles.noProposalsText, { color: colors.textSecondary }]}>
                           {t.noProposals}
-                        </Text>
+                        </AppText
                       </View>
                     ) : (
                       matchingProposals.map((proposal) => {
@@ -1619,25 +1618,25 @@ export default function GenerateReceipt() {
                                   size={20} 
                                   color={isSelected ? colors.primary : colors.textSecondary} 
                                 />
-                                <Text style={[styles.proposalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                                <AppText style={[styles.proposalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
                                   {proposal.clientName || t.priceProposals}
-                                </Text>
+                                </AppText
                               </View>
                               {isSelected && (
                                 <View style={[styles.selectedBadge, { backgroundColor: colors.primary + '20' }]}>
-                                  <Text style={[styles.selectedBadgeText, { color: colors.primary }]}>{t.selected}</Text>
+                                  <AppText style={[styles.selectedBadgeText, { color: colors.primary }]}>{t.selected}</AppText
                                 </View>
                               )}
                             </View>
                             <View style={styles.proposalMeta}>
                               {dateStr ? (
-                                <Text style={[styles.proposalMetaText, { color: colors.textSecondary }]}>
+                                <AppText style={[styles.proposalMetaText, { color: colors.textSecondary }]}>
                                   {t.proposalDate}: {dateStr}
-                                </Text>
+                                </AppText
                               ) : null}
-                              <Text style={[styles.proposalMetaText, { color: colors.textSecondary }]}>
+                              <AppText style={[styles.proposalMetaText, { color: colors.textSecondary }]}>
                                 {itemCount} {t.proposalItems} • ₪{totalAmount.toFixed(2)}
-                              </Text>
+                              </AppText
                             </View>
                           </TouchableOpacity>
                         );
@@ -1651,7 +1650,7 @@ export default function GenerateReceipt() {
                       style={[styles.cancelButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
                       onPress={closeReceiptForm}
                     >
-                      <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</Text>
+                      <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -1664,7 +1663,7 @@ export default function GenerateReceipt() {
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 0 }}
                       >
-                        <Text style={styles.submitButtonText}>{t.continueToItems}</Text>
+                        <AppText style={styles.submitButtonText}>{t.continueToItems}</AppText
                         <Ionicons name="arrow-forward" size={20} color="white" />
                       </LinearGradient>
                     </TouchableOpacity>
@@ -1677,14 +1676,14 @@ export default function GenerateReceipt() {
                 <>
                   {/* Service Details Section */}
                   <View style={[styles.formSection, { backgroundColor: colors.surface }]}>
-                    <Text style={[styles.sectionTitle, { color: colors.primary }]}>
+                    <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                       {t.serviceDetails}
-                    </Text>
+                    </AppText
                     
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.serviceDescription} <Text style={styles.requiredStar}>*</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.serviceDescription} <AppText style={styles.requiredStar}>*</AppText
+                      </AppText
                       <TextInput
                         style={[styles.inputMultiline, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.serviceDescription}
@@ -1697,9 +1696,9 @@ export default function GenerateReceipt() {
                     </View>
 
                     <View style={styles.inputGroup}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                        {t.invoiceDate} <Text style={styles.requiredStar}>*</Text>
-                      </Text>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                        {t.invoiceDate} <AppText style={styles.requiredStar}>*</AppText
+                      </AppText
                       <TextInput
                         style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                         value={invoiceData.invoiceDate}
@@ -1712,17 +1711,17 @@ export default function GenerateReceipt() {
 
                   {/* Parts & Services Section */}
                   <View style={[styles.formSection, { backgroundColor: colors.surface }]}>
-                    <Text style={[styles.sectionTitle, { color: colors.primary }]}>
+                    <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                       {t.partsAndServices}
-                    </Text>
+                    </AppText
 
                     {/* Price Proposal Applied Badge */}
                     {selectedPriceProposal && (
                       <View style={[styles.proposalAppliedBadge, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
                         <Ionicons name="pricetag" size={16} color={colors.primary} />
-                        <Text style={[styles.proposalAppliedText, { color: colors.primary }]}>
+                        <AppText style={[styles.proposalAppliedText, { color: colors.primary }]}>
                           {language === 'he' ? 'מחירים מהצעת מחיר' : language === 'ar' ? 'أسعار من عرض السعر' : 'Prices from Price Proposal'}
-                        </Text>
+                        </AppText
                         <TouchableOpacity onPress={() => applyPriceProposal(selectedPriceProposal)}>
                           <Ionicons name="close-circle" size={18} color={colors.primary} />
                         </TouchableOpacity>
@@ -1732,26 +1731,26 @@ export default function GenerateReceipt() {
                     {/* Job Parts */}
                     {jobParts.length > 0 ? (
                       <>
-                        <Text style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: spacing.sm }]}>
+                        <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: spacing.sm }]}>
                           {selectedJobs.length > 1 ? t.mergedParts : t.jobParts}
                           {selectedJobs.length > 1 && (
-                            <Text style={{ fontSize: typography.xs, color: colors.textSecondary, fontWeight: 'normal' }}>
+                            <AppText style={{ fontSize: typography.xs, color: colors.textSecondary, fontWeight: 'normal' }}>
                               {' '}({selectedJobs.length} {t.jobsSelected})
-                            </Text>
+                            </AppText
                           )}
-                        </Text>
+                        </AppText
                         {jobParts.map((part, index) => (
                           <View key={index} style={[styles.partItem, { backgroundColor: colors.backgroundLight, borderColor: colors.border }]}>
                             <View style={styles.partRow}>
-                              <Text style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</Text>
-                              <Text style={[styles.partQuantity, { color: colors.textSecondary }]}>
+                              <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText
+                              <AppText style={[styles.partQuantity, { color: colors.textSecondary }]}>
                                 {t.quantity}: {part.quantity}
-                              </Text>
+                              </AppText
                             </View>
                             <View style={styles.partPriceRow}>
-                              <Text style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
-                                {t.price} <Text style={styles.requiredStar}>*</Text>
-                              </Text>
+                              <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
+                                {t.price} <AppText style={styles.requiredStar}>*</AppText
+                              </AppText
                               <TextInput
                                 style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border, flex: 1 }]}
                                 value={part.price}
@@ -1762,30 +1761,30 @@ export default function GenerateReceipt() {
                               />
                             </View>
                             {part.price && !isNaN(parseFloat(part.price)) && (
-                              <Text style={[styles.partTotal, { color: colors.primary }]}>
+                              <AppText style={[styles.partTotal, { color: colors.primary }]}>
                                 {t.totalPrice}: {(parseFloat(part.quantity) * parseFloat(part.price)).toFixed(2)} ₪
-                              </Text>
+                              </AppText
                             )}
                           </View>
                         ))}
                       </>
                     ) : (
-                      <Text style={[styles.noPartsText, { color: colors.textSecondary }]}>
+                      <AppText style={[styles.noPartsText, { color: colors.textSecondary }]}>
                         {t.noPartsFromJob}
-                      </Text>
+                      </AppText
                     )}
 
                     {/* Custom Parts with Inventory Search */}
                     <View style={{ marginTop: spacing.lg }}>
-                      <Text style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: spacing.sm }]}>
+                      <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: spacing.sm }]}>
                         {t.customParts}
-                      </Text>
+                      </AppText
                       {customParts.map((part, index) => (
                         <View key={index} style={[styles.partItem, { backgroundColor: colors.backgroundLight, borderColor: colors.border }]}>
                           <View style={styles.partHeader}>
-                            <Text style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                              {t.partName} <Text style={styles.requiredStar}>*</Text>
-                            </Text>
+                            <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+                              {t.partName} <AppText style={styles.requiredStar}>*</AppText
+                            </AppText
                             <TouchableOpacity onPress={() => removeCustomPart(index)}>
                               <MaterialCommunityIcons name="close-circle" size={24} color={colors.error} />
                             </TouchableOpacity>
@@ -1801,9 +1800,9 @@ export default function GenerateReceipt() {
                           />
                           <View style={styles.partPriceRow}>
                             <View style={{ flex: 1, marginRight: spacing.sm }}>
-                              <Text style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
-                                {t.quantity} <Text style={styles.requiredStar}>*</Text>
-                              </Text>
+                              <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
+                                {t.quantity} <AppText style={styles.requiredStar}>*</AppText
+                              </AppText
                               <TextInput
                                 style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border }]}
                                 value={part.quantity}
@@ -1814,9 +1813,9 @@ export default function GenerateReceipt() {
                               />
                             </View>
                             <View style={{ flex: 1 }}>
-                              <Text style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
-                                {t.price} <Text style={styles.requiredStar}>*</Text>
-                              </Text>
+                              <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
+                                {t.price} <AppText style={styles.requiredStar}>*</AppText
+                              </AppText
                               <TextInput
                                 style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border }]}
                                 value={part.price}
@@ -1828,9 +1827,9 @@ export default function GenerateReceipt() {
                             </View>
                           </View>
                           {part.quantity && part.price && !isNaN(parseFloat(part.quantity)) && !isNaN(parseFloat(part.price)) && (
-                            <Text style={[styles.partTotal, { color: colors.primary }]}>
+                            <AppText style={[styles.partTotal, { color: colors.primary }]}>
                               {t.totalPrice}: {(parseFloat(part.quantity) * parseFloat(part.price)).toFixed(2)} ₪
-                            </Text>
+                            </AppText
                           )}
                         </View>
                       ))}
@@ -1841,7 +1840,7 @@ export default function GenerateReceipt() {
                         style={[styles.addPartButton, { backgroundColor: colors.primary }]}
                       >
                         <MaterialCommunityIcons name="plus-circle" size={20} color="white" />
-                        <Text style={styles.addPartButtonText}>{t.addCustomPart}</Text>
+                        <AppText style={styles.addPartButtonText}>{t.addCustomPart}</AppText
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1853,7 +1852,7 @@ export default function GenerateReceipt() {
                       onPress={goToStep1}
                     >
                       <Ionicons name="arrow-back" size={18} color={colors.textPrimary} style={{ marginRight: 4 }} />
-                      <Text style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.backToClient}</Text>
+                      <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.backToClient}</AppText
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -1872,7 +1871,7 @@ export default function GenerateReceipt() {
                         ) : (
                           <>
                             <MaterialCommunityIcons name="eye" size={20} color="white" />
-                            <Text style={styles.submitButtonText}>{t.preview}</Text>
+                            <AppText style={styles.submitButtonText}>{t.preview}</AppText
                           </>
                         )}
                       </LinearGradient>
@@ -1897,9 +1896,9 @@ export default function GenerateReceipt() {
           
           {/* PDF Modal Header */}
           <View style={[styles.pdfModalHeader, { paddingTop: insets.top + 10, backgroundColor: colors.surface }]}>
-            <Text style={[styles.pdfModalTitle, { color: colors.textPrimary }]}>
+            <AppText style={[styles.pdfModalTitle, { color: colors.textPrimary }]}>
               {t.previewTitle}
-            </Text>
+            </AppText
             <TouchableOpacity onPress={() => setPdfModalVisible(false)} style={styles.closePdfButton}>
               <Ionicons name="close" size={28} color={colors.textPrimary} />
             </TouchableOpacity>
@@ -1909,12 +1908,12 @@ export default function GenerateReceipt() {
           {previewURL && (
             <View style={styles.pdfActionsContainer}>
               <MaterialCommunityIcons name="file-pdf-box" size={120} color={colors.primary} />
-              <Text style={[styles.pdfSuccessText, { color: colors.textPrimary }]}>
+              <AppText style={[styles.pdfSuccessText, { color: colors.textPrimary }]}>
                 Tax Invoice Generated Successfully!
-              </Text>
-              <Text style={[styles.pdfInfoText, { color: colors.textSecondary }]}>
+              </AppText
+              <AppText style={[styles.pdfInfoText, { color: colors.textSecondary }]}>
                 Your PDF is ready to view or share
-              </Text>
+              </AppText
 
               <View style={styles.openPdfButtonContainer}>
                 <TouchableOpacity onPress={downloadAndSharePDF}>
@@ -1925,7 +1924,7 @@ export default function GenerateReceipt() {
                     end={{ x: 1, y: 0 }}
                   >
                     <MaterialCommunityIcons name="file-pdf-box" size={24} color="white" />
-                    <Text style={styles.openPdfButtonText}>Open PDF</Text>
+                    <AppText style={styles.openPdfButtonText}>Open PDF</AppText
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
@@ -1939,7 +1938,7 @@ export default function GenerateReceipt() {
                     end={{ x: 1, y: 0 }}
                   >
                     <MaterialCommunityIcons name="check-circle" size={24} color="white" />
-                    <Text style={styles.openPdfButtonText}>Generate Invoice</Text>
+                    <AppText style={styles.openPdfButtonText}>Generate Invoice</AppText
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
@@ -1963,7 +1962,7 @@ export default function GenerateReceipt() {
 
           {/* Viewer Header */}
           <View style={[styles.pdfModalHeader, { backgroundColor: colors.surface, paddingTop: insets.top + 10 }]}>
-            <Text style={[styles.pdfModalTitle, { color: colors.primary }]}>Tax Invoice Preview</Text>
+            <AppText style={[styles.pdfModalTitle, { color: colors.primary }]}>Tax Invoice Preview</AppText
             <TouchableOpacity
               onPress={() => {
                 setPdfViewerVisible(false);
@@ -1989,7 +1988,7 @@ export default function GenerateReceipt() {
                 renderLoading={() => (
                   <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={[styles.loadingText, { color: colors.text }]}>{t.loading}</Text>
+                    <AppText style={[styles.loadingText, { color: colors.text }]}>{t.loading}</AppText
                   </View>
                 )}
                 onError={(syntheticEvent) => {
@@ -2006,7 +2005,7 @@ export default function GenerateReceipt() {
             ) : (
               <View style={styles.centerContainer}>
                 <MaterialCommunityIcons name="file-alert" size={64} color={colors.textSecondary} />
-                <Text style={[styles.noJobsText, { color: colors.textSecondary }]}>No preview available</Text>
+                <AppText style={[styles.noJobsText, { color: colors.textSecondary }]}>No preview available</AppText
               </View>
             )}
           </View>
@@ -2560,3 +2559,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 });
+
+
+
+
+

@@ -1,53 +1,46 @@
 import React from 'react';
-import { I18nManager, StyleSheet, Text } from 'react-native';
+import { I18nManager, Text } from 'react-native';
 import { getColors, typography } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import { useLanguageContext } from '../contexts/LanguageContext';
 
-const variants = StyleSheet.create({
-  display: {
-    fontSize: typography.display,
-    fontWeight: typography.extrabold,
-    lineHeight: typography.display * typography.tight,
-  },
-  title: {
-    fontSize: typography.xxl,
-    fontWeight: typography.bold,
-    lineHeight: typography.xxl * typography.tight,
-  },
-  heading: {
-    fontSize: typography.xl,
-    fontWeight: typography.bold,
-    lineHeight: typography.xl * typography.tight,
-  },
-  body: {
-    fontSize: typography.base,
-    fontWeight: typography.regular,
-    lineHeight: typography.base * typography.normal,
-  },
-  bodyStrong: {
-    fontSize: typography.base,
-    fontWeight: typography.semibold,
-    lineHeight: typography.base * typography.normal,
-  },
-  caption: {
-    fontSize: typography.sm,
-    fontWeight: typography.regular,
-    lineHeight: typography.sm * typography.normal,
-  },
-  label: {
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-    lineHeight: typography.sm * typography.normal,
-  },
+const variantTokens = {
+  display: { size: typography.display, weight: 'extrabold', ratio: typography.tight, spacing: -0.35 },
+  title: { size: typography.xxl, weight: 'bold', ratio: typography.tight, spacing: -0.2 },
+  heading: { size: typography.xl, weight: 'bold', ratio: typography.tight, spacing: -0.15 },
+  body: { size: typography.base, weight: 'regular', ratio: typography.normal, spacing: 0 },
+  bodyStrong: { size: typography.base, weight: 'semibold', ratio: typography.normal, spacing: 0.1 },
+  caption: { size: typography.sm, weight: 'regular', ratio: typography.normal, spacing: 0.15 },
+  label: { size: typography.sm, weight: 'semibold', ratio: typography.normal, spacing: 0.18 },
   badge: {
-    fontSize: typography.xs,
-    fontWeight: typography.bold,
-    lineHeight: typography.xs * typography.normal,
-    letterSpacing: 0.2,
+    size: typography.xs,
+    weight: 'bold',
+    ratio: typography.normal,
+    spacing: 0.4,
     textTransform: 'uppercase',
   },
-});
+};
+
+const getFontFamily = (weightKey) => {
+  if (weightKey === 'extrabold') return typography.fontFamilies.primaryExtraBold;
+  if (weightKey === 'bold') return typography.fontFamilies.primaryBold;
+  if (weightKey === 'semibold') return typography.fontFamilies.primarySemiBold;
+  if (weightKey === 'medium') return typography.fontFamilies.primaryMedium;
+  return typography.fontFamilies.primary;
+};
+
+const buildVariantStyle = (variant, weightOverride) => {
+  const token = variantTokens[variant] || variantTokens.body;
+  const weightKey = weightOverride || token.weight;
+  return {
+    fontSize: token.size,
+    lineHeight: Math.round(token.size * token.ratio),
+    letterSpacing: token.spacing,
+    fontWeight: typography.weights[weightKey] || typography.weights.regular,
+    fontFamily: getFontFamily(weightKey),
+    textTransform: token.textTransform || 'none',
+  };
+};
 
 export default function AppText({
   children,
@@ -58,18 +51,20 @@ export default function AppText({
   accessibilityLabel,
   align,
   allowFontScaling = true,
+  weight,
 }) {
   const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
   const palette = getColors(isDarkMode);
   const isRTL = language === 'he' || language === 'ar' || I18nManager.isRTL;
-  const resolvedVariant = variants[variant] || variants.body;
+  const resolvedVariant = buildVariantStyle(variant, weight);
 
   return (
     <Text
       allowFontScaling={allowFontScaling}
       numberOfLines={numberOfLines}
       accessibilityLabel={accessibilityLabel}
+      maxFontSizeMultiplier={1.25}
       style={[
         resolvedVariant,
         {

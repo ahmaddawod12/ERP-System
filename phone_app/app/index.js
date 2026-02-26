@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { auth, onAuthStateChanged } from '../firebase';
 import Login from '../app/Login';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { useThemeContext } from '../contexts/ThemeContext';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useCache } from '../contexts/CacheContext';
+import { AppText } from '../components';
 import { 
   registerPushTokenForUser, 
   setupNotificationListeners,
@@ -20,7 +20,6 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [firebaseInitialized, setFirebaseInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
   const { initializeCache } = useCache();
   
@@ -62,19 +61,19 @@ export default function App() {
   }, [isLoading, dot1Anim, dot2Anim, dot3Anim]);
 
   const t = language === 'en' ? {
-    title: 'JobMate',
-    subtitle: 'Inventory Manager',
+    title: 'Smart-Job ERP',
+    subtitle: 'Business Operations Platform',
     loading: 'Loading...',
     success: 'Login Successful!',
     welcome: 'Welcome Back',
   } : language === 'he' ? {
-    title: 'JobMate',
+    title: 'Smart-Job ERP',
     subtitle: 'מנהל מלאי',
     loading: 'טוען...',
     success: 'התחברות מוצלחת!',
     welcome: 'ברוך שובך',
   } : {
-    title: 'JobMate',
+    title: 'Smart-Job ERP',
     subtitle: 'مدير المخزون',
     loading: 'جاري التحميل...',
     success: 'تم تسجيل الدخول بنجاح!',
@@ -124,31 +123,6 @@ export default function App() {
       }, 1500);
     };
 
-    /**
-     * Check if business registration is required
-     * All roles except worker and dev need business registration
-     * Uses hasBusinessInfo flag from cache initialization
-     */
-    const checkBusinessRegistration = (role, companyId, hasBusinessInfo) => {
-      // Dev role doesn't need business registration
-      if (role === 'dev') return false;
-      
-      // All non-worker roles need business registration: manager, user, basic
-      if (role !== 'worker' && companyId) {
-        // Check if business_info exists (flag from cache init)
-        if (!hasBusinessInfo) {
-          console.log('📝 No business info found, redirecting to registration');
-          setIsLoading(false);
-          router.replace({
-            pathname: '/BusinessReg',
-            params: { companyId, userRole: role }
-          });
-          return true; // Business registration required
-        }
-      }
-      return false; // No business registration required
-    };
-    
     // Initialize Firebase auth listener
     const initializeAuth = async () => {
       if (isInitialized) {
@@ -190,8 +164,8 @@ export default function App() {
                   );
                 }
                 
-                const { uid, role, companyId, hasBusinessInfo } = cacheResult;
-                console.log(`🔐 User authenticated: ${uid} (${role}) hasBusinessInfo: ${hasBusinessInfo}`);
+                const { uid, role } = cacheResult;
+                console.log(`🔐 User authenticated: ${uid} (${role})`);
                 
                 // Register push token for notifications (always overwrite - handles token rotation)
                 registerPushTokenForUser(user.uid).then((success) => {
@@ -201,10 +175,6 @@ export default function App() {
                 }).catch((err) => {
                   console.warn('Push token registration failed (non-blocking):', err.message);
                 });
-                
-                // Check if business registration is required (using hasBusinessInfo flag)
-                const needsBusinessReg = checkBusinessRegistration(role, companyId, hasBusinessInfo);
-                if (needsBusinessReg) return;
                 
                 // All checks passed - show success animation then navigate
                 showSuccessAndNavigate(role);
@@ -251,7 +221,7 @@ export default function App() {
     return (
       <View style={styles.container}>
         <LinearGradient
-          colors={['#0F2A4D', '#1e3a8a', '#00ACC1']}
+          colors={['#081426', '#0C3A66', '#0EA892']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.loadingGradient}
@@ -263,15 +233,15 @@ export default function App() {
                 colors={['#FFFFFF', '#E0F2FE']}
                 style={styles.titleGradient}
               >
-                <Text style={styles.appTitle}>{t.title}</Text>
+                <AppText style={styles.appTitle}>{t.title}</AppText>
               </LinearGradient>
-              <Text style={styles.appSubtitle}>{t.subtitle}</Text>
+              <AppText style={styles.appSubtitle}>{t.subtitle}</AppText>
             </View>
 
             {/* Document Icon */}
             <View style={styles.iconContainer}>
               <LinearGradient
-                colors={['#0F2A4D', '#00ACC1']}
+                colors={['#0C3A66', '#0EA892']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={styles.iconCircle}
@@ -279,8 +249,8 @@ export default function App() {
                 <MaterialCommunityIcons name="clipboard-check-multiple" size={64} color="white" />
               </LinearGradient>
               <View style={styles.sparkles}>
-                <Ionicons name="sparkles" size={20} color="#00ACC1" style={styles.sparkle1} />
-                <Ionicons name="sparkles" size={16} color="#00ACC1" style={styles.sparkle2} />
+                <Ionicons name="sparkles" size={20} color="#0EA892" style={styles.sparkle1} />
+                <Ionicons name="sparkles" size={16} color="#7DD3FC" style={styles.sparkle2} />
               </View>
             </View>
 
@@ -291,7 +261,7 @@ export default function App() {
                 <Animated.View style={[styles.dot, { opacity: dot2Anim }]} />
                 <Animated.View style={[styles.dot, { opacity: dot3Anim }]} />
               </View>
-              <Text style={styles.loadingText}>{t.loading}</Text>
+              <AppText style={styles.loadingText}>{t.loading}</AppText>
             </View>
           </View>
         </LinearGradient>
@@ -325,8 +295,8 @@ export default function App() {
             <View style={styles.successCircle}>
               <Ionicons name="checkmark-circle" size={80} color="white" />
             </View>
-            <Text style={styles.successTitle}>{t.success}</Text>
-            <Text style={styles.successSubtitle}>{t.welcome}</Text>
+            <AppText style={styles.successTitle}>{t.success}</AppText>
+            <AppText style={styles.successSubtitle}>{t.welcome}</AppText>
           </View>
         </LinearGradient>
       </Animated.View>
@@ -368,7 +338,7 @@ const styles = StyleSheet.create({
   appTitle: {
     fontSize: 38,
     fontWeight: '800',
-    color: '#0F2A4D',
+    color: '#0C3A66',
     letterSpacing: 1,
   },
   appSubtitle: {
@@ -461,3 +431,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+

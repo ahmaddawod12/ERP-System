@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
+import { View,
   Text,
   TextInput,
   TouchableOpacity,
@@ -13,7 +12,7 @@ import {
   KeyboardAvoidingView,
   Keyboard,
   Modal,
-} from 'react-native';
+ } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -23,7 +22,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db, storage, FieldValue, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
-import { TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
+import { AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -715,9 +714,9 @@ export default function FillJob() {
             end={{ x: 1, y: 1 }}
             style={styles.header}
           >
-            <Text style={styles.headerTitle}>
+            <AppText style={styles.headerTitle}>
               {editingJob ? t.editJob : t.fillJob}
-            </Text>
+            </AppText
           </LinearGradient>
 
           {/* Job Title Card (User mode only) */}
@@ -725,9 +724,9 @@ export default function FillJob() {
             <View style={[styles.card, { backgroundColor: colors.surface }]}>
               <View style={styles.cardHeader}>
                 <MaterialCommunityIcons name="briefcase" size={20} color={colors.secondary} />
-                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+                <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                   {t.jobTitle} *
-                </Text>
+                </AppText
               </View>
               <TextInput
                 style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
@@ -743,9 +742,9 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <Ionicons name="person" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.clientInfo}
-              </Text>
+              </AppText
             </View>
 
             {/* Embedded client selector (search + dropdown) */}
@@ -808,32 +807,32 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <Ionicons name="time" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.timeWorked} *
-              </Text>
+              </AppText
             </View>
             <View style={styles.timeRow}>
               <View style={styles.timeColumn}>
-                <Text style={[styles.timeLabel, { color: colors.textSecondary }]}>{t.from}</Text>
+                <AppText style={[styles.timeLabel, { color: colors.textSecondary }]}>{t.from}</AppText
                 <TouchableOpacity
                   style={[styles.timeButton, { backgroundColor: colors.background, borderColor: colors.border }]}
                   onPress={() => setShowTimeFromPicker(true)}
                 >
-                  <Text style={[styles.timeText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.timeText, { color: colors.textPrimary }]}>
                     {jobData.timeFrom || 'HH:MM'}
-                  </Text>
+                  </AppText
                 </TouchableOpacity>
               </View>
 
               <View style={styles.timeColumn}>
-                <Text style={[styles.timeLabel, { color: colors.textSecondary }]}>{t.to}</Text>
+                <AppText style={[styles.timeLabel, { color: colors.textSecondary }]}>{t.to}</AppText
                 <TouchableOpacity
                   style={[styles.timeButton, { backgroundColor: colors.background, borderColor: colors.border }]}
                   onPress={() => setShowTimeToPicker(true)}
                 >
-                  <Text style={[styles.timeText, { color: colors.textPrimary }]}>
+                  <AppText style={[styles.timeText, { color: colors.textPrimary }]}>
                     {jobData.timeTo || 'HH:MM'}
-                  </Text>
+                  </AppText
                 </TouchableOpacity>
               </View>
             </View>
@@ -843,9 +842,9 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <Ionicons name="location" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.location} *
-              </Text>
+              </AppText
             </View>
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
@@ -859,7 +858,7 @@ export default function FillJob() {
               onPress={handleGetLocation}
             >
               <Ionicons name="navigate" size={18} color="white" />
-              <Text style={styles.locationButtonText}>{t.getLocation}</Text>
+              <AppText style={styles.locationButtonText}>{t.getLocation}</AppText
             </TouchableOpacity>
           </View>
 
@@ -867,9 +866,9 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="map-marker-distance" size={20} color={colors.primary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.travelDistance}
-              </Text>
+              </AppText
             </View>
             
             <View style={styles.travelDistanceContainer}>
@@ -891,11 +890,11 @@ export default function FillJob() {
                 returnKeyType="done"
               />
               <View style={[styles.travelDistanceUnit, { backgroundColor: colors.primary }]}>
-                <Text style={styles.travelDistanceUnitText}>{t.travelDistanceUnit}</Text>
+                <AppText style={styles.travelDistanceUnitText}>{t.travelDistanceUnit}</AppText
               </View>
             </View>
             {travelDistanceError ? (
-              <Text style={[styles.errorText, { color: colors.error }]}>{travelDistanceError}</Text>
+              <AppText style={[styles.errorText, { color: colors.error }]}>{travelDistanceError}</AppText
             ) : null}
           </View>
 
@@ -903,9 +902,9 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="text" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.jobDescription} *
-              </Text>
+              </AppText
             </View>
             <TextInput
               style={[styles.input, styles.textArea, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
@@ -923,16 +922,16 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <Ionicons name="images" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.photos} * ({jobData.photos.length}/5)
-              </Text>
+              </AppText
             </View>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.secondary }]}
               onPress={() => setShowPhotoPicker(true)}
             >
               <Ionicons name="camera" size={18} color="white" />
-              <Text style={styles.actionButtonText}>{t.addPhoto}</Text>
+              <AppText style={styles.actionButtonText}>{t.addPhoto}</AppText
             </TouchableOpacity>
 
             {jobData.photos.length > 0 && (
@@ -948,9 +947,9 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="cog" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.partsUsed}
-              </Text>
+              </AppText
             </View>
 
             {/* Inline part search using InventoryItemSearch */}
@@ -989,11 +988,11 @@ export default function FillJob() {
                 {selectedParts.map((part) => (
                   <View key={part.id} style={[styles.partItem, { backgroundColor: colors.background }]}>
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</Text>
+                      <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: spacing.sm }}>
-                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        <AppText style={{ fontSize: 12, color: colors.textSecondary }}>
                           {language === 'en' ? 'Qty:' : language === 'he' ? 'כמות:' : 'الكمية:'}
-                        </Text>
+                        </AppText
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                           <TouchableOpacity
                             onPress={() => {
@@ -1004,11 +1003,11 @@ export default function FillJob() {
                             }}
                             style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.border, justifyContent: 'center', alignItems: 'center' }}
                           >
-                            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.textPrimary }}>−</Text>
+                            <AppText style={{ fontSize: 16, fontWeight: '700', color: colors.textPrimary }}>−</AppText
                           </TouchableOpacity>
-                          <Text style={{ fontSize: 15, fontWeight: '600', color: colors.textPrimary, minWidth: 24, textAlign: 'center' }}>
+                          <AppText style={{ fontSize: 15, fontWeight: '600', color: colors.textPrimary, minWidth: 24, textAlign: 'center' }}>
                             {part.usedQuantity || 1}
-                          </Text>
+                          </AppText
                           <TouchableOpacity
                             onPress={() => {
                               const current = part.usedQuantity || 1;
@@ -1019,12 +1018,12 @@ export default function FillJob() {
                             }}
                             style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.secondary, justifyContent: 'center', alignItems: 'center' }}
                           >
-                            <Text style={{ fontSize: 16, fontWeight: '700', color: 'white' }}>+</Text>
+                            <AppText style={{ fontSize: 16, fontWeight: '700', color: 'white' }}>+</AppText
                           </TouchableOpacity>
                         </View>
-                        <Text style={{ fontSize: 11, color: colors.textSecondary }}>
+                        <AppText style={{ fontSize: 11, color: colors.textSecondary }}>
                           / {part.quantity || '∞'}
-                        </Text>
+                        </AppText
                       </View>
                     </View>
                     <TouchableOpacity
@@ -1043,9 +1042,9 @@ export default function FillJob() {
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="draw" size={20} color={colors.secondary} />
-              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.clientSignature} *
-              </Text>
+              </AppText
             </View>
 
             {/* Show existing signature prominently if it exists */}
@@ -1053,15 +1052,15 @@ export default function FillJob() {
               <View style={[styles.signatureContainer, { backgroundColor: colors.background, padding: spacing.md, borderRadius: borderRadius.md, marginBottom: spacing.md }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm }}>
                   <MaterialCommunityIcons name="check-circle" size={20} color={colors.success} />
-                  <Text style={[styles.signatureLabel, { color: colors.success, marginLeft: spacing.xs, marginBottom: 0 }]}>
+                  <AppText style={[styles.signatureLabel, { color: colors.success, marginLeft: spacing.xs, marginBottom: 0 }]}>
                     {t.existingSignature || 'Existing Signature:'}
-                  </Text>
+                  </AppText
                 </View>
                 
                 {signatureLoading ? (
                   <View style={[styles.signaturePreview, { borderColor: colors.border, marginTop: 0, justifyContent: 'center', alignItems: 'center' }]}>
                     <ActivityIndicator size="large" color={colors.secondary} />
-                    <Text style={[{ color: colors.textSecondary, marginTop: spacing.sm }]}>Loading signature...</Text>
+                    <AppText style={[{ color: colors.textSecondary, marginTop: spacing.sm }]}>Loading signature...</AppText
                   </View>
                 ) : refreshedSignatureURL ? (
                   <Image 
@@ -1080,9 +1079,9 @@ export default function FillJob() {
                 ) : (
                   <View style={[styles.signaturePreview, { borderColor: colors.border, marginTop: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }]}>
                     <MaterialCommunityIcons name="image-off" size={48} color={colors.textSecondary} />
-                    <Text style={[{ color: colors.textSecondary, marginTop: spacing.sm, textAlign: 'center' }]}>
+                    <AppText style={[{ color: colors.textSecondary, marginTop: spacing.sm, textAlign: 'center' }]}>
                       Signature not available
-                    </Text>
+                    </AppText
                   </View>
                 )}
               </View>
@@ -1100,9 +1099,9 @@ export default function FillJob() {
               onPress={() => setShowSignature(true)}
             >
               <MaterialCommunityIcons name="gesture-tap" size={18} color="white" />
-              <Text style={styles.actionButtonText}>
+              <AppText style={styles.actionButtonText}>
                 {jobData.signature ? t.changeSignature || 'Change Signature' : t.addSignature}
-              </Text>
+              </AppText
             </TouchableOpacity>
           </View>
 
@@ -1112,7 +1111,7 @@ export default function FillJob() {
               style={[styles.button, styles.cancelButton, { backgroundColor: colors.textSecondary }]}
               onPress={() => router.back()}
             >
-              <Text style={styles.buttonText}>{t.cancel}</Text>
+              <AppText style={styles.buttonText}>{t.cancel}</AppText
             </TouchableOpacity>
 
             {!editingJob && (
@@ -1120,7 +1119,7 @@ export default function FillJob() {
                 style={[styles.button, styles.draftButton, { backgroundColor: colors.warning }]}
                 onPress={handleSaveDraft}
               >
-                <Text style={styles.buttonText}>{t.saveDraft}</Text>
+                <AppText style={styles.buttonText}>{t.saveDraft}</AppText
               </TouchableOpacity>
             )}
 
@@ -1129,7 +1128,7 @@ export default function FillJob() {
               onPress={handleSubmit}
               disabled={submitting}
             >
-              <Text style={styles.buttonText}>{t.submit}</Text>
+              <AppText style={styles.buttonText}>{t.submit}</AppText
             </TouchableOpacity>
           </View>
         </ScrollableContainer>
@@ -1434,3 +1433,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+
+
+

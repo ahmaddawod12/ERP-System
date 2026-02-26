@@ -463,7 +463,7 @@ export default function Userjob() {
       let message = '';
       if (job.isCert === true) {
         message = language === 'en'
-          ? 'This job has a tax certificate and cannot be edited.'
+          ? 'This job has a tax document and cannot be edited.'
           : language === 'he'
           ? 'למשימה זו יש אישור מס ולא ניתן לערוך אותה.'
           : 'هذه المهمة لها شهادة ضريبية ولا يمكن تعديلها.';
@@ -511,7 +511,7 @@ export default function Userjob() {
       alert.warning(
         language === 'en' ? 'Cannot Delete Job' : language === 'he' ? 'לא ניתן למחוק משימה' : 'لا يمكن حذف المهمة',
         language === 'en'
-          ? 'This job has a tax certificate and cannot be deleted.'
+          ? 'This job has a tax document and cannot be deleted.'
           : language === 'he'
           ? 'למשימה זו יש אישור מס ולא ניתן למחוק אותה.'
           : 'هذه المهمة لها شهادة ضريبية ولا يمكن حذفها.'

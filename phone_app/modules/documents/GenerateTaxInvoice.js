@@ -41,7 +41,7 @@ export default function GenerateReceipt() {
     companyFinishedJobs: cachedCompanyFinishedJobs, 
     getUserRole,
     clients: cachedClients,
-    certifications: cachedCertifications,
+    documents: cachedDocuments,
     inventory: cachedInventory,
   } = useCache();
   const colors = getColors(isDarkMode);
@@ -490,7 +490,7 @@ export default function GenerateReceipt() {
         
         // Use cached company finished jobs first
         if (cachedCompanyFinishedJobs && cachedCompanyFinishedJobs.length > 0) {
-          // Filter out jobs that are already converted to certificates (isCert = true)
+          // Filter out jobs that are already converted to documents (isCert = true)
           const jobsData = cachedCompanyFinishedJobs
             .filter(job => !job.isCert)
             .map(job => ({
@@ -710,13 +710,13 @@ export default function GenerateReceipt() {
 
   // Find price proposals matching the client
   const findMatchingProposals = (clientId, clientObj, clientName) => {
-    if (!cachedCertifications || cachedCertifications.length === 0) {
+    if (!cachedDocuments || cachedDocuments.length === 0) {
       setMatchingProposals([]);
       return;
     }
 
-    // Filter certifications to only price proposals (type 10) that are NOT already used
-    const proposals = cachedCertifications.filter(cert => cert.type === 10 && !cert.isUsed);
+    // Filter documents to only price proposals (type 10) that are NOT already used
+    const proposals = cachedDocuments.filter(cert => cert.type === 10 && !cert.isUsed);
     
     if (proposals.length === 0) {
       setMatchingProposals([]);

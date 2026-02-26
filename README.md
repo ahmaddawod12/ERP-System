@@ -56,7 +56,8 @@ ERP-System/
   - Job IDs are server-generated from a sequential `jid` counter.
   - `PendingJobs`: `p_{jid}`
   - `finishedJobs`: `f_{jid}`
-  - `certifications`: `c_XXXXX`
+  - `documents`: `d_XXXXX`
+  - `d_` is the canonical document prefix for new writes.
   - Valid statuses: `pending`, `waiting`, `finished`, `denied`.
 - Mutations:
   - Protected writes must go through Cloud Functions.
@@ -79,7 +80,7 @@ companies/{companyId}/
   clients/{clientId}
   PendingJobs/{p_XXXXX}
   finishedJobs/{f_XXXXX}
-  certifications/{c_XXXXX}
+  documents/{d_XXXXX}
   invites/{inviteId}
 ```
 

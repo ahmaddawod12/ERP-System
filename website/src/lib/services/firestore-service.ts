@@ -17,7 +17,7 @@ import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase/client";
 import {
   companyBusinessInfoRef,
-  companyCertificationsCollection,
+  companyDocumentsCollection,
   companyClientsCollection,
   companyFinishedJobsCollection,
   companyInventoryRef,
@@ -28,7 +28,7 @@ import {
 import type {
   AccountType,
   BusinessInfo,
-  CertificationRecord,
+  DocumentRecord,
   ClientRecord,
   InventoryDoc,
   InventoryPart,
@@ -342,12 +342,12 @@ export async function updateClient(companyId: string, clientId: string, payload:
   await fn({ companyId, clientId, ...payload });
 }
 
-/* ─── Certifications ─── */
+/* ─── Documents ─── */
 
-export async function listCertifications(companyId: string): Promise<CertificationRecord[]> {
-  const snap = await getDocs(query(companyCertificationsCollection(companyId), orderBy("createdAt", "desc")));
+export async function listDocuments(companyId: string): Promise<DocumentRecord[]> {
+  const snap = await getDocs(query(companyDocumentsCollection(companyId), orderBy("createdAt", "desc")));
   return snap.docs.map((docSnap) => ({
     id: docSnap.id,
-    ...(docSnap.data() as Omit<CertificationRecord, "id">),
+    ...(docSnap.data() as Omit<DocumentRecord, "id">),
   }));
 }

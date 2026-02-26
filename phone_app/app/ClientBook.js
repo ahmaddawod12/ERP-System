@@ -4,7 +4,7 @@
  * Allows users to view, search, add, edit, and delete clients.
  * When pressing a client card, shows 3 options:
  *   1. Show Finished Jobs for this client (monthly filter)
- *   2. Show Certifications for this client (monthly filter)
+ *   2. Show Documents for this client (monthly filter)
  *   3. Edit or Remove this client
  * Uses getDataForMonth from CacheContext for cache-first monthly data retrieval.
  */
@@ -81,7 +81,7 @@ export default function ClientBook() {
   const [selectedClient, setSelectedClient] = useState(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showDataModal, setShowDataModal] = useState(false);
-  const [dataViewType, setDataViewType] = useState('finishedJobs'); // 'finishedJobs' | 'certifications'
+  const [dataViewType, setDataViewType] = useState('finishedJobs'); // 'finishedJobs' | 'documents'
   const [dataItems, setDataItems] = useState([]);
   const [dataLoading, setDataLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
@@ -117,11 +117,11 @@ export default function ClientBook() {
     // New translations
     clientOptions: 'Client Options',
     finishedJobs: 'Finished Jobs',
-    certifications: 'Certifications',
+    documents: 'Documents',
     editOrRemove: 'Edit / Remove',
     noDataFound: 'No data found for this month',
     jobsFor: 'Finished Jobs for',
-    certsFor: 'Certifications for',
+    docsFor: 'Documents for',
     jobTitle: 'Job Title',
     completedOn: 'Completed',
     status: 'Status',
@@ -166,11 +166,11 @@ export default function ClientBook() {
     // New translations
     clientOptions: 'אפשרויות לקוח',
     finishedJobs: 'עבודות שהושלמו',
-    certifications: 'מסמכים',
+    documents: 'מסמכים',
     editOrRemove: 'עריכה / מחיקה',
     noDataFound: 'לא נמצאו נתונים לחודש זה',
     jobsFor: 'עבודות שהושלמו עבור',
-    certsFor: 'מסמכים עבור',
+    docsFor: 'מסמכים עבור',
     jobTitle: 'כותרת עבודה',
     completedOn: 'הושלם',
     status: 'סטטוס',
@@ -215,11 +215,11 @@ export default function ClientBook() {
     // New translations
     clientOptions: 'خيارات العميل',
     finishedJobs: 'الأعمال المكتملة',
-    certifications: 'المستندات',
+    documents: 'المستندات',
     editOrRemove: 'تعديل / حذف',
     noDataFound: 'لا توجد بيانات لهذا الشهر',
     jobsFor: 'الأعمال المكتملة لـ',
-    certsFor: 'المستندات لـ',
+    docsFor: 'المستندات لـ',
     jobTitle: 'عنوان العمل',
     completedOn: 'اكتمل',
     status: 'الحالة',
@@ -366,7 +366,7 @@ export default function ClientBook() {
     setShowOptionsModal(true);
   };
 
-  /** Fetch finished jobs or certifications for the selected client & month */
+  /** Fetch finished jobs or documents for the selected client & month */
   const fetchClientData = useCallback(async (client, type, monthDate) => {
     if (!client) return;
     setDataLoading(true);
@@ -386,7 +386,7 @@ export default function ClientBook() {
       });
 
       // Sort by date descending
-      const dateField = type === 'certifications' ? 'createdAt' : 'finishedAt';
+      const dateField = type === 'documents' ? 'createdAt' : 'finishedAt';
       matched.sort((a, b) => {
         const getTime = (d) => {
           if (!d) return 0;
@@ -405,7 +405,7 @@ export default function ClientBook() {
     }
   }, [getDataForMonth]);
 
-  /** Open data viewer modal (finished jobs or certifications) */
+  /** Open data viewer modal (finished jobs or documents) */
   const openDataViewer = useCallback((type) => {
     setDataViewType(type);
     setSelectedMonth(new Date());
@@ -539,7 +539,7 @@ export default function ClientBook() {
     </View>
   );
 
-  /** Render a single certification card in the data viewer */
+  /** Render a single document card in the data viewer */
   const renderCertItem = ({ item }) => {
     const total = item.totals?.grandTotal ?? calculateTotal(item.income || item.items);
     const typeColor = getDocTypeColor(item.type);
@@ -784,10 +784,10 @@ export default function ClientBook() {
                     <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
                   </TouchableOpacity>
 
-                  {/* Option 2: Certifications */}
+                  {/* Option 2: Documents */}
                   <TouchableOpacity
                     style={[styles.optionButton, { borderColor: colors.border }]}
-                    onPress={() => openDataViewer('certifications')}
+                    onPress={() => openDataViewer('documents')}
                     activeOpacity={0.7}
                   >
                     <View style={[styles.optionIconBox, { backgroundColor: '#3B82F6' + '15' }]}>
@@ -795,7 +795,7 @@ export default function ClientBook() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <AppText style={[styles.optionButtonTitle, { color: colors.textPrimary }]}>
-                        {t.certifications}
+                        {t.documents}
                       </AppText>
                     </View>
                     <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
@@ -824,7 +824,7 @@ export default function ClientBook() {
         </TouchableWithoutFeedback>
       </Modal>
 
-      {/* ==================== MODAL 2: Data Viewer (Jobs / Certs) ==================== */}
+      {/* ==================== MODAL 2: Data Viewer (Jobs / Documents) ==================== */}
       <Modal
         visible={showDataModal}
         animationType="slide"
@@ -844,7 +844,7 @@ export default function ClientBook() {
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
               <AppText style={styles.dataModalTitle} numberOfLines={1}>
-                {dataViewType === 'finishedJobs' ? t.jobsFor : t.certsFor}
+                {dataViewType === 'finishedJobs' ? t.jobsFor : t.docsFor}
               </AppText>
               <AppText style={styles.dataModalSubtitle} numberOfLines={1}>
                 {selectedClient?.name}

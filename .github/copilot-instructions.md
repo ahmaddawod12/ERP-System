@@ -45,6 +45,7 @@ When generating code, prefer compatibility with these versions.
 - Job IDs are server-generated from `jid`.
 - `PendingJobs`: `p_{jid}`
 - `finishedJobs`: `f_{jid}`
+- Document IDs in `companies/{companyId}/documents/*` must use `d_` prefix for new writes.
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`
 
 4. Writes:

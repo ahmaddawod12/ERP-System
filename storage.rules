@@ -94,7 +94,7 @@ service firebase.storage {
       allow read, write, delete: if ownsCompany(companyId) && isUser();
     }
     
-    // Archived data (finishedJobs & certifications moved from Firestore to Storage)
+    // Archived data (finishedJobs & documents moved from Firestore to Storage)
     // Path: companies/{companyId}/archives/{archiveFile}
     // Written by Cloud Run Job (Admin SDK, bypasses rules), read by mobile app
     match /companies/{companyId}/archives/{archiveFile} {

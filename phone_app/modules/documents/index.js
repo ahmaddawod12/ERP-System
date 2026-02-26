@@ -7,4 +7,4 @@ export { default as GeneralDocuments } from './GeneralDocuments';
 export { default as GenerateTaxInvoice } from './GenerateTaxInvoice';
 export { default as CreateDocument } from './CreateDocument';
 export { default as DocumentHistory } from './DocumentHistory';
-export { default as ViewCertification } from './ViewCertification';
+export { default as ViewDocument } from './ViewDocument';

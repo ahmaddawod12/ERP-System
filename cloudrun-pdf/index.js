@@ -50,12 +50,13 @@ const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
 
 function toBaseDocumentId(documentId) {
   const raw = String(documentId || '').trim();
-  return raw.startsWith('c_') ? raw.slice(2) : raw;
+  if (raw.startsWith('d_') || raw.startsWith('c_')) return raw.slice(2);
+  return raw;
 }
 
-function toCertificationDocId(documentId) {
+function toDocumentDocId(documentId) {
   const baseId = toBaseDocumentId(documentId);
-  return baseId ? `c_${baseId}` : '';
+  return baseId ? `d_${baseId}` : '';
 }
 // ============================================================================
 // SHARED BROWSER MANAGEMENT (Singleton)
@@ -430,8 +431,8 @@ async function processGenerateTask(taskData) {
       throw new Error('Document ID is required');
     }
     const normalizedDocumentId = toBaseDocumentId(documentId);
-    const certificationDocId = toCertificationDocId(documentId);
-    if (!normalizedDocumentId || !certificationDocId) {
+    const documentDocId = toDocumentDocId(documentId);
+    if (!normalizedDocumentId || !documentDocId) {
       throw new Error('Invalid document ID');
     }
     
@@ -570,12 +571,12 @@ async function processGenerateTask(taskData) {
     const cachePath = getCachePath();
     console.log(`[generate:${taskId}] Using cache path: ${cachePath} for role: ${userRole}`);
     
-    // Save/update certification data
-    const certificationRef = db.doc(`companies/${companyId}/certifications/${certificationDocId}`);
+    // Save/update document data
+    const documentRef = db.doc(`companies/${companyId}/documents/${documentDocId}`);
     const isNewDocument = documentType !== 305;
     
     if (isNewDocument) {
-      await certificationRef.set({
+      await documentRef.set({
         type: documentType,
         clientName: client.name,
         clientEmail: client.email || null,
@@ -603,18 +604,18 @@ async function processGenerateTask(taskData) {
       // to avoid double-counting.
       console.log(`[generate:${taskId}] Document saved (counter already incremented by CF)`, { documentType, documentNumber, userRole });
     } else {
-      await certificationRef.update({
+      await documentRef.update({
         downloadURL,
         storagePath: filePath,
       });
     }
     
-    // Update certification cache version based on role
+    // Update document cache version based on role
     await db.doc(cachePath).set({
-      [certificationDocId]: 1,
+      [documentDocId]: 1,
       lastUpdated: new Date().toISOString(),
     }, { merge: true });
-    console.log(`[generate:${taskId}] Updated certification cache at ${cachePath}`);
+    console.log(`[generate:${taskId}] Updated document cache at ${cachePath}`);
 
     // ========================================================================
     // EMAIL DELIVERY TO CLIENT

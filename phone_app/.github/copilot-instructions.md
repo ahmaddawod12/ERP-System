@@ -64,11 +64,15 @@ Write code that is compatible with these versions.
 - Use `companyId` for company scope.
 - Never use email-derived usernames.
 
-2. Job rules:
+2. Documents:
+- Canonical Firestore path is `companies/{companyId}/documents/{d_XXXXX}`.
+- Use `d_` prefix for new document writes.
+
+3. Job rules:
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`.
 - Job mutations should use Cloud Functions.
 
-3. Inventory rules:
+4. Inventory rules:
 - Inventory is a single document with `parts` + `nextId`.
 - Do not refactor inventory into subcollections.
 

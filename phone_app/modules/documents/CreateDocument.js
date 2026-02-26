@@ -134,7 +134,7 @@ export default function CreateDocument() {
   const { uid } = useAuth();
   const { 
     getCompanyId: getCachedCompanyId, 
-    certifications: cachedCertifications,
+    documents: cachedDocuments,
     profile,
     clients: cachedClients,
     inventory: cachedInventory,
@@ -224,11 +224,11 @@ export default function CreateDocument() {
   // Translations
   const t = getTranslations(language, documentType);
 
-  // Filter cached certifications to get tax invoices (for receipt auto mode)
-  const taxInvoiceCertifications = useMemo(() => {
-    if (!cachedCertifications || cachedCertifications.length === 0) return [];
+  // Filter cached documents to get tax invoices (for receipt auto mode)
+  const taxInvoiceDocuments = useMemo(() => {
+    if (!cachedDocuments || cachedDocuments.length === 0) return [];
     
-    return cachedCertifications
+    return cachedDocuments
       .filter(cert => cert.type === DOC_TYPE.TAX_INVOICE || Number(cert.type) === DOC_TYPE.TAX_INVOICE)
       .map(cert => ({
         id: cert.id,
@@ -251,7 +251,7 @@ export default function CreateDocument() {
         const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
         return dateB.getTime() - dateA.getTime();
       });
-  }, [cachedCertifications]);
+  }, [cachedDocuments]);
 
   // Initialize company name and business info from cache
   useEffect(() => {
@@ -271,9 +271,9 @@ export default function CreateDocument() {
           fetchClients();
         }
         
-        // Set invoices from cached certifications for receipt
+        // Set invoices from cached documents for receipt
         if (config.hasReceiptMode) {
-          setInvoices(taxInvoiceCertifications);
+          setInvoices(taxInvoiceDocuments);
         }
       } catch (error) {
         console.error('Error initializing:', error);
@@ -288,7 +288,7 @@ export default function CreateDocument() {
         clearTimeout(loadingTimeoutRef.current);
       }
     };
-  }, [uid, documentType, taxInvoiceCertifications]);
+  }, [uid, documentType, taxInvoiceDocuments]);
 
   // Fetch company inventory for managers (for inline inventory search)
   useEffect(() => {
@@ -323,12 +323,12 @@ export default function CreateDocument() {
 
   // Find matching price proposals for the selected client
   const findMatchingProposals = (clientObj) => {
-    if (!cachedCertifications || cachedCertifications.length === 0) {
+    if (!cachedDocuments || cachedDocuments.length === 0) {
       setMatchingProposals([]);
       return;
     }
 
-    const proposals = cachedCertifications.filter(cert => cert.type === DOC_TYPE.PRICE_PROPOSAL);
+    const proposals = cachedDocuments.filter(cert => cert.type === DOC_TYPE.PRICE_PROPOSAL);
     if (proposals.length === 0) {
       setMatchingProposals([]);
       return;

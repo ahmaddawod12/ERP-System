@@ -93,7 +93,7 @@ src/
 │   │   ├── clients/         # Client management
 │   │   ├── inventory/       # Inventory (company + personal)
 │   │   ├── inventory-picks/ # Worker picks from company stock
-│   │   ├── documents/       # Certification history + generation
+│   │   ├── documents/       # Document history + generation
 │   │   ├── workers/         # Worker management (manager only)
 │   │   ├── settings/        # Profile + preferences
 │   │   ├── upgrade/         # Subscription upgrade
@@ -124,3 +124,4 @@ src/
 5. **All client operations** go through `companies/{scopeId}/clients/*` — never `users/{uid}/clients`
 6. **Business info fields**: `he_name`, `en_name`, `vat_number` — never `name`, `number`
 7. **Job IDs**: `p_XXXXX` for pending, `f_XXXXX` for finished — never auto-generated IDs
+8. **Document IDs**: `companies/{companyId}/documents/{d_XXXXX}` for new writes — `d_` is canonical

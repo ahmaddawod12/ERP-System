@@ -52,7 +52,7 @@ export default function DocumentHistory() {
   const alert = useAlert();
   const { 
     getCompanyId, 
-    certifications: cachedCertifications, 
+    documents: cachedDocuments, 
     clients: cachedClients,
     fetchClients,
     refreshCache, 
@@ -231,7 +231,7 @@ export default function DocumentHistory() {
 
   useEffect(() => {
     loadDocuments();
-  }, [cachedCertifications]);
+  }, [cachedDocuments]);
 
   useEffect(() => {
     applyFilters();
@@ -272,11 +272,11 @@ export default function DocumentHistory() {
         return;
       }
 
-      // Use cached certifications - CacheContext already has real-time listeners
-      // Cache contains last 90 days of certifications
-      if (cachedCertifications && cachedCertifications.length > 0) {
-        console.log('📦 [CACHE READ] DocumentHistory - certifications from cache:', cachedCertifications.length);
-        const docs = cachedCertifications.map(data => {
+      // Use cached documents - CacheContext already has real-time listeners
+      // Cache contains last 90 days of documents
+      if (cachedDocuments && cachedDocuments.length > 0) {
+        console.log('📦 [CACHE READ] DocumentHistory - documents from cache:', cachedDocuments.length);
+        const docs = cachedDocuments.map(data => {
           // Transform cached data to match expected structure
           return {
             id: data.id,
@@ -311,8 +311,8 @@ export default function DocumentHistory() {
       }
 
       // Fallback when no cached data available - shouldn't normally happen
-      // as CacheContext initializes certifications on login
-      console.log('No cached certifications available, cache may not be initialized');
+      // as CacheContext initializes documents on login
+      console.log('No cached documents available, cache may not be initialized');
       setDocuments([]);
       setLoading(false);
     } catch (error) {
@@ -338,7 +338,7 @@ export default function DocumentHistory() {
       if (!startInCache) {
         // Date range extends beyond cache - use smart filtering from CacheContext
         try {
-          const smartData = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'certifications');
+          const smartData = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'documents');
           
           // Transform the data
           filtered = smartData.map(data => ({
@@ -443,11 +443,11 @@ export default function DocumentHistory() {
   };
 
   /**
-   * View - Navigate to ViewCertification screen to show document data
+   * View - Navigate to ViewDocument screen to show document data
    */
   const handleView = (doc) => {
     router.push({
-      pathname: '/ViewCertification',
+      pathname: '/ViewDocument',
       params: { 
         document: JSON.stringify(doc)
       }
@@ -592,9 +592,9 @@ export default function DocumentHistory() {
             style: 'destructive',
             onPress: async () => {
               try {
-                // Delete certification via Cloud Function
-                const deleteCertFn = httpsCallable(functions, 'deleteCertificationV1');
-                await deleteCertFn({ companyId, certificationId: document.id });
+                // Delete document via Cloud Function
+                const deleteDocumentFn = httpsCallable(functions, 'deleteDocumentV1');
+                await deleteDocumentFn({ companyId, documentId: document.id });
                 alert.success(t.deleteSuccess || 'Success', t.deleteSuccess);
               } catch (error) {
                 console.error('Error deleting document:', error);

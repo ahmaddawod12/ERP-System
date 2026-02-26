@@ -7,7 +7,7 @@ const bullets = [
   "Dispatch preventive maintenance and emergency repair jobs quickly.",
   "Assign licensed technicians and preserve service logs by workerId.",
   "Track filters, sensors, compressors, and parts with low-threshold alerts.",
-  "Generate certificates and compliance PDFs for clients after completion.",
+  "Generate documents and compliance PDFs for clients after completion.",
 ];
 
 export default function HvacSolutionPage() {

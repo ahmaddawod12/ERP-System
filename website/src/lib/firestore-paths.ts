@@ -37,8 +37,8 @@ export const companyPendingJobsCollection = (companyId: string) =>
 export const companyFinishedJobsCollection = (companyId: string) =>
   collection(db, "companies", companyId, "finishedJobs");
 
-export const companyCertificationsCollection = (companyId: string) =>
-  collection(db, "companies", companyId, "certifications");
+export const companyDocumentsCollection = (companyId: string) =>
+  collection(db, "companies", companyId, "documents");
 
 export const companyInvitesCollection = (companyId: string) =>
   collection(db, "companies", companyId, "invites");

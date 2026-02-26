@@ -15,7 +15,7 @@ This Cloud Run **Job** (not a Service) runs monthly to migrate old data from Fir
 ### What Gets Archived
 
 - **finishedJobs**: `companies/{companyId}/finishedJobs` → archived by `finishedAt`
-- **certifications**: `companies/{companyId}/certifications` → archived by `createdAt`
+- **documents**: `companies/{companyId}/documents` → archived by `createdAt`
 
 ### Storage Structure
 
@@ -26,16 +26,16 @@ gs://cooling-inventory-5be04.firebasestorage.app/
         └── archives/
             ├── manifest.json              # Tracks what's been archived (idempotency)
             ├── 2025-7-j.json             # finishedJobs for July 2025
-            ├── 2025-7-c.json             # certifications for July 2025
+            ├── 2025-7-d.json             # documents for July 2025
             ├── 2025-8-j.json             # finishedJobs for August 2025
-            ├── 2025-8-c.json             # certifications for August 2025
+            ├── 2025-8-d.json             # documents for August 2025
             └── ...
 ```
 
 ### Naming Convention
 
 - `{YYYY}-{M}-j.json` → finishedJobs for that month
-- `{YYYY}-{M}-c.json` → certifications for that month
+- `{YYYY}-{M}-d.json` → documents for that month
 - `manifest.json` → idempotency tracker
 
 ---
@@ -117,7 +117,7 @@ The archiver queries by date range fields. Ensure these composite indexes exist:
 Collection: companies/{companyName}/finishedJobs
   Fields: finishedAt ASC
 
-Collection: companies/{companyName}/certifications
+Collection: companies/{companyName}/documents
   Fields: createdAt ASC
 ```
 
@@ -193,7 +193,7 @@ Each company has a `manifest.json` in Storage that tracks which months have been
 ```json
 {
   "2025-7-j": { "archivedAt": "2026-01-01T03:05:12Z", "docCount": 150, "deletedCount": 150 },
-  "2025-7-c": { "archivedAt": "2026-01-01T03:05:15Z", "docCount": 42, "deletedCount": 42 },
+  "2025-7-d": { "archivedAt": "2026-01-01T03:05:15Z", "docCount": 42, "deletedCount": 42 },
   "2025-8-j": { "archivedAt": "2026-02-01T03:04:30Z", "docCount": 0, "empty": true }
 }
 ```

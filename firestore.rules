@@ -289,9 +289,9 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
-    // ── Certifications ──
+    // ── Documents ──
     // basic/user/manager can READ. All writes via Cloud Function only.
-    match /companies/{companyId}/certifications/{id} {
+    match /companies/{companyId}/documents/{id} {
       allow read: if isAdmin() || isManagerUserBasic(companyId) || isSoloScope(companyId);
       allow create, update, delete: if false;
     }

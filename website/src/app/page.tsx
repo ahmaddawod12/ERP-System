@@ -66,7 +66,7 @@ export default function HomePage() {
                   <p className="text-xs text-slate-700 dark:text-slate-200">Inventory Alert Panel</p>
                 </div>
                 <div className="h-24 rounded-xl bg-gradient-to-r from-blue-500/20 via-cyan-500/10 to-sky-500/20 p-3">
-                  <p className="text-xs text-slate-700 dark:text-slate-200">Certification Generator</p>
+                  <p className="text-xs text-slate-700 dark:text-slate-200">Document Generator</p>
                 </div>
               </div>
             </div>

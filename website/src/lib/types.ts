@@ -159,11 +159,11 @@ export interface ClientRecord {
 }
 
 /**
- * Matches phone app certification at companies/{id}/certifications/{certId}.
+ * Matches phone app document at companies/{id}/documents/{documentId}.
  * Document type codes: 10 (Price Proposal), 200 (Delivery Note),
  * 210 (Return Certificate), 305 (Tax Invoice), 330 (Refund), 400 (Receipt).
  */
-export interface CertificationRecord {
+export interface DocumentRecord {
   id: string;
   type: string;
   documentType?: number;

@@ -396,18 +396,21 @@ async function assertHttpCompanyAccess(params) {
 }
 
 /**
- * Normalize certification document IDs.
- * Firestore certification docs are stored with "c_" prefix.
+ * Normalize document IDs.
+ * Firestore documents are stored with "d_" prefix.
  */
-function toCertificationDocId(documentId) {
+function toDocumentDocId(documentId) {
   const raw = String(documentId || '').trim();
   if (!raw) return '';
-  return raw.startsWith('c_') ? raw : `c_${raw}`;
+  if (raw.startsWith('d_')) return raw;
+  if (raw.startsWith('c_')) return `d_${raw.slice(2)}`;
+  return `d_${raw}`;
 }
 
 function toBaseDocumentId(documentId) {
   const raw = String(documentId || '').trim();
-  return raw.startsWith('c_') ? raw.slice(2) : raw;
+  if (raw.startsWith('d_') || raw.startsWith('c_')) return raw.slice(2);
+  return raw;
 }
 
 /**
@@ -1469,11 +1472,11 @@ exports.generateDocumentV1 = onRequest({
       uid: auth.uid, companyId, type,
     });
 
-    const certificationsRef = admin.firestore()
+    const documentsRef = admin.firestore()
       .collection('companies')
       .doc(companyId)
-      .collection('certifications');
-    const taskRef = certificationsRef.doc();
+      .collection('documents');
+    const taskRef = documentsRef.doc();
     const nowIso = new Date().toISOString();
     const placeholderUrl = `/downloads/${taskRef.id}.pdf`;
 
@@ -2821,8 +2824,8 @@ exports.getInvoiceApproval = onCall({
       documentNumber
     });
 
-    const certificationRef = admin.firestore().doc(`companies/${companyId}/certifications/c_${documentId}`);
-    const certificationData = {
+    const documentRef = admin.firestore().doc(`companies/${companyId}/documents/${toDocumentDocId(documentId)}`);
+    const documentData = {
       type: DOC_TYPE.TAX_INVOICE, // Store numeric type (305)
       documentNumber: documentNumber, // Use the date-number-type format
       clientName: client.name,
@@ -2849,10 +2852,10 @@ exports.getInvoiceApproval = onCall({
       taxAuthorityResponseData: response.data,
     };
     try {
-      await certificationRef.set(certificationData);
+      await documentRef.set(documentData);
       logger.info('Document saved to Firestore with approval', {
         documentId,
-        path: `companies/${companyId}/certifications/${toCertificationDocId(documentId)}`,
+        path: `companies/${companyId}/documents/${toDocumentDocId(documentId)}`,
         confirmationNumber
       });
 
@@ -2883,8 +2886,8 @@ exports.getInvoiceApproval = onCall({
             const finishedJobRef = admin.firestore().doc(finishedJobPath);
             batch.update(finishedJobRef, {
               isCert: true,
-              certificationId: documentId,
-              certificationCreatedAt: new Date().toISOString()
+              documentId: documentId,
+              documentCreatedAt: new Date().toISOString()
             });
             logger.info('Queued finishedJob update isCert=true', { jobId, documentId });
             cacheUpdates.jobID = admin.firestore.FieldValue.increment(1); // Increment jobID cache for manager
@@ -2899,7 +2902,7 @@ exports.getInvoiceApproval = onCall({
         // Mark price proposal as used if provided
         if (priceProposalId) {
           try {
-            const proposalRef = admin.firestore().doc(`companies/${companyId}/certifications/${toCertificationDocId(priceProposalId)}`);
+            const proposalRef = admin.firestore().doc(`companies/${companyId}/documents/${toDocumentDocId(priceProposalId)}`);
             batch.update(proposalRef, {
               isUsed: true,
               usedByDocumentId: documentId,
@@ -3036,7 +3039,7 @@ exports.getInvoiceApproval = onCall({
         documentId: documentId,
         documentNumber: documentNumber,
         completeDocumentData: completeDocumentData,
-        certificationData: certificationData,
+        documentData: documentData,
         uid: uid,
         companyId: companyId,
         createdByUid: request.auth.uid,
@@ -3070,7 +3073,7 @@ exports.getInvoiceApproval = onCall({
     return {
       success: true,
       documentId: documentId,
-      savedPath: `companies/${companyId}/certifications/${toCertificationDocId(documentId)}`,
+      savedPath: `companies/${companyId}/documents/${toDocumentDocId(documentId)}`,
       status: response.status,
       message: response.data?.message || 'Invoice approved and saved successfully',
       confirmation_number: confirmationNumber,
@@ -3194,7 +3197,7 @@ async function acquireCompanyBusyFlag(companyId, documentType, uid, taskId) {
  * @param {string} params.documentId - Pre-generated document ID
  * @param {number} params.documentNumber - Pre-assigned document number
  * @param {Object} params.completeDocumentData - Complete document data with all fields
- * @param {Object} params.certificationData - Certification data (for taxInvoice)
+ * @param {Object} params.documentData - Document data (for taxInvoice)
  * @param {string} params.uid - uid
  * @param {string} params.companyId - Company name
  * @param {string} params.createdByUid - User's Firebase UID
@@ -3207,7 +3210,7 @@ async function publishGenerateTaskHelper({
   documentId,
   documentNumber,
   completeDocumentData,
-  certificationData,
+  documentData,
   uid,
   companyId,
   createdByUid,
@@ -3248,7 +3251,7 @@ async function publishGenerateTaskHelper({
       documentData: completeDocumentData,
       uid: uid,
       companyId: companyId,
-      certificationData: certificationData,  // Existing cert data for taxInvoice
+      documentData: documentData,  // Existing document data for taxInvoice
       userRole: userRole || null,
       // Pass confirmation number at top level for easy access in Cloud Run
       confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
@@ -3492,7 +3495,7 @@ exports.publishGenerateTask = onCall({
     const uid = request.auth.uid;
     logger.info('Publishing generate task', { uid });
 
-    const { documentType, documentData, companyId, documentId: providedDocId } = request.data || {};
+    const { documentType, documentData: requestDocumentData, companyId, documentId: providedDocId } = request.data || {};
 
     // Validate required fields
     if (!documentType) {
@@ -3511,13 +3514,13 @@ exports.publishGenerateTask = onCall({
         throw new HttpsError('invalid-argument', 'Document ID is required for tax invoice');
       }
     } else {
-      if (!documentData) {
+      if (!requestDocumentData) {
         throw new HttpsError('invalid-argument', 'Document data is required');
       }
-      if (!documentData.client || !documentData.client.name) {
+      if (!requestDocumentData.client || !requestDocumentData.client.name) {
         throw new HttpsError('invalid-argument', 'Client name is required');
       }
-      if (!documentData.items || !Array.isArray(documentData.items) || documentData.items.length === 0) {
+      if (!requestDocumentData.items || !Array.isArray(requestDocumentData.items) || requestDocumentData.items.length === 0) {
         throw new HttpsError('invalid-argument', 'At least one item is required');
       }
     }
@@ -3554,48 +3557,48 @@ exports.publishGenerateTask = onCall({
     let documentId;
     let documentNumber;
     let completeDocumentData;
-    let certificationData = null;
+    let existingDocumentData = null;
 
     // Handle tax invoice vs other types
     if (numericDocType === DOC_TYPE.TAX_INVOICE) {
       // Tax invoice - document already exists (approved via getInvoiceApproval)
-      const certDocId = toCertificationDocId(providedDocId);
+      const documentDocId = toDocumentDocId(providedDocId);
       documentId = toBaseDocumentId(providedDocId);
       
-      // Fetch existing certification to get all data
-      const certRef = admin.firestore().doc(`companies/${companyId}/certifications/${certDocId}`);
-      const certDoc = await certRef.get();
+      // Fetch existing document to get all data
+      const documentRef = admin.firestore().doc(`companies/${companyId}/documents/${documentDocId}`);
+      const documentDoc = await documentRef.get();
       
-      if (!certDoc.exists) {
-        throw new HttpsError('not-found', `Document ${certDocId} not found`);
+      if (!documentDoc.exists) {
+        throw new HttpsError('not-found', `Document ${documentDocId} not found`);
       }
       
-      certificationData = certDoc.data();
-      documentNumber = certificationData.documentNumber;
+      existingDocumentData = documentDoc.data();
+      documentNumber = existingDocumentData.documentNumber;
       
-      // Build complete data from existing certification
+      // Build complete data from existing document
       completeDocumentData = {
         client: {
-          name: certificationData.clientName,
-          email: certificationData.clientEmail || '',
-          phone: certificationData.clientPhone || '',
-          address: certificationData.clientAddress || '',
+          name: existingDocumentData.clientName,
+          email: existingDocumentData.clientEmail || '',
+          phone: existingDocumentData.clientPhone || '',
+          address: existingDocumentData.clientAddress || '',
         },
-        items: certificationData.items,
+        items: existingDocumentData.items,
         company: companyData,
-        language: certificationData.language || 'he',
-        date: certificationData.date,
-        notes: certificationData.notes,
+        language: existingDocumentData.language || 'he',
+        date: existingDocumentData.date,
+        notes: existingDocumentData.notes,
         totals: {
-          totalBeforeVat: certificationData.totalBeforeVat,
-          vatAmount: certificationData.vatAmount,
-          totalWithVat: certificationData.totalWithVat,
+          totalBeforeVat: existingDocumentData.totalBeforeVat,
+          vatAmount: existingDocumentData.vatAmount,
+          totalWithVat: existingDocumentData.totalWithVat,
         }
       };
       
     } else {
       // Other document types - prepare everything here
-      const { client, items, language, date, notes } = documentData;
+      const { client, items, language, date, notes } = requestDocumentData;
       
       // Atomically read + increment document number to prevent race conditions
       const docNumResult = await admin.firestore().runTransaction(async (tx) => {
@@ -3647,7 +3650,7 @@ exports.publishGenerateTask = onCall({
       documentId,
       documentNumber,
       completeDocumentData,
-      certificationData,
+      documentData: existingDocumentData || requestDocumentData,
       uid,
       companyId,
       createdByUid: request.auth.uid,
@@ -3896,7 +3899,7 @@ exports.deleteJobV1 = onCall(async (request) => {
 
   const jobData = finishedSnap.data();
 
-  // Cannot delete a job with a generated certification
+  // Cannot delete a job with a generated document
   if (jobData.isCert === true) {
     throw new HttpsError('failed-precondition', 'Cannot delete a job that has a generated document (isCert=true)');
   }
@@ -4868,12 +4871,12 @@ exports.clearPushTokenV1 = onCall(async (request) => {
 });
 
 /**
- * Callable Function: deleteCertificationV1
- * Deletes a certification document via Cloud Function.
+ * Callable Function: deleteDocumentV1
+ * Deletes a document via Cloud Function.
  * Only manager/user/basic (with company access) can delete.
- * Cannot delete certifications linked to tax invoices that have been approved.
+ * Cannot delete documents linked to tax invoices that have been approved.
  */
-exports.deleteCertificationV1 = onCall(async (request) => {
+exports.deleteDocumentV1 = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required');
   }
@@ -4883,10 +4886,10 @@ exports.deleteCertificationV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const certificationId = typeof data.certificationId === 'string' ? data.certificationId.trim() : '';
+  const documentId = typeof data.documentId === 'string' ? data.documentId.trim() : '';
 
-  if (!certificationId) {
-    throw new HttpsError('invalid-argument', 'certificationId is required');
+  if (!documentId) {
+    throw new HttpsError('invalid-argument', 'documentId is required');
   }
 
   await assertHttpCompanyAccess({
@@ -4897,27 +4900,27 @@ exports.deleteCertificationV1 = onCall(async (request) => {
   });
 
   const dbRef = admin.firestore();
-  const certRef = dbRef.doc(`companies/${companyId}/certifications/${certificationId}`);
-  const certSnap = await certRef.get();
+  const documentRef = dbRef.doc(`companies/${companyId}/documents/${documentId}`);
+  const documentSnap = await documentRef.get();
 
-  if (!certSnap.exists) {
-    throw new HttpsError('not-found', 'Certification not found');
+  if (!documentSnap.exists) {
+    throw new HttpsError('not-found', 'Document not found');
   }
 
-  const certData = certSnap.data();
+  const documentDataRecord = documentSnap.data();
 
   // Prevent deleting tax invoices that have been approved by the Tax Authority
-  if (certData.type === DOC_TYPE.TAX_INVOICE && certData.taxAuthorityResponseData) {
+  if (documentDataRecord.type === DOC_TYPE.TAX_INVOICE && documentDataRecord.taxAuthorityResponseData) {
     throw new HttpsError(
       'failed-precondition',
       'Cannot delete a Tax Authority approved invoice'
     );
   }
 
-  await certRef.delete();
+  await documentRef.delete();
 
-  logger.info('deleteCertificationV1: certification deleted', { companyId, certificationId, uid });
-  return { success: true, certificationId };
+  logger.info('deleteDocumentV1: document deleted', { companyId, documentId, uid });
+  return { success: true, documentId };
 });
 
 /**

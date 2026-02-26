@@ -21,7 +21,7 @@ const features = [
   {
     icon: FileText,
     title: "Document generation",
-    description: "Queue certifications and PDFs using API tasks with optional Cloud Run forwarding.",
+    description: "Queue documents and PDFs using API tasks with optional Cloud Run forwarding.",
   },
   {
     icon: Radio,

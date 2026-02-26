@@ -36,7 +36,7 @@ export default function RootLayout() {
               <Stack.Screen name="CreateDocument" />
               <Stack.Screen name="GenerateTaxInvoice" />
               <Stack.Screen name="DocumentHistory" />
-              <Stack.Screen name="ViewCertification" />
+              <Stack.Screen name="ViewDocument" />
               <Stack.Screen name="Settings" />
               <Stack.Screen name="FillJob" />
               <Stack.Screen name="EditJob" />

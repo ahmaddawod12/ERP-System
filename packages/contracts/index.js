@@ -55,7 +55,7 @@ const DocTypeLabel = Object.freeze(
 const JobPrefix = Object.freeze({
   Pending:       'p_',
   Finished:      'f_',
-  Certification: 'c_',
+  Document: 'd_',
 });
 
 // ── Subscription Tiers ─────────────────────────────────────────────────────
@@ -93,8 +93,8 @@ const paths = {
   pendingJobs:        (cid) => `companies/${cid}/PendingJobs`,
   finishedJob:        (cid, jobId) => `companies/${cid}/finishedJobs/${jobId}`,
   finishedJobs:       (cid) => `companies/${cid}/finishedJobs`,
-  certification:      (cid, certId) => `companies/${cid}/certifications/${certId}`,
-  certifications:     (cid) => `companies/${cid}/certifications`,
+  document:      (cid, docId) => `companies/${cid}/documents/${docId}`,
+  documents:     (cid) => `companies/${cid}/documents`,
   invite:             (cid, inviteId) => `companies/${cid}/invites/${inviteId}`,
 
   // Top-level collections

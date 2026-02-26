@@ -1,7 +1,7 @@
 /**
  * Cloud Run Job: Firestore → Cloud Storage Archiver
  * 
- * Purpose: Migrate old finishedJobs and certifications from Firestore to Cloud Storage
+ * Purpose: Migrate old finishedJobs and documents from Firestore to Cloud Storage
  * to reduce Firestore storage costs. Data older than ~6 months is archived as monthly
  * JSON files in Cloud Storage, then deleted from Firestore.
  * 
@@ -14,7 +14,7 @@
  * 
  * Storage Structure:
  *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-j.json  (finishedJobs)
- *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-c.json  (certifications)
+ *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-d.json  (documents)
  * 
  * Manifest (idempotency tracking):
  *   gs://{bucket}/companies/{companyId}/archives/manifest.json
@@ -92,7 +92,7 @@ function getTargetMonth() {
  * Load the manifest for a company.
  * The manifest tracks which months have been successfully archived.
  * 
- * Format: { "2026-1-j": { archivedAt, docCount }, "2026-1-c": { archivedAt, docCount } }
+ * Format: { "2026-1-j": { archivedAt, docCount }, "2026-1-d": { archivedAt, docCount } }
  */
 async function loadManifest(companyId) {
   const manifestPath = `companies/${companyId}/archives/manifest.json`;
@@ -192,7 +192,7 @@ async function queryDocumentsByDateRange(collectionPath, dateField, startDate, e
  * Upload a JSON archive to Cloud Storage.
  * 
  * @param {string} companyId 
- * @param {string} archiveKey - e.g., "2026-1-j" or "2026-1-c"
+ * @param {string} archiveKey - e.g., "2026-1-j" or "2026-1-d"
  * @param {Array} documents - The documents to archive
  * @returns {string} - Storage path of the uploaded file
  */
@@ -345,33 +345,33 @@ async function processCompany(companyId, target) {
     }
   }
 
-  // ---- CERTIFICATIONS ----
-  const certsKey = `${year}-${month}-c`;
-  if (manifest[certsKey]) {
-    console.log(`⏭️ ${certsKey} already archived (${manifest[certsKey].docCount} docs on ${manifest[certsKey].archivedAt})`);
+  // ---- DOCUMENTS ----
+  const documentsKey = `${year}-${month}-d`;
+  if (manifest[documentsKey]) {
+    console.log(`⏭️ ${documentsKey} already archived (${manifest[documentsKey].docCount} docs on ${manifest[documentsKey].archivedAt})`);
   } else {
-    const collectionPath = `companies/${companyId}/certifications`;
+    const collectionPath = `companies/${companyId}/documents`;
     const docs = await queryDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
 
     if (docs.length === 0) {
-      console.log(`📭 No certifications found for ${year}-${month}`);
-      manifest[certsKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
+      console.log(`📭 No documents found for ${year}-${month}`);
+      manifest[documentsKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
       manifestUpdated = true;
     } else {
-      console.log(`📊 Found ${docs.length} certifications for ${year}-${month}`);
+      console.log(`📊 Found ${docs.length} documents for ${year}-${month}`);
 
       // Step 1: Upload to Storage
-      await uploadArchive(companyId, certsKey, docs);
+      await uploadArchive(companyId, documentsKey, docs);
 
       // Step 2: Verify upload
-      await verifyArchive(companyId, certsKey, docs.length);
+      await verifyArchive(companyId, documentsKey, docs.length);
 
       // Step 3: Delete from Firestore
       const deleted = await deleteDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
-      console.log(`✅ Archived and deleted ${deleted} certifications for ${year}-${month}`);
+      console.log(`✅ Archived and deleted ${deleted} documents for ${year}-${month}`);
 
       // Step 4: Update manifest
-      manifest[certsKey] = {
+      manifest[documentsKey] = {
         archivedAt: new Date().toISOString(),
         docCount: docs.length,
         deletedCount: deleted,

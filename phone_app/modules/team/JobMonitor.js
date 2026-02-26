@@ -430,7 +430,7 @@ export default function JobMonitor() {
       let message = '';
       if (job.isCert === true) {
         message = language === 'en' 
-          ? 'This job has a tax certificate and cannot be edited.'
+          ? 'This job has a tax document and cannot be edited.'
           : language === 'he'
           ? 'למשימה זו יש אישור מס ולא ניתן לערוך אותה.'
           : 'هذه المهمة لها شهادة ضريبية ولا يمكن تعديلها.';

@@ -41,7 +41,7 @@ export declare const DocTypeLabel: Readonly<Record<DocTypeCode, string>>;
 export declare const JobPrefix: Readonly<{
   Pending: 'p_';
   Finished: 'f_';
-  Certification: 'c_';
+  Document: 'd_';
 }>;
 
 // ── Subscription ───────────────────────────────────────────────────────────
@@ -70,8 +70,8 @@ export declare const paths: {
   pendingJobs(companyId: string): string;
   finishedJob(companyId: string, jobId: string): string;
   finishedJobs(companyId: string): string;
-  certification(companyId: string, certId: string): string;
-  certifications(companyId: string): string;
+  document(companyId: string, docId: string): string;
+  documents(companyId: string): string;
   invite(companyId: string, inviteId: string): string;
 
   upgradeRequest(id: string): string;

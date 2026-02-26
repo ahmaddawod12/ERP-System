@@ -61,7 +61,7 @@
       ]
     },
     {
-      "collectionGroup": "certifications",
+      "collectionGroup": "documents",
       "queryScope": "COLLECTION",
       "fields": [
         {

@@ -13,8 +13,8 @@ import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { useDocumentTask } from "@/hooks/use-document-task";
-import { listCertifications, listClients, resolveCompanyScope } from "@/lib/services/firestore-service";
-import type { CertificationRecord, ClientRecord } from "@/lib/types";
+import { listDocuments, listClients, resolveCompanyScope } from "@/lib/services/firestore-service";
+import type { DocumentRecord, ClientRecord } from "@/lib/types";
 
 /* ─── Document type codes (matches phone app) ─── */
 
@@ -55,12 +55,12 @@ export default function DocumentsPage() {
   const companyScopeId = resolveCompanyScope(companyId);
 
   /* ── History state ── */
-  const [records, setRecords] = useState<CertificationRecord[]>([]);
+  const [records, setRecords] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("history");
 
-  /* ── Certification detail modal ── */
-  const [viewingCert, setViewingCert] = useState<CertificationRecord | null>(null);
+  /* ── Document detail modal ── */
+  const [viewingDocument, setViewingDocument] = useState<DocumentRecord | null>(null);
 
   /* ── Create form state ── */
   const [docType, setDocType] = useState<DocTypeCode>(10);
@@ -132,7 +132,7 @@ export default function DocumentsPage() {
     }
     setLoading(true);
     try {
-      const result = await listCertifications(companyScopeId);
+      const result = await listDocuments(companyScopeId);
       setRecords(result);
     } catch {
       // silent
@@ -805,7 +805,7 @@ export default function DocumentsPage() {
                           <Button
                             size="sm"
                             variant="secondary"
-                            onClick={() => setViewingCert(row)}
+                            onClick={() => setViewingDocument(row)}
                           >
                             View
                           </Button>
@@ -924,83 +924,83 @@ export default function DocumentsPage() {
           </div>
         </Modal>
 
-        {/* ── View Certification Modal ── */}
+        {/* ── View Document Modal ── */}
         <Modal
-          open={viewingCert !== null}
+          open={viewingDocument !== null}
           title={
-            viewingCert?.documentType
-              ? getDocTypeLabel(viewingCert.documentType)
-              : viewingCert?.type || "Document Details"
+            viewingDocument?.documentType
+              ? getDocTypeLabel(viewingDocument.documentType)
+              : viewingDocument?.type || "Document Details"
           }
-          onClose={() => setViewingCert(null)}
+          onClose={() => setViewingDocument(null)}
           className="max-w-2xl"
         >
-          {viewingCert && <CertificationDetail cert={viewingCert} />}
+          {viewingDocument && <DocumentDetail documentRecord={viewingDocument} />}
         </Modal>
       </section>
     </ProtectedRoute>
   );
 }
 
-/* ─── Certification Detail Component (matches phone app ViewCertification) ─── */
+/* ─── Document Detail Component (matches phone app ViewDocument) ─── */
 
-function CertificationDetail({ cert }: { cert: CertificationRecord }) {
+function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) {
   return (
     <div className="space-y-4 text-sm">
       {/* Document Info */}
       <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
-        {cert.documentType != null && (
+        {documentRecord.documentType != null && (
           <div>
             <span className="text-xs text-slate-500">Type</span>
-            <p className="font-medium">{getDocTypeLabel(cert.documentType)}</p>
+            <p className="font-medium">{getDocTypeLabel(documentRecord.documentType)}</p>
           </div>
         )}
-        {(cert.documentNumber ?? cert.documentId) && (
+        {(documentRecord.documentNumber ?? documentRecord.documentId) && (
           <div>
             <span className="text-xs text-slate-500">Document #</span>
             <p className="font-medium">
-              {cert.documentNumber ?? cert.documentId}
+              {documentRecord.documentNumber ?? documentRecord.documentId}
             </p>
           </div>
         )}
-        {cert.confirmationNumber && (
+        {documentRecord.confirmationNumber && (
           <div>
             <span className="text-xs text-slate-500">Confirmation #</span>
-            <p className="font-medium">{cert.confirmationNumber}</p>
+            <p className="font-medium">{documentRecord.confirmationNumber}</p>
           </div>
         )}
-        {cert.date && (
+        {documentRecord.date && (
           <div>
             <span className="text-xs text-slate-500">Date</span>
-            <p className="font-medium">{cert.date}</p>
+            <p className="font-medium">{documentRecord.date}</p>
           </div>
         )}
-        {cert.language && (
+        {documentRecord.language && (
           <div>
             <span className="text-xs text-slate-500">Language</span>
             <p className="font-medium">
-              {cert.language === "he"
+              {documentRecord.language === "he"
                 ? "Hebrew"
-                : cert.language === "en"
+                : documentRecord.language === "en"
                   ? "English"
-                  : cert.language === "ar"
+                  : documentRecord.language === "ar"
                     ? "Arabic"
-                    : cert.language}
+                    : documentRecord.language}
             </p>
           </div>
         )}
         <div>
           <span className="text-xs text-slate-500">Created</span>
           <p className="font-medium">
-            {cert.createdAt
-              ? new Date(cert.createdAt).toLocaleString()
+            {documentRecord.createdAt
+              ? new Date(documentRecord.createdAt).toLocaleString()
               : "—"}
           </p>
         </div>
       </div>
 
       {/* Client Info */}
-      {cert.clientName && (
+      {documentRecord.clientName && (
         <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <h4 className="mb-2 font-semibold text-slate-900 dark:text-slate-100">
             Client
@@ -1008,36 +1008,36 @@ function CertificationDetail({ cert }: { cert: CertificationRecord }) {
           <div className="grid grid-cols-2 gap-1">
             <p>
               <span className="text-slate-500">Name: </span>
-              {cert.clientName}
+              {documentRecord.clientName}
             </p>
-            {cert.clientPhone && (
+            {documentRecord.clientPhone && (
               <p>
                 <span className="text-slate-500">Phone: </span>
-                {cert.clientPhone}
+                {documentRecord.clientPhone}
               </p>
             )}
-            {cert.clientEmail && (
+            {documentRecord.clientEmail && (
               <p>
                 <span className="text-slate-500">Email: </span>
-                {cert.clientEmail}
+                {documentRecord.clientEmail}
               </p>
             )}
-            {cert.clientAddress && (
+            {documentRecord.clientAddress && (
               <p>
                 <span className="text-slate-500">Address: </span>
-                {cert.clientAddress}
+                {documentRecord.clientAddress}
               </p>
             )}
-            {cert.clientCity && (
+            {documentRecord.clientCity && (
               <p>
                 <span className="text-slate-500">City: </span>
-                {cert.clientCity}
+                {documentRecord.clientCity}
               </p>
             )}
-            {cert.clientVatNumber && (
+            {documentRecord.clientVatNumber && (
               <p>
                 <span className="text-slate-500">VAT: </span>
-                {cert.clientVatNumber}
+                {documentRecord.clientVatNumber}
               </p>
             )}
           </div>
@@ -1045,7 +1045,7 @@ function CertificationDetail({ cert }: { cert: CertificationRecord }) {
       )}
 
       {/* Items */}
-      {cert.items && cert.items.length > 0 && (
+      {documentRecord.items && documentRecord.items.length > 0 && (
         <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <h4 className="mb-2 font-semibold text-slate-900 dark:text-slate-100">
             Items
@@ -1060,7 +1060,7 @@ function CertificationDetail({ cert }: { cert: CertificationRecord }) {
               </tr>
             </thead>
             <tbody>
-              {cert.items.map((item, i) => (
+              {documentRecord.items.map((item, i) => (
                 <tr key={i} className="border-b border-slate-100 dark:border-slate-800">
                   <td className="py-1">{item.description}</td>
                   <td className="py-1 text-right">₪{Number(item.price).toFixed(2)}</td>
@@ -1076,34 +1076,34 @@ function CertificationDetail({ cert }: { cert: CertificationRecord }) {
       )}
 
       {/* Totals */}
-      {cert.totalWithVat != null && (
+      {documentRecord.totalWithVat != null && (
         <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
           <div className="flex justify-between">
             <span>Subtotal</span>
-            <span>₪{Number(cert.totalBeforeVat ?? 0).toFixed(2)}</span>
+            <span>₪{Number(documentRecord.totalBeforeVat ?? 0).toFixed(2)}</span>
           </div>
           <div className="flex justify-between">
             <span>VAT (18%)</span>
-            <span>₪{Number(cert.vatAmount ?? 0).toFixed(2)}</span>
+            <span>₪{Number(documentRecord.vatAmount ?? 0).toFixed(2)}</span>
           </div>
           <div className="mt-1 flex justify-between border-t pt-1 font-semibold">
             <span>Total</span>
-            <span>₪{Number(cert.totalWithVat).toFixed(2)}</span>
+            <span>₪{Number(documentRecord.totalWithVat).toFixed(2)}</span>
           </div>
         </div>
       )}
 
       {/* Payment (receipt) */}
-      {cert.paymentMethod && (
+      {documentRecord.paymentMethod && (
         <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <h4 className="mb-1 font-semibold">Payment</h4>
           <p>
             <span className="text-slate-500">Method: </span>
-            {cert.paymentMethod}
+            {documentRecord.paymentMethod}
           </p>
-          {cert.paymentInfo &&
-            typeof cert.paymentInfo === "object" &&
-            Object.entries(cert.paymentInfo).map(([k, v]) => (
+          {documentRecord.paymentInfo &&
+            typeof documentRecord.paymentInfo === "object" &&
+            Object.entries(documentRecord.paymentInfo).map(([k, v]) => (
               <p key={k}>
                 <span className="text-slate-500">{k}: </span>
                 {String(v)}
@@ -1113,19 +1113,19 @@ function CertificationDetail({ cert }: { cert: CertificationRecord }) {
       )}
 
       {/* Notes */}
-      {cert.notes && (
+      {documentRecord.notes && (
         <div>
           <h4 className="mb-1 font-semibold text-slate-900 dark:text-slate-100">
             Notes
           </h4>
-          <p className="text-slate-600 dark:text-slate-400">{cert.notes}</p>
+          <p className="text-slate-600 dark:text-slate-400">{documentRecord.notes}</p>
         </div>
       )}
 
       {/* PDF link */}
-      {cert.downloadURL && (
+      {documentRecord.downloadURL && (
         <a
-          href={cert.downloadURL}
+          href={documentRecord.downloadURL}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-400"

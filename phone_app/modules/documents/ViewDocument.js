@@ -1,7 +1,7 @@
 /**
- * ViewCertification.js - View Document/Certification Details
+ * ViewDocument.js - View Document Details
  * 
- * Displays the full details of a saved certification/document
+ * Displays the full details of a saved document
  * Shows different fields based on document type:
  * - Tax Invoice (305): Has confirmation number, VAT details
  * - Receipt (400): Has payment method and info
@@ -92,7 +92,7 @@ const DOCUMENT_CONFIGS = {
   },
 };
 
-export default function ViewCertification() {
+export default function ViewDocument() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();

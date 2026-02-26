@@ -70,12 +70,14 @@ companies/{companyId}/clients/{clientId}              → client records
 companies/{companyId}/counters/clients                → auto-increment counter
 companies/{companyId}/PendingJobs/{p_XXXXX}           → active jobs (p_ prefix IDs)
 companies/{companyId}/finishedJobs/{f_XXXXX}          → completed/denied jobs (f_ prefix IDs)
-companies/{companyId}/certifications/{c_XXXXX}        → generated documents (c_ prefix IDs)
+companies/{companyId}/documents/{d_XXXXX}          → generated documents (d_ prefix IDs)
 companies/{companyId}/invites/{inviteId}              → onboarding invite codes
 
 upgrade_requests/{id}                                 → upgrade request tickets
 documentTasks/{taskId}                                → Pub/Sub task tracking (preview/generate)
 ```
+
+**Document IDs**: use `d_` as the canonical prefix for new document writes.
 
 **Company IDs**: `companyId` is backend-assigned (sequential numeric string, e.g. `1`, `2`, `3`) and is never derived from `uid`.
 

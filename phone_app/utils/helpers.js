@@ -60,24 +60,24 @@ export const generateFinishedJobId = () => {
 };
 
 /**
- * Generate a prefixed certification ID
- * Format: c_XXXXX (c = certification)
- * @returns {string} Prefixed certification ID
+ * Generate a prefixed document ID
+ * Format: d_XXXXX (d = document)
+ * @returns {string} Prefixed document ID
  */
-export const generateCertificationId = () => {
-  return `c_${generateBase62Id()}`;
+export const generateDocumentId = () => {
+  return `d_${generateBase62Id()}`;
 };
 
 /**
  * Get document type from prefixed ID
  * @param {string} docId - Document ID with prefix
- * @returns {'pendingJob'|'finishedJob'|'certification'|'unknown'} Document type
+ * @returns {'pendingJob'|'finishedJob'|'document'|'unknown'} Document type
  */
 export const getDocTypeFromId = (docId) => {
   if (!docId || typeof docId !== 'string') return 'unknown';
   if (docId.startsWith('p_')) return 'pendingJob';
   if (docId.startsWith('f_')) return 'finishedJob';
-  if (docId.startsWith('c_')) return 'certification';
+  if (docId.startsWith('d_') || docId.startsWith('c_')) return 'document';
   return 'unknown';
 };
 

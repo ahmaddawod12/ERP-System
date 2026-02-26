@@ -184,7 +184,7 @@ export default function ViewCertification() {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <MaterialCommunityIcons name="file-document-outline" size={64} color={colors.textSecondary} />
-        <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>{t.documentNotFound}</AppText
+        <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>{t.documentNotFound}</AppText>
         <GlobalHeader />
       </View>
     );
@@ -226,9 +226,9 @@ export default function ViewCertification() {
             <View style={styles.headerIconContainer}>
               <MaterialCommunityIcons name={config.icon} size={48} color="white" />
             </View>
-            <AppText style={styles.headerTitle}>{getDocTypeName(document.type)}</AppText
+            <AppText style={styles.headerTitle}>{getDocTypeName(document.type)}</AppText>
             {document.documentNumber && (
-              <AppText style={styles.headerSubtitle}>#{document.documentNumber}</AppText
+              <AppText style={styles.headerSubtitle}>#{document.documentNumber}</AppText>
             )}
           </LinearGradient>
           
@@ -237,14 +237,14 @@ export default function ViewCertification() {
               <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
               <AppText style={[styles.headerDetailText, { color: colors.textPrimary }]}>
                 {formatDate(document.createdAt)}
-              </AppText
+              </AppText>
             </View>
             {(document.createdByName || document.createdByUid) && (
               <View style={styles.headerDetailRow}>
                 <Ionicons name="person-outline" size={18} color={colors.textSecondary} />
                 <AppText style={[styles.headerDetailText, { color: colors.textPrimary }]}>
                   {t.createdBy}: {document.createdByName || document.createdByUid}
-                </AppText
+                </AppText>
               </View>
             )}
           </View>
@@ -266,7 +266,7 @@ export default function ViewCertification() {
               <MaterialCommunityIcons name="file-pdf-box" size={22} color="white" />
               <AppText style={styles.downloadButtonText}>
                 {language === 'en' ? 'Open PDF' : language === 'he' ? 'פתח PDF' : 'فتح PDF'}
-              </AppText
+              </AppText>
             </LinearGradient>
           </TouchableOpacity>
         )}
@@ -276,15 +276,15 @@ export default function ViewCertification() {
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="shield-checkmark" size={24} color="#10B981" />
-              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.taxAuthority}</AppText
+              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.taxAuthority}</AppText>
             </View>
             <View style={styles.confirmationBox}>
               <AppText style={[styles.confirmationLabel, { color: colors.textSecondary }]}>
                 {t.confirmationNumber}
-              </AppText
+              </AppText>
               <AppText style={[styles.confirmationValue, { color: colors.textPrimary }]}>
                 {document.taxAuthorityConfirmationNumber}
-              </AppText
+              </AppText>
             </View>
           </View>
         )}
@@ -294,28 +294,28 @@ export default function ViewCertification() {
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="card" size={24} color="#06B6D4" />
-              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.paymentDetails}</AppText
+              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.paymentDetails}</AppText>
             </View>
             <View style={styles.infoRow}>
-              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.paymentMethod}</AppText
+              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.paymentMethod}</AppText>
               <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>
                 {getPaymentMethodLabel(document.paymentMethod || document.documentData?.paymentMethod)}
-              </AppText
+              </AppText>
             </View>
             {(document.paymentInfo || document.documentData?.paymentInfo) && (
               <View style={styles.infoRow}>
-                <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.paymentInfo}</AppText
+                <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.paymentInfo}</AppText>
                 <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>
                   {document.paymentInfo || document.documentData?.paymentInfo}
-                </AppText
+                </AppText>
               </View>
             )}
             {(document.invoiceReference || document.documentData?.invoiceReference) && (
               <View style={styles.infoRow}>
-                <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.invoiceReference}</AppText
+                <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.invoiceReference}</AppText>
                 <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>
                   {document.invoiceReference || document.documentData?.invoiceReference}
-                </AppText
+                </AppText>
               </View>
             )}
           </View>
@@ -325,42 +325,42 @@ export default function ViewCertification() {
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.sectionHeader}>
             <Ionicons name="person" size={24} color={config.color} />
-            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.clientDetails}</AppText
+            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.clientDetails}</AppText>
           </View>
           
           {clientData.name && (
             <View style={styles.infoRow}>
-              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.name}</AppText
-              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.name}</AppText
+              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.name}</AppText>
+              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.name}</AppText>
             </View>
           )}
           
           {clientData.email && (
             <View style={styles.infoRow}>
-              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.email}</AppText
-              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.email}</AppText
+              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.email}</AppText>
+              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.email}</AppText>
             </View>
           )}
           
           {clientData.phone && (
             <View style={styles.infoRow}>
-              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.phone}</AppText
-              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.phone}</AppText
+              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.phone}</AppText>
+              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.phone}</AppText>
             </View>
           )}
           
           {clientData.address && (
             <View style={styles.infoRow}>
-              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.address}</AppText
-              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.address}</AppText
+              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.address}</AppText>
+              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.address}</AppText>
             </View>
           )}
           
           {/* VAT Number for Tax Invoice */}
           {config.hasVatNumber && clientData.clientVatNumber && (
             <View style={styles.infoRow}>
-              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.vatNumber}</AppText
-              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.clientVatNumber}</AppText
+              <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.vatNumber}</AppText>
+              <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{clientData.clientVatNumber}</AppText>
             </View>
           )}
         </View>
@@ -370,7 +370,7 @@ export default function ViewCertification() {
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="list" size={24} color={config.color} />
-              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.items}</AppText
+              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.items}</AppText>
             </View>
             
             {items.map((item, index) => (
@@ -381,8 +381,8 @@ export default function ViewCertification() {
                       {t.itemId}:{' '}
                       <AppText style={[styles.itemValue, { color: config.color, writingDirection: 'ltr' }]}>
                         {item.id}
-                      </AppText
-                    </AppText
+                      </AppText>
+                    </AppText>
                   </View>
                 )}
                 <View style={styles.itemInfoRow}>
@@ -390,27 +390,27 @@ export default function ViewCertification() {
                     {t.itemName}:{' '}
                     <AppText style={[styles.itemValue, { color: colors.textPrimary }]}>
                       {item.description}
-                    </AppText
-                  </AppText
+                    </AppText>
+                  </AppText>
                 </View>
                 <View style={styles.itemDetails}>
                   <View style={styles.itemDetail}>
-                    <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.quantity}</AppText
+                    <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.quantity}</AppText>
                     <AppText style={[styles.itemDetailValue, { color: colors.textPrimary }]}>
                       {item.quantity || 1}
-                    </AppText
+                    </AppText>
                   </View>
                   <View style={styles.itemDetail}>
-                    <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.price}</AppText
+                    <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.price}</AppText>
                     <AppText style={[styles.itemDetailValue, { color: colors.textPrimary }]}>
                       {formatAmount(item.price)}
-                    </AppText
+                    </AppText>
                   </View>
                   <View style={styles.itemDetail}>
-                    <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.subtotal}</AppText
+                    <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.subtotal}</AppText>
                     <AppText style={[styles.itemDetailValue, { color: config.color, fontWeight: 'bold' }]}>
                       {formatAmount((parseFloat(item.price) || 0) * (parseFloat(item.quantity) || 1))}
-                    </AppText
+                    </AppText>
                   </View>
                 </View>
               </View>
@@ -422,22 +422,22 @@ export default function ViewCertification() {
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.sectionHeader}>
             <Ionicons name="calculator" size={24} color={config.color} />
-            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.summary}</AppText
+            <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.summary}</AppText>
           </View>
           
           <View style={styles.totalRow}>
-            <AppText style={[styles.totalLabel, { color: colors.textSecondary }]}>{t.subtotal}</AppText
-            <AppText style={[styles.totalValue, { color: colors.textPrimary }]}>{formatAmount(subtotal)}</AppText
+            <AppText style={[styles.totalLabel, { color: colors.textSecondary }]}>{t.subtotal}</AppText>
+            <AppText style={[styles.totalValue, { color: colors.textPrimary }]}>{formatAmount(subtotal)}</AppText>
           </View>
           
           <View style={styles.totalRow}>
-            <AppText style={[styles.totalLabel, { color: colors.textSecondary }]}>{t.vat} (18%)</AppText
-            <AppText style={[styles.totalValue, { color: colors.textPrimary }]}>{formatAmount(vatAmount)}</AppText
+            <AppText style={[styles.totalLabel, { color: colors.textSecondary }]}>{t.vat} (18%)</AppText>
+            <AppText style={[styles.totalValue, { color: colors.textPrimary }]}>{formatAmount(vatAmount)}</AppText>
           </View>
           
           <View style={[styles.totalRow, styles.grandTotalRow, { borderTopColor: colors.border }]}>
-            <AppText style={[styles.grandTotalLabel, { color: colors.textPrimary }]}>{t.total}</AppText
-            <AppText style={[styles.grandTotalValue, { color: config.color }]}>{formatAmount(grandTotal)}</AppText
+            <AppText style={[styles.grandTotalLabel, { color: colors.textPrimary }]}>{t.total}</AppText>
+            <AppText style={[styles.grandTotalValue, { color: config.color }]}>{formatAmount(grandTotal)}</AppText>
           </View>
         </View>
 
@@ -446,11 +446,11 @@ export default function ViewCertification() {
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <View style={styles.sectionHeader}>
               <Ionicons name="document-text" size={24} color={config.color} />
-              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.notes}</AppText
+              <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.notes}</AppText>
             </View>
             <AppText style={[styles.notesText, { color: colors.textPrimary }]}>
               {document.notes || document.documentData?.notes}
-            </AppText
+            </AppText>
           </View>
         )}
 
@@ -802,6 +802,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 });
+
 
 
 

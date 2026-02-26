@@ -1039,11 +1039,11 @@ export default function CreateDocument() {
                 <MaterialCommunityIcons name="receipt" size={28} color={colors.primary} />
                 <AppText style={[styles.receiptModeMainTitle, { color: colors.primary }]}>
                   {t.selectReceiptMode}
-                </AppText
+                </AppText>
               </View>
               <AppText style={[styles.sectionDescription, { color: colors.textSecondary }]}>
                 {t.selectReceiptModeDescription}
-              </AppText
+              </AppText>
               
               <View style={styles.receiptModeContainer}>
                 {/* Auto from Invoice Option */}
@@ -1055,7 +1055,7 @@ export default function CreateDocument() {
                   <View style={styles.recommendedBadge}>
                     <AppText style={styles.recommendedBadgeText}>
                       {language === 'en' ? 'Recommended' : language === 'he' ? 'מומלץ' : 'موصى به'}
-                    </AppText
+                    </AppText>
                   </View>
                   <LinearGradient
                     colors={['#10B981', '#059669']}
@@ -1067,22 +1067,22 @@ export default function CreateDocument() {
                   </LinearGradient>
                   <AppText style={[styles.receiptModeTitle, { color: colors.textPrimary }]}>
                     {t.autoFromInvoice}
-                  </AppText
+                  </AppText>
                   <AppText style={[styles.receiptModeDescription, { color: colors.textSecondary }]}>
                     {t.autoFromInvoiceDescription}
-                  </AppText
+                  </AppText>
                   <View style={[styles.receiptModeFeatures, { borderTopColor: colors.border }]}>
                     <View style={styles.featureItem}>
                       <Ionicons name="checkmark-circle" size={16} color="#10B981" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
                         {language === 'en' ? 'Pre-filled data' : language === 'he' ? 'נתונים מוכנים' : 'بيانات جاهزة'}
-                      </AppText
+                      </AppText>
                     </View>
                     <View style={styles.featureItem}>
                       <Ionicons name="checkmark-circle" size={16} color="#10B981" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
                         {language === 'en' ? 'Invoice linked' : language === 'he' ? 'מקושר לחשבונית' : 'مرتبط بالفاتورة'}
-                      </AppText
+                      </AppText>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -1103,22 +1103,22 @@ export default function CreateDocument() {
                   </LinearGradient>
                   <AppText style={[styles.receiptModeTitle, { color: colors.textPrimary }]}>
                     {t.manualEntry}
-                  </AppText
+                  </AppText>
                   <AppText style={[styles.receiptModeDescription, { color: colors.textSecondary }]}>
                     {t.manualEntryDescription}
-                  </AppText
+                  </AppText>
                   <View style={[styles.receiptModeFeatures, { borderTopColor: colors.border }]}>
                     <View style={styles.featureItem}>
                       <Ionicons name="create-outline" size={16} color="#6B7280" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
                         {language === 'en' ? 'Full control' : language === 'he' ? 'שליטה מלאה' : 'تحكم كامل'}
-                      </AppText
+                      </AppText>
                     </View>
                     <View style={styles.featureItem}>
                       <Ionicons name="document-outline" size={16} color="#6B7280" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
                         {language === 'en' ? 'No invoice needed' : language === 'he' ? 'ללא חשבונית' : 'بدون فاتورة'}
-                      </AppText
+                      </AppText>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -1132,7 +1132,7 @@ export default function CreateDocument() {
               <View style={styles.receiptModeHeader}>
                 <AppText style={[styles.sectionTitle, { color: colors.primary, marginBottom: 0 }]}>
                   {receiptMode === 'auto' ? t.autoFromInvoice : t.manualEntry}
-                </AppText
+                </AppText>
                 <TouchableOpacity
                   style={[styles.changeModeButton, { backgroundColor: colors.primary }]}
                   onPress={() => {
@@ -1151,7 +1151,7 @@ export default function CreateDocument() {
                     setItems([{ id: Date.now(), description: '', price: '', quantity: '1' }]);
                   }}
                 >
-                  <AppText style={styles.changeModeText}>{t.changeMode}</AppText
+                  <AppText style={styles.changeModeText}>{t.changeMode}</AppText>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1162,23 +1162,23 @@ export default function CreateDocument() {
             <View style={[styles.section, { backgroundColor: colors.surface }]}>
               <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                 {t.selectInvoice}
-              </AppText
+              </AppText>
               
               {selectedInvoice ? (
                 <View style={styles.selectedInvoiceContainer}>
                   <View style={styles.selectedInvoiceInfo}>
                     <AppText style={[styles.selectedInvoiceLabel, { color: colors.textPrimary }]}>
                       {t.invoiceNumber}: {selectedInvoice.documentNumber}
-                    </AppText
+                    </AppText>
                     <AppText style={[styles.selectedInvoiceDetail, { color: colors.textSecondary }]}>
                       {selectedInvoice.documentData?.client?.name}
-                    </AppText
+                    </AppText>
                   </View>
                   <TouchableOpacity
                     style={[styles.changeInvoiceButton, { backgroundColor: colors.primary }]}
                     onPress={() => openModal('invoiceSelect')}
                   >
-                    <AppText style={styles.changeInvoiceText}>{t.changeInvoice}</AppText
+                    <AppText style={styles.changeInvoiceText}>{t.changeInvoice}</AppText>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -1189,7 +1189,7 @@ export default function CreateDocument() {
                   <MaterialCommunityIcons name="file-document-outline" size={24} color={colors.textSecondary} />
                   <AppText style={[styles.selectInvoiceText, { color: colors.textSecondary }]}>
                     {t.tapToSelectInvoice}
-                  </AppText
+                  </AppText>
                 </TouchableOpacity>
               )}
             </View>
@@ -1202,11 +1202,11 @@ export default function CreateDocument() {
           {(isTwoStepFlow || (config.hasReceiptMode && receiptMode !== null)) && (
             <View style={styles.stepIndicator}>
               <View style={[styles.stepDot, currentStep >= 1 && { backgroundColor: colors.primary }]}>
-                <AppText style={[styles.stepDotText, currentStep >= 1 && { color: '#fff' }]}>1</AppText
+                <AppText style={[styles.stepDotText, currentStep >= 1 && { color: '#fff' }]}>1</AppText>
               </View>
               <View style={[styles.stepConnector, currentStep >= 2 && { backgroundColor: colors.primary }]} />
               <View style={[styles.stepDot, currentStep >= 2 && { backgroundColor: colors.primary }]}>
-                <AppText style={[styles.stepDotText, currentStep >= 2 && { color: '#fff' }]}>2</AppText
+                <AppText style={[styles.stepDotText, currentStep >= 2 && { color: '#fff' }]}>2</AppText>
               </View>
             </View>
           )}
@@ -1218,7 +1218,7 @@ export default function CreateDocument() {
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
               {t.customerDetails}
-            </AppText
+            </AppText>
 
             {/* Embedded client selector (search + dropdown) */}
             <ClientSelector
@@ -1264,8 +1264,8 @@ export default function CreateDocument() {
             {/* Customer Name */}
             <View style={styles.inputGroup}>
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                {t.customerName} <AppText style={styles.requiredStar}>*</AppText
-              </AppText
+                {t.customerName} <AppText style={styles.requiredStar}>*</AppText>
+              </AppText>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerName}
@@ -1279,10 +1279,10 @@ export default function CreateDocument() {
             <View style={styles.inputGroup}>
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                 {t.clientVatNumber} {config.requiresVatNumber 
-                  ? <AppText style={styles.requiredStar}>*</AppText
-                  : <AppText style={styles.optionalText}>({t.optional})</AppText
+                  ? <AppText style={styles.requiredStar}>*</AppText>
+                  : <AppText style={styles.optionalText}>({t.optional})</AppText>
                 }
-              </AppText
+              </AppText>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.clientVatNumber}
@@ -1296,8 +1296,8 @@ export default function CreateDocument() {
             {/* Customer Email */}
             <View style={styles.inputGroup}>
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                {t.customerEmail} <AppText style={styles.optionalText}>({t.optional})</AppText
-              </AppText
+                {t.customerEmail} <AppText style={styles.optionalText}>({t.optional})</AppText>
+              </AppText>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerEmail}
@@ -1311,8 +1311,8 @@ export default function CreateDocument() {
             {/* Customer Address */}
             <View style={styles.inputGroup}>
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                {t.customerAddress} <AppText style={styles.optionalText}>({t.optional})</AppText
-              </AppText
+                {t.customerAddress} <AppText style={styles.optionalText}>({t.optional})</AppText>
+              </AppText>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerAddress}
@@ -1325,8 +1325,8 @@ export default function CreateDocument() {
             {/* Customer City */}
             <View style={styles.inputGroup}>
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                {t.customerCity} <AppText style={styles.optionalText}>({t.optional})</AppText
-              </AppText
+                {t.customerCity} <AppText style={styles.optionalText}>({t.optional})</AppText>
+              </AppText>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerCity}
@@ -1339,8 +1339,8 @@ export default function CreateDocument() {
             {/* Customer Phone */}
             <View style={styles.inputGroup}>
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                {t.customerPhone} <AppText style={styles.optionalText}>({t.optional})</AppText
-              </AppText
+                {t.customerPhone} <AppText style={styles.optionalText}>({t.optional})</AppText>
+              </AppText>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerPhone}
@@ -1359,10 +1359,10 @@ export default function CreateDocument() {
             <View style={[styles.section, { backgroundColor: colors.surface }]}>
               <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                 {t.priceProposals}
-              </AppText
+              </AppText>
               <AppText style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
                 {t.selectProposal}
-              </AppText
+              </AppText>
               {matchingProposals.map((proposal) => {
                 const isSelected = selectedPriceProposal?.id === proposal.id;
                 const proposalDate = proposal.createdAt ? new Date(proposal.createdAt).toLocaleDateString() : '';
@@ -1383,23 +1383,23 @@ export default function CreateDocument() {
                       <View style={styles.proposalInfo}>
                         <AppText style={[styles.proposalTitle, { color: colors.textPrimary }]}>
                           {t.priceProposal} #{proposal.documentNumber || ''}
-                        </AppText
+                        </AppText>
                         {proposalDate ? (
                           <AppText style={[styles.proposalMeta, { color: colors.textSecondary }]}>
                             {proposalDate}
-                          </AppText
+                          </AppText>
                         ) : null}
                       </View>
                       {isSelected && (
                         <View style={[styles.selectedBadge, { backgroundColor: colors.primary }]}>
                           <Ionicons name="checkmark" size={14} color="#fff" />
-                          <AppText style={styles.selectedBadgeText}>{t.selected}</AppText
+                          <AppText style={styles.selectedBadgeText}>{t.selected}</AppText>
                         </View>
                       )}
                     </View>
                     <AppText style={[styles.proposalMeta, { color: colors.textSecondary }]}>
                       {proposal.items?.length || 0} {t.proposalItems} · ₪{proposalTotal.toFixed(2)}
-                    </AppText
+                    </AppText>
                   </TouchableOpacity>
                 );
               })}
@@ -1411,7 +1411,7 @@ export default function CreateDocument() {
               <Ionicons name="document-text-outline" size={24} color={colors.textSecondary} />
               <AppText style={[styles.noProposalsText, { color: colors.textSecondary }]}>
                 {t.noProposals}
-              </AppText
+              </AppText>
             </View>
           )}
 
@@ -1427,7 +1427,7 @@ export default function CreateDocument() {
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
               >
-                <AppText style={styles.continueButtonText}>{t.continueToItems}</AppText
+                <AppText style={styles.continueButtonText}>{t.continueToItems}</AppText>
                 <Ionicons name="arrow-forward" size={20} color="white" />
               </LinearGradient>
             </TouchableOpacity>
@@ -1443,12 +1443,12 @@ export default function CreateDocument() {
             <View style={[styles.section, { backgroundColor: colors.surface }]}>
               <AppText style={[styles.sectionTitle, { color: colors.primary }]}>
                 {t.paymentDetails}
-              </AppText
+              </AppText>
               
               <View style={styles.inputGroup}>
                 <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                  {t.paymentMethod} <AppText style={styles.requiredStar}>*</AppText
-                </AppText
+                  {t.paymentMethod} <AppText style={styles.requiredStar}>*</AppText>
+                </AppText>
                 <View style={styles.paymentMethodsContainer}>
                   {paymentMethods.map((method) => (
                     <TouchableOpacity
@@ -1465,7 +1465,7 @@ export default function CreateDocument() {
                         { color: formData.paymentMethod === method.id ? colors.primary : colors.textSecondary }
                       ]}>
                         {method.label}
-                      </AppText
+                      </AppText>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1474,8 +1474,8 @@ export default function CreateDocument() {
               {/* Payment Info/Reference - shows relevant placeholder based on payment method */}
               <View style={styles.inputGroup}>
                 <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                  {t.paymentInfo} <AppText style={styles.optionalText}>({t.optional})</AppText
-                </AppText
+                  {t.paymentInfo} <AppText style={styles.optionalText}>({t.optional})</AppText>
+                </AppText>
                 <TextInput
                   style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                   value={formData.paymentInfo}
@@ -1497,14 +1497,14 @@ export default function CreateDocument() {
             <View style={styles.itemsSectionHeader}>
               <AppText style={[styles.sectionTitle, { color: colors.primary, marginBottom: 0 }]}>
                 {t.itemsTitle}
-              </AppText
+              </AppText>
               {/* Show locked indicator for auto mode */}
               {config.hasReceiptMode && receiptMode === 'auto' && selectedInvoice && (
                 <View style={[styles.lockedBadge, { backgroundColor: colors.backgroundLight }]}>
                   <Ionicons name="lock-closed" size={14} color={colors.textSecondary} />
                   <AppText style={[styles.lockedBadgeText, { color: colors.textSecondary }]}>
                     {language === 'en' ? 'From Invoice' : language === 'he' ? 'מהחשבונית' : 'من الفاتورة'}
-                  </AppText
+                  </AppText>
                 </View>
               )}
             </View>
@@ -1522,7 +1522,7 @@ export default function CreateDocument() {
                   <View style={styles.itemHeader}>
                     <AppText style={[styles.itemNumber, { color: colors.primary }]}>
                       {t.item} {index + 1}
-                    </AppText
+                    </AppText>
                     {/* Only show delete button if not read-only and more than 1 item */}
                     {!isReadOnly && items.length > 1 && (
                       <TouchableOpacity onPress={() => removeItem(item.id)}>
@@ -1533,8 +1533,8 @@ export default function CreateDocument() {
 
                   <View style={styles.inputGroup}>
                     <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                      {t.itemDescription} {!isReadOnly && <AppText style={styles.requiredStar}>*</AppText}
-                    </AppText
+                      {t.itemDescription} {!isReadOnly && <AppText style={styles.requiredStar}>*</AppText>}
+                    </AppText>
                     {/* Use InventoryItemSearch for items when inventory is available */}
                     {!isReadOnly && getInventoryParts().length > 0 ? (
                       <InventoryItemSearch
@@ -1572,8 +1572,8 @@ export default function CreateDocument() {
 
                   <View style={styles.inputGroup}>
                     <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                      {t.itemPrice} {!isReadOnly && <AppText style={styles.requiredStar}>*</AppText}
-                    </AppText
+                      {t.itemPrice} {!isReadOnly && <AppText style={styles.requiredStar}>*</AppText>}
+                    </AppText>
                     <TextInput
                       style={[
                         styles.input, 
@@ -1591,8 +1591,8 @@ export default function CreateDocument() {
 
                   <View style={styles.inputGroup}>
                     <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
-                      {t.itemQuantity} {!isReadOnly && <AppText style={styles.optionalText}>({t.optional})</AppText}
-                    </AppText
+                      {t.itemQuantity} {!isReadOnly && <AppText style={styles.optionalText}>({t.optional})</AppText>}
+                    </AppText>
                     <TextInput
                       style={[
                         styles.input, 
@@ -1618,16 +1618,16 @@ export default function CreateDocument() {
                 onPress={addItem}
               >
                 <MaterialCommunityIcons name="plus" size={20} color="white" />
-                <AppText style={styles.addItemText}>{t.addItem}</AppText
+                <AppText style={styles.addItemText}>{t.addItem}</AppText>
               </TouchableOpacity>
             )}
 
             {/* Total Display */}
             <View style={[styles.totalContainer, { borderTopColor: colors.border }]}>
-              <AppText style={[styles.totalLabel, { color: colors.textPrimary }]}>{t.total}</AppText
+              <AppText style={[styles.totalLabel, { color: colors.textPrimary }]}>{t.total}</AppText>
               <AppText style={[styles.totalValue, { color: colors.primary }]}>
                 ₪{calculateTotal().toFixed(2)}
-              </AppText
+              </AppText>
             </View>
           </View>
 
@@ -1640,7 +1640,7 @@ export default function CreateDocument() {
             >
               <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>
                 {t.backToClient}
-              </AppText
+              </AppText>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1659,7 +1659,7 @@ export default function CreateDocument() {
                 ) : (
                   <>
                     <MaterialCommunityIcons name="eye" size={20} color="white" />
-                    <AppText style={styles.submitButtonText}>{t.preview}</AppText
+                    <AppText style={styles.submitButtonText}>{t.preview}</AppText>
                   </>
                 )}
               </LinearGradient>
@@ -1685,7 +1685,7 @@ export default function CreateDocument() {
             {modalState.type === 'invoiceSelect' && (
               <>
                 <View style={[styles.modalHeader, { backgroundColor: colors.surface, paddingTop: insets.top + 10 }]}>
-                  <AppText style={[styles.modalTitle, { color: colors.primary }]}>{t.selectInvoice}</AppText
+                  <AppText style={[styles.modalTitle, { color: colors.primary }]}>{t.selectInvoice}</AppText>
                   <TouchableOpacity onPress={closeModal}>
                     <Ionicons name="close" size={28} color={colors.textPrimary} />
                   </TouchableOpacity>
@@ -1710,7 +1710,7 @@ export default function CreateDocument() {
                 {filteredInvoices.length === 0 ? (
                   <View style={styles.emptyContainer}>
                     <MaterialCommunityIcons name="file-document-outline" size={64} color={colors.textSecondary} />
-                    <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>{t.noInvoicesFound}</AppText
+                    <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>{t.noInvoicesFound}</AppText>
                   </View>
                 ) : (
                   <FlatList
@@ -1738,19 +1738,19 @@ export default function CreateDocument() {
                           <View style={styles.invoiceItemContent}>
                             <AppText style={[styles.invoiceItemNumber, { color: colors.textPrimary }]}>
                               {t.invoiceNumber}: {invoice.documentNumber}
-                            </AppText
+                            </AppText>
                             <AppText style={[styles.invoiceItemCustomer, { color: colors.textSecondary }]}>
                               {clientData.name || 'Unknown'}
-                            </AppText
+                            </AppText>
                             <View style={styles.invoiceItemRow}>
                               <AppText style={[styles.invoiceItemDate, { color: colors.textSecondary }]}>
                                 {invoice.createdAt instanceof Date 
                                   ? invoice.createdAt.toLocaleDateString()
                                   : new Date(invoice.createdAt).toLocaleDateString()}
-                              </AppText
+                              </AppText>
                               <AppText style={[styles.invoiceItemAmount, { color: colors.primary }]}>
                                 ₪{totalAmount.toFixed(2)}
-                              </AppText
+                              </AppText>
                             </View>
                           </View>
                           <MaterialCommunityIcons name="chevron-right" size={24} color={colors.textSecondary} />
@@ -1768,7 +1768,7 @@ export default function CreateDocument() {
                 <View style={[styles.pdfModalHeader, { backgroundColor: colors.surface, paddingTop: insets.top + 10 }]}>
                   <AppText style={[styles.pdfModalTitle, { color: colors.primary }]}>
                     {t.previewTitle}
-                  </AppText
+                  </AppText>
                   <TouchableOpacity 
                     onPress={closeModal}
                     style={styles.closePdfButton}
@@ -1781,10 +1781,10 @@ export default function CreateDocument() {
                   <MaterialCommunityIcons name="file-document-outline" size={100} color={colors.primary} />
                   <AppText style={[styles.pdfSuccessText, { color: colors.primary }]}>
                     {t.previewTitle}
-                  </AppText
+                  </AppText>
                   <AppText style={[styles.pdfInfoText, { color: colors.textSecondary }]}>
                     {t.pdfReady}
-                  </AppText
+                  </AppText>
 
                   <View style={styles.openPdfButtonContainer}>
                     <TouchableOpacity onPress={downloadAndSharePDF}>
@@ -1795,7 +1795,7 @@ export default function CreateDocument() {
                         end={{ x: 1, y: 0 }}
                       >
                         <MaterialCommunityIcons name="file-pdf-box" size={24} color="white" />
-                        <AppText style={styles.openPdfButtonText}>{t.openPdf}</AppText
+                        <AppText style={styles.openPdfButtonText}>{t.openPdf}</AppText>
                       </LinearGradient>
                     </TouchableOpacity>
                   </View>
@@ -1821,7 +1821,7 @@ export default function CreateDocument() {
                         end={{ x: 1, y: 0 }}
                       >
                         <MaterialCommunityIcons name="check-circle" size={24} color="white" />
-                        <AppText style={styles.openPdfButtonText}>{t.submit}</AppText
+                        <AppText style={styles.openPdfButtonText}>{t.submit}</AppText>
                       </LinearGradient>
                     </TouchableOpacity>
                   </View>
@@ -1835,7 +1835,7 @@ export default function CreateDocument() {
                 <View style={[styles.pdfModalHeader, { backgroundColor: colors.surface, paddingTop: insets.top + 10 }]}>
                   <AppText style={[styles.pdfModalTitle, { color: colors.primary }]}>
                     {t.previewTitle}
-                  </AppText
+                  </AppText>
                   <TouchableOpacity 
                     onPress={() => {
                       closeModal();
@@ -1868,7 +1868,7 @@ export default function CreateDocument() {
                           <ActivityIndicator size="large" color={colors.primary} />
                           <AppText style={[styles.loadingText, { color: colors.textSecondary }]}>
                             Loading PDF...
-                          </AppText
+                          </AppText>
                         </View>
                       )}
                       onError={(syntheticEvent) => {
@@ -2725,6 +2725,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.bold,
   },
 });
+
 
 
 

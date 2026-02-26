@@ -551,30 +551,30 @@ export default function JobMonitor() {
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <View style={styles.jobHeaderContent}>
                 <View style={styles.jobTitleRow}>
-                  <AppText style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</AppText
+                  <AppText style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</AppText>
                   {isJobNew(job) && (
                     <View style={styles.newBadge}>
-                      <AppText style={styles.newBadgeText}>NEW</AppText
+                      <AppText style={styles.newBadgeText}>NEW</AppText>
                     </View>
                   )}
                 </View>
                 <AppText style={[styles.jobWorker, { color: themeColors.textSecondary }]}>
                   👤 {displayName}
-                </AppText
+                </AppText>
                 {job.createdAt && (
                   <AppText style={[styles.jobDate, { color: themeColors.textSecondary }]}>
                     📅 {new Date(job.createdAt).toLocaleDateString()}
-                  </AppText
+                  </AppText>
                 )}
                 {job.status?.toLowerCase() === 'finished' && job.finishedAt && (
                   <AppText style={[styles.jobFinishedDate, { color: themeColors.textSecondary }]}>
                     ✓ {t.finishedAt || 'Finished'}: {new Date(job.finishedAt).toLocaleDateString()} {new Date(job.finishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </AppText
+                  </AppText>
                 )}
               </View>
             </View>
             <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-              <AppText style={styles.statusText}>{getStatusText(job.status)}</AppText
+              <AppText style={styles.statusText}>{getStatusText(job.status)}</AppText>
             </View>
           </View>
           
@@ -589,7 +589,7 @@ export default function JobMonitor() {
             }}
           >
             <Ionicons name="create-outline" size={18} color={themeColors.secondary} />
-            <AppText style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</AppText
+            <AppText style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</AppText>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -600,7 +600,7 @@ export default function JobMonitor() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.secondary} />
-        <AppText style={styles.loadingText}>{t.loading}</AppText
+        <AppText style={styles.loadingText}>{t.loading}</AppText>
       </View>
     );
   }
@@ -612,8 +612,8 @@ export default function JobMonitor() {
       {/* Header */}
       <View style={[styles.header, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border }]}>
         <View style={styles.headerCenter}>
-          <AppText style={[styles.title, { color: themeColors.textPrimary }]}>{t.title}</AppText
-          <AppText style={[styles.subtitle, { color: themeColors.textSecondary }]}>{t.subtitle}</AppText
+          <AppText style={[styles.title, { color: themeColors.textPrimary }]}>{t.title}</AppText>
+          <AppText style={[styles.subtitle, { color: themeColors.textSecondary }]}>{t.subtitle}</AppText>
         </View>
       </View>
 
@@ -633,7 +633,7 @@ export default function JobMonitor() {
             <Ionicons name="calendar-outline" size={20} color="#fff" />
             <AppText style={styles.dateFilterButtonTextSmall}>
               {dateFilter.label}
-            </AppText
+            </AppText>
           </LinearGradient>
         </TouchableOpacity>
 
@@ -673,7 +673,7 @@ export default function JobMonitor() {
           >
             <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
               {t.all} ({jobs.pending.length + jobs.received.length + jobs.waiting.length + jobs.finished.length})
-            </AppText
+            </AppText>
           </LinearGradient>
         </TouchableOpacity>
         
@@ -687,7 +687,7 @@ export default function JobMonitor() {
           >
             <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
               {t.pending} ({jobs.pending.length})
-            </AppText
+            </AppText>
           </LinearGradient>
         </TouchableOpacity>
         
@@ -701,7 +701,7 @@ export default function JobMonitor() {
           >
             <AppText style={[styles.filterText, activeFilter === 'received' && styles.filterTextActive]}>
               {t.received} ({jobs.received.length})
-            </AppText
+            </AppText>
           </LinearGradient>
         </TouchableOpacity>
         
@@ -715,7 +715,7 @@ export default function JobMonitor() {
           >
             <AppText style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
               {t.waiting} ({jobs.waiting.length})
-            </AppText
+            </AppText>
           </LinearGradient>
         </TouchableOpacity>
         
@@ -729,7 +729,7 @@ export default function JobMonitor() {
           >
             <AppText style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
               {t.finished} ({jobs.finished.length})
-            </AppText
+            </AppText>
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
@@ -741,7 +741,7 @@ export default function JobMonitor() {
       >
         {filteredJobs.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <AppText style={styles.emptyText}>{t.noJobs}</AppText
+            <AppText style={styles.emptyText}>{t.noJobs}</AppText>
           </View>
         ) : (
           filteredJobs.map((job) => <JobCard key={`${job.workerId}-${job.id}`} job={job} />)
@@ -1457,6 +1457,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
 
 
 

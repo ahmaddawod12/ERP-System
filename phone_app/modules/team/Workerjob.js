@@ -482,7 +482,7 @@ export default function Workerjob() {
       {!isOnline && (
         <View style={styles.offlineBanner}>
           <MaterialCommunityIcons name="wifi-off" size={20} color="#fff" />
-          <AppText style={styles.offlineBannerText}>{t.offlineMode}</AppText
+          <AppText style={styles.offlineBannerText}>{t.offlineMode}</AppText>
         </View>
       )}
 
@@ -492,7 +492,7 @@ export default function Workerjob() {
           <MaterialCommunityIcons name="cloud-upload" size={20} color="#fff" />
           <AppText style={styles.pendingJobsText}>
             {t.pendingJobs}: {pendingJobCount}
-          </AppText
+          </AppText>
         </View>
       )}
 
@@ -513,13 +513,13 @@ export default function Workerjob() {
             style={styles.dateFilterButton}
           >
             <Ionicons name="calendar-outline" size={22} color="#fff" />
-            <AppText style={styles.dateFilterButtonText}>{dateFilter.label}</AppText
+            <AppText style={styles.dateFilterButtonText}>{dateFilter.label}</AppText>
             <Ionicons name="chevron-down" size={20} color="rgba(255,255,255,0.8)" />
           </LinearGradient>
         </TouchableOpacity>
 
         {jobs.length === 0 ? (
-          <AppText style={styles.emptyText}>{t.noJobs}</AppText
+          <AppText style={styles.emptyText}>{t.noJobs}</AppText>
         ) : (
           jobs.map((job) => (
             <TouchableOpacity
@@ -531,12 +531,12 @@ export default function Workerjob() {
               {/* Title Row */}
               <View style={styles.jobTitleRow}>
                 <View style={styles.titleContainer}>
-                  <AppText style={[styles.jobTitle, { color: colors.primary }]}>{job.title}</AppText
+                  <AppText style={[styles.jobTitle, { color: colors.primary }]}>{job.title}</AppText>
                   {isJobNew(job) && (
                     <View style={styles.newBadge}>
                       <AppText style={styles.newBadgeText}>
                         {language === 'en' ? 'NEW' : language === 'he' ? 'חדש' : 'جديد'}
-                      </AppText
+                      </AppText>
                     </View>
                   )}
                 </View>
@@ -590,34 +590,34 @@ export default function Workerjob() {
               </View>
 
               {/* Job Info */}
-              <AppText style={[styles.jobDescription, { color: colors.textSecondary }]}>{job.description}</AppText
+              <AppText style={[styles.jobDescription, { color: colors.textSecondary }]}>{job.description}</AppText>
               {job.assignedBy && (
                 <AppText style={[styles.jobDetails, { color: colors.textSecondary }]}>
                   {t.assignedBy}: {job.assignedBy}
-                </AppText
+                </AppText>
               )}
               {(job.clientName || job.clientPhone) && (
                 <AppText style={[styles.jobCustomer, { color: colors.textSecondary }]}>
                   {job.clientName && `${t.clientName}: ${job.clientName}`}
                   {job.clientName && job.clientPhone ? ' • ' : ''}
                   {job.clientPhone && `${t.clientPhone}: ${job.clientPhone}`}
-                </AppText
+                </AppText>
               )}
               {job.dueDate && (
                 <AppText style={[styles.jobDetails, { color: colors.textSecondary }]}>
                   {language === 'en' ? 'Due Date' : language === 'he' ? 'תאריך יעד' : 'تاريخ الاستحقاق'}: {job.dueDate}
-                </AppText
+                </AppText>
               )}
               {job.location && (
                 <AppText style={[styles.jobLocation, { color: colors.textSecondary }]}>
-                  <AppText style={styles.locationLabel}>{t.location}:</AppText {job.location}
-                </AppText
+                  <AppText style={styles.locationLabel}>{t.location}:</AppText> {job.location}
+                </AppText>
               )}
 
               {/* Status + Quick Actions Row */}
               <View style={styles.statusAndWazeRow}>
                 <View style={[styles.statusBadge, { backgroundColor: getStatusColor(job.status) }]}>
-                  <AppText style={styles.statusText}>{job.status || t.pending}</AppText
+                  <AppText style={styles.statusText}>{job.status || t.pending}</AppText>
                 </View>
                 {job.location && (
                   <TouchableOpacity
@@ -634,7 +634,7 @@ export default function Workerjob() {
                     onPress={(e) => { e.stopPropagation(); handleCallClient(job.clientPhone); }}
                     activeOpacity={0.7}
                   >
-                    <AppText style={styles.phoneIcon}>📞</AppText
+                    <AppText style={styles.phoneIcon}>📞</AppText>
                   </TouchableOpacity>
                 )}
                 {job.clientPhone && (
@@ -661,7 +661,7 @@ export default function Workerjob() {
               {language === 'en' ? 'Syncing pending jobs...'
                 : language === 'he' ? 'מסנכרן משימות ממתינות...'
                 : 'مزامنة المهام المعلقة...'}
-            </AppText
+            </AppText>
           </View>
         </View>
       )}
@@ -988,6 +988,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
 
 
 

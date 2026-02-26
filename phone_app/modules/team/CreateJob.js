@@ -313,7 +313,7 @@ export default function CreateJob() {
       >
         {/* Workers List */}
         <View style={styles.section}>
-          <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary }]}>{t.selectWorker}</AppText
+          <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary }]}>{t.selectWorker}</AppText>
           
           {!selectedWorker && (
             <SearchInput
@@ -378,14 +378,14 @@ export default function CreateJob() {
                       <View style={styles.workerInfo}>
                         <AppText style={[styles.workerName, { color: themeColors.textPrimary }]}>
                           {worker.name || worker.email}
-                        </AppText
+                        </AppText>
                         <AppText style={[styles.workerEmail, { color: themeColors.textSecondary }]}>
                           {worker.email}
-                        </AppText
+                        </AppText>
                         {worker.phoneNumber && (
                           <AppText style={[styles.workerPhone, { color: themeColors.textLight }]}>
                             📞 {worker.phoneNumber}
-                          </AppText
+                          </AppText>
                         )}
                       </View>
                       {isSelected ? (
@@ -393,7 +393,7 @@ export default function CreateJob() {
                           <Ionicons name="checkmark-circle" size={32} color={themeColors.secondary} />
                           <AppText style={[styles.tapToChangeText, { color: themeColors.textLight }]}>
                             {language === 'en' ? 'Tap to change' : language === 'he' ? 'לחץ לשינוי' : 'اضغط للتغيير'}
-                          </AppText
+                          </AppText>
                         </View>
                       ) : (
                         <Ionicons name="chevron-forward" size={24} color={themeColors.textLight} />
@@ -412,7 +412,7 @@ export default function CreateJob() {
               <MaterialCommunityIcons name="clipboard-text" size={24} color={themeColors.secondary} />
               <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary, marginBottom: 0, marginLeft: 8 }]}>
                 {t.jobDetails}
-              </AppText
+              </AppText>
             </View>
             
             <View style={[styles.formContainer, { backgroundColor: themeColors.surface }]}>
@@ -422,7 +422,7 @@ export default function CreateJob() {
                   <MaterialCommunityIcons name="account-check" size={20} color="white" />
                   <AppText style={styles.assignedToBadgeText}>
                     {t.assignedTo}: {selectedWorkerName}
-                  </AppText
+                  </AppText>
                 </LinearGradient>
               </View>
 
@@ -432,7 +432,7 @@ export default function CreateJob() {
                   <Ionicons name="person" size={20} color={themeColors.secondary} />
                   <AppText style={[styles.inputLabel, { color: themeColors.textSecondary, fontWeight: 'bold' }]}>
                     {t.clientName}
-                  </AppText
+                  </AppText>
                 </View>
 
                 {/* Embedded client selector (search + dropdown) */}
@@ -512,7 +512,7 @@ export default function CreateJob() {
                   <MaterialCommunityIcons name="format-title" size={20} color={themeColors.secondary} />
                   <AppText style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
                     {t.jobTitle} *
-                  </AppText
+                  </AppText>
                 </View>
                 <TextInput
                   style={[styles.input, { 
@@ -532,7 +532,7 @@ export default function CreateJob() {
                   <MaterialCommunityIcons name="text" size={20} color={themeColors.secondary} />
                   <AppText style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
                     {t.description} *
-                  </AppText
+                  </AppText>
                 </View>
                 <TextInput
                   style={[styles.input, styles.textArea, { 
@@ -554,7 +554,7 @@ export default function CreateJob() {
                   <MaterialCommunityIcons name="map-marker" size={20} color={themeColors.secondary} />
                   <AppText style={[styles.inputLabel, { color: themeColors.textSecondary }]}>
                     {t.location} *
-                  </AppText
+                  </AppText>
                 </View>
                 <TextInput
                   style={[styles.input, { 
@@ -582,7 +582,7 @@ export default function CreateJob() {
                 >
                   <View style={[styles.cancelButton, { borderColor: themeColors.border, backgroundColor: themeColors.background }]}>
                     <Ionicons name="close-circle-outline" size={20} color={themeColors.textSecondary} />
-                    <AppText style={[styles.cancelButtonText, { color: themeColors.textPrimary }]}>{t.cancel}</AppText
+                    <AppText style={[styles.cancelButtonText, { color: themeColors.textPrimary }]}>{t.cancel}</AppText>
                   </View>
                 </TouchableOpacity>
                 
@@ -592,7 +592,7 @@ export default function CreateJob() {
                 >
                   <LinearGradient colors={gradients.indigoBox} style={styles.submitButton}>
                     <Ionicons name="checkmark-circle" size={20} color="white" />
-                    <AppText style={styles.submitButtonText}>{t.submit}</AppText
+                    <AppText style={styles.submitButtonText}>{t.submit}</AppText>
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
@@ -773,6 +773,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 });
+
 
 
 

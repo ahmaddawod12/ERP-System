@@ -436,7 +436,7 @@ export default function WorkersMonitor() {
           <View style={styles.section}>
             <View style={styles.sectionHeaderWithIcon}>
               <MaterialCommunityIcons name="account-group" size={28} color={themeColors.primary} />
-              <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary, marginLeft: 12 }]}>{t.selectWorker}</AppText
+              <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary, marginLeft: 12 }]}>{t.selectWorker}</AppText>
             </View>
             
             {/* Always Visible Search Bar */}
@@ -496,10 +496,10 @@ export default function WorkersMonitor() {
                           <View style={styles.workerInfo}>
                             <AppText style={[styles.workerName, { color: themeColors.textPrimary }]}>
                               {worker.name || worker.uid}
-                            </AppText
+                            </AppText>
                             <AppText style={[styles.workerEmail, { color: themeColors.textSecondary }]}>
                               {worker.email}
-                            </AppText
+                            </AppText>
                           </View>
                           {isSelected ? (
                             <Ionicons name="checkmark-circle" size={32} color={themeColors.secondary} />
@@ -527,8 +527,8 @@ export default function WorkersMonitor() {
                                 <View style={[styles.statIconContainer, { backgroundColor: themeColors.secondary }]}>
                                   <MaterialCommunityIcons name="briefcase-outline" size={24} color="white" />
                                 </View>
-                                <AppText style={[styles.statNumber, { color: themeColors.textPrimary }]}>{workerJobs.length}</AppText
-                                <AppText style={[styles.statLabel, { color: themeColors.textSecondary }]}>{t.jobs}</AppText
+                                <AppText style={[styles.statNumber, { color: themeColors.textPrimary }]}>{workerJobs.length}</AppText>
+                                <AppText style={[styles.statLabel, { color: themeColors.textSecondary }]}>{t.jobs}</AppText>
                               </View>
                               
                               <View style={[styles.statDivider, { backgroundColor: themeColors.border }]} />
@@ -543,7 +543,7 @@ export default function WorkersMonitor() {
                                 <View style={[styles.statIconContainer, { backgroundColor: themeColors.secondary }]}>
                                   <MaterialCommunityIcons name="package-variant" size={24} color="white" />
                                 </View>
-                                <AppText style={[styles.statLabel, { color: themeColors.textSecondary }]}>{t.parts}</AppText
+                                <AppText style={[styles.statLabel, { color: themeColors.textSecondary }]}>{t.parts}</AppText>
                                 <Ionicons name="arrow-forward-circle" size={18} color={themeColors.secondary} style={{ marginTop: 4 }} />
                               </TouchableOpacity>
                             </View>
@@ -554,7 +554,7 @@ export default function WorkersMonitor() {
                             <View style={styles.recentJobsContainer}>
                               <AppText style={[styles.recentJobsTitle, { color: themeColors.textPrimary }]}>
                                 {t.recentJobs}
-                              </AppText
+                              </AppText>
                               {workerJobs.slice(0, 3).map((job) => (
                                 <TouchableOpacity
                                   key={job.id}
@@ -566,15 +566,15 @@ export default function WorkersMonitor() {
                                     <View style={styles.compactJobInfo}>
                                       <AppText style={[styles.compactJobTitle, { color: themeColors.textPrimary }]} numberOfLines={1}>
                                         {job.title}
-                                      </AppText
+                                      </AppText>
                                       <View style={styles.compactJobBottom}>
                                         {job.createdAt && (
                                           <AppText style={[styles.compactJobDate, { color: themeColors.textSecondary }]}>
                                             {new Date(job.createdAt).toLocaleDateString()}
-                                          </AppText
+                                          </AppText>
                                         )}
                                         <View style={[styles.compactStatusBadge, { backgroundColor: getStatusColor(job.status) }]}>
-                                          <AppText style={styles.compactStatusText}>{getStatusText(job.status)}</AppText
+                                          <AppText style={styles.compactStatusText}>{getStatusText(job.status)}</AppText>
                                         </View>
                                       </View>
                                     </View>
@@ -585,7 +585,7 @@ export default function WorkersMonitor() {
                               {workerJobs.length > 3 && (
                                 <AppText style={[styles.moreJobsText, { color: themeColors.secondary }]}>
                                   +{workerJobs.length - 3} {t.moreJobs}
-                                </AppText
+                                </AppText>
                               )}
                             </View>
                           )}
@@ -1164,6 +1164,7 @@ const styles = StyleSheet.create({
     height: '80%',
   },
 });
+
 
 
 

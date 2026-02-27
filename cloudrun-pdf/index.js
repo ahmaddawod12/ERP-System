@@ -27,9 +27,14 @@ const { v4: uuidv4 } = require('uuid');
 // Email service for document delivery
 const { getEmailServiceInstance, getDocumentTitle } = require('./emailService');
 
-// Initialize Firebase Admin with storage bucket (prefer env var over hardcoded default)
+const STORAGE_BUCKET = process.env.STORAGE_BUCKET;
+if (!STORAGE_BUCKET) {
+  throw new Error('STORAGE_BUCKET environment variable is required');
+}
+
+// Initialize Firebase Admin with explicit storage bucket.
 admin.initializeApp({
-  storageBucket: process.env.STORAGE_BUCKET || 'cooling-inventory-5be04.firebasestorage.app'
+  storageBucket: STORAGE_BUCKET
 });
 const db = admin.firestore();
 const storage = admin.storage();
@@ -153,7 +158,7 @@ async function verifyPubSubRequest(req, res, next) {
     const idToken = authHeader.slice('Bearer '.length).trim();
     if (idToken) {
       try {
-        // Verify the OIDC token — in production this is a Google-signed JWT
+        // Verify the OIDC token; in production this is a Google-signed JWT
         // from the Pub/Sub push subscription's service account
         const { OAuth2Client } = require('google-auth-library');
         const client = new OAuth2Client();
@@ -171,7 +176,7 @@ async function verifyPubSubRequest(req, res, next) {
           PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
 
         if (issuerValid && emailValid && serviceAccountAllowed) {
-          // Valid OIDC token — allow request
+          // Valid OIDC token; allow request
           return next();
         }
 
@@ -378,7 +383,7 @@ async function processGenerateTask(taskData) {
     companyId, 
     documentId,
     documentNumber,
-    confirmationNumber, // Tax Authority confirmation number for tax invoices
+    confirmationNumber, // Tax Authority confirmation number
     userRole: claimedUserRole, // Untrusted role from message (for diagnostics only)
   } = taskData;
 
@@ -392,31 +397,36 @@ async function processGenerateTask(taskData) {
       throw new Error('Missing required task identity fields (uid/companyId)');
     }
 
-    // P0-5: Idempotency — check task state before processing.
-    // If task is already processing/completed, skip to prevent duplicate side effects.
+    // P0-5: Idempotency check before processing.
+    // If task is already processing/completed, skip duplicate side effects.
     const taskRef = db.collection('documentTasks').doc(taskId);
-    const taskSnap = await taskRef.get();
-    if (taskSnap.exists) {
+    const casResult = await db.runTransaction(async (tx) => {
+      const taskSnap = await tx.get(taskRef);
+      if (!taskSnap.exists) {
+        return { shouldProcess: false, reason: 'task_not_found' };
+      }
+
       const taskState = taskSnap.data()?.status;
       if (taskState === 'completed' || taskState === 'failed') {
-        console.log(`[generate:${taskId}] Skipping — already in terminal state: ${taskState}`);
-        return { success: true, taskId, skipped: true, reason: `already_${taskState}` };
+        return { shouldProcess: false, reason: `already_${taskState}` };
       }
       if (taskState === 'processing') {
-        console.log(`[generate:${taskId}] Skipping — already processing (possible redelivery)`);
-        return { success: true, taskId, skipped: true, reason: 'already_processing' };
+        return { shouldProcess: false, reason: 'already_processing' };
       }
-    }
+      if (taskState !== 'queued' && taskState !== 'pending') {
+        return { shouldProcess: false, reason: `invalid_state_${String(taskState || 'unknown')}` };
+      }
 
-    // CAS transition: queued → processing (reject if not in queued state)
-    try {
-      await taskRef.update({
+      tx.update(taskRef, {
         status: 'processing',
         processingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-    } catch (casError) {
-      console.warn(`[generate:${taskId}] CAS update failed, likely concurrent delivery`, casError.message);
-      return { success: true, taskId, skipped: true, reason: 'cas_conflict' };
+      return { shouldProcess: true, reason: null };
+    });
+
+    if (!casResult.shouldProcess) {
+      console.log(`[generate:${taskId}] Skipping - ${casResult.reason}`);
+      return { success: true, taskId, skipped: true, reason: casResult.reason };
     }
 
     // Resolve requester role/company from Firestore, never from Pub/Sub payload.
@@ -524,7 +534,7 @@ async function processGenerateTask(taskData) {
       date,
       notes,
       logoUrl,
-      confirmationNumber, // Tax Authority confirmation number (מספר הקצאה)
+      confirmationNumber, // Tax Authority confirmation number
     });
     
     const htmlSize = Buffer.byteLength(html, 'utf8');

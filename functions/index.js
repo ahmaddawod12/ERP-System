@@ -3968,9 +3968,19 @@ exports.acceptJobV1 = onCall(async (request) => {
   validateCompanyId(companyId);
   const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
   const finishedJobId = typeof data.finishedJobId === 'string' ? data.finishedJobId.trim() : '';
+  const expectedFinishedJobId = jobId.startsWith('p_') ? `f_${jobId.slice(2)}` : `f_${jobId}`;
 
   if (!jobId) {
     throw new HttpsError('invalid-argument', 'jobId is required');
+  }
+  if (!/^f_[A-Za-z0-9_-]+$/.test(expectedFinishedJobId)) {
+    throw new HttpsError('invalid-argument', 'jobId produces an invalid finished job ID');
+  }
+  if (finishedJobId && finishedJobId !== expectedFinishedJobId) {
+    throw new HttpsError(
+      'invalid-argument',
+      `finishedJobId must match canonical ID: ${expectedFinishedJobId}`
+    );
   }
 
   // Only manager/dev can accept jobs
@@ -4006,9 +4016,13 @@ exports.acceptJobV1 = onCall(async (request) => {
       }
     }
 
-    // Determine finished job ID
-    const fJobId = finishedJobId || (jobId.startsWith('p_') ? `f_${jobId.slice(2)}` : `f_${jobId}`);
+    // Determine finished job ID from canonical mapping only.
+    const fJobId = expectedFinishedJobId;
     const finishedRef = dbRef.doc(`companies/${companyId}/finishedJobs/${fJobId}`);
+    const finishedSnap = await tx.get(finishedRef);
+    if (finishedSnap.exists) {
+      throw new HttpsError('already-exists', `Finished job already exists: ${fJobId}`);
+    }
 
     const now = new Date().toISOString();
 
@@ -4500,6 +4514,12 @@ exports.updateJobV1 = onCall(async (request) => {
   if (updates.status && !VALID_STATUSES.includes(updates.status)) {
     throw new HttpsError('invalid-argument', `Invalid status: ${updates.status}. Valid: ${VALID_STATUSES.join(', ')}`);
   }
+  if (isPending && updates.status === 'finished') {
+    throw new HttpsError('failed-precondition', 'Pending job cannot transition directly to finished. Use acceptJobV1.');
+  }
+  if (!isPending && (updates.status === 'pending' || updates.status === 'waiting')) {
+    throw new HttpsError('failed-precondition', 'Finished job cannot transition back to pending/waiting.');
+  }
 
   updates.updatedAt = new Date().toISOString();
 
@@ -4927,7 +4947,8 @@ exports.deleteDocumentV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const documentId = typeof data.documentId === 'string' ? data.documentId.trim() : '';
+  const rawDocumentId = typeof data.documentId === 'string' ? data.documentId.trim() : '';
+  const documentId = toDocumentDocId(rawDocumentId);
 
   if (!documentId) {
     throw new HttpsError('invalid-argument', 'documentId is required');
@@ -4959,8 +4980,23 @@ exports.deleteDocumentV1 = onCall(async (request) => {
   }
 
   await documentRef.delete();
+  const storagePath = typeof documentDataRecord.storagePath === 'string'
+    ? documentDataRecord.storagePath.trim()
+    : '';
+  if (storagePath) {
+    try {
+      await admin.storage().bucket().file(storagePath).delete({ ignoreNotFound: true });
+    } catch (storageError) {
+      logger.error('deleteDocumentV1: failed to delete storage object', {
+        companyId,
+        documentId,
+        storagePath,
+        error: storageError.message,
+      });
+    }
+  }
 
-  logger.info('deleteDocumentV1: document deleted', { companyId, documentId, uid });
+  logger.info('deleteDocumentV1: document deleted', { companyId, documentId, rawDocumentId, uid });
   return { success: true, documentId };
 });
 

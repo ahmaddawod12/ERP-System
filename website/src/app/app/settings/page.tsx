@@ -19,7 +19,7 @@ import type { Locale } from "@/lib/i18n/translations";
 
 const profileSchema = z.object({
   name: z.string().min(1, "Name is required").max(120),
-  phone: z.string().max(40).optional().default(""),
+  phone: z.string().max(40),
 });
 
 type ProfileFormValues = z.infer<typeof profileSchema>;
@@ -109,4 +109,3 @@ export default function SettingsPage() {
     </ProtectedRoute>
   );
 }
-

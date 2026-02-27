@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const body = await parseRequestBody(request, contactRequestSchema);
-    return await proxyToHttpFunction(request, "contactRequestV1", body);
+    return await proxyToHttpFunction(request, "contactRequestV1", body, { requireAuth: false });
   } catch (error) {
     return handleRouteError(error);
   }

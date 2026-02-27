@@ -63,10 +63,14 @@ export async function proxyToHttpFunction(
   request: Request,
   functionName: string,
   body: unknown,
+  options?: { requireAuth?: boolean },
 ) {
-  // P1-3: Verify auth server-side before proxying (defense-in-depth)
+  const requireAuth = options?.requireAuth !== false;
   const bodyObj = (typeof body === "object" && body !== null) ? body as Record<string, unknown> : {};
-  const auth = await resolveRequestAuth(request, bodyObj.uid as string | undefined);
+  if (requireAuth) {
+    // P1-3: Verify auth server-side before proxying (defense-in-depth)
+    await resolveRequestAuth(request, bodyObj.uid as string | undefined);
+  }
 
   const headers = new Headers({ "Content-Type": "application/json" });
   const authorization = request.headers.get("authorization");

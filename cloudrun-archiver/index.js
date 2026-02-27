@@ -33,7 +33,10 @@ const { Storage } = require('@google-cloud/storage');
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
-const BUCKET_NAME = process.env.ARCHIVE_BUCKET || 'cooling-inventory-5be04.firebasestorage.app';
+const BUCKET_NAME = process.env.ARCHIVE_BUCKET;
+if (!BUCKET_NAME) {
+  throw new Error('ARCHIVE_BUCKET environment variable is required');
+}
 const MONTHS_LOOKBACK = 6; // Archive data older than 6 months
 const BATCH_SIZE = 500; // Firestore batch delete limit
 const QUERY_PAGE_SIZE = 5000; // Docs per paginated query

@@ -394,7 +394,7 @@ async function processGenerateTask(taskData) {
   
   try {
     if (!uid || !companyId) {
-      throw new Error('Missing required task identity fields (uid/companyId)');
+      throw new Error('Missing required task identity fields (uid and companyId)');
     }
 
     // P0-5: Idempotency check before processing.

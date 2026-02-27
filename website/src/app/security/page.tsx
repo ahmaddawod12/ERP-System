@@ -26,7 +26,7 @@ export default function SecurityPage() {
       <section className="page-shell py-12">
         <h1 className="text-4xl font-bold text-slate-900 dark:text-white">Security Overview</h1>
         <p className="mt-3 max-w-3xl text-slate-600 dark:text-slate-300">
-          Smart-Job ERP uses Firebase Authentication, Firestore security rules, and company-scoped data models with uid/companyId ownership.
+          Smart-Job ERP uses Firebase Authentication, Firestore security rules, and company-scoped data models where uid identity is separate from companyId scope.
         </p>
         <div className="mt-8 grid gap-4 md:grid-cols-3">
           {items.map((item) => (

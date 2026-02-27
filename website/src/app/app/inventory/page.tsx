@@ -60,7 +60,7 @@ export default function InventoryPage() {
   }, [load]);
 
   const createItem = async () => {
-    if (!uid || !form.name) return;
+    if (!uid || !companyId || !form.name) return;
     if (isCompanyInventory && companyId) {
       await addCompanyInventoryPart(companyId, {
         name: form.name,
@@ -71,7 +71,7 @@ export default function InventoryPage() {
         name: form.name,
         quantity: Number(form.quantity || "0"),
         lowThreshold: Number(form.lowThreshold || "0"),
-      });
+      }, companyId);
     }
     setForm(initialForm);
     await load();
@@ -79,19 +79,19 @@ export default function InventoryPage() {
   };
 
   const updateQty = async (partId: number, quantity: number) => {
-    if (!uid) return;
+    if (!uid || !companyId) return;
     if (!isCompanyInventory) {
-      await updateUserInventoryPart(uid, partId, { quantity });
+      await updateUserInventoryPart(uid, partId, { quantity }, companyId);
       await load();
     }
   };
 
   const removeItem = async (partId: number) => {
-    if (!uid) return;
+    if (!uid || !companyId) return;
     if (isCompanyInventory && companyId) {
       await removeCompanyInventoryPart(companyId, partId);
     } else {
-      await removeUserInventoryPart(uid, partId);
+      await removeUserInventoryPart(uid, partId, companyId);
     }
     await load();
     toast({ title: "Part removed", variant: "info" });

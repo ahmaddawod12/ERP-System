@@ -8,7 +8,7 @@ These instructions apply to the full repository.
 - Business registration is website-only (`website/src/app/register`, `website/src/app/onboarding`).
 - Mobile route `phone_app/app/BusinessReg.js` was removed. Do not recreate it.
 
-## Current Version Targets (2026-02-26)
+## Current Version Targets (2026-02-27)
 
 ### Mobile (`phone_app/package.json`)
 - Expo `~54.0.25`
@@ -35,6 +35,7 @@ When generating code, prefer compatibility with these versions.
 1. Identity:
 - Always use Firebase Auth `uid` for user-scoped data.
 - Always use `companyId` for company-scoped data.
+- `companyId` is allocated by backend registration from `system/data/comid` (never `uid` fallback).
 - Never derive identifiers from email.
 
 2. Inventory model:
@@ -64,6 +65,10 @@ When generating code, prefer compatibility with these versions.
 ## Website Coding Rules (`website/`)
 
 - Registration/onboarding flows belong to website.
+- `/register` creates Firebase Auth user only.
+- `/onboarding` performs provisioning:
+  - manager/solo -> `registerBusinessV1`
+  - worker -> `/api/onboarding/join-company` -> `joinCompanyV1`
 - Use existing form stack and validation patterns already used in the app.
 - Keep API route and Cloud Function proxy patterns consistent with current code.
 

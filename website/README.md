@@ -6,7 +6,7 @@ Next.js App Router website for Smart-Job ERP (TypeScript + Tailwind + Firebase W
 
 - Next.js App Router + TypeScript
 - Firebase Web SDK (Auth + Firestore)
-- Firebase Admin SDK (API routes + privileged writes)
+- Firebase Admin SDK (API routes + privileged proxy/auth checks)
 - React Hook Form + Zod
 - EN/HE/AR i18n with RTL
 - Dark/light theme persistence
@@ -17,79 +17,80 @@ Next.js App Router website for Smart-Job ERP (TypeScript + Tailwind + Firebase W
 - Auth: `/register`, `/login`, `/forgot-password`
 - Protected: `/app`, `/app/jobs`, `/app/workers`, `/app/inventory`, `/app/inventory-picks`, `/app/clients`, `/app/documents`, `/app/settings`, `/app/upgrade`, `/app/admin`
 
-## API Endpoints
+## Registration and Onboarding
 
-- `POST /api/documents/generate` (legacy — kept for backward compatibility)
-- `POST /api/invites/create`
-- `POST /api/onboarding/join-company`
-- `POST /api/clients/create`
-- `POST /api/upgrades/request`
-- `POST /api/contact/request`
+- `/register` only creates Firebase Auth credentials.
+- `/onboarding` writes profile/business data through backend functions:
+  - Manager/solo provisioning: callable `registerBusinessV1`
+  - Worker join flow: `/api/onboarding/join-company` -> HTTP `joinCompanyV1`
+- `companyId` is backend-assigned from `system/data/comid` and never derived from `uid`.
 
-## Document Generation (Pub/Sub)
+## API Endpoints (Next.js -> Cloud Functions)
 
-The website uses the same Pub/Sub document generation flow as the phone app:
-
-1. **Preview**: `publishPreviewTask` callable Cloud Function (us-central1) → Pub/Sub `document-preview` → Cloud Run PDF worker → `documentTasks/{taskId}` updated with `previewURL`
-2. **Generate**: `publishGenerateTask` callable Cloud Function (us-central1) → Pub/Sub `document-generate` → Cloud Run PDF worker → `documentTasks/{taskId}` updated with `downloadURL`
-3. **Tax Invoice (305)**: `getInvoiceApproval` callable Cloud Function (me-west1) → Tax Authority API → approval → PDF task via Pub/Sub
-
-The `useDocumentTask` hook (`hooks/use-document-task.ts`) manages the full lifecycle with `onSnapshot` listeners on `documentTasks/{taskId}`.
-
-Firebase Functions SDK is initialized with two regions in `lib/firebase/client.ts`:
-- `functions` — us-central1 (default)
-- `middleEastFunctions` — me-west1 (Tax Authority)
+- `POST /api/clients/create` -> `addClientV1`
+- `POST /api/invites/create` -> `createInviteV1`
+- `POST /api/onboarding/join-company` -> `joinCompanyV1`
+- `POST /api/upgrades/request` -> `requestUpgradeV1`
+- `POST /api/contact/request` -> `contactRequestV1` (no auth required)
+- `POST /api/documents/generate` -> `generateDocumentV1` (legacy/backward compatibility only)
 
 All endpoints return:
 
 - Success: `{ ok: true, data }`
 - Failure: `{ ok: false, error: { code, message, details? } }`
 
+## Document Generation (Pub/Sub)
+
+Current document flows:
+
+1. Preview: `publishPreviewTask` callable -> Pub/Sub `document-preview` -> Cloud Run PDF -> `documentTasks/{taskId}.previewURL`
+2. Generate: `publishGenerateTask` callable -> Pub/Sub `document-generate` -> Cloud Run PDF -> `documentTasks/{taskId}.downloadURL`
+3. Tax invoice (305): `getInvoiceApproval` callable (me-west1) -> Tax Authority API -> PDF task
+
+`useDocumentTask` (`src/hooks/use-document-task.ts`) manages task lifecycle via Firestore listeners on `documentTasks/{taskId}`.
+
 ## Auth + Security Notes
 
 - Production API calls require `Authorization: Bearer <Firebase ID token>`.
-- `uid` request-body fallback is accepted only in local development when emulator mode is enabled.
-- Server routes validate request JSON with Zod before processing.
-- Firestore security rules are least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`, plus admin custom claim).
+- `uid` request-body fallback is accepted only in local development emulator mode.
+- Server routes validate request JSON with Zod before proxying.
+- Firestore rules remain least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`).
 
 ## Data Model
 
-All paths are shared with the phone app — both apps connect to the same Firestore database.
-
 ```
-users/{uid}/data/profile                              → user profile
-users/{uid}/data/cache                                → user cache versioning
-users/{uid}/data/inventory                            → { parts: [...], nextId, lastUpdated } (single doc)
+users/{uid}/data/profile                      -> user profile
+users/{uid}/data/cache                        -> user cache versioning
+users/{uid}/data/inventory                    -> { parts: [...], nextId, lastUpdated }
 
-companies/{companyId}/data/subscription      → { tier, status, enabledModules }
-companies/{companyId}/data/business_info     → { he_name, en_name, vat_number, city, ... }
-companies/{companyId}/data/inventory         → { parts: [...], nextId, lastUpdated } (single doc)
-companies/{companyId}/data/cache             → company cache versioning
-companies/{companyId}/workers/{uid}                   → worker membership + role
-companies/{companyId}/clients/{clientId}              → client records
-companies/{companyId}/counters/clients                → auto-increment counter
-companies/{companyId}/PendingJobs/{p_XXXXX}           → active jobs (p_ prefix IDs)
-companies/{companyId}/finishedJobs/{f_XXXXX}          → completed/denied jobs (f_ prefix IDs)
-companies/{companyId}/documents/{d_XXXXX}          → generated documents (d_ prefix IDs)
-companies/{companyId}/invites/{inviteId}              → onboarding invite codes
+companies/{companyId}                         -> { companyId, cid, wid?, jid, ... }
+companies/{companyId}/data/subscription       -> { tier, status, enabledModules }
+companies/{companyId}/data/business_info      -> business registration data
+companies/{companyId}/data/inventory          -> { parts: [...], nextId, lastUpdated }
+companies/{companyId}/data/cache              -> company cache versioning
+companies/{companyId}/workers/{uid}           -> worker membership + role
+companies/{companyId}/clients/{clientId}      -> client records
+companies/{companyId}/PendingJobs/{p_XXXXX}   -> active jobs
+companies/{companyId}/finishedJobs/{f_XXXXX}  -> completed/denied jobs
+companies/{companyId}/documents/{d_XXXXX}     -> generated documents
+companies/{companyId}/invites/{inviteId}      -> onboarding invite codes
 
-upgrade_requests/{id}                                 → upgrade request tickets
-documentTasks/{taskId}                                → Pub/Sub task tracking (preview/generate)
+system/data/comid                             -> { comid: nextCompanyId, ... }
+upgrade_requests/{id}                         -> upgrade request tickets
+documentTasks/{taskId}                        -> preview/generate task state
 ```
 
-**Document IDs**: use `d_` as the canonical prefix for new document writes.
+Canonical IDs:
 
-**Company IDs**: `companyId` is backend-assigned (sequential numeric string, e.g. `1`, `2`, `3`) and is never derived from `uid`.
-
-### Job Status Flow
-
-`pending` → `waiting` → `finished` (or `denied`)
+- Company IDs: backend-assigned numeric string from `system/data/comid`
+- Job IDs: `p_{jid}` / `f_{jid}`
+- Document IDs: `d_...` for new writes
 
 ## Environment Variables
 
 Copy `.env.local.example` to `.env.local` and set:
 
-- Public Firebase Web SDK:
+- Public Firebase:
   - `NEXT_PUBLIC_FIREBASE_API_KEY`
   - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
   - `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
@@ -97,8 +98,8 @@ Copy `.env.local.example` to `.env.local` and set:
   - `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
   - `NEXT_PUBLIC_FIREBASE_APP_ID`
 - Admin SDK:
-  - Either `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON`
-  - Or `FIREBASE_ADMIN_PROJECT_ID`, `FIREBASE_ADMIN_CLIENT_EMAIL`, `FIREBASE_ADMIN_PRIVATE_KEY`
+  - `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON`
+  - or split vars: `FIREBASE_ADMIN_PROJECT_ID`, `FIREBASE_ADMIN_CLIENT_EMAIL`, `FIREBASE_ADMIN_PRIVATE_KEY`
 - Optional:
   - `CLOUDRUN_PDF_URL`
 
@@ -115,46 +116,10 @@ npm install
 npm run dev
 ```
 
-## Demo Seed
-
-```bash
-npm run seed:demo
-```
-
-Optional seed vars:
-
-- `SEED_COMPANY_ID`
-- `SEED_MANAGER_UID`
-- `SEED_WORKER_UID`
-
-## Path Migration (Legacy)
-
-If your project still has old user paths from before the alignment, run migration scripts. These are one-time operations.
-
-```bash
-npm run migrate:user-paths
-```
-
-Copies legacy data:
-- `users/{uid}/profile/data` → `users/{uid}/data/profile`
-- `users/{uid}/subscription/data` → `companies/{companyId}/data/subscription`
-- legacy top-level `{uid}/{profile|cache|inventory}` → `users/{uid}/data/{profile|cache|inventory}`
-
-```bash
-npm run migrate:company-schema -- --dry-run
-npm run migrate:company-schema
-```
-
-Optional cleanup pass (after verification):
-
-```bash
-npm run migrate:company-schema -- --cleanup-legacy
-```
-
 ## Deployment (Vercel)
 
-1. Set project root to `website/`.
-2. Add all required env vars from `.env.local.example`.
-3. Provide Firebase Admin credentials (JSON or split vars).
-4. Keep emulator vars disabled in production.
-5. Deploy and verify API routes with real bearer tokens.
+1. Set project root to `website/`
+2. Add required env vars
+3. Provide Firebase Admin credentials
+4. Disable emulator vars in production
+5. Deploy and verify API routes with real bearer tokens

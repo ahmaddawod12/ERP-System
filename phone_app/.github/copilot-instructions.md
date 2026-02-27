@@ -62,6 +62,7 @@ Write code that is compatible with these versions.
 1. Identity:
 - Use Firebase Auth `uid` for user identity.
 - Use `companyId` for company scope.
+- `companyId` is backend-provided; never fallback to `uid`.
 - Never use email-derived usernames.
 
 2. Documents:

@@ -244,11 +244,11 @@ export async function getUserInventory(uid: string): Promise<InventoryDoc> {
 export async function addUserInventoryPart(
   uid: string,
   part: Omit<InventoryPart, "id" | "dateAdded">,
-  companyId?: string,
+  companyId: string,
 ) {
   const fn = httpsCallable(functions, "updateInventoryV1");
   await fn({
-    companyId: companyId || uid,
+    companyId,
     action: "addPart",
     scope: "user",
     targetUid: uid,
@@ -262,11 +262,11 @@ export async function updateUserInventoryPart(
   uid: string,
   partId: number,
   updates: Partial<Pick<InventoryPart, "name" | "quantity" | "lowThreshold">>,
-  companyId?: string,
+  companyId: string,
 ) {
   const fn = httpsCallable(functions, "updateInventoryV1");
   await fn({
-    companyId: companyId || uid,
+    companyId,
     action: "updatePart",
     scope: "user",
     targetUid: uid,
@@ -277,10 +277,10 @@ export async function updateUserInventoryPart(
   });
 }
 
-export async function removeUserInventoryPart(uid: string, partId: number, companyId?: string) {
+export async function removeUserInventoryPart(uid: string, partId: number, companyId: string) {
   const fn = httpsCallable(functions, "updateInventoryV1");
   await fn({
-    companyId: companyId || uid,
+    companyId,
     action: "removePart",
     scope: "user",
     targetUid: uid,

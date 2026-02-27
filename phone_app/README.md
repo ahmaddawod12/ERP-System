@@ -66,7 +66,7 @@ utils/               # Utilities
 ## Data and API Rules
 
 - Identity is `uid` (Firebase Auth UID), never email-derived usernames.
-- Company scope is always `companyId`.
+- Company scope is always `companyId` (backend-assigned; never fallback to `uid`).
 - Document paths use `companies/{companyId}/documents/{d_XXXXX}`.
 - Use `d_` as the canonical document ID prefix for new writes.
 - Use Cloud Functions for protected writes (`createJobV1`, `updateJobV1`, `updateInventoryV1`, etc.).

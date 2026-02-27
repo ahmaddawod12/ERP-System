@@ -23,7 +23,7 @@ ERP-System/
 `-- storage.rules
 ```
 
-## Version Snapshot (2026-02-26)
+## Version Snapshot (2026-02-27)
 
 ### Phone app (`phone_app/package.json`)
 - Expo `~54.0.25`
@@ -48,7 +48,7 @@ ERP-System/
 - Identity:
   - Always use Firebase Auth `uid` for user identity.
   - Always use `companyId` for company-scoped paths.
-  - For solo users, `companyId` is the same as `uid`.
+  - `companyId` is assigned by backend registration from `system/data/comid` and is never derived from `uid`.
 - Inventory:
   - Inventory is a single document with a `parts` array and `nextId` counter.
   - Do not model inventory as a Firestore subcollection.
@@ -62,6 +62,14 @@ ERP-System/
 - Mutations:
   - Protected writes must go through Cloud Functions.
   - Avoid direct client writes to protected profile, business, and job documents.
+
+## Registration and Onboarding Flow
+
+- Website registration creates Firebase Auth credentials (`/register`).
+- Website onboarding completes profile/business setup:
+  - Manager or solo: callable `registerBusinessV1`
+  - Worker join: HTTP `joinCompanyV1` via `/api/onboarding/join-company`
+- `registerBusinessV1` allocates `companyId` from `system/data/comid` in a transaction and increments `comid` by 1.
 
 ## Canonical Firestore Paths
 

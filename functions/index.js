@@ -380,7 +380,7 @@ async function assertHttpCompanyAccess(params) {
 
   const profileAccountType = normalizeAccountType(profile.accountType);
   const profileCompanyId = String(profile.companyId || '');
-  const isSoloScope = allowSoloScope && profileAccountType === 'solo' && uid === companyId;
+  const isSoloScope = allowSoloScope && profileAccountType === 'solo' && profileCompanyId === companyId;
 
   let resolvedRole = profileRole;
   let workerSnap = null;
@@ -4094,9 +4094,9 @@ exports.acceptJobV1 = onCall(async (request) => {
  * This replaces the client-side registration flow (BusinessReg + onboarding)
  * to prevent users from forging roles, companyIds, or document numbers.
  *
- * Handles:
- * - Solo user registration (user/basic): companyId = uid
- * - manager company creation: generates companyId, creates company structure
+ * companyId allocation source:
+ * - system/data/comid (field: comid = next company ID)
+ * Transaction uses current comid as companyId, then increments comid by 1.
  */
 exports.registerBusinessV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -4158,21 +4158,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
   const dbRef = admin.firestore();
   const profileRole = toProfileRole(role);
 
-  let companyId;
-
-  if (role === 'manager' && accountType === 'business') {
-    // Company creation — generate slug from business name
-    const slugBase = (enName || heName).toLowerCase()
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 40);
-    const randomSuffix = crypto.randomBytes(3).toString('hex');
-    companyId = `${slugBase}-${randomSuffix}`;
-  } else {
-    // Solo scope — companyId = uid
-    companyId = uid;
-  }
+  let companyId = '';
 
   const now = new Date().toISOString();
 
@@ -4212,11 +4198,34 @@ exports.registerBusinessV1 = onCall(async (request) => {
   // Transactional registration — prevents race where concurrent calls both pass precheck
   await dbRef.runTransaction(async (tx) => {
     const profileRef = dbRef.doc(userProfileDocPath(uid));
-    const existingProfile = await tx.get(profileRef);
+    const companyCounterRef = dbRef.doc('system/data/comid');
+    const [existingProfile, companyCounterSnap] = await Promise.all([
+      tx.get(profileRef),
+      tx.get(companyCounterRef),
+    ]);
 
     if (existingProfile.exists && existingProfile.data()?.companyId) {
       throw new HttpsError('already-exists', 'User is already registered with a company');
     }
+
+    const companyCounterData = companyCounterSnap.exists ? (companyCounterSnap.data() || {}) : {};
+    const rawNextCompanyId = companyCounterData.comid;
+    const nextCompanyId = companyCounterSnap.exists ? Number(rawNextCompanyId) : 1;
+
+    if (!Number.isInteger(nextCompanyId) || nextCompanyId < 1) {
+      throw new HttpsError(
+        'failed-precondition',
+        'system/data/comid must contain a positive integer field "comid"'
+      );
+    }
+
+    companyId = String(nextCompanyId);
+    tx.set(companyCounterRef, {
+      comid: nextCompanyId + 1,
+      updatedAt: now,
+      lastAllocatedCompanyId: companyId,
+      lastAllocatedBy: uid,
+    }, { merge: true });
 
     // 1. Profile
     tx.set(profileRef, {
@@ -4284,25 +4293,25 @@ exports.registerBusinessV1 = onCall(async (request) => {
         lastUpdated: now,
       });
     } else {
-      // Solo user — companyId = uid
-      tx.set(dbRef.doc(`companies/${uid}`), {
-        companyId: uid,
+      // Solo user uses companyId allocated from system/data/comid
+      tx.set(dbRef.doc(`companies/${companyId}`), {
+        companyId,
         createdBy: uid,
         createdAt: now,
         cid: 1,
         jid: 1,
       }, { merge: true });
 
-      tx.set(dbRef.doc(`companies/${uid}/data/business_info`), businessData);
+      tx.set(dbRef.doc(`companies/${companyId}/data/business_info`), businessData);
 
-      tx.set(dbRef.doc(`companies/${uid}/data/subscription`), {
+      tx.set(dbRef.doc(`companies/${companyId}/data/subscription`), {
         tier,
         status: 'active',
         enabledModules,
         updatedAt: now,
       });
 
-      tx.set(dbRef.doc(companyWorkerDocPath(uid, uid)), {
+      tx.set(dbRef.doc(companyWorkerDocPath(companyId, uid)), {
         workerId: uid,
         uid,
         role: profileRole,
@@ -4313,13 +4322,13 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: now,
       });
 
-      tx.set(dbRef.doc(`companies/${uid}/data/inventory`), {
+      tx.set(dbRef.doc(`companies/${companyId}/data/inventory`), {
         parts: [],
         nextId: 1,
         lastUpdated: now,
       });
 
-      tx.set(dbRef.doc(`companies/${uid}/data/cache`), {
+      tx.set(dbRef.doc(`companies/${companyId}/data/cache`), {
         business_info: 1,
         lastUpdated: now,
       });

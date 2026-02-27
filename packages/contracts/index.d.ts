@@ -79,4 +79,4 @@ export declare const paths: {
   documentTask(id: string): string;
 };
 
-export declare function resolveCompanyScope(companyId: string | null | undefined, uid: string): string;
+export declare function resolveCompanyScope(companyId: string | null | undefined): string;

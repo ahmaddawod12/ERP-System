@@ -79,7 +79,7 @@ const paths = {
   userCache:     (uid) => `users/${uid}/data/cache`,
   userInventory: (uid) => `users/${uid}/data/inventory`,
 
-  // Company-scoped  (companyId = uid for solo users)
+  // Company-scoped
   companyRoot:        (cid) => `companies/${cid}`,
   businessInfo:       (cid) => `companies/${cid}/data/business_info`,
   subscription:       (cid) => `companies/${cid}/data/subscription`,
@@ -105,10 +105,14 @@ const paths = {
 
 /**
  * Resolve the effective companyId for data paths.
- * Solo users (role user/basic) use their own uid as companyId.
+ * companyId must always come from the backend profile/company context.
  */
-function resolveCompanyScope(companyId, uid) {
-  return companyId || uid;
+function resolveCompanyScope(companyId) {
+  const normalized = String(companyId || '').trim();
+  if (!normalized) {
+    throw new Error('companyId is required');
+  }
+  return normalized;
 }
 
 // ── Exports ────────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 
+export const revalidate = 3600;
+
 export default function TermsPage() {
   return (
     <PublicLayout>

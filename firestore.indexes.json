@@ -101,7 +101,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "createdByUsername",
+          "fieldPath": "createdBy",
           "order": "ASCENDING"
         },
         {

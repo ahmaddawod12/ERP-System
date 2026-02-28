@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { onSnapshot, doc, db, functions, httpsCallable } from '../../firebase';
+import { functions, httpsCallable } from '../../firebase';
 import {
   borderRadius,
   getColors,
@@ -70,12 +70,13 @@ export default function CompanyInventory() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId } = useCache();
+  const { getCompanyId, companyInventory } = useCache();
   const palette = getColors(isDarkMode);
   const t = translations[language] || translations.en;
 
-  const [companyParts, setCompanyParts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // I9: Use CacheContext-managed company inventory instead of direct listener
+  const companyParts = companyInventory;
+  const loading = false; // CacheContext handles loading state
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -83,31 +84,6 @@ export default function CompanyInventory() {
   const [newPartName, setNewPartName] = useState('');
   const [editingPart, setEditingPart] = useState(null);
   const [editName, setEditName] = useState('');
-
-  React.useEffect(() => {
-    const companyId = getCompanyId();
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-
-    const inventoryRef = doc(db, 'companies', companyId, 'data', 'inventory');
-
-    const unsubscribe = onSnapshot(
-      inventoryRef,
-      (snapshot) => {
-        const data = snapshot.exists() ? snapshot.data() : {};
-        setCompanyParts(Array.isArray(data.parts) ? data.parts : []);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('CompanyInventory listener error:', error);
-        setLoading(false);
-      }
-    );
-
-    return unsubscribe;
-  }, [getCompanyId]);
 
   const filteredParts = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();

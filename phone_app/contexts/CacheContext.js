@@ -75,6 +75,13 @@ const CACHE_KEYS = {
   USER_ROLE: 'cache_user_role',
   UID: 'cache_uid',
   COMPANY_ID: 'cache_company_id',
+  
+  // Incremental sync timestamps (C1 optimization)
+  JOBS_LAST_SYNC: 'cache_jobs_last_sync',
+  DOCS_LAST_SYNC: 'cache_docs_last_sync',
+
+  // Tier 2 query cache (N4 optimization)
+  TIER2_CACHE_PREFIX: 'tier2_',
 };
 
 // 90 days in milliseconds
@@ -82,6 +89,9 @@ const CACHE_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000;
 
 // 180 days in milliseconds (approximate archive boundary - 6 months)
 const ARCHIVE_BOUNDARY_MS = 180 * 24 * 60 * 60 * 1000;
+
+// N4: Tier 2 query cache TTL — 5 minutes
+const TIER2_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Create context
 const CacheContext = createContext(null);
@@ -215,12 +225,14 @@ export function CacheProvider({ children }) {
   const [documents, setDocuments] = useState([]);
   const [clients, setClients] = useState([]);
   const [subscription, setSubscription] = useState(null);
+  const [companyInventory, setCompanyInventory] = useState([]);
   const [cacheVersions, setCacheVersions] = useState({});
   const [companyVersions, setCompanyVersions] = useState({});
   
   // Refs for cleanup
   const unsubscribeRef = useRef(null);
   const companyUnsubscribeRef = useRef(null);
+  const inventoryUnsubscribeRef = useRef(null); // I9: Company inventory listener
   const listenersActiveRef = useRef(false); // Track if listeners are currently active
   
   // Get current user info from cache (canonical names)
@@ -246,6 +258,10 @@ export function CacheProvider({ children }) {
     if (companyUnsubscribeRef.current) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
+    }
+    if (inventoryUnsubscribeRef.current) {
+      inventoryUnsubscribeRef.current();
+      inventoryUnsubscribeRef.current = null;
     }
     
     listenersActiveRef.current = false;
@@ -652,6 +668,10 @@ export function CacheProvider({ children }) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
     }
+    if (inventoryUnsubscribeRef.current) {
+      inventoryUnsubscribeRef.current();
+      inventoryUnsubscribeRef.current = null;
+    }
     
     // =====================================================
     // USER CACHE LISTENER (for all roles - profile/inventory)
@@ -715,51 +735,88 @@ export function CacheProvider({ children }) {
           workersVersion: remoteData.workersVersion,
         }));
         
-        // --- JOBS VERSION CHECK ---
+        // I2: Collect all changed-version fetches and run them in parallel
+        const fetchPromises = [];
+        const versionUpdates = {};
+
+        // --- JOBS VERSION CHECK (C1: incremental sync) ---
         if (role !== 'basic' && role !== 'dev') {
           const remoteJobsVersion = remoteData.jobsVersion || 0;
           const localJobsVersion = localVersions.jobsVersion || 0;
           
           if (remoteJobsVersion !== localJobsVersion) {
             console.log(`Jobs version changed: local=${localJobsVersion}, remote=${remoteJobsVersion}`);
-            const ninetyDaysAgo = getCacheStartDate().toISOString();
             
-            try {
-              const jobsRef = collection(db, 'companies', companyId, 'jobs');
-              let jobsSnapshot;
-              
-              if (role === 'worker') {
-                const workerQuery = query(jobsRef, where('completedBy', '==', uid));
-                jobsSnapshot = await getDocs(workerQuery);
-              } else {
-                jobsSnapshot = await getDocs(jobsRef);
+            fetchPromises.push((async () => {
+              try {
+                const lastSync = mmkvHelpers.getString(CACHE_KEYS.JOBS_LAST_SYNC) || null;
+                const ninetyDaysAgo = getCacheStartDate().toISOString();
+                const jobsRef = collection(db, 'companies', companyId, 'jobs');
+                
+                // C1: Incremental sync — only fetch jobs updated since lastSync
+                if (lastSync) {
+                  let deltaQuery;
+                  if (role === 'worker') {
+                    deltaQuery = query(jobsRef,
+                      where('updatedAt', '>', lastSync),
+                      where('completedBy', '==', uid)
+                    );
+                  } else {
+                    deltaQuery = query(jobsRef, where('updatedAt', '>', lastSync));
+                  }
+                  const deltaSnap = await getDocs(deltaQuery);
+                  const updates = deltaSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                  const now = new Date().toISOString();
+                  
+                  // Merge updates into existing cache
+                  const cacheKey = role === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
+                  const existingJobs = mmkvHelpers.getObject(cacheKey) || [];
+                  const merged = [...existingJobs];
+                  for (const updated of updates) {
+                    const idx = merged.findIndex(j => j.id === updated.id);
+                    if (idx >= 0) merged[idx] = updated;
+                    else merged.push(updated);
+                  }
+                  // Apply 90-day expiry filter on merged result
+                  const filtered = merged.filter(j => {
+                    if (j.status === 'pending' || j.status === 'waiting') return true;
+                    const dateField = j.updatedAt || j.createdAt;
+                    if (!dateField) return true;
+                    return dateField >= ninetyDaysAgo;
+                  });
+                  saveToLocalCache(cacheKey, filtered);
+                  mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, now);
+                  console.log(`Incremental sync: ${updates.length} jobs updated, ${filtered.length} total`);
+                } else {
+                  // First sync — full fetch (fallback)
+                  let jobsSnapshot;
+                  if (role === 'worker') {
+                    const workerQuery = query(jobsRef, where('completedBy', '==', uid));
+                    jobsSnapshot = await getDocs(workerQuery);
+                  } else {
+                    jobsSnapshot = await getDocs(jobsRef);
+                  }
+                  const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                  const filteredJobs = allJobs.filter(j => {
+                    if (j.status === 'pending' || j.status === 'waiting') return true;
+                    const dateField = j.updatedAt || j.createdAt;
+                    if (!dateField) return true;
+                    return dateField >= ninetyDaysAgo;
+                  });
+                  const cacheKey = role === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
+                  saveToLocalCache(cacheKey, filteredJobs);
+                  mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
+                  console.log(`Full sync: ${filteredJobs.length} jobs from Firebase`);
+                }
+              } catch (error) {
+                console.error('Error syncing jobs:', error);
               }
-              
-              const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-              // Filter: keep pending/waiting always, finished within 90 days
-              const filteredJobs = allJobs.filter(j => {
-                if (j.status === 'pending' || j.status === 'waiting') return true;
-                const dateField = j.updatedAt || j.createdAt;
-                if (!dateField) return true;
-                return dateField >= ninetyDaysAgo;
-              });
-              
-              if (role === 'manager') {
-                saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, filteredJobs);
-              } else {
-                saveToLocalCache(CACHE_KEYS.JOBS, filteredJobs);
-              }
-              
-              console.log(`Synced ${filteredJobs.length} jobs from Firebase`);
-            } catch (error) {
-              console.error('Error syncing jobs:', error);
-            }
-            
-            localVersions.jobsVersion = remoteJobsVersion;
+              versionUpdates.jobsVersion = remoteJobsVersion;
+            })());
           }
         }
         
-        // --- DOCUMENTS VERSION CHECK ---
+        // --- DOCUMENTS VERSION CHECK (C1: incremental sync) ---
         if (role !== 'dev') {
           const remoteDocsVersion = remoteData.documentsVersion || 0;
           const localDocsVersion = localVersions.documentsVersion || 0;
@@ -767,19 +824,49 @@ export function CacheProvider({ children }) {
           if (remoteDocsVersion !== localDocsVersion) {
             console.log(`Documents version changed: local=${localDocsVersion}, remote=${remoteDocsVersion}`);
             
-            try {
-              const ninetyDaysAgo = getCacheStartDate().toISOString();
-              const documentsRef = collection(db, 'companies', companyId, 'documents');
-              const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
-              const docsSnapshot = await getDocs(documentsQuery);
-              const documentsData = docsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-              saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
-              console.log(`Synced ${documentsData.length} documents from Firebase`);
-            } catch (error) {
-              console.error('Error syncing documents:', error);
-            }
-            
-            localVersions.documentsVersion = remoteDocsVersion;
+            fetchPromises.push((async () => {
+              try {
+                const lastSync = mmkvHelpers.getString(CACHE_KEYS.DOCS_LAST_SYNC) || null;
+                const ninetyDaysAgo = getCacheStartDate().toISOString();
+                const documentsRef = collection(db, 'companies', companyId, 'documents');
+                
+                // C1: Incremental sync for documents
+                if (lastSync) {
+                  const deltaQuery = query(documentsRef, where('updatedAt', '>', lastSync));
+                  const deltaSnap = await getDocs(deltaQuery);
+                  const updates = deltaSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                  const now = new Date().toISOString();
+                  
+                  const existingDocs = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) || [];
+                  const merged = [...existingDocs];
+                  for (const updated of updates) {
+                    const idx = merged.findIndex(doc => doc.id === updated.id);
+                    if (idx >= 0) merged[idx] = updated;
+                    else merged.push(updated);
+                  }
+                  // Apply 90-day expiry filter
+                  const filtered = merged.filter(d => {
+                    const dateField = d.createdAt;
+                    if (!dateField) return true;
+                    return dateField >= ninetyDaysAgo;
+                  });
+                  saveToLocalCache(CACHE_KEYS.DOCUMENTS, filtered);
+                  mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, now);
+                  console.log(`Incremental sync: ${updates.length} docs updated, ${filtered.length} total`);
+                } else {
+                  // First sync — full fetch
+                  const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
+                  const docsSnapshot = await getDocs(documentsQuery);
+                  const documentsData = docsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                  saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
+                  mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, new Date().toISOString());
+                  console.log(`Full sync: ${documentsData.length} documents from Firebase`);
+                }
+              } catch (error) {
+                console.error('Error syncing documents:', error);
+              }
+              versionUpdates.documentsVersion = remoteDocsVersion;
+            })());
           }
         }
         
@@ -791,13 +878,14 @@ export function CacheProvider({ children }) {
           if (remoteClientsVersion !== localClientsVersion) {
             console.log(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
             
-            const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
-            if (clientsData !== null) {
-              saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
-              setClients(clientsData);
-            }
-            
-            localVersions.clientsVersion = remoteClientsVersion;
+            fetchPromises.push((async () => {
+              const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+              if (clientsData !== null) {
+                saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
+                setClients(clientsData);
+              }
+              versionUpdates.clientsVersion = remoteClientsVersion;
+            })());
           }
         }
         
@@ -809,20 +897,43 @@ export function CacheProvider({ children }) {
           if (remoteWorkersVersion !== localWorkersVersion) {
             console.log(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
             
-            const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
-            if (workersData !== null) {
-              saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
-            }
-            
-            localVersions.workersVersion = remoteWorkersVersion;
+            fetchPromises.push((async () => {
+              const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+              if (workersData !== null) {
+                saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
+              }
+              versionUpdates.workersVersion = remoteWorkersVersion;
+            })());
           }
         }
         
-        // Save updated company versions
-        saveToLocalCache(CACHE_KEYS.COMPANY_VERSIONS, localVersions);
+        // I2: Run all fetches in parallel
+        if (fetchPromises.length > 0) {
+          await Promise.all(fetchPromises);
+        }
+        
+        // Save updated company versions (after all fetches complete)
+        if (Object.keys(versionUpdates).length > 0) {
+          const updatedVersions = { ...localVersions, ...versionUpdates };
+          saveToLocalCache(CACHE_KEYS.COMPANY_VERSIONS, updatedVersions);
+        }
         
       }, (error) => {
         console.error('Company cache listener error:', error);
+      });
+    }
+    
+    // =====================================================
+    // I9: COMPANY INVENTORY LISTENER (consistent lifecycle)
+    // Replaces the ad-hoc onSnapshot in CompanyInventory.js
+    // =====================================================
+    if (companyId && role !== 'dev') {
+      const companyInventoryRef = doc(db, 'companies', companyId, 'data', 'inventory');
+      inventoryUnsubscribeRef.current = onSnapshot(companyInventoryRef, (snapshot) => {
+        const data = snapshot.exists() ? snapshot.data() : {};
+        setCompanyInventory(Array.isArray(data.parts) ? data.parts : []);
+      }, (error) => {
+        console.error('Company inventory listener error:', error);
       });
     }
     
@@ -1578,6 +1689,10 @@ export function CacheProvider({ children }) {
       companyUnsubscribeRef.current();
       companyUnsubscribeRef.current = null;
     }
+    if (inventoryUnsubscribeRef.current) {
+      inventoryUnsubscribeRef.current();
+      inventoryUnsubscribeRef.current = null;
+    }
     
     // Clear MMKV storage
     mmkvHelpers.clearAll();
@@ -1594,6 +1709,7 @@ export function CacheProvider({ children }) {
     setDocuments([]);
     setClients([]);
     setSubscription(null);
+    setCompanyInventory([]);
     setCacheVersions({});
     setCompanyVersions({});
     setIsInitialized(false);
@@ -1770,8 +1886,16 @@ export function CacheProvider({ children }) {
       }
     }
     
-    // Case 3: Month is completely outside cache range - try Firestore first, then Storage
-    console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is outside cache range, querying Firestore...`);
+    // Case 3: Month is completely outside cache range - try MMKV tier2 cache, then Firestore, then Storage
+    console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is outside cache range`);
+    
+    // N4: Check Tier 2 MMKV cache first (5-min TTL)
+    const tier2Key = `${CACHE_KEYS.TIER2_CACHE_PREFIX}${dataType}_${monthDate.getFullYear()}_${monthDate.getMonth() + 1}`;
+    const tier2Cached = mmkvHelpers.getObject(tier2Key);
+    if (tier2Cached && tier2Cached._ts && (Date.now() - tier2Cached._ts) < TIER2_CACHE_TTL_MS) {
+      console.log(`?? Tier 2 cache hit for ${tier2Key} (${tier2Cached.data.length} docs)`);
+      return tier2Cached.data;
+    }
     
     try {
       let q;
@@ -1806,6 +1930,8 @@ export function CacheProvider({ children }) {
       // If Firestore returned data, use it (data is still in Firestore, not yet archived)
       if (firebaseData.length > 0) {
         console.log(`?? Fetched ${firebaseData.length} records from Firestore for month ${monthDate.getMonth() + 1}`);
+        // N4: Cache in Tier 2 MMKV with TTL
+        mmkvHelpers.setObject(tier2Key, { data: firebaseData, _ts: Date.now() });
         return firebaseData;
       }
       
@@ -2028,6 +2154,7 @@ export function CacheProvider({ children }) {
     documents,
     clients,
     subscription,
+    companyInventory,
     
     // Getters (primary)
     getUid,

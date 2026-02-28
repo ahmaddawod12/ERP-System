@@ -62,8 +62,10 @@ export default function DocumentHistory() {
   } = useCache();
   const colors = getColors(isDarkMode);
 
+  const PAGE_SIZE = 50;
   const [documents, setDocuments] = useState([]);
   const [filteredDocuments, setFilteredDocuments] = useState([]);
+  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(true);
   const [selectedDocType, setSelectedDocType] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -235,6 +237,7 @@ export default function DocumentHistory() {
 
   useEffect(() => {
     applyFilters();
+    setDisplayLimit(PAGE_SIZE); // I3: Reset pagination when filters change
   }, [documents, selectedDocType, dateFilter, clientFilter]);
 
 
@@ -845,7 +848,7 @@ export default function DocumentHistory() {
               <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>{t.noDocuments}</AppText>
             </View>
           ) : (
-            filteredDocuments.map((doc) => (
+            filteredDocuments.slice(0, displayLimit).map((doc) => (
               <View key={doc.id} style={[styles.documentCard, { backgroundColor: colors.surface }]}>
                 <View style={styles.documentHeader}>
                   <View style={styles.documentTitleRow}>
@@ -941,6 +944,17 @@ export default function DocumentHistory() {
                 </View>
               </View>
             ))
+          )}
+          {filteredDocuments.length > displayLimit && (
+            <TouchableOpacity
+              style={[styles.showMoreButton, { borderColor: colors.primary }]}
+              onPress={() => setDisplayLimit(prev => prev + PAGE_SIZE)}
+              activeOpacity={0.7}
+            >
+              <AppText style={{ color: colors.primary, fontWeight: '600' }}>
+                {language === 'he' ? `הצג עוד (${filteredDocuments.length - displayLimit} נותרו)` : `Show more (${filteredDocuments.length - displayLimit} remaining)`}
+              </AppText>
+            </TouchableOpacity>
           )}
         </View>
       </ScrollableContainer>
@@ -1196,6 +1210,13 @@ const styles = StyleSheet.create({
   },
   documentsContainer: {
     gap: spacing.md,
+  },
+  showMoreButton: {
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    borderWidth: 1,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
   },
   emptyState: {
     alignItems: 'center',

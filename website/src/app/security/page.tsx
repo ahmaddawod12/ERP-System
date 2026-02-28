@@ -2,6 +2,8 @@ import { Lock, ShieldCheck, UserRoundCheck } from "lucide-react";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 
+export const revalidate = 3600;
+
 const items = [
   {
     icon: ShieldCheck,

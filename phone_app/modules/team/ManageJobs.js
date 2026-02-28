@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -211,25 +211,41 @@ export default function ManageJobs() {
     return () => clearTimeout(timer);
   }, [jobId, loading]);
 
-  const getStatusColor = (status) => {
+  const getStatusColor = useCallback((status) => {
     const key = String(status || '').toLowerCase();
     if (key === 'pending') return '#F59E0B';
     if (key === 'waiting') return '#8B5CF6';
     if (key === 'finished') return '#10B981';
     if (key === 'denied') return '#DC2626';
     return '#64748B';
-  };
+  }, []);
 
-  const getStatusLabel = (status) => {
+  const getStatusLabel = useCallback((status) => {
     const key = String(status || '').toLowerCase();
     if (key === 'pending') return t.pending;
     if (key === 'waiting') return t.waiting;
     if (key === 'finished') return t.finished;
     if (key === 'denied') return t.denied;
     return status || '-';
-  };
+  }, [t]);
 
-  const handleAcceptJob = (job) => {
+  const renderJobCard = useCallback(({ item }) => (
+    <JobCard
+      job={item}
+      palette={palette}
+      t={t}
+      statusColor={getStatusColor(item.status)}
+      statusLabel={getStatusLabel(item.status)}
+      highlighted={highlightedJobId === String(item.id)}
+      onOpenDetails={setSelectedJobDetails}
+      onAccept={handleAcceptJob}
+      onDeny={handleDenyJob}
+    />
+  ), [palette, t, getStatusColor, getStatusLabel, highlightedJobId, handleAcceptJob, handleDenyJob]);
+
+  const keyExtractor = useCallback((item) => String(item.id), []);
+
+  const handleAcceptJob = useCallback((job) => {
     alert.confirm(t.confirmAccept, t.confirmAcceptMessage, [
       { text: t.cancel, style: 'cancel', onPress: () => {} },
       {
@@ -247,9 +263,15 @@ export default function ManageJobs() {
 
             await acceptJobFn({ companyId, jobId: job.id });
 
+            const acceptedAt = new Date().toISOString();
+
             await acceptJob(job.id, {
               status: 'finished',
-              finishedAt: new Date().toISOString(),
+              finishedAt: job.finishedAt || acceptedAt,
+              acceptedAt,
+              acceptedBy: getUid() || auth.currentUser?.uid,
+              updatedAt: acceptedAt,
+              isCert: job.isCert === true,
             });
 
             setSelectedJobDetails(null);
@@ -261,9 +283,9 @@ export default function ManageJobs() {
         },
       },
     ]);
-  };
+  }, [alert, t, getCompanyId, getUid, acceptJob]);
 
-  const handleDenyJob = (job) => {
+  const handleDenyJob = useCallback((job) => {
     alert.confirm(t.confirmDeny, t.confirmDenyMessage, [
       { text: t.cancel, style: 'cancel', onPress: () => {} },
       {
@@ -297,7 +319,7 @@ export default function ManageJobs() {
         },
       },
     ]);
-  };
+  }, [alert, t, getCompanyId, getUid, updateJob]);
 
   if (loading) {
     return (
@@ -329,26 +351,18 @@ export default function ManageJobs() {
 
       <FlatList
         data={jobs}
-        keyExtractor={(item) => String(item.id)}
+        keyExtractor={keyExtractor}
         contentContainerStyle={{
           paddingHorizontal: spacing.lg,
           paddingBottom: insets.bottom + 110,
           paddingTop: spacing.sm,
           flexGrow: jobs.length === 0 ? 1 : 0,
         }}
-        renderItem={({ item }) => (
-          <JobCard
-            job={item}
-            palette={palette}
-            t={t}
-            statusColor={getStatusColor(item.status)}
-            statusLabel={getStatusLabel(item.status)}
-            highlighted={highlightedJobId === String(item.id)}
-            onOpenDetails={setSelectedJobDetails}
-            onAccept={handleAcceptJob}
-            onDeny={handleDenyJob}
-          />
-        )}
+        renderItem={renderJobCard}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews
         ListEmptyComponent={
           <AppEmptyState
             icon="clipboard-text-off-outline"

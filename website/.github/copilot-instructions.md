@@ -63,7 +63,7 @@ The `useDocumentTask` hook is the canonical website workflow.
 4. Use canonical path conventions:
 - `users/{uid}/data/*`
 - `companies/{companyId}/*`
-- `companies/{companyId}/documents/{d_...}`
+- `companies/{companyId}/documents/{docId}`
 
 ## Do Not Introduce
 
@@ -71,3 +71,5 @@ The `useDocumentTask` hook is the canonical website workflow.
 - Legacy mobile registration screens/routes in website
 - Direct protected writes that bypass backend function validation
 - Legacy job/document status formats outside current schema
+- `node-fetch` or similar polyfills (Node 22 has native `fetch()`)
+- Direct Firestore writes to locked collections (`clients`, `jobs`, `documents`, `invites`, `workers`)

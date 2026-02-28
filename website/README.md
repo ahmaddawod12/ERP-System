@@ -54,6 +54,8 @@ Current document flows:
 - Production API calls require `Authorization: Bearer <Firebase ID token>`.
 - `uid` request-body fallback is accepted only in local development emulator mode.
 - Server routes validate request JSON with Zod before proxying.
+- Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate them.
+- Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).
 - Firestore rules remain least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`).
 
 ## Data Model

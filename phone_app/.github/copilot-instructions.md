@@ -54,7 +54,7 @@ Write code that is compatible with these versions.
 - Layout/shell: `ScrollableContainer`, `GlobalHeader`
 
 3. Alerts:
-- Never use `Alert.alert()`.
+- Never use `Alert.alert()` or `RNAlert.alert()`. All such calls were eliminated from the codebase on 2026-02-28.
 - Always use `useAlert()` from `contexts/AlertContext`.
 
 ## Data Rules
@@ -71,7 +71,9 @@ Write code that is compatible with these versions.
 
 3. Job rules:
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`.
-- Job mutations should use Cloud Functions.
+- All job mutations must use Cloud Functions (`createJobV1`, `updateJobV1`, `deleteJobV1`, `acceptJobV1`).
+- Firestore rules lock `jobs`, `clients`, `documents`, `invites`, and `workers` collections. Direct client writes are blocked.
+- Server-side limits: `MAX_JOB_ARRAY_LENGTH = 200` for array fields.
 
 4. Inventory rules:
 - Inventory is a single document with `parts` + `nextId`.

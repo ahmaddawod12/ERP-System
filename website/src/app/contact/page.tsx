@@ -2,6 +2,8 @@ import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 import { ContactForm } from "@/components/marketing/contact-form";
 
+export const revalidate = 3600;
+
 export default function ContactPage() {
   return (
     <PublicLayout>

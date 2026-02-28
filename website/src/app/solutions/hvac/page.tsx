@@ -3,6 +3,8 @@ import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 
+export const revalidate = 3600;
+
 const bullets = [
   "Dispatch preventive maintenance and emergency repair jobs quickly.",
   "Assign licensed technicians and preserve service logs by workerId.",

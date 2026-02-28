@@ -49,8 +49,10 @@ When generating code, prefer compatibility with these versions.
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`
 
 4. Writes:
-- Protected mutations should go through Cloud Functions.
-- Prefer callable/HTTP function flows over direct client writes for protected paths.
+- Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate them.
+- All protected mutations must go through the corresponding Cloud Function.
+- Prefer callable/HTTP function flows over direct client writes for all company-scoped data.
+- Server-side limits: `MAX_ITEMS_PER_DOCUMENT = 100`, `MAX_JOB_ARRAY_LENGTH = 200`.
 
 ## Mobile Coding Rules (`phone_app/`)
 
@@ -70,12 +72,35 @@ When generating code, prefer compatibility with these versions.
   - worker -> `/api/onboarding/join-company` -> `joinCompanyV1`
 - Use existing form stack and validation patterns already used in the app.
 - Keep API route and Cloud Function proxy patterns consistent with current code.
+- Dashboard pages (`/app/*`) use the server wrapper + client shell pattern:
+  - `page.tsx` — server component with `export const metadata`, wraps client in `<Suspense>`.
+  - `page-client.tsx` — `"use client"` shell with all hooks and interactivity.
+  - Do not add `"use client"` directly to `page.tsx` files.
+- Static marketing pages (`/`, `/features`, `/pricing`, `/security`, `/contact`, `/terms`, `/privacy`, `/solutions/*`) use `export const revalidate = 3600` for ISR.
+- `middleware.ts` handles auth redirect for `/app/*` routes.
 
 ## Functions Rules (`functions/`)
 
+- Cloud Functions are split into domain modules under `functions/src/`:
+  - `shared.js` — Firebase Admin init, constants, helpers, auth utilities
+  - `auth.js` — manageWorker, registerBusinessV1
+  - `jobs.js` — createJobV1, updateJobV1, deleteJobV1, acceptJobV1, triggers
+  - `clients.js` — addClientV1, deleteClientV1, updateClientV1
+  - `documents.js` — generateDocumentV1, publishPreviewTask, publishGenerateTask, deleteDocumentV1, onTaskCompleted
+  - `tax.js` — startTaxAuthorityAuth, taxAuthorityCallback, getInvoiceApproval (me-west1)
+  - `invites.js` — createInviteV1, joinCompanyV1
+  - `inventory.js` — updateInventoryV1
+  - `profile.js` — updateProfileV1, updatePushTokenV1, updateBusinessInfoV1, updateCacheV1, clearPushTokenV1
+  - `misc.js` — requestUpgradeV1, contactRequestV1
+- `functions/index.js` is a thin re-exporter — do not add logic there.
+- All shared utilities must be imported from `./shared.js`.
 - Keep role checks explicit.
 - Preserve App Check and auth verification behavior where already enforced.
 - Avoid schema drift: use canonical field names (`uid`, `companyId`, `workerId`, `he_name`, `en_name`, `vat_number`).
+- Node 22 runtime provides native `fetch()` — do not add `node-fetch` or similar polyfills.
+- Validate array field lengths against `MAX_JOB_ARRAY_LENGTH` (200) in job mutation functions.
+- Validate item counts against `MAX_ITEMS_PER_DOCUMENT` (100) in document generation functions.
+- PubSub is lazy-loaded via `getPubSub()` — do not import `@google-cloud/pubsub` at top level.
 
 ## Do Not Introduce
 
@@ -85,3 +110,6 @@ When generating code, prefer compatibility with these versions.
 - `p_`/`f_`/`d_` ID prefixes (use plain Base62 IDs)
 - A new mobile business-registration route
 - Ad hoc UI styles that bypass the shared design system
+- `node-fetch` or similar polyfills (Node 22 has native `fetch()`)
+- Direct Firestore client writes to locked collections (`clients`, `jobs`, `documents`, `invites`, `workers`)
+- `Alert.alert()` or `RNAlert.alert()` in mobile code (use `useAlert()` only)

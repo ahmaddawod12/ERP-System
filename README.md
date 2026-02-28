@@ -15,6 +15,18 @@ ERP-System/
 |-- phone_app/           # Expo + React Native mobile app
 |-- website/             # Next.js web app
 |-- functions/           # Firebase Cloud Functions
+|   |-- index.js         # Thin re-exporter (no logic)
+|   `-- src/             # Domain modules
+|       |-- shared.js    # Admin init, constants, helpers, auth
+|       |-- auth.js      # manageWorker, registerBusinessV1
+|       |-- jobs.js      # createJobV1, updateJobV1, deleteJobV1, triggers
+|       |-- clients.js   # addClientV1, deleteClientV1, updateClientV1
+|       |-- documents.js # generateDocumentV1, publishing, onTaskCompleted
+|       |-- tax.js       # Tax Authority OAuth + invoice approval (me-west1)
+|       |-- invites.js   # createInviteV1, joinCompanyV1
+|       |-- inventory.js # updateInventoryV1
+|       |-- profile.js   # updateProfileV1, push tokens, business info, cache
+|       `-- misc.js      # requestUpgradeV1, contactRequestV1
 |-- cloudrun-pdf/        # Cloud Run PDF service
 |-- cloudrun-archiver/   # Cloud Run archival job
 |-- firebase.json
@@ -58,8 +70,9 @@ ERP-System/
   - Document IDs are plain Base62 (no prefix).
   - Valid statuses: `pending`, `waiting`, `finished`, `denied`.
 - Mutations:
-  - Protected writes must go through Cloud Functions.
-  - Avoid direct client writes to protected profile, business, and job documents.
+  - All writes to `clients`, `jobs`, `documents`, `invites`, and `workers` are locked in Firestore rules (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate these collections.
+  - Protected writes must go through the corresponding Cloud Function (`createJobV1`, `updateJobV1`, `updateClientV1`, `updateInventoryV1`, etc.).
+  - Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).
 
 ## Registration and Onboarding Flow
 
@@ -68,6 +81,15 @@ ERP-System/
   - Manager or solo: callable `registerBusinessV1`
   - Worker join: HTTP `joinCompanyV1` via `/api/onboarding/join-company`
 - `registerBusinessV1` allocates `companyId` from `system/data/comid` in a transaction and increments `comid` by 1.
+
+## Website Architecture
+
+- **Dashboard pages** (`/app/*`) use the server wrapper + client shell pattern:
+  - `page.tsx` — server component with `export const metadata`, wraps a `<Suspense>` boundary around the client component.
+  - `page-client.tsx` — `"use client"` shell containing hooks and interactivity.
+- **Static marketing pages** (`/`, `/features`, `/pricing`, `/security`, `/contact`, `/terms`, `/privacy`, `/solutions/*`) export `revalidate = 3600` for 1-hour ISR caching.
+- **`middleware.ts`** handles auth redirect for all `/app/*` routes.
+- **`loading.tsx`** provides instant loading UI during dashboard route transitions.
 
 ## Canonical Firestore Paths
 
@@ -121,6 +143,8 @@ firebase deploy --only functions
 
 ## Documentation Pointers
 
+- Architectural audit (2026-02-28): `AUDIT_2026-02-28.md`
 - Mobile design and architecture: `phone_app/README.md`
 - Monorepo coding rules for Copilot: `.github/copilot-instructions.md`
 - Mobile-specific Copilot rules: `phone_app/.github/copilot-instructions.md`
+- Website-specific Copilot rules: `website/.github/copilot-instructions.md`

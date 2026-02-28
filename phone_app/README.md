@@ -61,7 +61,7 @@ utils/               # Utilities
 2. Prefer shared components first: `AppText`, `AppButton`, `AppInput`, `SearchInput`, `AppCard`, `AppListItem`, `AppChip`, `AppEmptyState`.
 3. Keep route files in `app/` minimal; business logic belongs in `modules/`.
 4. Use `withGate` for gated screens.
-5. Use `useAlert()` instead of `Alert.alert()`.
+5. Use `useAlert()` instead of `Alert.alert()`. All `Alert.alert()` / `RNAlert.alert()` calls have been eliminated from the codebase as of 2026-02-28.
 
 ## Data and API Rules
 
@@ -70,7 +70,9 @@ utils/               # Utilities
 - All jobs live in `companies/{companyId}/jobs/{jobId}` (status determines lifecycle).
 - Document paths use `companies/{companyId}/documents/{docId}`.
 - Job and document IDs are plain Base62 (no prefix).
-- Use Cloud Functions for protected writes (`createJobV1`, `updateJobV1`, `updateInventoryV1`, etc.).
+- Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections. Only Cloud Functions (Admin SDK) can mutate them.
+- Use Cloud Functions for all writes (`createJobV1`, `updateJobV1`, `updateClientV1`, `updateInventoryV1`, etc.).
+- Server-side validation limits: `MAX_ITEMS_PER_DOCUMENT = 100`, `MAX_JOB_ARRAY_LENGTH = 200`.
 - Valid job statuses: `pending`, `waiting`, `finished`, `denied`.
 
 ## Run Locally

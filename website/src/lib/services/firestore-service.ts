@@ -104,6 +104,16 @@ export async function updateWorkerRole(companyId: string, workerId: string, role
 
 const DEFAULT_PAGE_SIZE = 50;
 
+function isPendingLikeStatus(status: JobRecord["status"] | string | undefined) {
+  const normalized = String(status ?? "").toLowerCase();
+  return normalized === "pending" || normalized === "waiting" || normalized === "received";
+}
+
+function isClosedJobStatus(status: JobRecord["status"] | string | undefined) {
+  const normalized = String(status ?? "").toLowerCase();
+  return normalized === "finished" || normalized === "denied";
+}
+
 export async function listJobs(
   companyId: string,
   opts?: {
@@ -129,8 +139,8 @@ export async function listJobs(
 
   return {
     jobs: allJobs,
-    pending: allJobs.filter((j) => j.status !== "finished"),
-    finished: allJobs.filter((j) => j.status === "finished"),
+    pending: allJobs.filter((j) => isPendingLikeStatus(j.status)),
+    finished: allJobs.filter((j) => isClosedJobStatus(j.status)),
     lastDoc: snap.docs[snap.docs.length - 1] ?? null,
     hasMore: snap.docs.length === pageSize,
   };
@@ -185,7 +195,7 @@ export async function updateJob(companyId: string, jobId: string, payload: Parti
 export async function deleteJob(companyId: string, jobId: string) {
   const deleteJobFn = httpsCallable<
     Record<string, unknown>,
-    { success: boolean; collection: string }
+    { success: boolean; jobId: string }
   >(functions, "deleteJobV1");
   await deleteJobFn({ companyId, jobId });
 }

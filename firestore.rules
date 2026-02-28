@@ -120,15 +120,25 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── user cache: user can write own cache; manager can write worker's cache ──
+    // ── user cache: user can increment own version fields; manager can write worker's cache ──
+    // Security: only allow updates to known version fields to prevent field injection
     match /users/{uid}/data/cache {
       allow read: if isAdmin() || (
         signedIn() && request.auth.uid == uid
       ) || canManagerAccessWorkerData(uid);
 
-      allow create, update, delete: if isAdmin() || (
+      allow create: if isAdmin() || (
         signedIn() && request.auth.uid == uid
       ) || canManagerAccessWorkerData(uid);
+
+      // Tighten updates: only allow known version fields (profile, inventory, subscription, lastUpdated)
+      allow update: if isAdmin() || canManagerAccessWorkerData(uid) || (
+        signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['profile', 'inventory', 'subscription', 'lastUpdated'])
+      );
+
+      allow delete: if isAdmin() || canManagerAccessWorkerData(uid);
     }
 
     // ── user inventory: user can write own inventory; manager can write worker's inventory ──
@@ -208,12 +218,12 @@ service cloud.firestore {
     }
 
     // ── Clients ──
-    // manager/user/basic can read and update.
-    // Create and delete via Cloud Functions only (addClientV1, deleteClientV1).
+    // manager/user/basic can read.
+    // All writes (create/update/delete) via Cloud Functions only
+    // (addClientV1, updateClientV1, deleteClientV1).
     match /companies/{companyId}/clients/{clientId} {
       allow read: if isAdmin() || isManagerUserBasic(companyId);
-      allow update: if isAdmin() || isManagerUserBasic(companyId);
-      allow create, delete: if false;
+      allow create, update, delete: if false;
     }
 
     // ── Counters (client counter, etc.) ──
@@ -228,9 +238,11 @@ service cloud.firestore {
 
     // ── Jobs (unified collection) ──
     // All jobs live in a single 'jobs' collection. Status determines lifecycle phase.
-    // manager/dev can read/write. worker can read + update assigned jobs with restrictions.
-    // user (solo) can read/update their own jobs.
-    // Create and delete via Cloud Function only (createJobV1, deleteJobV1, acceptJobV1).
+    // Read: manager/dev can read all; worker can read assigned; user (solo) can read own.
+    // All writes (create/update/delete) via Cloud Functions only:
+    //   createJobV1, updateJobV1, acceptJobV1, deleteJobV1
+    // Admin SDK bypasses rules. Routing all writes through CF ensures
+    // field whitelisting, status-transition validation, and audit logging.
     match /companies/{companyId}/jobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
@@ -241,31 +253,7 @@ service cloud.firestore {
         (resource.data.workerId == request.auth.uid || resource.data.completedBy == request.auth.uid)
       );
 
-      // Job creation via createJobV1 Cloud Function only (Admin SDK bypasses rules)
-      allow create: if false;
-
-      // Worker updates are field-constrained — cannot change assignment, creator, or jump to finished/denied
-      // Manager/dev updates go through updateJobV1 CF (Admin SDK bypasses rules)
-      // User (solo) updates: field-pinned workerId
-      allow update: if isAdmin() || canManageCompany(companyId) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) == "worker" &&
-        resource.data.workerId == request.auth.uid &&
-        // Pin immutable fields: assignment, creation, and approval metadata
-        request.resource.data.workerId == resource.data.workerId &&
-        request.resource.data.completedBy == resource.data.completedBy &&
-        request.resource.data.createdBy == resource.data.createdBy &&
-        // workers cannot jump to 'finished' or 'denied' — must go through callable
-        request.resource.data.status in ["pending", "waiting"]
-      ) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) == "user" &&
-        resource.data.workerId == request.auth.uid &&
-        request.resource.data.workerId == resource.data.workerId
-      );
-
-      // Delete via Cloud Function only (deleteJobV1)
-      allow delete: if false;
+      allow create, update, delete: if false;
     }
 
     // ── Documents ──

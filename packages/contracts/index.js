@@ -3,6 +3,8 @@
  * Shared enums, constants, and Firestore path builders for the Smart-Job ERP monorepo.
  *
  * Consumed by: functions/, website/, phone_app/, cloudrun-pdf/, scripts/
+ *
+ * v2 (2026-02-28): Unified jobs collection, removed ID prefixes, summary-based cache.
  */
 
 // ── Roles ──────────────────────────────────────────────────────────────────
@@ -27,14 +29,13 @@ const RoleLower = Object.freeze({
 // ── Job Status ─────────────────────────────────────────────────────────────
 const JobStatus = Object.freeze({
   Pending:  'pending',
-  Received: 'received',
   Waiting:  'waiting',
   Finished: 'finished',
   Denied:   'denied',
 });
 
 /** Statuses that represent an active (pre-completion) job. */
-const ACTIVE_JOB_STATUSES = [JobStatus.Pending, JobStatus.Received, JobStatus.Waiting];
+const ACTIVE_JOB_STATUSES = [JobStatus.Pending, JobStatus.Waiting];
 
 // ── Document Type Codes ────────────────────────────────────────────────────
 const DocType = Object.freeze({
@@ -50,13 +51,6 @@ const DocType = Object.freeze({
 const DocTypeLabel = Object.freeze(
   Object.fromEntries(Object.entries(DocType).map(([k, v]) => [v, k]))
 );
-
-// ── Job ID Prefixes ────────────────────────────────────────────────────────
-const JobPrefix = Object.freeze({
-  Pending:       'p_',
-  Finished:      'f_',
-  Document: 'd_',
-});
 
 // ── Subscription Tiers ─────────────────────────────────────────────────────
 const Tier = Object.freeze({
@@ -89,12 +83,10 @@ const paths = {
   workers:            (cid) => `companies/${cid}/workers`,
   client:             (cid, clientId) => `companies/${cid}/clients/${clientId}`,
   clients:            (cid) => `companies/${cid}/clients`,
-  pendingJob:         (cid, jobId) => `companies/${cid}/PendingJobs/${jobId}`,
-  pendingJobs:        (cid) => `companies/${cid}/PendingJobs`,
-  finishedJob:        (cid, jobId) => `companies/${cid}/finishedJobs/${jobId}`,
-  finishedJobs:       (cid) => `companies/${cid}/finishedJobs`,
-  document:      (cid, docId) => `companies/${cid}/documents/${docId}`,
-  documents:     (cid) => `companies/${cid}/documents`,
+  job:                (cid, jobId) => `companies/${cid}/jobs/${jobId}`,
+  jobs:               (cid) => `companies/${cid}/jobs`,
+  document:           (cid, docId) => `companies/${cid}/documents/${docId}`,
+  documents:          (cid) => `companies/${cid}/documents`,
   invite:             (cid, inviteId) => `companies/${cid}/invites/${inviteId}`,
 
   // Top-level collections
@@ -123,7 +115,6 @@ module.exports = {
   ACTIVE_JOB_STATUSES,
   DocType,
   DocTypeLabel,
-  JobPrefix,
   Tier,
   SubStatus,
   paths,

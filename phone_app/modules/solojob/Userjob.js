@@ -29,8 +29,8 @@ export default function Userjob() {
   const insets = useSafeAreaInsets();
   const {
     profile,
-    finishedJobs: cachedFinishedJobs,
-    companyFinishedJobs: cachedCompanyFinishedJobs,
+    jobs: cachedJobs,
+    companyJobs: cachedCompanyJobs,
     clients: cachedClients,
     getUid,
     getCompanyId,
@@ -243,7 +243,7 @@ export default function Userjob() {
   useEffect(() => {
     if (!hasInitialLoadedRef.current) return;
     loadJobs();
-  }, [cachedFinishedJobs, cachedCompanyFinishedJobs, loadJobs, getUserRole]);
+  }, [cachedJobs, cachedCompanyJobs, loadJobs, getUserRole]);
 
   // Network listener — sync pending offline jobs when back online
   useEffect(() => {
@@ -422,11 +422,11 @@ export default function Userjob() {
       // Recent data — use cache
       let jobsList = [];
       if (role === 'manager') {
-        jobsList = (cachedCompanyFinishedJobs || []).filter(job => job.completedBy === uid);
+        jobsList = (cachedCompanyJobs || []).filter(job => job.status === 'finished' && job.completedBy === uid);
       } else if (role === 'user') {
-        jobsList = cachedFinishedJobs || [];
+        jobsList = (cachedJobs || []).filter(job => job.status === 'finished');
       } else {
-        jobsList = (cachedFinishedJobs || []).filter(job => job.completedBy === uid);
+        jobsList = (cachedJobs || []).filter(job => job.status === 'finished' && job.completedBy === uid);
       }
 
       // Apply date filter
@@ -454,7 +454,7 @@ export default function Userjob() {
       if (auth.currentUser) console.error('Error loading jobs:', error);
       setLoading(false);
     }
-  }, [cachedFinishedJobs, cachedCompanyFinishedJobs, dateFilter, clientFilter, getUid, getCompanyId, getUserRole, getDataForDateRange, isWithinCacheRange]);
+  }, [cachedJobs, cachedCompanyJobs, dateFilter, clientFilter, getUid, getCompanyId, getUserRole, getDataForDateRange, isWithinCacheRange]);
 
   // ─── Actions ────────────────────────────────────────────────────
 

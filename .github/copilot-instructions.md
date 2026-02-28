@@ -43,10 +43,9 @@ When generating code, prefer compatibility with these versions.
 - Do not model inventory as a subcollection.
 
 3. Job model:
-- Job IDs are server-generated from `jid`.
-- `PendingJobs`: `p_{jid}`
-- `finishedJobs`: `f_{jid}`
-- Document IDs in `companies/{companyId}/documents/*` must use `d_` prefix for new writes.
+- All jobs live in a single `jobs` collection; status determines lifecycle phase.
+- Job IDs are server-generated plain Base62 from `jid` (no prefix).
+- Document IDs are plain Base62 (no prefix).
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`
 
 4. Writes:
@@ -82,5 +81,7 @@ When generating code, prefer compatibility with these versions.
 
 - `username`, `companyName`, or email-derived path keys
 - Legacy job status names (`in_progress`, `completed`, `received`)
+- Separate `PendingJobs`/`finishedJobs` collections (use unified `jobs` collection)
+- `p_`/`f_`/`d_` ID prefixes (use plain Base62 IDs)
 - A new mobile business-registration route
 - Ad hoc UI styles that bypass the shared design system

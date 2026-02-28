@@ -41,8 +41,6 @@ function generateTempId() {
 export default function FillJob() {
   const {
     updateJob,
-    moveJobToFinished,
-    incrementDocumentVersion,
     getDataForDateRange,
     isWithinCacheRange
   } = useCache();

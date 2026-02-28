@@ -19,9 +19,8 @@ import {
   companyBusinessInfoRef,
   companyDocumentsCollection,
   companyClientsCollection,
-  companyFinishedJobsCollection,
+  companyJobsCollection,
   companyInventoryRef,
-  companyPendingJobsCollection,
   companyWorkersCollection,
   userInventoryRef,
 } from "@/lib/firestore-paths";
@@ -111,42 +110,33 @@ export async function listJobs(
     role?: Role;
     uid?: string;
     pageSize?: number;
-    lastPendingDoc?: DocumentSnapshot;
-    lastFinishedDoc?: DocumentSnapshot;
+    lastDoc?: DocumentSnapshot;
   },
 ) {
   const pageSize = opts?.pageSize || DEFAULT_PAGE_SIZE;
-  let pendingConstraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
-  let finishedConstraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
+  const constraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
 
   if (opts?.role === "worker" && opts.uid) {
-    // Worker queries use completedBy (canonical field matching phone app + trigger)
-    pendingConstraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc"), limit(pageSize)];
-    finishedConstraints = [where("completedBy", "==", opts.uid), orderBy("createdAt", "desc"), limit(pageSize)];
+    constraints.unshift(where("completedBy", "==", opts.uid));
   }
 
-  // Cursor-based pagination
-  if (opts?.lastPendingDoc) {
-    pendingConstraints.push(startAfter(opts.lastPendingDoc));
-  }
-  if (opts?.lastFinishedDoc) {
-    finishedConstraints.push(startAfter(opts.lastFinishedDoc));
+  if (opts?.lastDoc) {
+    constraints.push(startAfter(opts.lastDoc));
   }
 
-  const pendingSnap = await getDocs(query(companyPendingJobsCollection(companyId), ...pendingConstraints));
-  const finishedSnap = await getDocs(query(companyFinishedJobsCollection(companyId), ...finishedConstraints));
+  const snap = await getDocs(query(companyJobsCollection(companyId), ...constraints));
+  const allJobs = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<JobRecord, "id">) }));
 
   return {
-    pending: pendingSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<JobRecord, "id">) })),
-    finished: finishedSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<JobRecord, "id">) })),
-    lastPendingDoc: pendingSnap.docs[pendingSnap.docs.length - 1] ?? null,
-    lastFinishedDoc: finishedSnap.docs[finishedSnap.docs.length - 1] ?? null,
-    hasMorePending: pendingSnap.docs.length === pageSize,
-    hasMoreFinished: finishedSnap.docs.length === pageSize,
+    jobs: allJobs,
+    pending: allJobs.filter((j) => j.status !== "finished"),
+    finished: allJobs.filter((j) => j.status === "finished"),
+    lastDoc: snap.docs[snap.docs.length - 1] ?? null,
+    hasMore: snap.docs.length === pageSize,
   };
 }
 
-/** Creates a pending job via createJobV1 Cloud Function (sequential jid). */
+/** Creates a job via createJobV1 Cloud Function (sequential jid). */
 export async function createJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt">,
@@ -159,7 +149,7 @@ export async function createJob(
   return result.data.jobId;
 }
 
-/** Solo users create finished jobs directly via createJobV1 Cloud Function. */
+/** Solo users create finished jobs directly via createJobV1 (status: finished in jobs collection). */
 export async function createFinishedJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt" | "status">,
@@ -173,11 +163,11 @@ export async function createFinishedJob(
 }
 
 export async function updateJob(companyId: string, jobId: string, payload: Partial<JobRecord>) {
-  // When marking as finished, ONLY use acceptJobV1 Cloud Function for atomic move.
+  // When marking as finished, use acceptJobV1 Cloud Function to set status in place.
   if (payload.status === "finished") {
     const acceptJobFn = httpsCallable<
       Record<string, unknown>,
-      { success: boolean; finishedJobId: string }
+      { success: boolean; jobId: string }
     >(functions, "acceptJobV1");
     await acceptJobFn({ companyId, jobId });
     return;

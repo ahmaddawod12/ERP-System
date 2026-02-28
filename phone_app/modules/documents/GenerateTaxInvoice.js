@@ -518,8 +518,9 @@ export default function GenerateReceipt() {
 
         // Fallback to Firebase query - use getDocs (single read) not onSnapshot
         // Cache only stores last 90 days, so for older jobs we use normal read
-        const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
-        const q = query(finishedJobsRef, 
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
+        const q = query(jobsRef, 
+          where('status', '==', 'finished'),
           where('isCert', '!=', true),
           orderBy('isCert', 'desc'),
           orderBy('finishedAt', 'desc')

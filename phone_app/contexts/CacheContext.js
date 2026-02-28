@@ -1,53 +1,32 @@
-/**
- * CacheContext.js - Comprehensive MMKV-based caching system with granular document-level versioning
+﻿/**
+ * CacheContext.js - MMKV-based caching with summary-version sync
  * 
- * Document ID Prefixes (for type detection):
- * - p_XXXXX = PendingJob (created by manager, assigned to worker)
- * - f_XXXXX = FinishedJob (completed job, approved by manager or created by user)
- * - d_XXXXX = Document (taxInvoice, priceProposal, refund, returnCertificate)
+ * Cache Structure (Firestore company cache document):
+ * - companies/{companyId}/data/cache:
+ *   { jobsVersion, documentsVersion, clientsVersion, workersVersion, updatedAt }
  * 
- * Cache Structure (Firestore - document-level versioning):
- * - Standard fields have version numbers: { profile: 1, inventory: 5, workers: 2, business_info: 1 }
- * - Individual documents have version numbers: { p_ABC12: 1, f_XYZ99: 3, d_QWE45: 1 }
+ * Sync Strategy:
+ * - Snapshot listener on company cache doc
+ * - On version mismatch: full re-fetch of the changed collection (within 90-day window)
+ * - Constant-size cache doc (no per-document fields)
  * 
- * Example cache documents:
- * - User cache ({uid}/cache): { profile: 1, inventory: 50, f_ABC12: 1, f_XYZ99: 2 }
- * - Company cache (companies/{companyId}/data/cache): 
- *   { workers: 2, business_info: 1, p_ABC12: 1, f_XYZ99: 2, d_QWE45: 1 }
+ * Unified Jobs Collection:
+ * - All jobs live in companies/{companyId}/jobs
+ * - Status field distinguishes: pending, waiting, finished, denied
+ * - No p_/f_ prefixes on IDs (plain sequential numbers from jid)
  * 
- * Document Type Detection:
- * - Primary: ID prefix (p_, f_, d_)
- * - Fallback (legacy): field-based detection
- *   - PendingJob: has 'assignedBy' field and no 'finishedAt'
- *   - FinishedJob: has 'finishedAt' field
- *   - Document: has 'type' field (taxInvoice, priceProposal, refund, returnCertificate)
- * 
- * Granular Fetching:
- * - Only fetches individual documents that are missing or have version mismatches
- * - If 99 jobs are cached and 1 new job is added, only that 1 job is fetched
- * - Drastically reduces Firebase reads and network usage
- * 
- * Cache Duration: 90 days
- * - finishedJobs: delete when finishedAt > 90 days
- * - documents: delete when createdAt > 90 days
- * 
- * Firestore Cache Docs:
- * - Manager personal: {uid}/cache (profile, inventory)
- * - Company: companies/{companyId}/data/cache (workers, business_info, clients, all jobs/documents)
- * - Worker: {uid}/cache (profile, inventory, clients, pendingJobs, finishedJobs)
- * - User: {uid}/cache (profile, inventory, clients, finishedJobs, business_info, documents)
- * - Basic: {uid}/cache (profile, clients, business_info, documents) - NO inventory, NO jobs
+ * Cache Duration: 90 days for finished jobs and documents
  * 
  * Listener Setup by Role:
- * - Manager: 2 listeners (user cache: profile/inventory, company cache: workers/business_info/clients/jobs/documents)
- * - Worker: 1 listener (user cache: profile/inventory/clients/pendingJobs/finishedJobs)
- * - User: 1 listener (user cache: profile/inventory/clients/finishedJobs/business_info/documents)
- * - Basic: 1 listener (user cache: profile/clients/business_info/documents - no inventory, no jobs)
+ * - Manager: 2 listeners (user cache: profile/inventory, company cache: all version fields)
+ * - Worker: 1 listener (user cache: profile/inventory) + 1 company cache listener (jobsVersion)
+ * - User: 1 listener (user cache: profile/inventory) + 1 company cache listener
+ * - Basic: 1 listener (user cache: profile) + 1 company cache listener (documentsVersion/clientsVersion)
+ * - Dev: no listeners
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
-import { getDocTypeFromId } from '../utils/helpers';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
@@ -69,14 +48,12 @@ const CACHE_KEYS = {
   PROFILE: 'cache_profile',
   INVENTORY: 'cache_inventory',
   
-  // Jobs
-  PENDING_JOBS: 'cache_pending_jobs',
-  FINISHED_JOBS: 'cache_finished_jobs',
+  // Unified jobs (all statuses in one array)
+  JOBS: 'cache_jobs',
+  COMPANY_JOBS: 'cache_company_jobs',
   
   // Company data (for managers)
   WORKERS: 'cache_workers',
-  COMPANY_PENDING_JOBS: 'cache_company_pending_jobs',
-  COMPANY_FINISHED_JOBS: 'cache_company_finished_jobs',
   
   // Business data
   DOCUMENTS: 'cache_documents',
@@ -88,9 +65,10 @@ const CACHE_KEYS = {
   // Subscription
   SUBSCRIPTION: 'cache_subscription',
   
-  // Version tracking (maps documentId to version)
+  // Summary version tracking (mirrors company cache doc)
+  COMPANY_VERSIONS: 'cache_company_versions',
+  // User cache version tracking
   CACHE_VERSIONS: 'cache_versions',
-  COMPANY_CACHE_VERSIONS: 'cache_company_versions',
   
   // Metadata
   LAST_SYNC: 'cache_last_sync',
@@ -117,7 +95,7 @@ export const useCache = () => {
   return context;
 };
 
-// P2-4: Scope prefix for MMKV keys — prevents cross-user cache leaks
+// P2-4: Scope prefix for MMKV keys â€” prevents cross-user cache leaks
 let _mmkvScopePrefix = '';
 
 /**
@@ -214,27 +192,14 @@ const isWithinCacheRange = (date) => {
 };
 
 /**
- * Determine document type based on ID prefix (primary) or fields (fallback)
- * ID Prefixes:
- * - p_ = PendingJob
- * - f_ = FinishedJob  
- * - d_ = Document
- * Fallback (for legacy IDs without prefix):
- * - PendingJob: has 'assignedBy' field and no 'finishedAt'
- * - FinishedJob: has 'finishedAt' field
- * - Document: has 'type' field (taxInvoice, priceProposal, refund, returnCertificate)
+ * Determine if a document is a "job" or "document" (invoice/proposal/etc.)
+ * based on its data fields.
  */
 const getDocumentType = (docData) => {
-  // First try to detect from ID prefix
-  if (docData.id) {
-    const typeFromId = getDocTypeFromId(docData.id);
-    if (typeFromId !== 'unknown') return typeFromId;
-  }
-  
-  // Fallback to field-based detection for legacy documents
-  if (docData.assignedBy && !docData.finishedAt) return 'pendingJob';
-  if (docData.finishedAt) return 'finishedJob';
+  // Documents have a 'type' field (taxInvoice, priceProposal, refund, returnCertificate)
   if (docData.type && ['taxInvoice', 'priceProposal', 'refund', 'returnCertificate'].includes(docData.type)) return 'document';
+  // Everything else is a job
+  if (docData.status && ['pending', 'waiting', 'finished', 'denied'].includes(docData.status)) return 'job';
   return 'unknown';
 };
 
@@ -244,16 +209,14 @@ export function CacheProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true);
   const [profile, setProfile] = useState(null);
   const [inventory, setInventory] = useState([]);
-  const [pendingJobs, setPendingJobs] = useState([]);
-  const [finishedJobs, setFinishedJobs] = useState([]);
+  const [jobs, setJobs] = useState([]);
   const [workers, setWorkers] = useState({});
-  const [companyPendingJobs, setCompanyPendingJobs] = useState([]);
-  const [companyFinishedJobs, setCompanyFinishedJobs] = useState([]);
+  const [companyJobs, setCompanyJobs] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [clients, setClients] = useState([]);
   const [subscription, setSubscription] = useState(null);
   const [cacheVersions, setCacheVersions] = useState({});
-  const [companyCacheVersions, setCompanyCacheVersions] = useState({});
+  const [companyVersions, setCompanyVersions] = useState({});
   
   // Refs for cleanup
   const unsubscribeRef = useRef(null);
@@ -264,7 +227,7 @@ export function CacheProvider({ children }) {
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
   const getUserRole = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_ROLE), []);
   const getCompanyId = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID), []);
-  // Backward-compatible aliases (deprecated � use getUid/getCompanyId)
+  // Backward-compatible aliases (deprecated ï¿½ use getUid/getCompanyId)
   const getUsername = getUid;
   const getCompanyName = getCompanyId;
 
@@ -318,97 +281,48 @@ export function CacheProvider({ children }) {
 
   /**
    * Clean up expired cache entries (older than 90 days)
-   * For finishedJobs: based on finishedAt
+   * For finished jobs: based on updatedAt or createdAt
    * For documents: based on createdAt
-   * IMPORTANT: Also deletes expired document IDs from Firebase cache docs
    * 
-   * Uses whole-day boundary: calculates the cutoff date (90 days ago), truncates to
-   * the start of that day (00:00:00), and deletes ALL items from that day and before.
-   * This ensures all data for the same day is cleaned up in one go, preventing
-   * repeated partial cleanups on each login.
+   * Uses whole-day boundary.
    */
-  const cleanupExpiredCache = useCallback(async (data, type, uid, companyId, role) => {
-    // Calculate the cutoff: 90 days ago, truncated to start of day (00:00:00.000)
+  const cleanupExpiredCache = useCallback(async (data, type) => {
     const now = new Date();
     const cutoffDate = new Date(now.getTime() - CACHE_EXPIRY_MS);
-    // Truncate to start of day (midnight) - delete everything from this day and before
     cutoffDate.setHours(0, 0, 0, 0);
     const cutoffMs = cutoffDate.getTime();
-    
-    const expiredIds = [];
     
     const filteredData = data.filter(item => {
       let dateField;
       if (type === 'documents') {
         dateField = item.createdAt;
-      } else if (type === 'finishedJobs') {
-        dateField = item.finishedAt;
+      } else if (type === 'jobs') {
+        // Only expire finished jobs; keep pending/waiting
+        if (item.status === 'pending' || item.status === 'waiting') return true;
+        dateField = item.updatedAt || item.createdAt;
       } else {
-        return true; // Keep if not finishedJobs or documents
+        return true;
       }
       
-      if (!dateField) return true; // Keep if no date field
+      if (!dateField) return true;
       
       const itemDate = dateField.toDate ? dateField.toDate().getTime() : new Date(dateField).getTime();
-      // Delete items from the cutoff day and before (whole-day boundary)
-      const isExpired = itemDate < cutoffMs;
-      
-      if (isExpired && item.id) {
-        expiredIds.push(item.id);
-      }
-      
-      return !isExpired;
+      return itemDate >= cutoffMs;
     });
     
-    // Delete expired IDs from Firebase cache docs
-    if (expiredIds.length > 0 && uid) {
-      console.log(`??? Deleting ${expiredIds.length} expired ${type} from cache docs:`, expiredIds.join(', '));
-      
-      try {
-        const batch = writeBatch(db);
-        
-        // Determine which cache doc to update based on role
-        if (role === 'manager') {
-          // Manager: delete from company cache
-          const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
-          const deleteFields = {};
-          expiredIds.forEach(id => {
-            deleteFields[id] = FieldValue.delete();
-          });
-          batch.update(companyCacheRef, deleteFields);
-        } else if (role === 'worker') {
-          // Worker: delete from user cache
-          const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
-          const deleteFields = {};
-          expiredIds.forEach(id => {
-            deleteFields[id] = FieldValue.delete();
-          });
-          batch.update(userCacheRef, deleteFields);
-        } else {
-          // User: delete from user cache (and company cache for documents)
-          const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
-          const deleteFields = {};
-          expiredIds.forEach(id => {
-            deleteFields[id] = FieldValue.delete();
-          });
-          batch.update(userCacheRef, deleteFields);
-        }
-        
-        await batch.commit();
-        console.log('? Expired IDs deleted from cache docs');
-      } catch (error) {
-        console.error('Error deleting expired IDs from cache docs:', error);
-      }
+    const expiredCount = data.length - filteredData.length;
+    if (expiredCount > 0) {
+      console.log(`Cleaned up ${expiredCount} expired ${type} entries`);
     }
     
-    return { filteredData, expiredIds };
+    return { filteredData, expiredIds: [] };
   }, []);
 
   /**
    * Load data from local cache
    */
   const loadFromLocalCache = useCallback(() => {
-    console.log('?? [CACHE READ] Loading from local MMKV cache...');
+    console.log('[CACHE READ] Loading from local MMKV cache...');
     
     const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
     const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
@@ -419,30 +333,26 @@ export function CacheProvider({ children }) {
 
     const cachedProfile = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
     const cachedInventory = mmkvHelpers.getObject(CACHE_KEYS.INVENTORY);
-    const cachedPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS);
-    const cachedFinishedJobs = mmkvHelpers.getObject(CACHE_KEYS.FINISHED_JOBS);
+    const cachedJobs = mmkvHelpers.getObject(CACHE_KEYS.JOBS);
     const cachedWorkers = mmkvHelpers.getObject(CACHE_KEYS.WORKERS);
-    const cachedCompanyPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_PENDING_JOBS);
-    const cachedCompanyFinishedJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_FINISHED_JOBS);
+    const cachedCompanyJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_JOBS);
     const cachedDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS);
     const cachedHasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO);
     const cachedClients = mmkvHelpers.getObject(CACHE_KEYS.CLIENTS);
     const cachedSubscription = mmkvHelpers.getObject(CACHE_KEYS.SUBSCRIPTION);
     const cachedVersions = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS);
-    const cachedCompanyVersions = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_CACHE_VERSIONS);
+    const cachedCompanyVersions = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS);
     
     if (cachedProfile) setProfile(cachedProfile);
     if (cachedInventory) setInventory(cachedInventory);
-    if (cachedPendingJobs) setPendingJobs(cachedPendingJobs);
-    if (cachedFinishedJobs) setFinishedJobs(cachedFinishedJobs);
+    if (cachedJobs) setJobs(cachedJobs);
     if (cachedWorkers) setWorkers(cachedWorkers);
-    if (cachedCompanyPendingJobs) setCompanyPendingJobs(cachedCompanyPendingJobs);
-    if (cachedCompanyFinishedJobs) setCompanyFinishedJobs(cachedCompanyFinishedJobs);
+    if (cachedCompanyJobs) setCompanyJobs(cachedCompanyJobs);
     if (cachedDocuments) setDocuments(cachedDocuments);
     if (cachedClients) setClients(cachedClients);
     if (cachedSubscription) setSubscription(cachedSubscription);
     if (cachedVersions) setCacheVersions(cachedVersions);
-    if (cachedCompanyVersions) setCompanyCacheVersions(cachedCompanyVersions);
+    if (cachedCompanyVersions) setCompanyVersions(cachedCompanyVersions);
     
     return {
       hasCache: !!cachedProfile,
@@ -470,20 +380,14 @@ export function CacheProvider({ children }) {
       case CACHE_KEYS.INVENTORY:
         setInventory(data);
         break;
-      case CACHE_KEYS.PENDING_JOBS:
-        setPendingJobs(data);
-        break;
-      case CACHE_KEYS.FINISHED_JOBS:
-        setFinishedJobs(data);
+      case CACHE_KEYS.JOBS:
+        setJobs(data);
         break;
       case CACHE_KEYS.WORKERS:
         setWorkers(data);
         break;
-      case CACHE_KEYS.COMPANY_PENDING_JOBS:
-        setCompanyPendingJobs(data);
-        break;
-      case CACHE_KEYS.COMPANY_FINISHED_JOBS:
-        setCompanyFinishedJobs(data);
+      case CACHE_KEYS.COMPANY_JOBS:
+        setCompanyJobs(data);
         break;
       case CACHE_KEYS.DOCUMENTS:
         setDocuments(data);
@@ -497,8 +401,8 @@ export function CacheProvider({ children }) {
       case CACHE_KEYS.CACHE_VERSIONS:
         setCacheVersions(data);
         break;
-      case CACHE_KEYS.COMPANY_CACHE_VERSIONS:
-        setCompanyCacheVersions(data);
+      case CACHE_KEYS.COMPANY_VERSIONS:
+        setCompanyVersions(data);
         break;
     }
   }, []);
@@ -583,68 +487,30 @@ export function CacheProvider({ children }) {
   }, []);
 
   /**
-   * Fetch a single document by ID
-   * Uses ID prefix to determine collection:
-   * - p_ = PendingJobs
-   * - f_ = finishedJobs
-   * - d_ = documents
+   * Fetch a single document by ID from the unified jobs or documents collection.
+   * Tries jobs first, then documents.
    */
   const fetchDocumentById = useCallback(async (docId, uid, companyId, role) => {
-    console.log(`?? [FIREBASE READ] Fetching document ${docId} from Firebase...`);
+    console.log(`[FIREBASE READ] Fetching document ${docId} from Firebase...`);
     
     try {
-      const docType = getDocTypeFromId(docId);
-      let docRef;
-      let docSnap;
+      // Try jobs collection first
+      let docRef = doc(db, 'companies', companyId, 'jobs', docId);
+      let docSnap = await getDoc(docRef);
       
-      if (docType === 'pendingJob') {
-        docRef = doc(db, 'companies', companyId, 'PendingJobs', docId);
-        docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-          return { id: docId, ...docSnap.data() };
-        }
-      } else if (docType === 'finishedJob') {
-        docRef = doc(db, 'companies', companyId, 'finishedJobs', docId);
-        docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-          return { id: docId, ...docSnap.data() };
-        }
-      } else if (docType === 'document') {
-        docRef = doc(db, 'companies', companyId, 'documents', docId);
-        docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-          return { id: docId, ...docSnap.data() };
-        }
-      } else {
-        // Legacy fallback - try all collections
-        console.log(`?? Unknown prefix for ${docId}, trying all collections...`);
-        
-        // Try pending jobs first
-        docRef = doc(db, 'companies', companyId, 'PendingJobs', docId);
-        docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          return { id: docId, ...docSnap.data() };
-        }
-        
-        // Try finished jobs
-        docRef = doc(db, 'companies', companyId, 'finishedJobs', docId);
-        docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          return { id: docId, ...docSnap.data() };
-        }
-        
-        // Try documents
-        docRef = doc(db, 'companies', companyId, 'documents', docId);
-        docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          return { id: docId, ...docSnap.data() };
-        }
+      if (docSnap.exists()) {
+        return { id: docId, ...docSnap.data() };
       }
       
-      console.warn(`Document ${docId} not found in any collection`);
+      // Try documents collection
+      docRef = doc(db, 'companies', companyId, 'documents', docId);
+      docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        return { id: docId, ...docSnap.data() };
+      }
+      
+      console.warn(`Document ${docId} not found in jobs or documents collection`);
       return null;
     } catch (error) {
       console.error(`Error fetching document ${docId}:`, error);
@@ -653,105 +519,91 @@ export function CacheProvider({ children }) {
   }, []);
 
   /**
-   * Fetch all recent jobs (within 90 days) from Firebase
+   * Fetch all recent jobs (within 90 days for finished, all pending) from Firebase
    * Used on first initialization when no local cache exists
+   * Returns unified jobs array and documents array
    */
   const fetchAllRecentJobs = useCallback(async (uid, companyId, role) => {
     // Dev role has no jobs or documents - return early
     if (role === 'dev') {
-      console.log('?? Dev role: skipping all jobs/documents fetch (early return)');
-      return { pendingJobsData: [], finishedJobsData: [], documentsData: [] };
+      console.log('Dev role: skipping all jobs/documents fetch (early return)');
+      return { jobsData: [], documentsData: [] };
     }
     
-    console.log('?? [FIREBASE READ] Fetching all recent jobs from Firebase (first-time init)...');
+    console.log('[FIREBASE READ] Fetching all recent jobs from Firebase (first-time init)...');
     const ninetyDaysAgo = getCacheStartDate().toISOString();
     
     try {
-      let pendingJobsData = [];
-      let finishedJobsData = [];
+      let jobsData = [];
       let documentsData = [];
       
       if (role === 'manager') {
-        // Manager: fetch all company pending jobs
-        const pendingRef = collection(db, 'companies', companyId, 'PendingJobs');
-        const pendingSnapshot = await getDocs(pendingRef);
-        pendingJobsData = pendingSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${pendingJobsData.length} pending jobs for manager`);
-        
-        // Manager: fetch all company finished jobs (within 90 days)
-        const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
-        const finishedQuery = query(finishedRef, where('finishedAt', '>=', ninetyDaysAgo));
-        const finishedSnapshot = await getDocs(finishedQuery);
-        finishedJobsData = finishedSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${finishedJobsData.length} finished jobs for manager`);
+        // Manager: fetch all company jobs (pending + recent finished)
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
+        const jobsSnapshot = await getDocs(jobsRef);
+        const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Keep all pending/waiting + finished within 90 days
+        jobsData = allJobs.filter(j => {
+          if (j.status === 'pending' || j.status === 'waiting') return true;
+          const dateField = j.updatedAt || j.createdAt;
+          if (!dateField) return true;
+          return dateField >= ninetyDaysAgo;
+        });
+        console.log(`Fetched ${jobsData.length} jobs for manager`);
         
         // Manager: fetch all company documents (within 90 days)
         const documentsRef = collection(db, 'companies', companyId, 'documents');
         const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
         const documentsSnapshot = await getDocs(documentsQuery);
         documentsData = documentsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${documentsData.length} documents for manager`);
+        console.log(`Fetched ${documentsData.length} documents for manager`);
         
       } else if (role === 'worker') {
-        // Worker: fetch assigned pending jobs
-        const pendingRef = collection(db, 'companies', companyId, 'PendingJobs');
-        const pendingQuery = query(pendingRef, where('completedBy', '==', uid));
-        const pendingSnapshot = await getDocs(pendingQuery);
-        pendingJobsData = pendingSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${pendingJobsData.length} pending jobs for worker`);
-        
-        // Worker: fetch own finished jobs (within 90 days)
-        const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
-        const finishedQuery = query(
-          finishedRef, 
-          where('completedBy', '==', uid),
-          where('finishedAt', '>=', ninetyDaysAgo)
-        );
-        const finishedSnapshot = await getDocs(finishedQuery);
-        finishedJobsData = finishedSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${finishedJobsData.length} finished jobs for worker`);
+        // Worker: fetch assigned jobs
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
+        const workerQuery = query(jobsRef, where('completedBy', '==', uid));
+        const jobsSnapshot = await getDocs(workerQuery);
+        const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        jobsData = allJobs.filter(j => {
+          if (j.status === 'pending' || j.status === 'waiting') return true;
+          const dateField = j.updatedAt || j.createdAt;
+          if (!dateField) return true;
+          return dateField >= ninetyDaysAgo;
+        });
+        console.log(`Fetched ${jobsData.length} jobs for worker`);
         
       } else if (role === 'user') {
-        // User: fetch own finished jobs (within 90 days)
-        const finishedRef = collection(db, 'companies', companyId, 'finishedJobs');
-        const finishedQuery = query(
-          finishedRef,
-          where('finishedAt', '>=', ninetyDaysAgo)
-        );
-        const finishedSnapshot = await getDocs(finishedQuery);
-        finishedJobsData = finishedSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${finishedJobsData.length} finished jobs for user`);
+        // User: fetch all jobs (solo user - within 90 days for finished)
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
+        const jobsSnapshot = await getDocs(jobsRef);
+        const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        jobsData = allJobs.filter(j => {
+          if (j.status === 'pending' || j.status === 'waiting') return true;
+          const dateField = j.updatedAt || j.createdAt;
+          if (!dateField) return true;
+          return dateField >= ninetyDaysAgo;
+        });
+        console.log(`Fetched ${jobsData.length} jobs for user`);
         
-        // User: fetch own documents (within 90 days)
+        // User: fetch documents (within 90 days)
         const documentsRef = collection(db, 'companies', companyId, 'documents');
-        const documentsQuery = query(
-          documentsRef,
-          where('createdAt', '>=', ninetyDaysAgo)
-        );
+        const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
         const documentsSnapshot = await getDocs(documentsQuery);
         documentsData = documentsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${documentsData.length} documents for user`);
+        console.log(`Fetched ${documentsData.length} documents for user`);
       } else if (role === 'basic') {
-        // Basic: fetch only documents (NO jobs, NO inventory)
+        // Basic: documents only (NO jobs)
         const documentsRef = collection(db, 'companies', companyId, 'documents');
-        const documentsQuery = query(
-          documentsRef,
-          where('createdAt', '>=', ninetyDaysAgo)
-        );
+        const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
         const documentsSnapshot = await getDocs(documentsQuery);
         documentsData = documentsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`?? Fetched ${documentsData.length} documents for basic user`);
-        // Basic role has no pending/finished jobs - keep arrays empty
-      } else if (role === 'dev') {
-        // Dev role: NO jobs, NO documents (support-only role)
-        console.log('?? Dev role: skipping all jobs/documents fetch');
-        // All arrays stay empty
+        console.log(`Fetched ${documentsData.length} documents for basic user`);
       }
       
-      return { pendingJobsData, finishedJobsData, documentsData };
+      return { jobsData, documentsData };
     } catch (error) {
       console.error('Error fetching all recent jobs:', error);
-      return { pendingJobsData: [], finishedJobsData: [], documentsData: [] };
+      return { jobsData: [], documentsData: [] };
     }
   }, []);
 
@@ -763,11 +615,9 @@ export function CacheProvider({ children }) {
       'profile': CACHE_KEYS.PROFILE,
       'inventory': CACHE_KEYS.INVENTORY,
       'subscription': CACHE_KEYS.SUBSCRIPTION,
-      'pendingJobs': CACHE_KEYS.PENDING_JOBS,
-      'finishedJobs': CACHE_KEYS.FINISHED_JOBS,
+      'jobs': CACHE_KEYS.JOBS,
+      'companyJobs': CACHE_KEYS.COMPANY_JOBS,
       'workers': CACHE_KEYS.WORKERS,
-      'companyPendingJobs': CACHE_KEYS.COMPANY_PENDING_JOBS,
-      'companyFinishedJobs': CACHE_KEYS.COMPANY_FINISHED_JOBS,
       'documents': CACHE_KEYS.DOCUMENTS,
       'clients': CACHE_KEYS.CLIENTS,
     };
@@ -776,17 +626,20 @@ export function CacheProvider({ children }) {
 
   /**
    * Set up real-time listeners for cache version changes (snapshot listeners)
-   * Based on role:
-   * - Manager: 2 listeners (user cache: profile/inventory, company cache: workers/business_info/clients/jobs/documents)
-   * - Worker: 1 listener (user cache only: profile/inventory/clients/pendingJobs/finishedJobs)
-   * - User: 1 listener (user cache only: profile/inventory/clients/finishedJobs/business_info/documents)
+   * 
+   * NEW ARCHITECTURE: Summary-based versioning
+   * - Company cache doc has: { jobsVersion, documentsVersion, clientsVersion, workersVersion, updatedAt }
+   * - On version change: full re-fetch of the changed collection
+   * - User cache doc has: { profile, inventory, subscription, lastUpdated }
+   * 
+   * All roles: user cache listener (profile/inventory) + company cache listener (version fields)
    */
   const setupCacheListeners = useCallback((uid, role, companyId) => {
-    console.log(`?? Setting up cache listeners for ${role}...`);
+    console.log(`Setting up cache listeners for ${role}...`);
     
     // Dev role doesn't need cache listeners
     if (role === 'dev') {
-      console.log('?? Dev role: skipping cache listeners (support-only role)');
+      console.log('Dev role: skipping cache listeners (support-only role)');
       return;
     }
     
@@ -801,7 +654,7 @@ export function CacheProvider({ children }) {
     }
     
     // =====================================================
-    // USER CACHE LISTENER (for all roles)
+    // USER CACHE LISTENER (for all roles - profile/inventory)
     // =====================================================
     const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
     unsubscribeRef.current = onSnapshot(userCacheRef, async (snapshot) => {
@@ -810,28 +663,18 @@ export function CacheProvider({ children }) {
       const remoteVersions = snapshot.data();
       const localVersions = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
       
-      console.log('?? User cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
-      console.log('📋 Remote fields:', Object.keys(remoteVersions).join(', '));
-      console.log('💾 Local versions tracked:', Object.keys(localVersions).join(', '));
+      console.log('User cache snapshot received');
       
-      // Define standard fields based on role for user cache
-      // Basic role: only profile (no inventory, no business_info cached)
+      // Standard user cache fields
       let standardFields = role === 'basic' ? ['profile'] : ['profile', 'inventory'];
-      // All roles track subscription version in user cache
       standardFields.push('subscription');
-      // All non-manager roles track clients version in user cache
-      if (role !== 'manager') {
-        standardFields.push('clients');
-      }
       
-      // Check standard fields for version changes
       for (const field of standardFields) {
         const remoteVersion = remoteVersions[field] || 0;
         const localVersion = localVersions[field] || 0;
         
         if (remoteVersion > localVersion) {
-          console.log(`?? Version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
-          // subscription is fetched from company path, not user path
+          console.log(`Version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
           if (field === 'subscription') {
             const subData = await fetchDataFromFirebase('subscription', uid, companyId, role);
             saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
@@ -846,122 +689,6 @@ export function CacheProvider({ children }) {
         }
       }
       
-      // Check for standard fields that exist locally but are missing from remote (deleted fields)
-      for (const field of standardFields) {
-        const hasRemoteField = remoteVersions.hasOwnProperty(field);
-        const remoteVersion = remoteVersions[field];
-        const localVersion = localVersions[field];
-        
-        
-        if (localVersion && !hasRemoteField) {
-          console.log(`❌ Field ${field} exists locally but not in remote cache - deleting`);
-          const cacheKey = getCacheKeyForField(field);
-          mmkvHelpers.delete(cacheKey);
-          delete localVersions[field];
-          // Clear state if it's subscription
-          if (field === 'subscription') {
-            setSubscription(null);
-          }
-        }
-      }
-      
-      // For workers, users, and basic role, check document versions in user cache
-      // Basic role: only documents (no pending/finished jobs)
-      if (role === 'worker' || role === 'user' || role === 'basic') {
-        const documentFields = Object.keys(remoteVersions).filter(key => 
-          !['profile', 'inventory', 'business_info', 'clients', 'subscription', 'lastUpdated'].includes(key)
-        );
-        // Basic role doesn't have jobs, only documents
-        let localPendingJobs = role === 'basic' ? [] : (mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS) || []);
-        let localFinishedJobs = role === 'basic' ? [] : (mmkvHelpers.getObject(CACHE_KEYS.FINISHED_JOBS) || []);
-        let localDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) || [];
-        
-        const documentsToFetch = [];
-        const documentsToDelete = [];
-        
-        // Check for documents to fetch
-        for (const docId of documentFields) {
-          const remoteVersion = remoteVersions[docId] || 0;
-          const localVersion = localVersions[docId] || 0;
-          
-          const existsInPending = localPendingJobs.some(j => j.id === docId);
-          const existsInFinished = localFinishedJobs.some(j => j.id === docId);
-          const existsInDocuments = localDocuments.some(c => c.id === docId);
-          const existsLocally = existsInPending || existsInFinished || existsInDocuments;
-          
-          if (!existsLocally || remoteVersion > localVersion) {
-            console.log(`?? Document ${docId} needs fetch: exists=${existsLocally}, local=${localVersion}, remote=${remoteVersion}`);
-            documentsToFetch.push(docId);
-            localVersions[docId] = remoteVersion;
-          }
-        }
-        
-        // Check for documents to delete
-        const allLocalDocIds = [
-          ...localPendingJobs.map(j => j.id),
-          ...localFinishedJobs.map(j => j.id),
-          ...localDocuments.map(c => c.id)
-        ];
-        
-        for (const localDocId of allLocalDocIds) {
-          if (!documentFields.includes(localDocId) && !remoteVersions[localDocId]) {
-            console.log(`??? Document ${localDocId} exists locally but not in remote cache - marking for deletion`);
-            documentsToDelete.push(localDocId);
-            delete localVersions[localDocId];
-          }
-        }
-        
-        // Delete stale documents
-        if (documentsToDelete.length > 0) {
-          localPendingJobs = localPendingJobs.filter(j => !documentsToDelete.includes(j.id));
-          localFinishedJobs = localFinishedJobs.filter(j => !documentsToDelete.includes(j.id));
-          localDocuments = localDocuments.filter(c => !documentsToDelete.includes(c.id));
-          
-          saveToLocalCache(CACHE_KEYS.PENDING_JOBS, localPendingJobs);
-          saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, localFinishedJobs);
-          saveToLocalCache(CACHE_KEYS.DOCUMENTS, localDocuments);
-        }
-        
-        // Fetch missing/outdated documents
-        if (documentsToFetch.length > 0) {
-          console.log(`?? Fetching ${documentsToFetch.length} documents:`, documentsToFetch.join(', '));
-          
-          for (const docId of documentsToFetch) {
-            const docData = await fetchDocumentById(docId, uid, companyId, role);
-            
-            if (docData) {
-              // For workers, only cache if assigned to them
-              if (role === 'worker' && docData.completedBy !== uid) {
-                continue;
-              }
-              
-              const docType = getDocumentType(docData);
-              
-              if (docType === 'pendingJob') {
-                const currentJobs = mmkvHelpers.getObject(CACHE_KEYS.PENDING_JOBS) || [];
-                const updatedJobs = currentJobs.filter(j => j.id !== docId);
-                updatedJobs.push(docData);
-                saveToLocalCache(CACHE_KEYS.PENDING_JOBS, updatedJobs);
-              } else if (docType === 'finishedJob') {
-                if (isWithinCacheRange(docData.finishedAt)) {
-                  const currentJobs = mmkvHelpers.getObject(CACHE_KEYS.FINISHED_JOBS) || [];
-                  const updatedJobs = currentJobs.filter(j => j.id !== docId);
-                  updatedJobs.push(docData);
-                  saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, updatedJobs);
-                }
-              } else if (docType === 'document') {
-                if (isWithinCacheRange(docData.createdAt)) {
-                  const currentDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) || [];
-                  const updatedDocuments = currentDocuments.filter(c => c.id !== docId);
-                  updatedDocuments.push(docData);
-                  saveToLocalCache(CACHE_KEYS.DOCUMENTS, updatedDocuments);
-                }
-              }
-            }
-          }
-        }
-      }
-      
       // Save updated versions
       saveToLocalCache(CACHE_KEYS.CACHE_VERSIONS, localVersions);
       
@@ -970,145 +697,129 @@ export function CacheProvider({ children }) {
     });
     
     // =====================================================
-    // COMPANY CACHE LISTENER (for managers only)
-    // Workers and users don't need company cache listener
-    // because their cache is updated directly when jobs are assigned/changed
+    // COMPANY CACHE LISTENER (for all non-dev roles)
+    // Listens to summary version fields and re-fetches on change
     // =====================================================
-    if (role === 'manager' && companyId) {
+    if (companyId) {
       const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
       companyUnsubscribeRef.current = onSnapshot(companyCacheRef, async (snapshot) => {
         if (!snapshot.exists()) return;
         
-        const remoteVersions = snapshot.data();
-        const localVersions = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_CACHE_VERSIONS) || {};
+        const remoteData = snapshot.data();
+        const localVersions = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS) || {};
         
-        console.log('?? Company cache snapshot received:', Object.keys(remoteVersions).length, 'fields');
+        console.log('Company cache snapshot received:', JSON.stringify({
+          jobsVersion: remoteData.jobsVersion,
+          documentsVersion: remoteData.documentsVersion,
+          clientsVersion: remoteData.clientsVersion,
+          workersVersion: remoteData.workersVersion,
+        }));
         
-        // Check standard company fields (business_info excluded - fetched by Cloud Functions only)
-        const standardCompanyFields = ['workers', 'clients'];
-        
-        for (const field of standardCompanyFields) {
-          const remoteVersion = remoteVersions[field] || 0;
-          const localVersion = localVersions[field] || 0;
+        // --- JOBS VERSION CHECK ---
+        if (role !== 'basic' && role !== 'dev') {
+          const remoteJobsVersion = remoteData.jobsVersion || 0;
+          const localJobsVersion = localVersions.jobsVersion || 0;
           
-          if (remoteVersion > localVersion) {
-            console.log(`?? Company version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
-            const data = await fetchDataFromFirebase(field, uid, companyId, role);
-            if (data !== null) {
-              const cacheKey = getCacheKeyForField(field);
-              saveToLocalCache(cacheKey, data);
-            }
-            localVersions[field] = remoteVersion;
-          }
-        }
-        
-        // Check for company fields that exist locally but are missing from remote (deleted fields)
-        for (const field of standardCompanyFields) {
-          const hasRemoteField = remoteVersions.hasOwnProperty(field);
-          const remoteVersion = remoteVersions[field];
-          const localVersion = localVersions[field];
-          
-          console.log(`🔍 Company checking deletion for ${field}: hasRemote=${hasRemoteField}, remoteVer=${remoteVersion}, localVer=${localVersion}`);
-          
-          if (localVersion && !hasRemoteField) {
-            console.log(`❌ Company field ${field} exists locally but not in remote cache - deleting`);
-            const cacheKey = getCacheKeyForField(field);
-            mmkvHelpers.delete(cacheKey);
-            delete localVersions[field];
-          }
-        }
-        
-        // Check individual document versions
-        const documentFields = Object.keys(remoteVersions).filter(key => 
-          !['workers', 'business_info', 'clients', 'subscription', 'lastUpdated'].includes(key)
-        );
-        
-        let localCompanyPendingJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_PENDING_JOBS) || [];
-        let localCompanyFinishedJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_FINISHED_JOBS) || [];
-        let localDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) || [];
-        
-        const documentsToFetch = [];
-        const documentsToDelete = [];
-        
-        // Check for documents to fetch
-        for (const docId of documentFields) {
-          const remoteVersion = remoteVersions[docId] || 0;
-          const localVersion = localVersions[docId] || 0;
-          
-          const existsInPending = localCompanyPendingJobs.some(j => j.id === docId);
-          const existsInFinished = localCompanyFinishedJobs.some(j => j.id === docId);
-          const existsInDocuments = localDocuments.some(c => c.id === docId);
-          const existsLocally = existsInPending || existsInFinished || existsInDocuments;
-          
-          if (!existsLocally || remoteVersion > localVersion) {
-            console.log(`?? Company document ${docId} needs fetch: exists=${existsLocally}, local=${localVersion}, remote=${remoteVersion}`);
-            documentsToFetch.push(docId);
-            localVersions[docId] = remoteVersion;
-          }
-        }
-        
-        // Check for documents to delete
-        const allLocalCompanyDocIds = [
-          ...localCompanyPendingJobs.map(j => j.id),
-          ...localCompanyFinishedJobs.map(j => j.id),
-          ...localDocuments.map(c => c.id)
-        ];
-        
-        for (const localDocId of allLocalCompanyDocIds) {
-          if (!documentFields.includes(localDocId) && !remoteVersions[localDocId]) {
-            console.log(`??? Company document ${localDocId} exists locally but not in remote cache - marking for deletion`);
-            documentsToDelete.push(localDocId);
-            delete localVersions[localDocId];
-          }
-        }
-        
-        // Delete stale documents
-        if (documentsToDelete.length > 0) {
-          localCompanyPendingJobs = localCompanyPendingJobs.filter(j => !documentsToDelete.includes(j.id));
-          localCompanyFinishedJobs = localCompanyFinishedJobs.filter(j => !documentsToDelete.includes(j.id));
-          localDocuments = localDocuments.filter(c => !documentsToDelete.includes(c.id));
-          
-          saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, localCompanyPendingJobs);
-          saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, localCompanyFinishedJobs);
-          saveToLocalCache(CACHE_KEYS.DOCUMENTS, localDocuments);
-        }
-        
-        // Fetch missing/outdated documents
-        if (documentsToFetch.length > 0) {
-          console.log(`?? Fetching ${documentsToFetch.length} company documents:`, documentsToFetch.join(', '));
-          
-          for (const docId of documentsToFetch) {
-            const docData = await fetchDocumentById(docId, uid, companyId, role);
+          if (remoteJobsVersion !== localJobsVersion) {
+            console.log(`Jobs version changed: local=${localJobsVersion}, remote=${remoteJobsVersion}`);
+            const ninetyDaysAgo = getCacheStartDate().toISOString();
             
-            if (docData) {
-              const docType = getDocumentType(docData);
+            try {
+              const jobsRef = collection(db, 'companies', companyId, 'jobs');
+              let jobsSnapshot;
               
-              if (docType === 'pendingJob') {
-                const currentJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_PENDING_JOBS) || [];
-                const updatedJobs = currentJobs.filter(j => j.id !== docId);
-                updatedJobs.push(docData);
-                saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, updatedJobs);
-              } else if (docType === 'finishedJob') {
-                if (isWithinCacheRange(docData.finishedAt)) {
-                  const currentJobs = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_FINISHED_JOBS) || [];
-                  const updatedJobs = currentJobs.filter(j => j.id !== docId);
-                  updatedJobs.push(docData);
-                  saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, updatedJobs);
-                }
-              } else if (docType === 'document') {
-                if (isWithinCacheRange(docData.createdAt)) {
-                  const currentDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) || [];
-                  const updatedDocuments = currentDocuments.filter(c => c.id !== docId);
-                  updatedDocuments.push(docData);
-                  saveToLocalCache(CACHE_KEYS.DOCUMENTS, updatedDocuments);
-                }
+              if (role === 'worker') {
+                const workerQuery = query(jobsRef, where('completedBy', '==', uid));
+                jobsSnapshot = await getDocs(workerQuery);
+              } else {
+                jobsSnapshot = await getDocs(jobsRef);
               }
+              
+              const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+              // Filter: keep pending/waiting always, finished within 90 days
+              const filteredJobs = allJobs.filter(j => {
+                if (j.status === 'pending' || j.status === 'waiting') return true;
+                const dateField = j.updatedAt || j.createdAt;
+                if (!dateField) return true;
+                return dateField >= ninetyDaysAgo;
+              });
+              
+              if (role === 'manager') {
+                saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, filteredJobs);
+              } else {
+                saveToLocalCache(CACHE_KEYS.JOBS, filteredJobs);
+              }
+              
+              console.log(`Synced ${filteredJobs.length} jobs from Firebase`);
+            } catch (error) {
+              console.error('Error syncing jobs:', error);
             }
+            
+            localVersions.jobsVersion = remoteJobsVersion;
           }
         }
         
-        // Save updated versions
-        saveToLocalCache(CACHE_KEYS.COMPANY_CACHE_VERSIONS, localVersions);
+        // --- DOCUMENTS VERSION CHECK ---
+        if (role !== 'dev') {
+          const remoteDocsVersion = remoteData.documentsVersion || 0;
+          const localDocsVersion = localVersions.documentsVersion || 0;
+          
+          if (remoteDocsVersion !== localDocsVersion) {
+            console.log(`Documents version changed: local=${localDocsVersion}, remote=${remoteDocsVersion}`);
+            
+            try {
+              const ninetyDaysAgo = getCacheStartDate().toISOString();
+              const documentsRef = collection(db, 'companies', companyId, 'documents');
+              const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
+              const docsSnapshot = await getDocs(documentsQuery);
+              const documentsData = docsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+              saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
+              console.log(`Synced ${documentsData.length} documents from Firebase`);
+            } catch (error) {
+              console.error('Error syncing documents:', error);
+            }
+            
+            localVersions.documentsVersion = remoteDocsVersion;
+          }
+        }
+        
+        // --- CLIENTS VERSION CHECK ---
+        {
+          const remoteClientsVersion = remoteData.clientsVersion || 0;
+          const localClientsVersion = localVersions.clientsVersion || 0;
+          
+          if (remoteClientsVersion !== localClientsVersion) {
+            console.log(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
+            
+            const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+            if (clientsData !== null) {
+              saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
+              setClients(clientsData);
+            }
+            
+            localVersions.clientsVersion = remoteClientsVersion;
+          }
+        }
+        
+        // --- WORKERS VERSION CHECK (manager only) ---
+        if (role === 'manager') {
+          const remoteWorkersVersion = remoteData.workersVersion || 0;
+          const localWorkersVersion = localVersions.workersVersion || 0;
+          
+          if (remoteWorkersVersion !== localWorkersVersion) {
+            console.log(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
+            
+            const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+            if (workersData !== null) {
+              saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
+            }
+            
+            localVersions.workersVersion = remoteWorkersVersion;
+          }
+        }
+        
+        // Save updated company versions
+        saveToLocalCache(CACHE_KEYS.COMPANY_VERSIONS, localVersions);
         
       }, (error) => {
         console.error('Company cache listener error:', error);
@@ -1118,7 +829,7 @@ export function CacheProvider({ children }) {
     // Mark listeners as active
     listenersActiveRef.current = true;
     
-    console.log(`? Cache listeners set up for ${role}`);
+    console.log(`Cache listeners set up for ${role}`);
   }, [fetchDataFromFirebase, fetchDocumentById, saveToLocalCache]);
 
   /**
@@ -1302,34 +1013,28 @@ export function CacheProvider({ children }) {
       }
       
       // Fetch all recent jobs from Firebase
-      console.log('?? Fetching all recent jobs for initial cache...');
-      const { pendingJobsData, finishedJobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
+      console.log('Fetching all recent jobs for initial cache...');
+      const { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
       
-      // Save fetched jobs to local cache
+      // Save fetched jobs to local cache (unified jobs collection)
       if (role === 'manager') {
-        saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, pendingJobsData);
-        saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, finishedJobsData);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, []);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, []);
+        saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, jobsData);
+        saveToLocalCache(CACHE_KEYS.JOBS, []);
         saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
       } else if (role === 'worker') {
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, pendingJobsData);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, finishedJobsData);
+        saveToLocalCache(CACHE_KEYS.JOBS, jobsData);
         saveToLocalCache(CACHE_KEYS.DOCUMENTS, []);
       } else if (role === 'basic') {
         // Basic role: NO jobs at all, only documents
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, []);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, []);
+        saveToLocalCache(CACHE_KEYS.JOBS, []);
         saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
       } else if (role === 'dev') {
         // Dev role: NO jobs, NO documents (support-only)
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, []);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, []);
+        saveToLocalCache(CACHE_KEYS.JOBS, []);
         saveToLocalCache(CACHE_KEYS.DOCUMENTS, []);
       } else {
         // User role
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, []);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, finishedJobsData);
+        saveToLocalCache(CACHE_KEYS.JOBS, jobsData);
         saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
       }
       
@@ -1339,8 +1044,8 @@ export function CacheProvider({ children }) {
         await fetchClients(companyId);
       }
       
-      // IMPORTANT: Fetch remote cache docs to get correct version numbers
-      console.log('?? Fetching remote cache docs for version numbers...');
+      // Fetch remote cache docs to get correct version numbers
+      console.log('Fetching remote cache docs for version numbers...');
       const versions = {};
       const companyVersions = {};
       
@@ -1354,34 +1059,33 @@ export function CacheProvider({ children }) {
             versions[key] = userCacheData[key];
           }
         });
-        console.log(`?? User cache versions loaded: ${Object.keys(versions).length} fields`);
       }
       
-      // Fetch company cache doc (for managers)
-      if (role === 'manager' && companyId) {
+      // Fetch company cache doc (summary versions: jobsVersion, documentsVersion, clientsVersion, workersVersion)
+      if (companyId) {
         const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
         const companyCacheSnap = await getDoc(companyCacheRef);
         if (companyCacheSnap.exists()) {
           const companyCacheData = companyCacheSnap.data();
-          Object.keys(companyCacheData).forEach(key => {
-            if (key !== 'lastUpdated') {
+          // Store summary version fields
+          for (const key of ['jobsVersion', 'documentsVersion', 'clientsVersion', 'workersVersion']) {
+            if (companyCacheData[key] !== undefined) {
               companyVersions[key] = companyCacheData[key];
             }
-          });
-          console.log(`?? Company cache versions loaded: ${Object.keys(companyVersions).length} fields`);
+          }
         }
       }
       
       // Save versions to local cache
       saveToLocalCache(CACHE_KEYS.CACHE_VERSIONS, versions);
-      saveToLocalCache(CACHE_KEYS.COMPANY_CACHE_VERSIONS, companyVersions);
+      saveToLocalCache(CACHE_KEYS.COMPANY_VERSIONS, companyVersions);
       
       // Set up listeners
       setupCacheListeners(uid, role, companyId);
       setIsInitialized(true);
       setIsLoading(false);
       
-      console.log('? Initial cache populated with', pendingJobsData.length, 'pending,', finishedJobsData.length, 'finished jobs');
+      console.log('Initial cache populated with', jobsData.length, 'jobs');
     } catch (error) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
@@ -1389,77 +1093,44 @@ export function CacheProvider({ children }) {
   }, [fetchDataFromFirebase, fetchAllRecentJobs, saveToLocalCache, setupCacheListeners, fetchClients]);
 
   /**
-   * Update cache version in Firebase (increment by 1)
-   * Can handle both standard fields (profile, inventory) and individual documents (job123, doc456)
+   * Pre-increment a summary version field locally.
+   * Used for optimistic updates so the snapshot listener won't trigger
+   * an unnecessary re-fetch when the CF-written version arrives.
    * 
-   * IMPORTANT: Updates local version FIRST, then Firebase, to prevent unnecessary refetch
-   * when snapshot listener fires (local version will already match remote)
+   * For user cache: standard fields (profile, inventory, subscription)
+   * For company cache: summary fields (jobsVersion, documentsVersion, clientsVersion, workersVersion)
    */
-  const incrementCacheVersion = useCallback(async (fieldOrDocId, isCompanyCache = false) => {
-    const uid = getUid();
-    const companyId = getCompanyId();
-    
-    try {
-      // STEP 1: Update local version FIRST (before Firebase write triggers snapshot)
-      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
-      const newVersion = (localVersions[fieldOrDocId] || 0) + 1;
-      localVersions[fieldOrDocId] = newVersion;
-      saveToLocalCache(localVersionsKey, localVersions);
-      
-      console.log(`?? Pre-incremented local ${fieldOrDocId} version to ${newVersion} in ${isCompanyCache ? 'company' : 'user'} cache`);
-      
-      // STEP 2: Then update Firebase directly
-      const cacheRef = isCompanyCache
-        ? doc(db, `companies/${companyId}/data/cache`)
-        : doc(db, `users/${uid}/data/cache`);
-      await updateDoc(cacheRef, { [fieldOrDocId]: FieldValue.increment(1) });
-      
-      console.log(`? Firebase ${fieldOrDocId} version incremented`);
-    } catch (error) {
-      console.error(`Error incrementing ${fieldOrDocId} version:`, error);
-      // Rollback local version on error
-      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
-      localVersions[fieldOrDocId] = Math.max(0, (localVersions[fieldOrDocId] || 1) - 1);
-      saveToLocalCache(localVersionsKey, localVersions);
-    }
-  }, [getUid, getCompanyId, saveToLocalCache]);
+  const preIncrementVersion = useCallback((field, isCompanyCache = false) => {
+    const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
+    const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
+    localVersions[field] = (localVersions[field] || 0) + 1;
+    saveToLocalCache(localVersionsKey, localVersions);
+  }, [saveToLocalCache]);
 
   /**
-   * Delete a field from Firebase cache doc
-   * Used when deleting jobs/documents or moving from pending to finished
+   * Increment cache version in Firebase for user cache fields (profile, inventory).
+   * Company cache versions are managed by Cloud Functions only.
    */
-  const deleteCacheField = useCallback(async (fieldOrDocId, isCompanyCache = false) => {
-    const uid = getUid();
-    const companyId = getCompanyId();
-    
-    try {
-      // Delete from local versions
-      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
-      delete localVersions[fieldOrDocId];
-      saveToLocalCache(localVersionsKey, localVersions);
-      
-      // Delete field from Firebase cache doc directly
-      const cacheRef = isCompanyCache
-        ? doc(db, `companies/${companyId}/data/cache`)
-        : doc(db, `users/${uid}/data/cache`);
-      await updateDoc(cacheRef, { [fieldOrDocId]: FieldValue.delete() });
-      
-      console.log(`??? Deleted ${fieldOrDocId} from ${isCompanyCache ? 'company' : 'user'} cache`);
-    } catch (error) {
-      console.error(`Error deleting ${fieldOrDocId} from cache:`, error);
+  const incrementCacheVersion = useCallback(async (field, isCompanyCache = false) => {
+    if (isCompanyCache) {
+      // Company cache versions are bumped by Cloud Functions, not the client.
+      // Just pre-increment locally for optimistic UI.
+      preIncrementVersion(field, true);
+      return;
     }
-  }, [getUid, getCompanyId, saveToLocalCache]);
-
-  /**
-   * Increment version for a specific document (job or document)
-   * This is called when creating, updating, or deleting a job/document
-   */
-  const incrementDocumentVersion = useCallback(async (docId, isCompanyCache = true) => {
-    await incrementCacheVersion(docId, isCompanyCache);
-  }, [incrementCacheVersion]);
+    
+    const uid = getUid();
+    try {
+      // Pre-increment local version
+      preIncrementVersion(field, false);
+      
+      // Update Firebase user cache
+      const cacheRef = doc(db, `users/${uid}/data/cache`);
+      await updateDoc(cacheRef, { [field]: FieldValue.increment(1) });
+    } catch (error) {
+      console.error(`Error incrementing ${field} version:`, error);
+    }
+  }, [getUid, preIncrementVersion]);
 
   /**
    * Update profile cache
@@ -1497,48 +1168,16 @@ export function CacheProvider({ children }) {
       parts: Array.isArray(newInventory) ? newInventory : [],
     });
     
-    console.log('? Inventory updated via Cloud Function');
+    console.log('Inventory updated via Cloud Function');
   }, [saveToLocalCache, getUid, getCompanyId]);
 
   /**
-   * Update worker's cache when manager assigns a job
-   * Increments the specific job version in worker's cache
+   * Add a job to the unified jobs cache (prevents duplicates).
+   * Cloud Functions handle Firestore writes and version bumps.
+   * This does optimistic local cache updates only.
    */
-  const updateWorkerCacheVersion = useCallback(async (workerId, jobId) => {
-    try {
-      const workerCacheRef = doc(db, `users/${workerId}/data/cache`);
-      await updateDoc(workerCacheRef, { [jobId]: FieldValue.increment(1) });
-      
-      console.log(`?? Incremented job ${jobId} version in worker ${workerId}'s cache`);
-    } catch (error) {
-      console.error('Error updating worker cache version:', error);
-    }
-  }, []);
-
-  /**
-   * Delete field from worker's cache
-   * Used when a job is moved from pending to finished
-   */
-  const deleteWorkerCacheField = useCallback(async (workerId, fieldOrDocId) => {
-    try {
-      const workerCacheRef = doc(db, `users/${workerId}/data/cache`);
-      await updateDoc(workerCacheRef, { [fieldOrDocId]: FieldValue.delete() });
-      
-      console.log(`??? Deleted ${fieldOrDocId} from worker ${workerId}'s cache`);
-    } catch (error) {
-      console.error('Error deleting from worker cache:', error);
-    }
-  }, []);
-
-  /**
-   * Add a job to cache (prevents duplicates)
-   * Manager adds job ? Company cache, increment job version
-   * Worker updates job ? Both worker cache + company cache, increment job version 
-   * User adds job ? User cache, increment job version
-   */
-  const addJob = useCallback(async (job, isPending = true, workerId = null) => {
+  const addJob = useCallback((job) => {
     const role = getUserRole();
-    const uid = getUid();
     
     if (!job.id) {
       console.error('Cannot add job without ID');
@@ -1546,206 +1185,79 @@ export function CacheProvider({ children }) {
     }
     
     // Helper to add job without duplicates
-    const addJobToArray = (jobs, newJob) => {
-      const filtered = jobs.filter(j => j.id !== newJob.id);
+    const addJobToArray = (arr, newJob) => {
+      const filtered = arr.filter(j => j.id !== newJob.id);
       return [...filtered, newJob];
     };
     
-    console.log(`?? addJob called: id=${job.id}, isPending=${isPending}, role=${role}`);
-    
     if (role === 'manager') {
-      // Manager adds job to company cache
-      if (isPending) {
-        const currentJobs = addJobToArray(companyPendingJobs, job);
-        saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, currentJobs);
-        // Increment individual job version in company cache
-        await incrementDocumentVersion(job.id, true);
-        
-        // If job is assigned to a worker, also increment in worker's cache
-        if (workerId) {
-          await updateWorkerCacheVersion(workerId, job.id);
-        }
-      } else {
-        const currentJobs = addJobToArray(companyFinishedJobs, job);
-        saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, currentJobs);
-        await incrementDocumentVersion(job.id, true);
-      }
-    } else if (role === 'worker') {
-      // Worker updates job - update in both worker cache AND company cache
-      if (isPending) {
-        const currentJobs = addJobToArray(pendingJobs, job);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, currentJobs);
-        // Increment job version in both worker and company caches
-        await incrementDocumentVersion(job.id, false); // Worker cache
-        await incrementDocumentVersion(job.id, true);  // Company cache
-      } else {
-        const currentJobs = addJobToArray(finishedJobs, job);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, currentJobs);
-        await incrementDocumentVersion(job.id, false);
-        await incrementDocumentVersion(job.id, true);
-      }
+      const updated = addJobToArray(companyJobs, job);
+      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, updated);
     } else {
-      // User adds job to user cache
-      if (isPending) {
-        const currentJobs = addJobToArray(pendingJobs, job);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, currentJobs);
-        await incrementDocumentVersion(job.id, false);
-      } else {
-        const currentJobs = addJobToArray(finishedJobs, job);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, currentJobs);
-        await incrementDocumentVersion(job.id, false);
-      }
+      const updated = addJobToArray(jobs, job);
+      saveToLocalCache(CACHE_KEYS.JOBS, updated);
     }
     
-    console.log(`? addJob completed for ${job.id}`);
-  }, [getUserRole, getUid, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, saveToLocalCache, incrementDocumentVersion, updateWorkerCacheVersion]);
+    // Pre-increment jobsVersion so snapshot listener won't double-fetch
+    preIncrementVersion('jobsVersion', true);
+  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
 
   /**
-   * Update a job in cache
+   * Update a job in the unified jobs cache.
    */
-  const updateJob = useCallback(async (jobId, updates, isPending = true) => {
+  const updateJob = useCallback((jobId, updates) => {
     const role = getUserRole();
     
-    const updateJobInArray = (jobs) => 
-      jobs.map(j => j.id === jobId ? { ...j, ...updates } : j);
+    const updateInArray = (arr) =>
+      arr.map(j => j.id === jobId ? { ...j, ...updates } : j);
     
     if (role === 'manager') {
-      if (isPending) {
-        const updatedJobs = updateJobInArray(companyPendingJobs);
-        saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, updatedJobs);
-        await incrementDocumentVersion(jobId, true);
-      } else {
-        const updatedJobs = updateJobInArray(companyFinishedJobs);
-        saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, updatedJobs);
-        await incrementDocumentVersion(jobId, true);
-      }
-    } else if (role === 'worker') {
-      if (isPending) {
-        const updatedJobs = updateJobInArray(pendingJobs);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, updatedJobs);
-        // Worker updates both caches
-        await incrementDocumentVersion(jobId, false);
-        await incrementDocumentVersion(jobId, true);
-      } else {
-        const updatedJobs = updateJobInArray(finishedJobs);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, updatedJobs);
-        await incrementDocumentVersion(jobId, false);
-      }
+      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, updateInArray(companyJobs));
     } else {
-      if (isPending) {
-        const updatedJobs = updateJobInArray(pendingJobs);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, updatedJobs);
-        await incrementDocumentVersion(jobId, false);
-      } else {
-        const updatedJobs = updateJobInArray(finishedJobs);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, updatedJobs);
-        await incrementDocumentVersion(jobId, false);
-      }
+      saveToLocalCache(CACHE_KEYS.JOBS, updateInArray(jobs));
     }
-  }, [getUserRole, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, saveToLocalCache, incrementDocumentVersion]);
+    
+    preIncrementVersion('jobsVersion', true);
+  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
 
   /**
-   * Remove a job from cache
+   * Remove a job from the unified jobs cache.
    */
-  const removeJob = useCallback(async (jobId, isPending = true) => {
+  const removeJob = useCallback((jobId) => {
     const role = getUserRole();
     
-    const filterJobs = (jobs) => jobs.filter(j => j.id !== jobId);
-    
     if (role === 'manager') {
-      if (isPending) {
-        const filteredJobs = filterJobs(companyPendingJobs);
-        saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, filteredJobs);
-        await deleteCacheField(jobId, true);
-      } else {
-        const filteredJobs = filterJobs(companyFinishedJobs);
-        saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, filteredJobs);
-        await deleteCacheField(jobId, true);
-      }
-    } else if (role === 'worker') {
-      if (isPending) {
-        const filteredJobs = filterJobs(pendingJobs);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, filteredJobs);
-        await deleteCacheField(jobId, false);
-        await deleteCacheField(jobId, true);
-      } else {
-        const filteredJobs = filterJobs(finishedJobs);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, filteredJobs);
-        await deleteCacheField(jobId, false);
-      }
+      const filtered = companyJobs.filter(j => j.id !== jobId);
+      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, filtered);
     } else {
-      if (isPending) {
-        const filteredJobs = filterJobs(pendingJobs);
-        saveToLocalCache(CACHE_KEYS.PENDING_JOBS, filteredJobs);
-        await deleteCacheField(jobId, false);
-      } else {
-        const filteredJobs = filterJobs(finishedJobs);
-        saveToLocalCache(CACHE_KEYS.FINISHED_JOBS, filteredJobs);
-        await deleteCacheField(jobId, false);
-      }
+      const filtered = jobs.filter(j => j.id !== jobId);
+      saveToLocalCache(CACHE_KEYS.JOBS, filtered);
     }
-  }, [getUserRole, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, saveToLocalCache, deleteCacheField]);
+    
+    preIncrementVersion('jobsVersion', true);
+  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
 
   /**
-   * Move job from pending to finished (MANAGER ONLY)
-   * When a manager accepts a job with status 'waiting', it moves to finished
-   * This function:
-   * 1. Removes the pending job from company pending jobs cache
-   * 2. Adds the finished job to company finished jobs cache
-   * 3. Deletes the p_jobId from company cache doc
-   * 4. Deletes the p_jobId from worker's cache doc
-   * 5. Adds the f_jobId to company cache doc
-   * 6. Adds the f_jobId to worker's cache doc
+   * Accept/finish a job: update status in-place within the unified jobs cache.
+   * No more collection move or ID conversion needed.
    * 
-   * @param {string} pendingJobId - Original pending job ID (p_XXXXX)
-   * @param {object} finishedJobData - The finished job data (should already have f_XXXXX id)
-   * @param {string} workerId - The worker's uid for cache update
+   * @param {string} jobId - The job ID
+   * @param {object} updates - Fields to merge (e.g. { status: 'finished', finishedAt: ... })
    */
-  const moveJobToFinished = useCallback(async (pendingJobId, finishedJobData, workerId = null) => {
+  const acceptJob = useCallback((jobId, updates) => {
     const role = getUserRole();
     
-    // Only managers can move jobs to finished
-    if (role !== 'manager') {
-      console.error('Only managers can move jobs to finished');
-      return;
+    const mergeUpdates = (arr) =>
+      arr.map(j => j.id === jobId ? { ...j, ...updates } : j);
+    
+    if (role === 'manager') {
+      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, mergeUpdates(companyJobs));
+    } else {
+      saveToLocalCache(CACHE_KEYS.JOBS, mergeUpdates(jobs));
     }
     
-    const job = companyPendingJobs.find(j => j.id === pendingJobId);
-    if (!job && !finishedJobData) {
-      console.error('Job not found in pending jobs');
-      return;
-    }
-    
-    const finishedJob = finishedJobData || { ...job, status: 'finished', finishedAt: new Date().toISOString() };
-    const finishedJobId = finishedJob.id || pendingJobId;
-    const worker = workerId || job?.completedBy;
-    
-    console.log(`?? moveJobToFinished: ${pendingJobId} -> ${finishedJobId}`);
-    
-    // 1. Remove from company pending jobs cache
-    const newPending = companyPendingJobs.filter(j => j.id !== pendingJobId);
-    saveToLocalCache(CACHE_KEYS.COMPANY_PENDING_JOBS, newPending);
-    // 4. If there's a worker, add the f_jobId to worker's cache doc
-    if (worker) {
-      await updateWorkerCacheVersion(worker, finishedJobId);
-    }
-    // 5. Delete the p_jobId from company cache doc
-    await deleteCacheField(pendingJobId, true);
-    
-    // 2. Add to company finished jobs cache
-    const newFinished = [...companyFinishedJobs, finishedJob];
-    saveToLocalCache(CACHE_KEYS.COMPANY_FINISHED_JOBS, newFinished);
-    // 3. Add the f_jobId to company cache doc
-    await incrementDocumentVersion(finishedJobId, true);
-    
-    // 6. If there's a worker, delete the p_jobId from worker's cache doc
-    if (worker) {
-      await deleteWorkerCacheField(worker, pendingJobId);
-    }
-    
-    
-    console.log(`? moveJobToFinished completed: ${pendingJobId} -> ${finishedJobId}`);
-  }, [getUserRole, companyPendingJobs, companyFinishedJobs, saveToLocalCache, deleteCacheField, deleteWorkerCacheField, incrementDocumentVersion, updateWorkerCacheVersion]);
+    preIncrementVersion('jobsVersion', true);
+  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Update workers list (manager only)
@@ -1795,16 +1307,16 @@ export function CacheProvider({ children }) {
       };
       saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
       
-      // 2. Increment cache version (triggers other devices to refresh)
-      await incrementCacheVersion('workers', true);
+      // 2. Pre-increment local workersVersion (CF handles Firebase bump)
+      preIncrementVersion('workersVersion', true);
       
-      console.log(`? Worker ${workerId} added to cache successfully`);
+      console.log(`Worker ${workerId} added to cache successfully`);
       
     } catch (error) {
       console.error('Error adding worker to cache:', error);
       throw error;
     }
-  }, [workers, getUserRole, getCompanyId, saveToLocalCache, incrementCacheVersion]);
+  }, [workers, getUserRole, getCompanyId, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Edit worker details (called AFTER cloud function updates Firestore)
@@ -1850,16 +1362,16 @@ export function CacheProvider({ children }) {
       };
       saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
       
-      // 2. Increment cache version
-      await incrementCacheVersion('workers', true);
+      // 2. Pre-increment local workersVersion (CF handles Firebase bump)
+      preIncrementVersion('workersVersion', true);
       
-      console.log(`? Worker ${workerId} updated in cache successfully`);
+      console.log(`Worker ${workerId} updated in cache successfully`);
       
     } catch (error) {
       console.error('Error editing worker in cache:', error);
       throw error;
     }
-  }, [workers, getUserRole, getCompanyId, saveToLocalCache, incrementCacheVersion]);
+  }, [workers, getUserRole, getCompanyId, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Delete worker from cache (called AFTER cloud function deletes Auth user and Firestore docs)
@@ -1890,16 +1402,16 @@ export function CacheProvider({ children }) {
       const { [workerId]: deletedWorker, ...remainingWorkers } = workers;
       saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
       
-      // 2. Increment cache version
-      await incrementCacheVersion('workers', true);
+      // 2. Pre-increment local workersVersion (CF handles Firebase bump)
+      preIncrementVersion('workersVersion', true);
       
-      console.log(`? Worker ${workerId} deleted from cache successfully`);
+      console.log(`Worker ${workerId} deleted from cache successfully`);
       
     } catch (error) {
       console.error('Error deleting worker from cache:', error);
       throw error;
     }
-  }, [workers, getUserRole, getCompanyId, saveToLocalCache, incrementCacheVersion]);
+  }, [workers, getUserRole, getCompanyId, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Add document
@@ -1913,9 +1425,9 @@ export function CacheProvider({ children }) {
     
     const newDocuments = [...documents, document];
     saveToLocalCache(CACHE_KEYS.DOCUMENTS, newDocuments);
-    // Increment specific document version in company cache
-    await incrementDocumentVersion(document.id, true);
-  }, [documents, saveToLocalCache, incrementDocumentVersion]);
+    // Pre-increment local documentsVersion (CF handles Firebase bump)
+    preIncrementVersion('documentsVersion', true);
+  }, [documents, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Fetch all clients from companies/{companyId}/clients
@@ -1967,7 +1479,7 @@ export function CacheProvider({ children }) {
     }
 
     try {
-      // Call addClientV1 CF — uses phone-app cid counter pattern on the server side
+      // Call addClientV1 CF â€” uses phone-app cid counter pattern on the server side
       const addClientFn = httpsCallable(functions, 'addClientV1');
       const result = await addClientFn({ companyId, ...clientData });
       const newClient = result.data.client;
@@ -1981,25 +1493,18 @@ export function CacheProvider({ children }) {
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
       setClients(updatedClients);
 
-      // Pre-increment local cache version to match what the CF just wrote to Firestore.
-      // This prevents the snapshot listener from triggering an unnecessary refetch
-      // (local version will already match remote when the snapshot arrives).
-      const role = getUserRole();
-      const isCompanyCache = role === 'manager';
-      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
-      localVersions['clients'] = (localVersions['clients'] || 0) + 1;
-      saveToLocalCache(localVersionsKey, localVersions);
+      // Pre-increment local clientsVersion to match what the CF just wrote.
+      preIncrementVersion('clientsVersion', true);
 
-      console.log(`✅ Client created with ID: ${newClient.id}`);
+      console.log(`âœ… Client created with ID: ${newClient.id}`);
       return newClient;
     } catch (error) {
-      console.error('❌ Error creating client:', error);
-      console.error('❌ Error code:', error.code);
-      console.error('❌ Error message:', error.message);
+      console.error('âŒ Error creating client:', error);
+      console.error('âŒ Error code:', error.code);
+      console.error('âŒ Error message:', error.message);
       throw error;
     }
-  }, [getCompanyId, getUserRole, clients, saveToLocalCache]);
+  }, [getCompanyId, clients, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Update an existing client
@@ -2048,22 +1553,15 @@ export function CacheProvider({ children }) {
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
       setClients(updatedClients);
 
-      // Pre-increment local cache version to match the Firestore version CF just wrote.
-      // This prevents the snapshot listener from triggering an unnecessary refetch
-      // (local version will already match remote when the snapshot arrives).
-      const role = getUserRole();
-      const isCompanyCache = role === 'manager';
-      const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_CACHE_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-      const localVersions = mmkvHelpers.getObject(localVersionsKey) || {};
-      localVersions['clients'] = (localVersions['clients'] || 0) + 1;
-      saveToLocalCache(localVersionsKey, localVersions);
+      // Pre-increment local clientsVersion to match the CF bump.
+      preIncrementVersion('clientsVersion', true);
 
-      console.log(`✅ Client ${clientId} deleted via CF`);
+      console.log(`âœ… Client ${clientId} deleted via CF`);
     } catch (error) {
       console.error('Error deleting client:', error);
       throw error;
     }
-  }, [getCompanyId, getUserRole, clients, saveToLocalCache]);
+  }, [getCompanyId, clients, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Clear all cache (on logout)
@@ -2090,16 +1588,14 @@ export function CacheProvider({ children }) {
     // Reset state
     setProfile(null);
     setInventory([]);
-    setPendingJobs([]);
-    setFinishedJobs([]);
+    setJobs([]);
     setWorkers({});
-    setCompanyPendingJobs([]);
-    setCompanyFinishedJobs([]);
+    setCompanyJobs([]);
     setDocuments([]);
     setClients([]);
     setSubscription(null);
     setCacheVersions({});
-    setCompanyCacheVersions({});
+    setCompanyVersions({});
     setIsInitialized(false);
     
     listenersActiveRef.current = false;
@@ -2202,10 +1698,11 @@ export function CacheProvider({ children }) {
     const cacheStartMs = cacheStartDate.getTime();
     const nowMs = now.getTime();
     
-    // Get cached data based on type and role
+    // Get cached data based on type and role (unified jobs collection)
     let cachedData = [];
     if (dataType === 'finishedJobs') {
-      cachedData = role === 'manager' ? companyFinishedJobs : finishedJobs;
+      const allJobs = role === 'manager' ? companyJobs : jobs;
+      cachedData = allJobs.filter(j => j.status === 'finished');
     } else if (dataType === 'documents') {
       cachedData = documents;
     }
@@ -2238,15 +1735,17 @@ export function CacheProvider({ children }) {
         let q;
         
         if (dataType === 'finishedJobs') {
-          const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
+          const jobsRef = collection(db, 'companies', companyId, 'jobs');
           if (role == 'worker') {
-            q = query(finishedJobsRef,
+            q = query(jobsRef,
+              where('status', '==', 'finished'),
               where('finishedAt', '>=', monthStart.toISOString()),
               where('finishedAt', '<', cacheStartDate.toISOString()),
               where('completedBy', '==', uid)
             );
           } else {
-            q = query(finishedJobsRef,
+            q = query(jobsRef,
+              where('status', '==', 'finished'),
               where('finishedAt', '>=', monthStart.toISOString()),
               where('finishedAt', '<', cacheStartDate.toISOString())
             );
@@ -2262,7 +1761,7 @@ export function CacheProvider({ children }) {
         const snapshot = await getDocs(q);
         const firebaseData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
-        console.log(`?? Fetched ${firebaseData.length} missing records from Firebase for month ${monthDate.getMonth() + 1}`);
+        console.log(`Fetched ${firebaseData.length} missing records from Firebase for month ${monthDate.getMonth() + 1}`);
         
         return [...cachedMonthData, ...firebaseData];
       } catch (error) {
@@ -2278,15 +1777,17 @@ export function CacheProvider({ children }) {
       let q;
       
       if (dataType === 'finishedJobs') {
-        const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
         if (role == 'worker') {
-          q = query(finishedJobsRef,
+          q = query(jobsRef,
+            where('status', '==', 'finished'),
             where('finishedAt', '>=', monthStart.toISOString()),
             where('finishedAt', '<=', monthEnd.toISOString()),
             where('completedBy', '==', uid)
           );
         } else {
-          q = query(finishedJobsRef,
+          q = query(jobsRef,
+            where('status', '==', 'finished'),
             where('finishedAt', '>=', monthStart.toISOString()),
             where('finishedAt', '<=', monthEnd.toISOString())
           );
@@ -2347,7 +1848,7 @@ export function CacheProvider({ children }) {
       console.error('Error fetching month data:', error);
       return [];
     }
-  }, [getUserRole, getUid, getCompanyId, finishedJobs, companyFinishedJobs, documents, fetchFromArchive]);
+  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
   /**
    * Get data for a date range with smart caching
@@ -2362,14 +1863,16 @@ export function CacheProvider({ children }) {
     const endMs = endDate.getTime();
     const cacheStartMs = getCacheStartDate().getTime();
     
-    // Get cached data based on type and role
+    // Get cached data based on type and role (unified jobs collection)
     let cachedData = [];
     if (dataType === 'finishedJobs') {
-      cachedData = role === 'manager' ? companyFinishedJobs : finishedJobs;
+      const allJobs = role === 'manager' ? companyJobs : jobs;
+      cachedData = allJobs.filter(j => j.status === 'finished');
     } else if (dataType === 'documents') {
       cachedData = documents;
     } else if (dataType === 'pendingJobs') {
-      cachedData = role === 'manager' ? companyPendingJobs : pendingJobs;
+      const allJobs = role === 'manager' ? companyJobs : jobs;
+      cachedData = allJobs.filter(j => j.status === 'pending' || j.status === 'waiting');
     }
     
     const dateField = dataType === 'documents' ? 'createdAt' : 
@@ -2398,15 +1901,17 @@ export function CacheProvider({ children }) {
       let q;
       
       if (dataType === 'finishedJobs') {
-        const finishedJobsRef = collection(db, 'companies', companyId, 'finishedJobs');
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
         if (role == 'worker') {
-          q = query(finishedJobsRef,
+          q = query(jobsRef,
+            where('status', '==', 'finished'),
             where('finishedAt', '>=', startDate.toISOString()),
             where('finishedAt', '<', getCacheStartDate().toISOString()),
             where('completedBy', '==', uid)
           );
         } else {
-          q = query(finishedJobsRef,
+          q = query(jobsRef,
+            where('status', '==', 'finished'),
             where('finishedAt', '>=', startDate.toISOString()),
             where('finishedAt', '<', getCacheStartDate().toISOString())
           );
@@ -2418,15 +1923,17 @@ export function CacheProvider({ children }) {
           where('createdAt', '<', getCacheStartDate().toISOString())
         );
       } else if (dataType === 'pendingJobs') {
-        const pendingJobsRef = collection(db, 'companies', companyId, 'PendingJobs');
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
         if (role !== 'manager') {
-          q = query(pendingJobsRef,
+          q = query(jobsRef,
+            where('status', 'in', ['pending', 'waiting']),
             where('createdAt', '>=', startDate.toISOString()),
             where('createdAt', '<', getCacheStartDate().toISOString()),
             where('completedBy', '==', uid)
           );
         } else {
-          q = query(pendingJobsRef,
+          q = query(jobsRef,
+            where('status', 'in', ['pending', 'waiting']),
             where('createdAt', '>=', startDate.toISOString()),
             where('createdAt', '<', getCacheStartDate().toISOString())
           );
@@ -2491,7 +1998,7 @@ export function CacheProvider({ children }) {
       console.error('Error fetching data for date range:', error);
       return cachedPortion;
     }
-  }, [getUserRole, getUid, getCompanyId, pendingJobs, finishedJobs, companyPendingJobs, companyFinishedJobs, documents, fetchFromArchive]);
+  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
   /**
    * Refresh specific cache data
@@ -2515,11 +2022,9 @@ export function CacheProvider({ children }) {
     isLoading,
     profile,
     inventory,
-    pendingJobs,
-    finishedJobs,
+    jobs,
     workers,
-    companyPendingJobs,
-    companyFinishedJobs,
+    companyJobs,
     documents,
     clients,
     subscription,
@@ -2540,11 +2045,11 @@ export function CacheProvider({ children }) {
     updateProfile,
     updateInventory,
     
-    // Jobs
+    // Jobs (unified)
     addJob,
     updateJob,
     removeJob,
-    moveJobToFinished,
+    acceptJob,
     
     // Manager specific
     updateWorkers,
@@ -2552,8 +2057,6 @@ export function CacheProvider({ children }) {
     addWorker,
     editWorker,
     deleteWorker,
-    updateWorkerCacheVersion,
-    deleteWorkerCacheField,
     
     // Business
     addDocument,
@@ -2573,9 +2076,7 @@ export function CacheProvider({ children }) {
     
     // Utilities
     refreshCache,
-    incrementCacheVersion,
-    incrementDocumentVersion,
-    deleteCacheField,
+    preIncrementVersion,
     
     // Direct storage access (for special cases)
     storage: mmkvHelpers,

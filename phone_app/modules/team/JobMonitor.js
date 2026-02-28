@@ -31,12 +31,19 @@ export default function JobMonitor() {
   const { 
     getCompanyId, 
     getUid, 
-    companyPendingJobs: cachedPendingJobs, 
-    companyFinishedJobs: cachedFinishedJobs,
+    companyJobs,
     getDataForDateRange,
     getDataForMonth,
     isWithinCacheRange 
   } = useCache();
+  const cachedPendingJobs = React.useMemo(
+    () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
+    [companyJobs]
+  );
+  const cachedFinishedJobs = React.useMemo(
+    () => (companyJobs || []).filter(j => j.status === 'finished'),
+    [companyJobs]
+  );
   const themeColors = getColors(isDarkMode);
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState({
@@ -324,7 +331,7 @@ export default function JobMonitor() {
     };
 
     loadJobsFromCache();
-  }, [dateFilter, cachedPendingJobs, cachedFinishedJobs]); // Re-run when date filter or cache changes
+  }, [dateFilter, companyJobs]); // Re-run when date filter or cache changes
 
   // Apply client name filter to jobs
   useEffect(() => {

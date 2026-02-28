@@ -1,6 +1,7 @@
 /**
  * @smart-job/contracts
  * TypeScript type declarations for the shared contracts package.
+ * v2 (2026-02-28): Unified jobs collection, removed ID prefixes, summary-based cache.
  */
 
 // ── Roles ──────────────────────────────────────────────────────────────────
@@ -11,17 +12,16 @@ export declare const Role: Readonly<Record<RoleTitle, RoleTitle>>;
 export declare const RoleLower: Readonly<Record<RoleLowercase, RoleLowercase>>;
 
 // ── Job Status ─────────────────────────────────────────────────────────────
-export type JobStatusValue = 'pending' | 'received' | 'waiting' | 'finished' | 'denied';
+export type JobStatusValue = 'pending' | 'waiting' | 'finished' | 'denied';
 
 export declare const JobStatus: Readonly<{
   Pending: 'pending';
-  Received: 'received';
   Waiting: 'waiting';
   Finished: 'finished';
   Denied: 'denied';
 }>;
 
-export declare const ACTIVE_JOB_STATUSES: readonly ['pending', 'received', 'waiting'];
+export declare const ACTIVE_JOB_STATUSES: readonly ['pending', 'waiting'];
 
 // ── Document Type Codes ────────────────────────────────────────────────────
 export type DocTypeCode = 10 | 200 | 210 | 305 | 330 | 400;
@@ -36,13 +36,6 @@ export declare const DocType: Readonly<{
 }>;
 
 export declare const DocTypeLabel: Readonly<Record<DocTypeCode, string>>;
-
-// ── Job ID Prefixes ────────────────────────────────────────────────────────
-export declare const JobPrefix: Readonly<{
-  Pending: 'p_';
-  Finished: 'f_';
-  Document: 'd_';
-}>;
 
 // ── Subscription ───────────────────────────────────────────────────────────
 export type TierValue = 'Basic' | 'User' | 'Team' | 'Dev';
@@ -66,10 +59,8 @@ export declare const paths: {
   workers(companyId: string): string;
   client(companyId: string, clientId: string): string;
   clients(companyId: string): string;
-  pendingJob(companyId: string, jobId: string): string;
-  pendingJobs(companyId: string): string;
-  finishedJob(companyId: string, jobId: string): string;
-  finishedJobs(companyId: string): string;
+  job(companyId: string, jobId: string): string;
+  jobs(companyId: string): string;
   document(companyId: string, docId: string): string;
   documents(companyId: string): string;
   invite(companyId: string, inviteId: string): string;

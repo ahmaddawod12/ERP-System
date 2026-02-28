@@ -155,7 +155,7 @@ async function seed() {
 
   await db.collection("companies").doc(companyId).collection("counters").doc("clients").set({ lastNumber: 0 }, { merge: true });
 
-  await db.collection("companies").doc(companyId).collection("PendingJobs").doc("p_00001").set(
+  await db.collection("companies").doc(companyId).collection("jobs").doc("00001").set(
     {
       title: "AC maintenance visit",
       clientName: "Demo Client",

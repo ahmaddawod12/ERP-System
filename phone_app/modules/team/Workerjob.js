@@ -31,8 +31,7 @@ export default function Workerjob() {
   const insets = useSafeAreaInsets();
   const {
     profile,
-    pendingJobs: cachedPendingJobs,
-    finishedJobs: cachedFinishedJobs,
+    jobs: cachedJobs,
     getUid,
     getCompanyId,
     updateJob,
@@ -181,7 +180,7 @@ export default function Workerjob() {
   useEffect(() => {
     if (!hasInitialLoadedRef.current) return;
     loadJobs();
-  }, [cachedPendingJobs, cachedFinishedJobs]);
+  }, [cachedJobs]);
 
   // Network state listener — sync pending offline jobs when back online
   useEffect(() => {
@@ -228,7 +227,7 @@ export default function Workerjob() {
         try {
           const companyId = pendingJob.companyId || getCompanyId();
           const jobId = pendingJob.jobId;
-          const jobRef = doc(db, 'companies', companyId, 'PendingJobs', jobId);
+          const jobRef = doc(db, 'companies', companyId, 'jobs', jobId);
           const jobSnapshot = await getDoc(jobRef);
 
           if (jobSnapshot.exists()) {
@@ -300,11 +299,14 @@ export default function Workerjob() {
       }
 
       // Recent data — use cache
-      const pending = (cachedPendingJobs || []).filter(job => {
+      const allCachedJobs = cachedJobs || [];
+      const pending = allCachedJobs.filter(job => {
+        if (job.status !== 'pending' && job.status !== 'waiting') return false;
         const d = new Date(job.createdAt);
         return d >= dateFilter.startDate && d <= dateFilter.endDate;
       });
-      const finished = (cachedFinishedJobs || []).filter(job => {
+      const finished = allCachedJobs.filter(job => {
+        if (job.status !== 'finished') return false;
         const d = new Date(job.finishedAt);
         return d >= dateFilter.startDate && d <= dateFilter.endDate;
       });
@@ -318,7 +320,7 @@ export default function Workerjob() {
       if (auth.currentUser) console.error('Error loading jobs:', error);
       setLoading(false);
     }
-  }, [cachedPendingJobs, cachedFinishedJobs, dateFilter, getUid, getCompanyId, getDataForDateRange]);
+  }, [cachedJobs, dateFilter, getUid, getCompanyId, getDataForDateRange]);
 
   // ─── Actions ────────────────────────────────────────────────────
 

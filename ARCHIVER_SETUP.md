@@ -14,7 +14,7 @@ This Cloud Run **Job** (not a Service) runs monthly to migrate old data from Fir
 
 ### What Gets Archived
 
-- **finishedJobs**: `companies/{companyId}/finishedJobs` → archived by `finishedAt`
+- **finished jobs**: `companies/{companyId}/jobs` (status=finished) → archived by `finishedAt`
 - **documents**: `companies/{companyId}/documents` → archived by `createdAt`
 
 ### Storage Structure
@@ -25,16 +25,16 @@ gs://cooling-inventory-5be04.firebasestorage.app/
     └── {companyId}/
         └── archives/
             ├── manifest.json              # Tracks what's been archived (idempotency)
-            ├── 2025-7-j.json             # finishedJobs for July 2025
+            ├── 2025-7-j.json             # finished jobs for July 2025
             ├── 2025-7-d.json             # documents for July 2025
-            ├── 2025-8-j.json             # finishedJobs for August 2025
+            ├── 2025-8-j.json             # finished jobs for August 2025
             ├── 2025-8-d.json             # documents for August 2025
             └── ...
 ```
 
 ### Naming Convention
 
-- `{YYYY}-{M}-j.json` → finishedJobs for that month
+- `{YYYY}-{M}-j.json` → finished jobs for that month
 - `{YYYY}-{M}-d.json` → documents for that month
 - `manifest.json` → idempotency tracker
 
@@ -114,10 +114,10 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 The archiver queries by date range fields. Ensure these composite indexes exist:
 
 ```
-Collection: companies/{companyName}/finishedJobs
-  Fields: finishedAt ASC
+Collection: companies/{companyId}/jobs
+  Fields: status ASC, finishedAt ASC
 
-Collection: companies/{companyName}/documents
+Collection: companies/{companyId}/documents
   Fields: createdAt ASC
 ```
 

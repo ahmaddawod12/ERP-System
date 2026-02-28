@@ -70,9 +70,8 @@ companies/{companyId}/data/inventory          -> { parts: [...], nextId, lastUpd
 companies/{companyId}/data/cache              -> company cache versioning
 companies/{companyId}/workers/{uid}           -> worker membership + role
 companies/{companyId}/clients/{clientId}      -> client records
-companies/{companyId}/PendingJobs/{p_XXXXX}   -> active jobs
-companies/{companyId}/finishedJobs/{f_XXXXX}  -> completed/denied jobs
-companies/{companyId}/documents/{d_XXXXX}     -> generated documents
+companies/{companyId}/jobs/{jobId}            -> all jobs (status determines lifecycle)
+companies/{companyId}/documents/{docId}       -> generated documents
 companies/{companyId}/invites/{inviteId}      -> onboarding invite codes
 
 system/data/comid                             -> { comid: nextCompanyId, ... }
@@ -83,8 +82,8 @@ documentTasks/{taskId}                        -> preview/generate task state
 Canonical IDs:
 
 - Company IDs: backend-assigned numeric string from `system/data/comid`
-- Job IDs: `p_{jid}` / `f_{jid}`
-- Document IDs: `d_...` for new writes
+- Job IDs: plain Base62 (no prefix)
+- Document IDs: plain Base62 (no prefix)
 
 ## Environment Variables
 

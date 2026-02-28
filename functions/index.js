@@ -416,14 +416,16 @@ async function assertHttpCompanyAccess(params) {
 
 /**
  * Normalize document IDs.
- * Firestore documents are stored with "d_" prefix.
+ * Documents are stored without prefix in the unified system.
+ * Strips legacy d_ or c_ prefixes for backward compatibility.
  */
 function toDocumentDocId(documentId) {
   const raw = String(documentId || '').trim();
   if (!raw) return '';
-  if (raw.startsWith('d_')) return raw;
-  if (raw.startsWith('c_')) return `d_${raw.slice(2)}`;
-  return `d_${raw}`;
+  // Strip legacy prefixes
+  if (raw.startsWith('d_')) return raw.slice(2);
+  if (raw.startsWith('c_')) return raw.slice(2);
+  return raw;
 }
 
 function getClientIp(req) {
@@ -434,6 +436,7 @@ function getClientIp(req) {
 function toBaseDocumentId(documentId) {
   const raw = String(documentId || '').trim();
   if (raw.startsWith('d_') || raw.startsWith('c_')) return raw.slice(2);
+  if (raw.startsWith('p_') || raw.startsWith('f_')) return raw.slice(2);
   return raw;
 }
 
@@ -898,8 +901,11 @@ exports.manageWorker = onCall(async (request) => {
 
       // Cleanup pending jobs assigned to the deleted worker
       try {
-        const pendingJobsRef = admin.firestore().collection(`companies/${companyId}/PendingJobs`);
-        const assignedJobsSnap = await pendingJobsRef.where('workerId', '==', workerUid).get();
+        const jobsRef = admin.firestore().collection(`companies/${companyId}/jobs`);
+        const assignedJobsSnap = await jobsRef
+          .where('workerId', '==', workerUid)
+          .where('status', 'in', ['pending', 'waiting'])
+          .get();
         if (!assignedJobsSnap.empty) {
           const cleanupBatch = admin.firestore().batch();
           let cleanupCount = 0;
@@ -916,6 +922,13 @@ exports.manageWorker = onCall(async (request) => {
           });
           await cleanupBatch.commit();
           logger.info(`Unassigned ${cleanupCount} pending jobs from deleted worker: ${workerUid}`);
+
+          // Bump jobs cache version
+          const companyCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
+          await companyCacheRef.set({
+            jobsVersion: admin.firestore.FieldValue.increment(1),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
         }
       } catch (cleanupErr) {
         // Log but don't fail the entire delete operation
@@ -1134,13 +1147,10 @@ exports.addClientV1 = onCall(async (request) => {
     tx.set(clientRef, clientDoc);
 
     // Bump cache version inside transaction for atomicity
-    const isManagerRole = resolvedRole === 'manager';
-    const cacheRef = isManagerRole
-      ? db.doc(`companies/${companyId}/data/cache`)
-      : db.doc(`users/${uid}/data/cache`);
+    const cacheRef = db.doc(`companies/${companyId}/data/cache`);
     tx.set(cacheRef, {
-      clients: admin.firestore.FieldValue.increment(1),
-      lastUpdated: new Date().toISOString(),
+      clientsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
     return { id: clientId, ...clientDoc };
@@ -1186,18 +1196,14 @@ exports.deleteClientV1 = onCall(async (request) => {
     throw new HttpsError('not-found', 'Client not found');
   }
 
-  // Delete client and bump the appropriate cache version in one atomic batch
-  // Manager → company cache; everyone else → their own user cache
-  const isManagerRole = resolvedRole === 'manager';
-  const cacheRef = isManagerRole
-    ? db.doc(`companies/${companyId}/data/cache`)
-    : db.doc(`users/${uid}/data/cache`);
+  // Delete client and bump the company cache version in one atomic batch
+  const cacheRef = db.doc(`companies/${companyId}/data/cache`);
 
   const batch = db.batch();
   batch.delete(clientRef);
   batch.set(cacheRef, {
-    clients: admin.firestore.FieldValue.increment(1),
-    lastUpdated: new Date().toISOString(),
+    clientsVersion: admin.firestore.FieldValue.increment(1),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   await batch.commit();
 
@@ -1398,12 +1404,12 @@ exports.joinCompanyV1 = onRequest({
 
       if (isNewMembership) {
         tx.set(companyCacheRef, {
-          workers: admin.firestore.FieldValue.increment(1),
-          lastUpdated: nowIso,
+          workersVersion: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       } else {
         tx.set(companyCacheRef, {
-          lastUpdated: nowIso,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
       }
 
@@ -1617,11 +1623,11 @@ exports.contactRequestV1 = onRequest({
  * 
  * DEDUPLICATION: Uses notificationLog collection keyed by {jobId}_assigned
  * 
- * Triggered on: companies/{companyId}/PendingJobs/{jobId} document creation
+ * Triggered on: companies/{companyId}/jobs/{jobId} document creation
  * Condition: status === 'pending' && completedBy exists (worker assignment)
  */
 exports.onJobAssignTrigger = onDocumentCreated({
-  document: 'companies/{companyId}/PendingJobs/{jobId}',
+  document: 'companies/{companyId}/jobs/{jobId}',
   region: 'us-central1'
 }, async (event) => {
   const startTime = Date.now();
@@ -1758,11 +1764,11 @@ exports.onJobAssignTrigger = onDocumentCreated({
  * 
  * DEDUPLICATION: Uses notificationLog collection keyed by {jobId}_submitted
  * 
- * Triggered on: companies/{companyId}/PendingJobs/{jobId} document update
+ * Triggered on: companies/{companyId}/jobs/{jobId} document update
  * Condition: status changed to 'waiting'
  */
 exports.onJobSubmitTrigger = onDocumentUpdated({
-  document: 'companies/{companyId}/PendingJobs/{jobId}',
+  document: 'companies/{companyId}/jobs/{jobId}',
   region: 'us-central1'
 }, async (event) => {
   const startTime = Date.now();
@@ -2884,7 +2890,7 @@ exports.getInvoiceApproval = onCall({
         confirmationNumber
       });
 
-      // CRITICAL: Update finishedJobs documents to mark them as having a tax invoice (isCert = true)
+      // CRITICAL: Update job documents to mark them as having a tax invoice (isCert = true)
       // Supports both single job (legacy jobData) and multi-job (jobsData) flows
       const allJobRefs = [];
       
@@ -2906,20 +2912,22 @@ exports.getInvoiceApproval = onCall({
         const batch = admin.firestore().batch();
         const cacheUpdates = {};
         for (const jobId of allJobRefs) {
-          const finishedJobPath = `companies/${companyId}/finishedJobs/${jobId}`;
+          // Strip legacy prefixes if present
+          const cleanJobId = toBaseDocumentId(jobId);
+          const jobPath = `companies/${companyId}/jobs/${cleanJobId}`;
           try {
-            const finishedJobRef = admin.firestore().doc(finishedJobPath);
-            batch.update(finishedJobRef, {
+            const jobRef = admin.firestore().doc(jobPath);
+            batch.update(jobRef, {
               isCert: true,
               documentId: documentId,
               documentCreatedAt: new Date().toISOString()
             });
-            logger.info('Queued finishedJob update isCert=true', { jobId, documentId });
-            cacheUpdates.jobID = admin.firestore.FieldValue.increment(1); // Increment jobID cache for manager
+            logger.info('Queued job update isCert=true', { jobId: cleanJobId, documentId });
+            cacheUpdates.jobsVersion = admin.firestore.FieldValue.increment(1);
           } catch (jobUpdateError) {
-            logger.error('Failed to queue finishedJob update', {
+            logger.error('Failed to queue job update', {
               error: jobUpdateError.message,
-              jobId
+              jobId: cleanJobId
             });
           }
         }
@@ -2934,7 +2942,6 @@ exports.getInvoiceApproval = onCall({
               usedAt: new Date().toISOString()
             });
             logger.info('Queued price proposal update isUsed=true', { priceProposalId, documentId });
-            cacheUpdates.priceProposalId = admin.firestore.FieldValue.increment(1); // Increment price proposal cache for manager
           } catch (proposalError) {
             logger.error('Failed to queue price proposal update', {
               error: proposalError.message,
@@ -2943,14 +2950,12 @@ exports.getInvoiceApproval = onCall({
           }
         }
         
-        // Determine cache path based on user role
-        const isManager = role === 'manager';
-        const cachePath = isManager ? `companies/${companyId}/data/cache` : userCacheDocPath(uid);
+        // Always update company cache with version bumps
+        const cachePath = `companies/${companyId}/data/cache`;
         const cacheRef = admin.firestore().doc(cachePath);
-        batch.update(cacheRef, {
-          ...cacheUpdates,
-          lastUpdated: new Date().toISOString()
-        });
+        cacheUpdates.documentsVersion = admin.firestore.FieldValue.increment(1);
+        cacheUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+        batch.update(cacheRef, cacheUpdates);
         logger.info('Queued cache update', { cachePath, cacheUpdates });
         
         // Commit all updates in one batch
@@ -2980,12 +2985,12 @@ exports.getInvoiceApproval = onCall({
     }
 
     // Document counter was already atomically incremented in the transaction above.
-    // Only bump the business_info cache version so clients detect the change.
+    // Only bump the company cache so clients detect the change.
     try {
       const businessCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
       await businessCacheRef.set({
-        business_info: admin.firestore.FieldValue.increment(1),
-        lastUpdated: new Date().toISOString()
+        documentsVersion: admin.firestore.FieldValue.increment(1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
       logger.info('Tax invoice counter already incremented transactionally', {
         documentNumber,
@@ -3860,8 +3865,7 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
   // Bump cache
   const cacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
   await cacheRef.set({
-    business_info: admin.firestore.FieldValue.increment(1),
-    lastUpdated: new Date().toISOString(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
   logger.info('updateBusinessInfoV1: updated', { companyId, uid, fields: Object.keys(updates) });
@@ -3870,7 +3874,7 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
 
 /**
  * Callable Function: deleteJobV1
- * Deletes a pending or finished job, enforcing:
+ * Deletes a job from the unified jobs collection, enforcing:
  * - Cannot delete a finished job that has isCert=true (has a generated document)
  * - manager/user can delete their company's jobs
  * - worker can delete their own assigned finished jobs only
@@ -3885,7 +3889,9 @@ exports.deleteJobV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  const rawJobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  // Strip legacy prefixes if present
+  const jobId = toBaseDocumentId(rawJobId);
 
   if (!jobId) {
     throw new HttpsError('invalid-argument', 'jobId is required');
@@ -3899,30 +3905,21 @@ exports.deleteJobV1 = onCall(async (request) => {
   });
 
   const dbRef = admin.firestore();
+  const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
+  const jobSnap = await jobRef.get();
 
-  // Try pending first
-  const pendingRef = dbRef.doc(`companies/${companyId}/PendingJobs/${jobId}`);
-  const pendingSnap = await pendingRef.get();
-
-  if (pendingSnap.exists) {
-    // Only manager/dev can delete pending jobs
-    if (!['manager', 'dev'].includes(resolvedRole)) {
-      throw new HttpsError('permission-denied', 'Only managers can delete pending jobs');
-    }
-    await pendingRef.delete();
-    logger.info('deleteJobV1: pending job deleted', { companyId, jobId, uid });
-    return { success: true, collection: 'PendingJobs' };
-  }
-
-  // Try finished
-  const finishedRef = dbRef.doc(`companies/${companyId}/finishedJobs/${jobId}`);
-  const finishedSnap = await finishedRef.get();
-
-  if (!finishedSnap.exists) {
+  if (!jobSnap.exists) {
     throw new HttpsError('not-found', 'Job not found');
   }
 
-  const jobData = finishedSnap.data();
+  const jobData = jobSnap.data();
+
+  // Only manager/dev can delete pending/waiting jobs
+  if (['pending', 'waiting'].includes(jobData.status)) {
+    if (!['manager', 'dev'].includes(resolvedRole)) {
+      throw new HttpsError('permission-denied', 'Only managers can delete pending jobs');
+    }
+  }
 
   // Cannot delete a job with a generated document
   if (jobData.isCert === true) {
@@ -3941,20 +3938,25 @@ exports.deleteJobV1 = onCall(async (request) => {
     throw new HttpsError('permission-denied', 'basic role cannot delete jobs');
   }
 
-  await finishedRef.delete();
-  logger.info('deleteJobV1: finished job deleted', { companyId, jobId, uid });
-  return { success: true, collection: 'finishedJobs' };
+  // Batch: delete job + bump cache
+  const batch = dbRef.batch();
+  batch.delete(jobRef);
+  const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+  batch.set(cacheRef, {
+    jobsVersion: admin.firestore.FieldValue.increment(1),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  await batch.commit();
+
+  logger.info('deleteJobV1: job deleted', { companyId, jobId, uid, status: jobData.status });
+  return { success: true, jobId };
 });
 
 /**
  * Callable Function: acceptJobV1
- * Atomically moves a pending job to finished jobs and deducts worker inventory.
- * This replaces the client-side accept flow to prevent:
- * - Duplicate jobs (pending + finished)
- * - Race conditions on inventory
- * - Cross-user writes from client
- *
- * Also bumps worker inventory cache version.
+ * Accepts a pending/waiting job by setting status to 'finished' in-place.
+ * Deducts worker inventory atomically.
+ * Also bumps company cache jobsVersion and worker inventory cache version.
  */
 exports.acceptJobV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -3966,21 +3968,12 @@ exports.acceptJobV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
-  const finishedJobId = typeof data.finishedJobId === 'string' ? data.finishedJobId.trim() : '';
-  const expectedFinishedJobId = jobId.startsWith('p_') ? `f_${jobId.slice(2)}` : `f_${jobId}`;
+  const rawJobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  // Strip legacy prefixes if present
+  const jobId = toBaseDocumentId(rawJobId);
 
   if (!jobId) {
     throw new HttpsError('invalid-argument', 'jobId is required');
-  }
-  if (!/^f_[A-Za-z0-9_-]+$/.test(expectedFinishedJobId)) {
-    throw new HttpsError('invalid-argument', 'jobId produces an invalid finished job ID');
-  }
-  if (finishedJobId && finishedJobId !== expectedFinishedJobId) {
-    throw new HttpsError(
-      'invalid-argument',
-      `finishedJobId must match canonical ID: ${expectedFinishedJobId}`
-    );
   }
 
   // Only manager/dev can accept jobs
@@ -3995,50 +3988,31 @@ exports.acceptJobV1 = onCall(async (request) => {
 
   // Use a transaction for atomicity
   const result = await dbRef.runTransaction(async (tx) => {
-    const pendingRef = dbRef.doc(`companies/${companyId}/PendingJobs/${jobId}`);
-    const pendingSnap = await tx.get(pendingRef);
+    const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
+    const jobSnap = await tx.get(jobRef);
 
-    if (!pendingSnap.exists) {
-      throw new HttpsError('not-found', 'Pending job not found');
+    if (!jobSnap.exists) {
+      throw new HttpsError('not-found', 'Job not found');
     }
 
-    const jobData = pendingSnap.data();
+    const jobData = jobSnap.data();
 
-    // Validate source status — only accept from valid transition states (canonical lifecycle)
+    // Validate source status — only accept from valid transition states
     const validSourceStatuses = ['pending', 'waiting'];
     if (jobData.status && !validSourceStatuses.includes(jobData.status)) {
-      // Allow legacy 'received' status by treating it as 'waiting'
-      if (jobData.status === 'received') {
-        logger.warn('acceptJobV1: Legacy "received" status encountered, treating as "waiting"', { companyId, jobId });
-      } else {
-        throw new HttpsError('failed-precondition',
-          `Cannot accept job with status "${jobData.status}". Expected: ${validSourceStatuses.join(', ')}`);
-      }
-    }
-
-    // Determine finished job ID from canonical mapping only.
-    const fJobId = expectedFinishedJobId;
-    const finishedRef = dbRef.doc(`companies/${companyId}/finishedJobs/${fJobId}`);
-    const finishedSnap = await tx.get(finishedRef);
-    if (finishedSnap.exists) {
-      throw new HttpsError('already-exists', `Finished job already exists: ${fJobId}`);
+      throw new HttpsError('failed-precondition',
+        `Cannot accept job with status "${jobData.status}". Expected: ${validSourceStatuses.join(', ')}`);
     }
 
     const now = new Date().toISOString();
 
-    // Write finished job
-    const finishedJobData = {
-      ...jobData,
-      id: fJobId,
+    // Update job status in-place
+    tx.update(jobRef, {
       status: 'finished',
       acceptedBy: uid,
       acceptedAt: now,
       updatedAt: now,
-    };
-    tx.set(finishedRef, finishedJobData);
-
-    // Delete pending job
-    tx.delete(pendingRef);
+    });
 
     // Deduct worker inventory if partsUsed exists
     const partsUsed = jobData.partsUsed || jobData.parts || [];
@@ -4053,10 +4027,7 @@ exports.acceptJobV1 = onCall(async (request) => {
         const currentParts = Array.isArray(invData.parts) ? invData.parts : [];
 
         const updatedParts = currentParts.map((p) => {
-          // Match by ID only — name-based matching risks collisions
-          const usedPart = partsUsed.find(
-            (u) => u.id === p.id
-          );
+          const usedPart = partsUsed.find((u) => u.id === p.id);
           if (usedPart && typeof usedPart.quantity === 'number') {
             const newQty = Math.max(0, (p.quantity || 0) - usedPart.quantity);
             return { ...p, quantity: newQty };
@@ -4078,14 +4049,21 @@ exports.acceptJobV1 = onCall(async (request) => {
       }
     }
 
-    return { finishedJobId: fJobId, workerId };
+    // Bump company cache
+    const companyCacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+    tx.set(companyCacheRef, {
+      jobsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return { jobId, workerId };
   });
 
   logger.info('acceptJobV1: job accepted', {
-    companyId, jobId, finishedJobId: result.finishedJobId, uid,
+    companyId, jobId, uid,
   });
 
-  return { success: true, finishedJobId: result.finishedJobId };
+  return { success: true, jobId: result.jobId };
 });
 
 /**
@@ -4287,10 +4265,13 @@ exports.registerBusinessV1 = onCall(async (request) => {
         lastUpdated: now,
       });
 
-      // 8. Company cache
+      // 8. Company cache (summary-based)
       tx.set(dbRef.doc(`companies/${companyId}/data/cache`), {
-        business_info: 1,
-        lastUpdated: now,
+        jobsVersion: 0,
+        documentsVersion: 0,
+        clientsVersion: 0,
+        workersVersion: 1,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     } else {
       // Solo user uses companyId allocated from system/data/comid
@@ -4328,9 +4309,13 @@ exports.registerBusinessV1 = onCall(async (request) => {
         lastUpdated: now,
       });
 
+      // Company cache (summary-based)
       tx.set(dbRef.doc(`companies/${companyId}/data/cache`), {
-        business_info: 1,
-        lastUpdated: now,
+        jobsVersion: 0,
+        documentsVersion: 0,
+        clientsVersion: 0,
+        workersVersion: 0,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     }
   });
@@ -4347,11 +4332,11 @@ exports.registerBusinessV1 = onCall(async (request) => {
 
 /**
  * Callable Function: createJobV1
- * Creates a pending or finished job with a sequential jid-based ID.
+ * Creates a job with a sequential jid-based ID in the unified jobs collection.
  * Atomically increments the jid counter on the company doc.
  *
- * - manager creates pending jobs (p_{jid})
- * - user (solo) creates finished jobs directly (f_{jid})
+ * - manager creates pending jobs (status: 'pending')
+ * - user (solo) creates finished jobs directly (status: 'finished')
  */
 exports.createJobV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -4364,7 +4349,7 @@ exports.createJobV1 = onCall(async (request) => {
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
 
-  // type: 'pending' | 'finished' — determines which collection
+  // type: 'pending' | 'finished' — determines initial status
   const jobType = typeof data.type === 'string' ? data.type.trim() : 'pending';
   if (!['pending', 'finished'].includes(jobType)) {
     throw new HttpsError('invalid-argument', 'type must be pending or finished');
@@ -4394,10 +4379,9 @@ exports.createJobV1 = onCall(async (request) => {
     const currentJid = Number(companySnap.data()?.jid || 1);
     tx.set(companyRef, { jid: currentJid + 1 }, { merge: true });
 
-    const prefix = jobType === 'pending' ? 'p' : 'f';
-    const jobId = `${prefix}_${currentJid}`;
-    const collectionName = jobType === 'pending' ? 'PendingJobs' : 'finishedJobs';
-    const jobRef = dbRef.doc(`companies/${companyId}/${collectionName}/${jobId}`);
+    // No prefix — plain sequential ID
+    const jobId = String(currentJid);
+    const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
 
     const now = new Date().toISOString();
 
@@ -4434,6 +4418,13 @@ exports.createJobV1 = onCall(async (request) => {
 
     tx.set(jobRef, jobDoc);
 
+    // Bump company cache
+    const companyCacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+    tx.set(companyCacheRef, {
+      jobsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
     return { jobId, jid: currentJid };
   });
 
@@ -4446,7 +4437,7 @@ exports.createJobV1 = onCall(async (request) => {
 
 /**
  * Callable Function: updateJobV1
- * Updates a pending job via Cloud Function (replaces direct client writes).
+ * Updates a job in the unified jobs collection via Cloud Function.
  * Workers can only update jobs assigned to them with field restrictions.
  * Managers can update any field.
  */
@@ -4460,7 +4451,9 @@ exports.updateJobV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  const rawJobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  // Strip legacy prefixes if present
+  const jobId = toBaseDocumentId(rawJobId);
   if (!companyId || !jobId) {
     throw new HttpsError('invalid-argument', 'companyId and jobId are required');
   }
@@ -4473,11 +4466,7 @@ exports.updateJobV1 = onCall(async (request) => {
   });
 
   const dbRef = admin.firestore();
-
-  // Determine collection from jobId prefix
-  const isPending = jobId.startsWith('p_');
-  const collectionName = isPending ? 'PendingJobs' : 'finishedJobs';
-  const jobRef = dbRef.doc(`companies/${companyId}/${collectionName}/${jobId}`);
+  const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
   const jobSnap = await jobRef.get();
 
   if (!jobSnap.exists) {
@@ -4523,16 +4512,25 @@ exports.updateJobV1 = onCall(async (request) => {
   if (updates.status && !VALID_STATUSES.includes(updates.status)) {
     throw new HttpsError('invalid-argument', `Invalid status: ${updates.status}. Valid: ${VALID_STATUSES.join(', ')}`);
   }
-  if (isPending && updates.status === 'finished') {
-    throw new HttpsError('failed-precondition', 'Pending job cannot transition directly to finished. Use acceptJobV1.');
+  // Prevent direct status transitions that should go through acceptJobV1
+  if (existingJob.status !== 'finished' && updates.status === 'finished') {
+    throw new HttpsError('failed-precondition', 'Cannot transition directly to finished. Use acceptJobV1.');
   }
-  if (!isPending && (updates.status === 'pending' || updates.status === 'waiting')) {
+  if (existingJob.status === 'finished' && (updates.status === 'pending' || updates.status === 'waiting')) {
     throw new HttpsError('failed-precondition', 'Finished job cannot transition back to pending/waiting.');
   }
 
   updates.updatedAt = new Date().toISOString();
 
-  await jobRef.update(updates);
+  // Batch: update job + bump cache
+  const batch = dbRef.batch();
+  batch.update(jobRef, updates);
+  const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+  batch.set(cacheRef, {
+    jobsVersion: admin.firestore.FieldValue.increment(1),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  await batch.commit();
 
   logger.info('updateJobV1: job updated', { companyId, jobId, uid, role: resolvedRole });
   return { success: true, jobId };
@@ -4590,16 +4588,13 @@ exports.updateClientV1 = onCall(async (request) => {
   updates.updatedAt = new Date().toISOString();
 
   // Atomic batch: update client + bump cache version
-  const isManagerRole = resolvedRole === 'manager';
-  const cacheRef = isManagerRole
-    ? dbRef.doc(`companies/${companyId}/data/cache`)
-    : dbRef.doc(`users/${uid}/data/cache`);
+  const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
 
   const batch = dbRef.batch();
   batch.update(clientRef, updates);
   batch.set(cacheRef, {
-    clients: admin.firestore.FieldValue.increment(1),
-    lastUpdated: new Date().toISOString(),
+    clientsVersion: admin.firestore.FieldValue.increment(1),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
   await batch.commit();
 
@@ -4820,21 +4815,22 @@ exports.updateInventoryV1 = onCall(async (request) => {
   // Cache bump is outside transaction intentionally — uses FieldValue.increment
   // which is idempotent and safe for eventual consistency. Moving inside transaction
   // would require reading the cache doc first, adding contention.
-  const cacheRef = scope === 'company'
-    ? dbRef.doc(`companies/${companyId}/data/cache`)
-    : dbRef.doc(`users/${targetUid}/data/cache`);
-  await cacheRef.set({
+  if (scope === 'company') {
+    const companyCacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+    await companyCacheRef.set({
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
+  // User-scope inventory changes bump user cache
+  const userCacheRef = dbRef.doc(`users/${targetUid}/data/cache`);
+  await userCacheRef.set({
     inventory: admin.firestore.FieldValue.increment(1),
     lastUpdated: new Date().toISOString(),
   }, { merge: true });
 
   // For pickParts with company scope, also bump user cache since they received parts
   if (result.picked && scope === 'company') {
-    const userCacheRef = dbRef.doc(`users/${targetUid}/data/cache`);
-    await userCacheRef.set({
-      inventory: admin.firestore.FieldValue.increment(1),
-      lastUpdated: new Date().toISOString(),
-    }, { merge: true });
+    // userCacheRef already bumped above
   }
 
   logger.info('updateInventoryV1: inventory updated', { companyId, action, scope, uid });
@@ -4900,12 +4896,12 @@ exports.updateCacheV1 = onCall(async (request) => {
   if (action === 'delete') {
     await cacheRef.update({
       [field]: admin.firestore.FieldValue.delete(),
-      lastUpdated: new Date().toISOString(),
+      ...(isCompanyCache ? { updatedAt: admin.firestore.FieldValue.serverTimestamp() } : { lastUpdated: new Date().toISOString() }),
     });
   } else {
     await cacheRef.set({
       [field]: admin.firestore.FieldValue.increment(1),
-      lastUpdated: new Date().toISOString(),
+      ...(isCompanyCache ? { updatedAt: admin.firestore.FieldValue.serverTimestamp() } : { lastUpdated: new Date().toISOString() }),
     }, { merge: true });
   }
 

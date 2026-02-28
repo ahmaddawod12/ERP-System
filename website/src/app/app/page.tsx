@@ -29,11 +29,9 @@ export default function AppOverviewPage() {
         return;
       }
 
-      const pendingCount = await getCountFromServer(collection(db, "companies", scopeId, "PendingJobs"));
-      const finishedCount = await getCountFromServer(collection(db, "companies", scopeId, "finishedJobs"));
+      const jobsCount = await getCountFromServer(collection(db, "companies", scopeId, "jobs"));
       const clientsCount = await getCountFromServer(collection(db, "companies", scopeId, "clients"));
-      items.push({ label: "Pending Jobs", value: pendingCount.data().count });
-      items.push({ label: "Finished Jobs", value: finishedCount.data().count });
+      items.push({ label: "Total Jobs", value: jobsCount.data().count });
       items.push({ label: "Clients", value: clientsCount.data().count });
 
       // Inventory parts count from single-doc

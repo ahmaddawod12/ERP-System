@@ -27,7 +27,7 @@ import {
   LoadingSpinner,
   ViewJobDetails,
 } from '../../components';
-import { convertToFinishedJobId } from '../../utils/helpers';
+
 
 const JobCard = memo(function JobCard({
   job,
@@ -153,13 +153,18 @@ export default function ManageJobs() {
   const alert = useAlert();
   const insets = useSafeAreaInsets();
   const {
-    companyPendingJobs: cachedPendingJobs,
+    companyJobs,
     cachedWorkersList,
     getCompanyId,
     getUid,
-    moveJobToFinished,
+    acceptJob,
     updateJob,
   } = useCache();
+
+  const cachedPendingJobs = useMemo(
+    () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
+    [companyJobs]
+  );
 
   const palette = getColors(isDarkMode);
   const t = translateMap[language] || translateMap.en;
@@ -238,21 +243,14 @@ export default function ManageJobs() {
               return;
             }
 
-            const workerId = job.workerId || job.completedBy || job.assignedTo;
-            const finishedJobId = convertToFinishedJobId(job.id);
             const acceptJobFn = httpsCallable(functions, 'acceptJobV1');
 
-            await acceptJobFn({ companyId, jobId: job.id, finishedJobId });
+            await acceptJobFn({ companyId, jobId: job.id });
 
-            const finishedJobData = {
-              ...job,
-              id: finishedJobId,
+            await acceptJob(job.id, {
               status: 'finished',
-              isCert: false,
               finishedAt: new Date().toISOString(),
-              approvedBy: getUid() || auth.currentUser?.uid,
-            };
-            await moveJobToFinished(job.id, finishedJobData, workerId);
+            });
 
             setSelectedJobDetails(null);
             alert.success('Success', t.acceptSuccess);

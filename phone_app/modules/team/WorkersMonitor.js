@@ -23,10 +23,17 @@ export default function WorkersMonitor() {
   const {
     getCompanyId,
     workers: cachedWorkersList,
-    companyPendingJobs: cachedPendingJobs,
-    companyFinishedJobs: cachedFinishedJobs,
+    companyJobs,
     updateWorkersList
   } = useCache();
+  const cachedPendingJobs = React.useMemo(
+    () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
+    [companyJobs]
+  );
+  const cachedFinishedJobs = React.useMemo(
+    () => (companyJobs || []).filter(j => j.status === 'finished'),
+    [companyJobs]
+  );
   const themeColors = getColors(isDarkMode);
   const [workers, setWorkers] = useState([]);
   const [selectedWorker, setSelectedWorker] = useState(null);
@@ -266,7 +273,7 @@ export default function WorkersMonitor() {
     });
     
     setWorkerJobs(allJobs);
-  }, [selectedWorker, cachedPendingJobs, cachedFinishedJobs]);
+  }, [selectedWorker, companyJobs]);
 
   useEffect(() => {
     // Deselect worker when search query changes

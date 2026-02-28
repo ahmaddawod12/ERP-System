@@ -67,8 +67,9 @@ utils/               # Utilities
 
 - Identity is `uid` (Firebase Auth UID), never email-derived usernames.
 - Company scope is always `companyId` (backend-assigned; never fallback to `uid`).
-- Document paths use `companies/{companyId}/documents/{d_XXXXX}`.
-- Use `d_` as the canonical document ID prefix for new writes.
+- All jobs live in `companies/{companyId}/jobs/{jobId}` (status determines lifecycle).
+- Document paths use `companies/{companyId}/documents/{docId}`.
+- Job and document IDs are plain Base62 (no prefix).
 - Use Cloud Functions for protected writes (`createJobV1`, `updateJobV1`, `updateInventoryV1`, etc.).
 - Valid job statuses: `pending`, `waiting`, `finished`, `denied`.
 

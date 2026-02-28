@@ -53,11 +53,9 @@ ERP-System/
   - Inventory is a single document with a `parts` array and `nextId` counter.
   - Do not model inventory as a Firestore subcollection.
 - Jobs:
-  - Job IDs are server-generated from a sequential `jid` counter.
-  - `PendingJobs`: `p_{jid}`
-  - `finishedJobs`: `f_{jid}`
-  - `documents`: `d_XXXXX`
-  - `d_` is the canonical document prefix for new writes.
+  - All jobs live in a single `jobs` collection; status determines lifecycle phase.
+  - Job IDs are server-generated plain Base62 from a sequential `jid` counter.
+  - Document IDs are plain Base62 (no prefix).
   - Valid statuses: `pending`, `waiting`, `finished`, `denied`.
 - Mutations:
   - Protected writes must go through Cloud Functions.
@@ -86,9 +84,8 @@ companies/{companyId}/
   data/inventory
   workers/{workerId}
   clients/{clientId}
-  PendingJobs/{p_XXXXX}
-  finishedJobs/{f_XXXXX}
-  documents/{d_XXXXX}
+  jobs/{jobId}
+  documents/{docId}
   invites/{inviteId}
 ```
 

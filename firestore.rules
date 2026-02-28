@@ -226,23 +226,27 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // ── Pending Jobs ──
-    // user role does NOT have pending jobs.
-    // manager can read/write/update. Delete via Cloud Function only.
-    // worker can read + update ONLY jobs assigned to them, with field restrictions.
-    match /companies/{companyId}/PendingJobs/{jobId} {
+    // ── Jobs (unified collection) ──
+    // All jobs live in a single 'jobs' collection. Status determines lifecycle phase.
+    // manager/dev can read/write. worker can read + update assigned jobs with restrictions.
+    // user (solo) can read/update their own jobs.
+    // Create and delete via Cloud Function only (createJobV1, deleteJobV1, acceptJobV1).
+    match /companies/{companyId}/jobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        (companyRole(companyId) == "worker") &&
+        companyRole(companyId) == "user"
+      ) || (
+        isCompanyWorker(companyId) &&
+        companyRole(companyId) == "worker" &&
         (resource.data.workerId == request.auth.uid || resource.data.completedBy == request.auth.uid)
       );
 
       // Job creation via createJobV1 Cloud Function only (Admin SDK bypasses rules)
       allow create: if false;
 
-      // S2: worker updates are field-constrained — cannot change assignment, creator, or status
-      // P0-8: Canonical statuses only: pending, waiting (no 'received')
+      // Worker updates are field-constrained — cannot change assignment, creator, or jump to finished/denied
       // Manager/dev updates go through updateJobV1 CF (Admin SDK bypasses rules)
+      // User (solo) updates: field-pinned workerId
       allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "worker" &&
@@ -253,36 +257,15 @@ service cloud.firestore {
         request.resource.data.createdBy == resource.data.createdBy &&
         // workers cannot jump to 'finished' or 'denied' — must go through callable
         request.resource.data.status in ["pending", "waiting"]
-      );
-
-      // Delete via Cloud Function only (deleteJobV1 / acceptJobV1)
-      allow delete: if false;
-    }
-
-    // ── Finished Jobs ──
-    // user and manager can read/write/update their company finished jobs.
-    // worker can read ONLY jobs assigned to them.
-    // Delete via Cloud Function only (deleteJobV1).
-    match /companies/{companyId}/finishedJobs/{jobId} {
-      allow read: if isAdmin() || canManageCompany(companyId) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) == "user"
       ) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) == "worker" &&
-        resource.data.workerId == request.auth.uid
-      );
-
-      // Update allowed for manager/user (field-pinned for user)
-      allow update: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
         companyRole(companyId) == "user" &&
         resource.data.workerId == request.auth.uid &&
         request.resource.data.workerId == resource.data.workerId
       );
 
-      // Create and delete via Cloud Function only (createJobV1, deleteJobV1, acceptJobV1)
-      allow create, delete: if false;
+      // Delete via Cloud Function only (deleteJobV1)
+      allow delete: if false;
     }
 
     // ── Documents ──

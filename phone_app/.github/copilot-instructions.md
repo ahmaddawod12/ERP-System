@@ -66,8 +66,8 @@ Write code that is compatible with these versions.
 - Never use email-derived usernames.
 
 2. Documents:
-- Canonical Firestore path is `companies/{companyId}/documents/{d_XXXXX}`.
-- Use `d_` prefix for new document writes.
+- Canonical Firestore path is `companies/{companyId}/documents/{docId}`.
+- Document IDs are plain Base62 (no prefix).
 
 3. Job rules:
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`.

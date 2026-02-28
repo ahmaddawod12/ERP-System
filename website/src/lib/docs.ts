@@ -32,11 +32,11 @@ export const docs: DocEntry[] = [
   {
     slug: "job-lifecycle",
     title: "Job Lifecycle",
-    summary: "Pending jobs transition through statuses to finished history.",
+    summary: "Jobs transition through statuses in a unified collection.",
     body: [
-      "Create jobs in PendingJobs with a generated p_XXXXX id and optional workerId assignment.",
+      "Create jobs in the unified jobs collection with a plain Base62 id and optional workerId assignment.",
       "Workers and managers update statuses: pending → waiting → finished (or denied).",
-      "When marked finished, job is moved to finishedJobs with an f_XXXXX id.",
+      "When marked finished, the job's status is updated in place (no collection move).",
       "Document generation can be triggered after completion.",
     ],
   },

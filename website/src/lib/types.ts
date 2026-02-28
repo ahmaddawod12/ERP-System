@@ -76,8 +76,7 @@ export interface WorkerProfile {
 
 /**
  * Matches phone app job structure.
- * PendingJobs: status = pending | waiting | denied
- * finishedJobs: status = finished
+ * All jobs live in a single 'jobs' collection; status determines lifecycle phase.
  */
 export interface JobRecord {
   id: string;

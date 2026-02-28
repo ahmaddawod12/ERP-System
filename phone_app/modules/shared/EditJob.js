@@ -113,14 +113,8 @@ export default function EditJob() {
         return;
       }
 
-      const statusLower = editingJob.status?.toLowerCase();
-      let jobRef;
-
-      if (statusLower === 'finished') {
-        jobRef = doc(db, 'companies', companyId, 'finishedJobs', editingJob.id);
-      } else {
-        jobRef = doc(db, 'companies', companyId, 'PendingJobs', editingJob.id);
-      }
+      // All jobs are in the unified 'jobs' collection
+      const jobRef = doc(db, 'companies', companyId, 'jobs', editingJob.id);
 
       // Get worker uid
       const workerId = editingJob.completedBy || editingJob.assignedTo;

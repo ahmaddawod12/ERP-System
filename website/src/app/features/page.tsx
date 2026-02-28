@@ -6,7 +6,7 @@ const features = [
   {
     icon: Clock3,
     title: "Jobs lifecycle",
-    description: "Create, assign, and complete jobs from pending queues to finished history with worker ownership.",
+    description: "Create, assign, and track jobs through their full lifecycle with worker ownership.",
   },
   {
     icon: Package,

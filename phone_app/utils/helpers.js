@@ -42,57 +42,12 @@ export const generateJobId = () => {
 };
 
 /**
- * Generate a prefixed pending job ID
- * Format: p_XXXXX (p = pending)
- * @returns {string} Prefixed pending job ID
- */
-export const generatePendingJobId = () => {
-  return `p_${generateBase62Id()}`;
-};
-
-/**
- * Generate a prefixed finished job ID
- * Format: f_XXXXX (f = finished)
- * @returns {string} Prefixed finished job ID
- */
-export const generateFinishedJobId = () => {
-  return `f_${generateBase62Id()}`;
-};
-
-/**
- * Generate a prefixed document ID
- * Format: d_XXXXX (d = document)
- * @returns {string} Prefixed document ID
+ * Generate a unique document ID using Base62
+ * Format: 5 character Base62 string
+ * @returns {string} Unique document ID
  */
 export const generateDocumentId = () => {
-  return `d_${generateBase62Id()}`;
-};
-
-/**
- * Get document type from prefixed ID
- * @param {string} docId - Document ID with prefix
- * @returns {'pendingJob'|'finishedJob'|'document'|'unknown'} Document type
- */
-export const getDocTypeFromId = (docId) => {
-  if (!docId || typeof docId !== 'string') return 'unknown';
-  if (docId.startsWith('p_')) return 'pendingJob';
-  if (docId.startsWith('f_')) return 'finishedJob';
-  if (docId.startsWith('d_') || docId.startsWith('c_')) return 'document';
-  return 'unknown';
-};
-
-/**
- * Convert pending job ID to finished job ID
- * Changes p_ prefix to f_ prefix
- * @param {string} pendingJobId - Pending job ID with p_ prefix
- * @returns {string} Finished job ID with f_ prefix
- */
-export const convertToFinishedJobId = (pendingJobId) => {
-  if (pendingJobId && pendingJobId.startsWith('p_')) {
-    return `f_${pendingJobId.substring(2)}`;
-  }
-  // If already finished or no prefix, return as is
-  return pendingJobId;
+  return generateBase62Id();
 };
 
 /**

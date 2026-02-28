@@ -31,11 +31,8 @@ export const companyWorkersCollection = (companyId: string) =>
 export const companyClientsCollection = (companyId: string) =>
   collection(db, "companies", companyId, "clients");
 
-export const companyPendingJobsCollection = (companyId: string) =>
-  collection(db, "companies", companyId, "PendingJobs");
-
-export const companyFinishedJobsCollection = (companyId: string) =>
-  collection(db, "companies", companyId, "finishedJobs");
+export const companyJobsCollection = (companyId: string) =>
+  collection(db, "companies", companyId, "jobs");
 
 export const companyDocumentsCollection = (companyId: string) =>
   collection(db, "companies", companyId, "documents");

@@ -1,7 +1,7 @@
 /**
  * Cloud Run Job: Firestore → Cloud Storage Archiver
  * 
- * Purpose: Migrate old finishedJobs and documents from Firestore to Cloud Storage
+ * Purpose: Migrate old finished jobs and documents from Firestore to Cloud Storage
  * to reduce Firestore storage costs. Data older than ~6 months is archived as monthly
  * JSON files in Cloud Storage, then deleted from Firestore.
  * 
@@ -13,7 +13,7 @@
  * Schedule: Runs at the start of each month via Cloud Scheduler
  * 
  * Storage Structure:
- *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-j.json  (finishedJobs)
+ *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-j.json  (finished jobs)
  *   gs://{bucket}/companies/{companyId}/archives/{YYYY}-{M}-d.json  (documents)
  * 
  * Manifest (idempotency tracking):
@@ -144,7 +144,7 @@ async function saveManifest(companyId, manifest) {
  * @param {Date} endDate - End of range (inclusive)
  * @returns {Array} - All matching documents with their IDs
  */
-async function queryDocumentsByDateRange(collectionPath, dateField, startDate, endDate) {
+async function queryDocumentsByDateRange(collectionPath, dateField, startDate, endDate, filters = {}) {
   const allDocs = [];
   const collRef = db.collection(collectionPath);
 
@@ -158,8 +158,14 @@ async function queryDocumentsByDateRange(collectionPath, dateField, startDate, e
   while (hasMore) {
     let q = collRef
       .where(dateField, '>=', startISO)
-      .where(dateField, '<=', endISO)
-      .orderBy(dateField, 'asc')
+      .where(dateField, '<=', endISO);
+
+    // Apply additional equality filters (e.g. { status: 'finished' })
+    for (const [field, value] of Object.entries(filters)) {
+      q = q.where(field, '==', value);
+    }
+
+    q = q.orderBy(dateField, 'asc')
       .limit(QUERY_PAGE_SIZE);
 
     if (lastDoc) {
@@ -257,18 +263,23 @@ async function verifyArchive(companyId, archiveKey, expectedCount) {
  * @param {Date} endDate - End of range (inclusive)
  * @returns {number} - Number of documents deleted
  */
-async function deleteDocumentsByDateRange(collectionPath, dateField, startDate, endDate) {
+async function deleteDocumentsByDateRange(collectionPath, dateField, startDate, endDate, filters = {}) {
   const startISO = startDate.toISOString();
   const endISO = endDate.toISOString();
   let totalDeleted = 0;
   let hasMore = true;
 
   while (hasMore) {
-    const snapshot = await db.collection(collectionPath)
+    let q = db.collection(collectionPath)
       .where(dateField, '>=', startISO)
-      .where(dateField, '<=', endISO)
-      .limit(BATCH_SIZE)
-      .get();
+      .where(dateField, '<=', endISO);
+
+    // Apply additional equality filters (e.g. { status: 'finished' })
+    for (const [field, value] of Object.entries(filters)) {
+      q = q.where(field, '==', value);
+    }
+
+    const snapshot = await q.limit(BATCH_SIZE).get();
 
     if (snapshot.empty) {
       hasMore = false;
@@ -316,16 +327,16 @@ async function processCompany(companyId, target) {
   if (manifest[finishedKey]) {
     console.log(`⏭️ ${finishedKey} already archived (${manifest[finishedKey].docCount} docs on ${manifest[finishedKey].archivedAt})`);
   } else {
-    const collectionPath = `companies/${companyId}/finishedJobs`;
-    const docs = await queryDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate);
+    const collectionPath = `companies/${companyId}/jobs`;
+    const docs = await queryDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate, { status: 'finished' });
 
     if (docs.length === 0) {
-      console.log(`📭 No finishedJobs found for ${year}-${month}`);
+      console.log(`📭 No finished jobs found for ${year}-${month}`);
       // Record in manifest so we don't re-query next run
       manifest[finishedKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
       manifestUpdated = true;
     } else {
-      console.log(`📊 Found ${docs.length} finishedJobs for ${year}-${month}`);
+      console.log(`📊 Found ${docs.length} finished jobs for ${year}-${month}`);
 
       // Step 1: Upload to Storage
       await uploadArchive(companyId, finishedKey, docs);
@@ -334,8 +345,8 @@ async function processCompany(companyId, target) {
       await verifyArchive(companyId, finishedKey, docs.length);
 
       // Step 3: Delete from Firestore (only after verified upload)
-      const deleted = await deleteDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate);
-      console.log(`✅ Archived and deleted ${deleted} finishedJobs for ${year}-${month}`);
+      const deleted = await deleteDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate, { status: 'finished' });
+      console.log(`✅ Archived and deleted ${deleted} finished jobs for ${year}-${month}`);
 
 
       // Step 4: Update manifest

@@ -57,15 +57,13 @@ const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCO
   .filter(Boolean);
 
 
+/** Document IDs are now plain Base62 — no prefix stripping needed. */
 function toBaseDocumentId(documentId) {
-  const raw = String(documentId || '').trim();
-  if (raw.startsWith('d_') || raw.startsWith('c_')) return raw.slice(2);
-  return raw;
+  return String(documentId || '').trim();
 }
 
 function toDocumentDocId(documentId) {
-  const baseId = toBaseDocumentId(documentId);
-  return baseId ? `d_${baseId}` : '';
+  return toBaseDocumentId(documentId);
 }
 // ============================================================================
 // SHARED BROWSER MANAGEMENT (Singleton)

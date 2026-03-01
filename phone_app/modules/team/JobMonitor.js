@@ -24,15 +24,13 @@ import { useCache } from '../../contexts/CacheContext';
 export default function JobMonitor() {
   const router = useRouter();
   const { jobId } = useLocalSearchParams();
-  const { language, toggleLanguage } = useLanguageContext();
+  const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { 
     getCompanyId, 
-    getUid, 
     companyJobs,
     getDataForDateRange,
-    getDataForMonth,
     isWithinCacheRange 
   } = useCache();
   const cachedPendingJobs = React.useMemo(
@@ -74,7 +72,6 @@ export default function JobMonitor() {
     back: 'Back',
     all: 'All',
     pending: 'Pending',
-    received: 'Received',
     waiting: 'Waiting',
     finished: 'Finished',
     noJobs: 'No jobs in this category',
@@ -272,7 +269,7 @@ export default function JobMonitor() {
               const status = jobData.status?.toLowerCase();
               if (status === 'pending') {
                 pendingJobsList.push(jobData);
-              } else if (status === 'waiting' || status === 'received') {
+              } else if (status === 'waiting') {
                 waitingJobsList.push(jobData);
               }
             }
@@ -369,7 +366,6 @@ export default function JobMonitor() {
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending': return '#f59e0b';
-      case 'received': return '#8b5cf6';
       case 'waiting': return '#8b5cf6';
       case 'finished': return '#10b981';
       default: return '#6b7280';
@@ -379,7 +375,6 @@ export default function JobMonitor() {
   const getStatusText = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending': return t.pending;
-      case 'received': return t.waiting;
       case 'waiting': return t.waiting;
       case 'finished': return t.finished;
       default: return status || 'unknown';

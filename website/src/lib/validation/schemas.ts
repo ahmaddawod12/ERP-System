@@ -1,14 +1,5 @@
 import { z } from "zod";
 
-const uidFallbackSchema = z
-  .string()
-  .trim()
-  .min(6, "uid is too short")
-  .max(128, "uid is too long")
-  .optional();
-
-// P0-6: Accept both canonical backend IDs (slug-based, uid-based)
-// and legacy numeric-only IDs for backward compatibility.
 const companyIdSchema = z
   .string()
   .trim()
@@ -33,7 +24,6 @@ const requiredText = (min: number, max: number, fieldLabel: string) =>
 
 export const createInviteSchema = z
   .object({
-    uid: uidFallbackSchema,
     companyId: companyIdSchema,
     targetRole: z.enum(["worker", "user", "basic"]).optional().default("worker"),
   })
@@ -41,7 +31,6 @@ export const createInviteSchema = z
 
 export const joinCompanySchema = z
   .object({
-    uid: uidFallbackSchema,
     email: z.string().trim().email("Valid email is required"),
     role: z.enum(["worker", "user", "basic"]).optional(),
     name: optionalText(120),
@@ -55,7 +44,6 @@ export const joinCompanySchema = z
 
 export const createClientSchema = z
   .object({
-    uid: uidFallbackSchema,
     companyId: companyIdSchema,
     requestId: requiredText(8, 120, "requestId"),
     name: requiredText(2, 140, "name"),
@@ -71,18 +59,8 @@ export const createClientSchema = z
   })
   .strict();
 
-export const documentGenerateSchema = z
-  .object({
-    uid: uidFallbackSchema,
-    companyId: companyIdSchema,
-    type: requiredText(2, 100, "type"),
-    jobId: optionalText(120),
-  })
-  .strict();
-
 export const upgradeRequestSchema = z
   .object({
-    uid: uidFallbackSchema,
     currentTier: z.enum(["Basic", "Solo", "Team", "Enterprise"]).optional(),
     requestedTier: z.enum(["Solo", "Team", "Enterprise"]),
     message: requiredText(10, 2000, "message"),

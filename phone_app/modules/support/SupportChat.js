@@ -24,7 +24,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { storage } from '../../contexts/CacheContext';
+import { storage } from '../../contexts/mmkv-storage';
 import { db, auth, FieldValue, collection, doc, getDoc, getDocs, addDoc, updateDoc, query, where, runTransaction } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';

@@ -17,7 +17,8 @@ import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer,
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { useCache, storage } from '../../contexts/CacheContext';
+import { useCache } from '../../contexts/CacheContext';
+import { storage } from '../../contexts/mmkv-storage';
 
 export default function Userjob() {
   const router = useRouter();

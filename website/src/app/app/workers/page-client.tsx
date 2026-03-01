@@ -12,11 +12,11 @@ import { useAppToast } from "@/hooks/use-toast";
 import { listWorkers, updateWorkerRole } from "@/lib/services/firestore-service";
 import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
-import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
+import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
 import type { Role, WorkerProfile } from "@/lib/types";
 
 export default function WorkersClient() {
-  const { uid, companyId } = useAppContext();
+  const { companyId } = useAppContext();
   const { toast } = useAppToast();
   const [workers, setWorkers] = useState<WorkerProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,12 +39,12 @@ export default function WorkersClient() {
   }, [load]);
 
   const createInvite = async () => {
-    if (!companyId || !uid) return;
+    if (!companyId) return;
     try {
       const response = await fetch("/api/invites/create", {
         method: "POST",
         headers: await buildAuthedJsonHeaders(),
-        body: JSON.stringify(withDevUidFallback({ companyId }, uid)),
+        body: JSON.stringify({ companyId }),
       });
       const payload = (await response.json()) as ClientApiResponse<{
         inviteId: string;

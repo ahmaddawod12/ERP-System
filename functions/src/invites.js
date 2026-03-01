@@ -49,7 +49,7 @@ exports.createInviteV1 = onRequest({
 
   try {
     const body = parseJsonBody(req);
-    const auth = await resolveHttpAuth(req, body);
+    const auth = await resolveHttpAuth(req);
 
     const companyId = validateCompanyId(requireNonEmptyString(body.companyId, 'companyId', 3, 80));
     const rawTargetRole = String(body.targetRole || 'worker').trim();
@@ -118,7 +118,7 @@ exports.joinCompanyV1 = onRequest({
 
   try {
     const body = parseJsonBody(req);
-    const auth = await resolveHttpAuth(req, body);
+    const auth = await resolveHttpAuth(req);
 
     const companyId = validateCompanyId(requireNonEmptyString(body.companyId, 'companyId', 3, 80));
     const inviteCode = requireNonEmptyString(body.inviteCode, 'inviteCode', 4, 80).toUpperCase();
@@ -212,8 +212,7 @@ exports.joinCompanyV1 = onRequest({
         role: resolvedRole,
         name,
         phoneNumber,
-        Uid: auth.uid,
-        ...(workerSerial !== null ? { wid: workerSerial, Wid: workerSerial } : {}),
+        ...(workerSerial !== null ? { wid: workerSerial } : {}),
         createdAt: workerSnap.exists ? (workerSnap.data()?.createdAt || nowIso) : nowIso,
         updatedAt: nowIso,
       }, { merge: true });

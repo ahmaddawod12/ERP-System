@@ -252,19 +252,6 @@ export default function DocumentsClient() {
     return docType;
   }, [docType]);
 
-  /** @deprecated use getDocumentTypeCode — kept only for reference */
-  const _getDocumentTypeKeyLegacy = useCallback(() => {
-    switch (docType) {
-      case 10: return "priceProposal";
-      case 200: return "deliveryNote";
-      case 210: return "returnCertificate";
-      case 305: return "taxInvoice";
-      case 330: return "refund";
-      case 400: return "receipt";
-      default: return "priceProposal";
-    }
-  }, [docType]);
-
   /* ── Preview ── */
   const handlePreview = async () => {
     const err = validate();
@@ -310,8 +297,8 @@ export default function DocumentsClient() {
           date: docData.date as string,
           notes: docData.notes as string,
         });
-        if (result.confirmation_number) {
-          setConfirmationNumber(result.confirmation_number);
+        if (result.confirmationNumber) {
+          setConfirmationNumber(result.confirmationNumber);
         }
         toast({
           title: "Tax Authority approved",

@@ -3,19 +3,10 @@ const {
   logger,
   onCall,
   HttpsError,
-  onRequest,
   onDocumentUpdated,
-  validateCompanyId,
   getAuthenticatedUserProfile,
   assertHttpCompanyAccess,
-  resolveHttpAuth,
-  sendHttpOk,
-  sendHttpError,
-  parseJsonBody,
-  sendCaughtHttpError,
-  CORS_ALLOWED_ORIGINS,
   GENERATE_DOCUMENT_ALLOWED_ROLES,
-  HTTP_COMPANY_MANAGER_ROLES,
   MAX_ITEMS_PER_DOCUMENT,
   VAT_RATE,
   DOC_TYPE,
@@ -23,8 +14,6 @@ const {
   PREVIEW_TOPIC,
   GENERATE_TOPIC,
   getPubSub,
-  requireNonEmptyString,
-  optionalTrimmedString,
   toDocumentDocId,
   toBaseDocumentId,
   clearCompanyBusyFlag,
@@ -35,104 +24,6 @@ const {
 // ════════════════════════════════════════════════════════════════════════════
 // Exported Cloud Functions
 // ════════════════════════════════════════════════════════════════════════════
-
-exports.generateDocumentV1 = onRequest({
-  region: "us-central1",
-  cors: CORS_ALLOWED_ORIGINS,
-}, async (req, res) => {
-  if (req.method !== 'POST') {
-    return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
-  }
-
-  try {
-    const body = parseJsonBody(req);
-    const auth = await resolveHttpAuth(req, body);
-
-    const companyId = validateCompanyId(requireNonEmptyString(body.companyId, 'companyId', 3, 80));
-    const type = requireNonEmptyString(body.type, 'type', 2, 100);
-    const jobId = optionalTrimmedString(body.jobId, 120) || 'manual';
-
-    // S3: Restricted to manager/dev only (previously open to all app roles)
-    await assertHttpCompanyAccess({
-      uid: auth.uid,
-      companyId,
-      allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
-      allowSoloScope: true,
-    });
-
-    logger.warn('generateDocumentV1: Legacy endpoint called — migrate to Pub/Sub pipeline', {
-      uid: auth.uid, companyId, type,
-    });
-
-    // Validate item count even on legacy endpoint to enforce safety cap
-    const items = body.items || body.documentData?.items;
-    if (Array.isArray(items) && items.length > MAX_ITEMS_PER_DOCUMENT) {
-      return sendHttpError(res, 400, 'invalid-argument', `Too many items (max ${MAX_ITEMS_PER_DOCUMENT})`);
-    }
-
-    const documentsRef = admin.firestore()
-      .collection('companies')
-      .doc(companyId)
-      .collection('documents');
-    const taskRef = documentsRef.doc();
-    const nowIso = new Date().toISOString();
-    const placeholderUrl = `/downloads/${taskRef.id}.pdf`;
-
-    await taskRef.set({
-      id: taskRef.id,
-      type,
-      jobId,
-      status: 'queued',
-      createdAt: nowIso,
-      createdBy: auth.uid,
-      downloadUrl: placeholderUrl,
-    });
-
-    const cloudRunUrl = process.env.CLOUDRUN_PDF_URL;
-    let status = 'queued';
-    let resolvedDownloadUrl = placeholderUrl;
-
-    if (cloudRunUrl) {
-      try {
-        const cloudRunResponse = await fetch(cloudRunUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requestId: taskRef.id,
-            uid: auth.uid,
-            companyId,
-            type,
-            jobId,
-          }),
-        });
-
-        if (cloudRunResponse.ok) {
-          const cloudPayload = await cloudRunResponse.json();
-          resolvedDownloadUrl = cloudPayload?.downloadUrl || placeholderUrl;
-          status = 'generated';
-        } else {
-          status = 'failed';
-        }
-      } catch (error) {
-        status = 'failed';
-      }
-
-      await taskRef.set({
-        status,
-        downloadUrl: resolvedDownloadUrl,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-    }
-
-    return sendHttpOk(res, {
-      id: taskRef.id,
-      downloadUrl: resolvedDownloadUrl,
-      status,
-    });
-  } catch (error) {
-    return sendCaughtHttpError(res, error);
-  }
-});
 
 exports.publishPreviewTask = onCall({
   region: "us-central1",
@@ -472,7 +363,6 @@ exports.publishGenerateTask = onCall({
       documentId,
       documentNumber,
       completeDocumentData,
-      documentData: existingDocumentData || requestDocumentData,
       uid,
       companyId,
       createdByUid: request.auth.uid,
@@ -595,7 +485,6 @@ exports.onTaskCompleted = onDocumentUpdated({
 });
 
 module.exports = {
-  generateDocumentV1: exports.generateDocumentV1,
   publishPreviewTask: exports.publishPreviewTask,
   publishGenerateTask: exports.publishGenerateTask,
   deleteDocumentV1: exports.deleteDocumentV1,

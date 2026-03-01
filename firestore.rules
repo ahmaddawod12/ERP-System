@@ -151,19 +151,6 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── Legacy paths — DENIED (deprecated, migration complete) ──
-    match /users/{uid}/jobs/{jobId} {
-      allow read, write: if false;
-    }
-
-    match /users/{uid}/personal_inventory/{itemId} {
-      allow read, write: if false;
-    }
-
-    match /users/{uid}/clients/{clientId} {
-      allow read, write: if false;
-    }
-
     // ── Company root document (cid, wid, jid fields) ──
     // Members can read. Create only by company creator.
     // No client update or delete — Cloud Functions handle counter increments.

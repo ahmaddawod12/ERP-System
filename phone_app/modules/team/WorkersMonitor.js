@@ -23,7 +23,7 @@ export default function WorkersMonitor() {
     getCompanyId,
     workers: cachedWorkersList,
     companyJobs,
-    updateWorkersList
+    updateWorkers
   } = useCache();
   const cachedPendingJobs = React.useMemo(
     () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
@@ -56,9 +56,7 @@ export default function WorkersMonitor() {
     recentJobs: 'Recent Jobs',
     moreJobs: 'more jobs',
     pending: 'Pending',
-    received: 'Received',
     waiting: 'Waiting for Approval',
-    accepted: 'Accepted',
     denied: 'Denied',
     finished: 'Finished',
     approve: 'Approve',
@@ -400,9 +398,7 @@ export default function WorkersMonitor() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'pending': return '#D97706';    // Amber (matches yellowBox)
-      case 'received': return '#7C3AED';   // Legacy value mapped to waiting
       case 'waiting': return '#7C3AED';    // Violet (matches purpleBox)
-      case 'accepted': return '#059669';   // Emerald (matches greenBox)
       case 'denied': return '#DC2626';     // Red (matches redBox)
       case 'finished': return '#059669';   // Emerald (matches greenBox)
       default: return '#6b7280';           // Gray
@@ -412,9 +408,7 @@ export default function WorkersMonitor() {
   const getStatusText = (status) => {
     switch (status?.toLowerCase()) {
       case 'pending': return t.pending;
-      case 'received': return t.waiting;
       case 'waiting': return t.waiting;
-      case 'accepted': return t.accepted;
       case 'denied': return t.denied;
       case 'finished': return t.finished;
       default: return status || 'unknown';

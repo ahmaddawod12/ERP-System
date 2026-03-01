@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  collection,
   doc,
   getDoc,
   getDocs,
@@ -16,7 +15,6 @@ import {
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase/client";
 import {
-  companyBusinessInfoRef,
   companyDocumentsCollection,
   companyClientsCollection,
   companyJobsCollection,
@@ -25,15 +23,12 @@ import {
   userInventoryRef,
 } from "@/lib/firestore-paths";
 import type {
-  AccountType,
-  BusinessInfo,
   DocumentRecord,
   ClientRecord,
   InventoryDoc,
   InventoryPart,
   JobRecord,
   Role,
-  UserProfile,
   WorkerProfile,
 } from "@/lib/types";
 
@@ -107,7 +102,7 @@ const DEFAULT_PAGE_SIZE = 50;
 
 function isPendingLikeStatus(status: JobRecord["status"] | string | undefined) {
   const normalized = String(status ?? "").toLowerCase();
-  return normalized === "pending" || normalized === "waiting" || normalized === "received";
+  return normalized === "pending" || normalized === "waiting";
 }
 
 function isClosedJobStatus(status: JobRecord["status"] | string | undefined) {

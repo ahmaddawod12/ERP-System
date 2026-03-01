@@ -38,7 +38,6 @@ Use root `.github/copilot-instructions.md` as global policy. This file adds webs
 - `/api/onboarding/join-company` -> `joinCompanyV1`
 - `/api/upgrades/request` -> `requestUpgradeV1`
 - `/api/contact/request` -> `contactRequestV1`
-- `/api/documents/generate` -> `generateDocumentV1` (legacy only)
 
 Keep these names exact unless backend changes first.
 
@@ -68,9 +67,9 @@ The `useDocumentTask` hook is the canonical website workflow.
 ## Do Not Introduce
 
 - `companyId` fallback to `uid`
-- Legacy mobile registration screens/routes in website
+- Mobile registration screens/routes in website
 - Direct protected writes that bypass backend function validation
-- Legacy job/document status formats outside current schema
+- Non-canonical job/document status formats outside current schema
 - `node-fetch` or similar polyfills (Node 22 has native `fetch()`)
 - Direct Firestore writes to locked collections (`clients`, `jobs`, `documents`, `invites`, `workers`)
 

@@ -11,7 +11,7 @@ import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
-import { buildAuthedJsonHeaders, withDevUidFallback } from "@/lib/firebase/client-auth";
+import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
 
 const schema = z.object({
   requestedTier: z.enum(["Solo", "Team", "Enterprise"]),
@@ -46,16 +46,11 @@ export default function UpgradeClient() {
       const response = await fetch("/api/upgrades/request", {
         method: "POST",
         headers: await buildAuthedJsonHeaders(),
-        body: JSON.stringify(
-          withDevUidFallback(
-            {
-              currentTier: subscription?.tier ?? "Basic",
-              requestedTier: values.requestedTier,
-              message: values.message,
-            },
-            uid,
-          ),
-        ),
+        body: JSON.stringify({
+          currentTier: subscription?.tier ?? "Basic",
+          requestedTier: values.requestedTier,
+          message: values.message,
+        }),
       });
       const payload = (await response.json()) as ClientApiResponse<{ requestId: string }>;
       if (!response.ok || !payload.ok) {

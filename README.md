@@ -21,7 +21,7 @@ ERP-System/
 |       |-- auth.js      # manageWorker, registerBusinessV1
 |       |-- jobs.js      # createJobV1, updateJobV1, deleteJobV1, triggers
 |       |-- clients.js   # addClientV1, deleteClientV1, updateClientV1
-|       |-- documents.js # generateDocumentV1, publishing, onTaskCompleted
+|       |-- documents.js # preview/generate publishing, deleteDocumentV1, onTaskCompleted
 |       |-- tax.js       # Tax Authority OAuth + invoice approval (me-west1)
 |       |-- invites.js   # createInviteV1, joinCompanyV1
 |       |-- inventory.js # updateInventoryV1

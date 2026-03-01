@@ -61,7 +61,6 @@ export const docs: DocEntry[] = [
       "Tax Invoices (type 305) use getInvoiceApproval on me-west1 for Tax Authority approval before PDF generation.",
       "Document types: Price Proposal (10), Delivery Note (200), Return Certificate (210), Tax Invoice (305), Refund (330), Receipt (400).",
       "Tasks are tracked via documentTasks/{taskId} Firestore documents with status: pending → queued → completed/failed.",
-      "The legacy /api/documents/generate route (generateDocumentV1) still exists for backward compatibility.",
       "Document history and document details are visible in /app/documents.",
     ],
   },

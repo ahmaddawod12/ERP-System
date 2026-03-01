@@ -460,7 +460,7 @@ exports.taxAuthorityCallback = onRequest({
  * 5. Frontend then calls generateDocument with documentId if approved
  * 
  * @param {Object} request.data - Full document data
- * @param {string} request.data.type - Document type (should be 'taxInvoice')
+ * @param {number} request.data.type - Document type (must be 305 for tax invoice)
  * @param {Object} request.data.client - Client details {name, email, phone, address, id}
  * @param {Array} request.data.items - Invoice items [{description, quantity, price}]
  * @param {Object} request.data.company - Company details {name, email, phone, address, vatNumber, etc.}
@@ -469,9 +469,9 @@ exports.taxAuthorityCallback = onRequest({
  * @param {string} request.data.language - Language (he, en, ar)
  * @param {string} request.data.date - Invoice date YYYY-MM-DD
  * @param {string} request.data.notes - Optional notes
- * @param {Object} request.data.jobData - Optional job reference data
+ * @param {Array<Object>} request.data.jobsData - Optional job references
  * 
- * @returns {Object} { success, documentId, status, message, confirmation_number, approved, savedPath, metadata }
+ * @returns {Object} { success, documentId, documentNumber, status, message, confirmationNumber, approved, savedPath, metadata }
  */
 exports.getInvoiceApproval = onCall({
   region: "me-west1",
@@ -502,7 +502,7 @@ exports.getInvoiceApproval = onCall({
 
     const {
       type, client, items, company, companyId,
-      language, date, notes, jobData, jobsData, priceProposalId
+      language, date, notes, jobsData, priceProposalId
     } = request.data || {};
 
     if (!companyId) {
@@ -518,8 +518,7 @@ exports.getInvoiceApproval = onCall({
     logger.info('User authorized for invoice approval', { uid, role, companyId });
 
     // Validate required fields for document
-    // Accept both numeric type (305) or string 'taxInvoice' for backwards compatibility
-    const numericType = typeof type === 'number' ? type : (type === 'taxInvoice' ? DOC_TYPE.TAX_INVOICE : Number(type));
+    const numericType = Number(type);
     if (!type || numericType !== DOC_TYPE.TAX_INVOICE) {
       throw new HttpsError('invalid-argument', 'Document type must be taxInvoice (305)');
     }
@@ -1003,7 +1002,6 @@ exports.getInvoiceApproval = onCall({
       notes: notes || null,
       createdBy: uid,
       createdAt: new Date().toISOString(),
-      jobData: jobData || null,
       jobsData: jobsData || null, // Multi-job references
       priceProposalId: priceProposalId || null, // Price proposal used
       itemCount: items.length,
@@ -1023,28 +1021,17 @@ exports.getInvoiceApproval = onCall({
       });
 
       // CRITICAL: Update job documents to mark them as having a tax invoice (isCert = true)
-      // Supports both single job (legacy jobData) and multi-job (jobsData) flows
-      const allJobRefs = [];
-      
-      // Collect all job IDs to update
-      if (jobsData && Array.isArray(jobsData) && jobsData.length > 0) {
-        // Multi-job flow: mark all selected jobs
-        jobsData.forEach(jd => {
-          if (jd && jd.jobId) {
-            allJobRefs.push(jd.jobId);
-          }
-        });
-      } else if (jobData && jobData.jobId) {
-        // Legacy single-job flow
-        allJobRefs.push(jobData.jobId);
-      }
+      const allJobRefs = Array.isArray(jobsData)
+        ? jobsData
+            .map((jobRef) => jobRef?.jobId)
+            .filter(Boolean)
+        : [];
       
       if (allJobRefs.length > 0) {
         // Use batched write to update all jobs + price proposal + cache in one go
         const batch = admin.firestore().batch();
         const cacheUpdates = {};
         for (const jobId of allJobRefs) {
-          // Strip legacy prefixes if present
           const cleanJobId = toBaseDocumentId(jobId);
           const jobPath = `companies/${companyId}/jobs/${cleanJobId}`;
           try {
@@ -1175,7 +1162,6 @@ exports.getInvoiceApproval = onCall({
         documentNumber: documentNumber,
         date: date || todayDate,
         notes: notes,
-        jobData: jobData || null,
         jobsData: jobsData || null, // Multi-job references
         priceProposalId: priceProposalId || null,
         taxAuthorityConfirmationNumber: confirmationNumber,
@@ -1192,7 +1178,6 @@ exports.getInvoiceApproval = onCall({
         documentId: documentId,
         documentNumber: documentNumber,
         completeDocumentData: completeDocumentData,
-        documentData: documentData,
         uid: uid,
         companyId: companyId,
         createdByUid: request.auth.uid,
@@ -1226,10 +1211,11 @@ exports.getInvoiceApproval = onCall({
     return {
       success: true,
       documentId: documentId,
+      documentNumber,
       savedPath: `companies/${companyId}/documents/${toDocumentDocId(documentId)}`,
       status: response.status,
       message: response.data?.message || 'Invoice approved and saved successfully',
-      confirmation_number: confirmationNumber,
+      confirmationNumber,
       approved: true,
       responseData: response.data,
       // PDF generation is now async via Pub/Sub

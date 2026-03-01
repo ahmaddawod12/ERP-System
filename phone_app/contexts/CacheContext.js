@@ -32,7 +32,6 @@ import { useAppStateListener } from '../hooks/useAppStateListener';
 // Extracted MMKV utilities (zero React dependencies)
 import {
   storage,
-  getStorage,
   CACHE_KEYS,
   CACHE_EXPIRY_MS,
   ARCHIVE_BOUNDARY_MS,
@@ -44,9 +43,6 @@ import {
   isWithinCacheRange,
   getDocumentType,
 } from './mmkv-storage';
-
-// Re-export for backward compatibility — other modules import { storage } from CacheContext
-export { storage, getStorage };
 
 // Create context
 const CacheContext = createContext(null);
@@ -86,9 +82,6 @@ export function CacheProvider({ children }) {
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
   const getUserRole = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_ROLE), []);
   const getCompanyId = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID), []);
-  // Backward-compatible aliases (deprecated ï¿½ use getUid/getCompanyId)
-  const getUsername = getUid;
-  const getCompanyName = getCompanyId;
 
   /**
    * Pause Firestore listeners when app is backgrounded (CRITICAL for Android)
@@ -879,23 +872,6 @@ export function CacheProvider({ children }) {
       console.log('?? Setting up cache listeners (will sync versions automatically)...');
       setupCacheListeners(uid, role, companyId);
       
-      // STEP 5: Migration check - if HAS_BUSINESS_INFO flag is missing, check Firestore once
-      // This handles users upgrading from old cache version (which stored full businessInfo object)
-      const existingFlag = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO);
-      if (!existingFlag && role !== 'worker' && role !== 'dev' && companyId) {
-        console.log(`?? HAS_BUSINESS_INFO flag missing (migration), checking Firestore...`);
-        try {
-          const bizRef = doc(db, 'companies', companyId, 'data', 'business_info');
-          const bizDoc = await getDoc(bizRef);
-          const exists = bizDoc.exists();
-          mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, exists ? 'true' : 'false');
-          console.log(`? Migration complete - business_info ${exists ? 'exists' : 'not found'}`);
-        } catch (e) {
-          console.warn('Migration check failed:', e.message);
-          mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, 'false');
-        }
-      }
-      
       setIsInitialized(true);
       console.log('? Cache initialized successfully');
       
@@ -1254,11 +1230,12 @@ export function CacheProvider({ children }) {
       const updatedWorkers = {
         ...workers,
         [workerId]: {
+          uid: workerData.uid || workerId,
+          workerId: workerData.workerId || workerId,
+          wid: workerData.wid ?? null,
           email: workerData.email,
           name: workerData.name,
           phoneNumber: workerData.phoneNumber,
-          Uid: workerData.Uid,
-          Wid: workerId || workerData.Wid,
           role: 'worker',
           companyId: companyId
         }
@@ -2007,9 +1984,6 @@ export function CacheProvider({ children }) {
     getUid,
     getUserRole,
     getCompanyId,
-    // Backward-compatible aliases
-    getUsername,
-    getCompanyName,
     
     // Initialization
     initializeCache,
@@ -2027,7 +2001,6 @@ export function CacheProvider({ children }) {
     
     // Manager specific
     updateWorkers,
-    updateWorkersList: updateWorkers, // Backward compatibility for existing screens
     addWorker,
     editWorker,
     deleteWorker,

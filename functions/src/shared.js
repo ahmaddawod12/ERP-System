@@ -239,7 +239,7 @@ function parseBearerToken(value) {
   return header.slice('Bearer '.length).trim();
 }
 
-async function resolveHttpAuth(req, body = {}) {
+async function resolveHttpAuth(req) {
   const token = parseBearerToken(req.get('authorization') || req.headers?.authorization || '');
   if (token) {
     try {
@@ -255,17 +255,6 @@ async function resolveHttpAuth(req, body = {}) {
         throw new HttpsError('unauthenticated', 'Token has been revoked. Please sign in again.');
       }
       throw new HttpsError('unauthenticated', 'Invalid or expired auth token');
-    }
-  }
-
-  if (isFunctionsEmulator()) {
-    const fallbackUid = String(body.uid || '').trim();
-    if (fallbackUid) {
-      return {
-        uid: fallbackUid,
-        token: null,
-        source: 'dev_fallback',
-      };
     }
   }
 
@@ -426,16 +415,8 @@ async function assertHttpCompanyAccess(params) {
 }
 
 // ── Document ID helpers ───────────────────────────────────────────────────
-/**
- * Normalize document IDs.
- * Strips legacy d_ or c_ prefixes for backward compatibility.
- */
 function toDocumentDocId(documentId) {
-  const raw = String(documentId || '').trim();
-  if (!raw) return '';
-  if (raw.startsWith('d_')) return raw.slice(2);
-  if (raw.startsWith('c_')) return raw.slice(2);
-  return raw;
+  return String(documentId || '').trim();
 }
 
 function getClientIp(req) {
@@ -444,10 +425,7 @@ function getClientIp(req) {
 }
 
 function toBaseDocumentId(documentId) {
-  const raw = String(documentId || '').trim();
-  if (raw.startsWith('d_') || raw.startsWith('c_')) return raw.slice(2);
-  if (raw.startsWith('p_') || raw.startsWith('f_')) return raw.slice(2);
-  return raw;
+  return String(documentId || '').trim();
 }
 
 // ── Job assignee helpers ──────────────────────────────────────────────────
@@ -481,7 +459,6 @@ function syncJobAssigneeFields(jobLike) {
 // ── Push notifications ────────────────────────────────────────────────────
 /**
  * Send push notification via Firebase Cloud Messaging (FCM).
- * Only supports native FCM tokens (not Expo push tokens).
  */
 async function sendPushNotification(pushToken, title, body, data = {}, userId = '') {
   try {
@@ -494,19 +471,6 @@ async function sendPushNotification(pushToken, title, body, data = {}, userId = 
     if (!pushToken) {
       logger.warn('No push token provided');
       return { success: false, reason: 'no_token', error: 'No push token provided' };
-    }
-
-    const isExpoToken = pushToken.startsWith('ExponentPushToken[') ||
-                       pushToken.startsWith('ExpoToken[') ||
-                       pushToken.startsWith('ExpoPushToken[');
-
-    if (isExpoToken) {
-      logger.warn('Expo push token detected - this is a legacy token. User needs to update app.');
-      return {
-        success: false,
-        reason: 'expo_token_deprecated',
-        error: 'Expo push tokens are no longer supported. User needs to update app.'
-      };
     }
 
     logger.info(`Sending FCM notification to ${userId || 'unknown user'}`);
@@ -731,7 +695,6 @@ async function deleteUserData(uid) {
     `users/${uid}/data`,
     `users/${uid}/jobs`,
     `users/${uid}/personal_inventory`,
-    uid, // legacy top-level uid collection path
   ];
 
   for (const path of collectionPaths) {
@@ -795,7 +758,6 @@ async function publishGenerateTaskHelper({
   documentId,
   documentNumber,
   completeDocumentData,
-  documentData,
   uid,
   companyId,
   createdByUid,
@@ -833,7 +795,6 @@ async function publishGenerateTaskHelper({
       documentData: completeDocumentData,
       uid,
       companyId,
-      legacyDocumentData: documentData || null,
       userRole: userRole || null,
       confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
     };

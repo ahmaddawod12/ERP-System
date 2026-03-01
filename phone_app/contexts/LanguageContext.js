@@ -5,7 +5,7 @@
  */
 
 import React, { createContext, useContext, useState } from 'react';
-import { storage } from './CacheContext';
+import { storage } from './mmkv-storage';
 
 const LANGUAGE_KEY = 'app_language';
 

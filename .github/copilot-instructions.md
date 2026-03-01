@@ -98,7 +98,7 @@ When generating code, prefer compatibility with these versions.
   - `auth.js` — manageWorker, registerBusinessV1
   - `jobs.js` — createJobV1, updateJobV1, deleteJobV1, acceptJobV1, triggers
   - `clients.js` — addClientV1, deleteClientV1, updateClientV1
-  - `documents.js` — generateDocumentV1, publishPreviewTask, publishGenerateTask, deleteDocumentV1, onTaskCompleted
+  - `documents.js` — publishPreviewTask, publishGenerateTask, deleteDocumentV1, onTaskCompleted
   - `tax.js` — startTaxAuthorityAuth, taxAuthorityCallback, getInvoiceApproval (me-west1)
   - `invites.js` — createInviteV1, joinCompanyV1
   - `inventory.js` — updateInventoryV1
@@ -144,7 +144,7 @@ When generating code, prefer compatibility with these versions.
 ## Do Not Introduce
 
 - `username`, `companyName`, or email-derived path keys
-- Legacy job status names (`in_progress`, `completed`, `received`)
+- Non-canonical job status names (`in_progress`, `completed`, `received`)
 - Separate `PendingJobs`/`finishedJobs` collections (use unified `jobs` collection)
 - `p_`/`f_`/`d_` ID prefixes (use plain Base62 IDs)
 - A new mobile business-registration route

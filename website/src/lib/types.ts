@@ -1,6 +1,5 @@
 import {
   Role as ContractRole,
-  JobStatus as ContractJobStatus,
   paths,
   resolveCompanyScope,
 } from "@smart-job/contracts";
@@ -105,7 +104,6 @@ export interface JobRecord {
   clientId?: string;
   /**
    * Canonical statuses: pending → waiting → finished | denied
-   * 'received' is legacy — treat as 'waiting' in all new code.
    */
   status: "pending" | "waiting" | "denied" | "finished";
   workerId: string | null;
@@ -159,7 +157,7 @@ export interface InventoryDoc {
 
 export interface ClientRecord {
   id: string;
-  /** Stored for website ordering; may be absent on legacy phone-app-created docs. */
+  /** Stored for website ordering when available. */
   numericId?: number;
   name: string;
   email?: string;

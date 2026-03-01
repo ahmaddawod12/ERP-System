@@ -10,7 +10,6 @@ const {
   userProfileDocPath,
   sendPushNotification,
   syncJobAssigneeFields,
-  toBaseDocumentId,
   MAX_JOB_ARRAY_LENGTH,
   HTTP_COMPANY_MANAGER_ROLES,
   HTTP_ALL_APP_ROLES,
@@ -297,9 +296,7 @@ exports.deleteJobV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const rawJobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
-  // Strip legacy prefixes if present
-  const jobId = toBaseDocumentId(rawJobId);
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
 
   if (!jobId) {
     throw new HttpsError('invalid-argument', 'jobId is required');
@@ -370,9 +367,7 @@ exports.acceptJobV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const rawJobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
-  // Strip legacy prefixes if present
-  const jobId = toBaseDocumentId(rawJobId);
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
 
   if (!jobId) {
     throw new HttpsError('invalid-argument', 'jobId is required');
@@ -617,9 +612,7 @@ exports.updateJobV1 = onCall(async (request) => {
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
-  const rawJobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
-  // Strip legacy prefixes if present
-  const jobId = toBaseDocumentId(rawJobId);
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
   if (!companyId || !jobId) {
     throw new HttpsError('invalid-argument', 'companyId and jobId are required');
   }
@@ -648,12 +641,7 @@ exports.updateJobV1 = onCall(async (request) => {
     }
   }
 
-  // Backward compatibility: old clients may send { updates: {...} }.
-  const nestedUpdates = (data.updates && typeof data.updates === 'object' && !Array.isArray(data.updates))
-    ? data.updates
-    : null;
-
-  const raw = nestedUpdates ? { ...nestedUpdates } : { ...data };
+  const raw = { ...data };
 
   // Positive field whitelist — only allow known job-data fields through
   const ALLOWED_UPDATE_FIELDS = [

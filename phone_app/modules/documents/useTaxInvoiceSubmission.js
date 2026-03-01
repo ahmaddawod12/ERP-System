@@ -57,9 +57,9 @@ export function useTaxInvoiceSubmission({
       setPreviewLoading(false);
       
       if (pendingTaxInvoice) {
-        const { documentId, invoiceNumber, confirmationNumber } = pendingTaxInvoice;
+        const { documentId, documentNumber, confirmationNumber } = pendingTaxInvoice;
         
-        const successMessage = `Tax Invoice created successfully!\n\nDocument ID: ${documentId}\nInvoice #: TAX-${invoiceNumber}\n\n✅ Tax Authority Approved\nConfirmation: ${confirmationNumber}\n\n✅ PDF Generated Successfully`;
+        const successMessage = `Tax Invoice created successfully!\n\nDocument ID: ${documentId}\nInvoice #: TAX-${documentNumber}\n\n✅ Tax Authority Approved\nConfirmation: ${confirmationNumber}\n\n✅ PDF Generated Successfully`;
         
         showSuccessMessage(
           'Success!',
@@ -298,12 +298,6 @@ export function useTaxInvoiceSubmission({
           jobTitle: job.title,
           worker: job.workerName || 'N/A',
         })) : undefined,
-        // Also send legacy single jobData for backward compatibility
-        jobData: selectedJobs.length > 0 ? {
-          jobId: selectedJobs[0].id,
-          jobTitle: selectedJobs[0].title,
-          worker: selectedJobs[0].workerName || 'N/A',
-        } : undefined,
         // Price proposal reference (to mark as used)
         priceProposalId: selectedPriceProposal?.id || null,
       };
@@ -350,7 +344,7 @@ export function useTaxInvoiceSubmission({
 
       // Tax Authority approved! PDF generation is now async via Pub/Sub
       console.log('✅ Tax Authority approved! Document ID:', approvalResult.data.documentId);
-      console.log('📄 Confirmation Number:', approvalResult.data.confirmation_number);
+      console.log('📄 Confirmation Number:', approvalResult.data.confirmationNumber);
       console.log('📄 PDF Task Published:', approvalResult.data.pdfTaskPublished);
       console.log('📄 PDF Task ID:', approvalResult.data.pdfTaskId);
 
@@ -359,8 +353,8 @@ export function useTaxInvoiceSubmission({
         // Store pending invoice info for when PDF completes
         setPendingTaxInvoice({
           documentId: approvalResult.data.documentId,
-          invoiceNumber: approvalResult.data.invoiceNumber || 'N/A',
-          confirmationNumber: approvalResult.data.confirmation_number,
+          documentNumber: approvalResult.data.documentNumber || 'N/A',
+          confirmationNumber: approvalResult.data.confirmationNumber,
         });
         
         // Start listening to the PDF generation task via Pub/Sub
@@ -371,14 +365,14 @@ export function useTaxInvoiceSubmission({
         // The useDocumentTask hook callbacks will handle completion/error
         showInfoMessage(
           'Tax Authority Approved!',
-          `Invoice approved with confirmation: ${approvalResult.data.confirmation_number}\n\nGenerating PDF... Please wait.`,
+          `Invoice approved with confirmation: ${approvalResult.data.confirmationNumber}\n\nGenerating PDF... Please wait.`,
           [{ text: 'OK', style: 'default', onPress: () => {} }]
         );
       } else {
         // PDF task publishing failed but document was saved and approved
         setPreviewLoading(false);
         
-        const partialSuccessMessage = `Tax Invoice approved but PDF generation task could not be started.\n\nDocument ID: ${approvalResult.data.documentId}\n\n✅ Tax Authority Approved\nConfirmation: ${approvalResult.data.confirmation_number}\n\n⚠️ PDF not scheduled\n\nYou can regenerate the PDF from Document History.`;
+        const partialSuccessMessage = `Tax Invoice approved but PDF generation task could not be started.\n\nDocument ID: ${approvalResult.data.documentId}\n\n✅ Tax Authority Approved\nConfirmation: ${approvalResult.data.confirmationNumber}\n\n⚠️ PDF not scheduled\n\nYou can regenerate the PDF from Document History.`;
         
         showWarningMessage(
           'Partial Success',
@@ -430,3 +424,4 @@ export function useTaxInvoiceSubmission({
     downloadAndSharePDF,
   };
 }
+

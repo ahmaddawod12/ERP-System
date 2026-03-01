@@ -229,8 +229,9 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
           {
             success: boolean;
             documentId?: string;
+            documentNumber?: number;
             pdfTaskId?: string;
-            confirmation_number?: string;
+            confirmationNumber?: string;
             error?: string;
           }
         >(middleEastFunctions, "getInvoiceApproval");

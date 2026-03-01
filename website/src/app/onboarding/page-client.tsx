@@ -27,7 +27,6 @@ import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
 import {
   buildAuthedJsonHeaders,
-  withDevUidFallback,
 } from "@/lib/firebase/client-auth";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase/client";
@@ -255,19 +254,14 @@ export default function OnboardingClient() {
         const response = await fetch("/api/onboarding/join-company", {
           method: "POST",
           headers: await buildAuthedJsonHeaders(),
-          body: JSON.stringify(
-            withDevUidFallback(
-              {
-                email: user.email,
-                role: "worker",
-                name: values.name,
-                phoneNumber: values.phoneNumber,
-                companyId: values.joinCompanyId?.trim(),
-                inviteCode: values.inviteCode,
-              },
-              user.uid,
-            ),
-          ),
+          body: JSON.stringify({
+            email: user.email,
+            role: "worker",
+            name: values.name,
+            phoneNumber: values.phoneNumber,
+            companyId: values.joinCompanyId?.trim(),
+            inviteCode: values.inviteCode,
+          }),
         });
 
         const data = (await response.json()) as ClientApiResponse<{

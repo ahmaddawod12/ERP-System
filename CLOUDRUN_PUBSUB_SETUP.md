@@ -216,7 +216,7 @@ const handleSubmitTaxInvoice = async () => {
   // 2. Check if Tax Authority approved
   if (result.data.approved) {
     console.log('Tax Authority approved!');
-    console.log('Confirmation:', result.data.confirmation_number);
+    console.log('Confirmation:', result.data.confirmationNumber);
     
     // 3. PDF generation is now async via Pub/Sub
     if (result.data.pdfTaskPublished && result.data.pdfTaskId) {

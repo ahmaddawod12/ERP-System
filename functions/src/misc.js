@@ -36,7 +36,7 @@ exports.requestUpgradeV1 = onRequest({
 
   try {
     const body = parseJsonBody(req);
-    const auth = await resolveHttpAuth(req, body);
+    const auth = await resolveHttpAuth(req);
 
     const requestedTier = requireNonEmptyString(body.requestedTier, 'requestedTier', 2, 32);
     const message = requireNonEmptyString(body.message, 'message', 10, 2000);

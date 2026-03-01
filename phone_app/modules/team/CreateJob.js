@@ -29,7 +29,7 @@ export default function CreateJob() {
     profile,
     workers: cachedWorkersList,
     addJob,
-    updateWorkersList,
+    updateWorkers,
     clients: cachedClients,
     addClient,
     updateClient,
@@ -179,7 +179,7 @@ export default function CreateJob() {
         });
         
         // Save to cache for next time
-        await updateWorkersList(workersData);
+        await updateWorkers(workersData);
         
         const workersArray = Object.entries(workersData).map(([uid, data]) => ({
           ...data,

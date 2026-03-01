@@ -97,6 +97,6 @@ Write code that is compatible with these versions.
 - Uses design-system primitives and theme tokens.
 - Keeps `app/` routes lightweight and `modules/` focused.
 - Keeps uid/companyId naming and path conventions.
-- Avoids stale dependencies and legacy route references.
+- Avoids stale dependencies and obsolete route references.
 - Uses MMKV via `storage` from `CacheContext` for local persistence (not `AsyncStorage`).
 - Uses `AppText` from `components/` in context providers (not raw `Text` from `react-native`).

@@ -124,7 +124,7 @@ export default function WorkersUsers() {
   const {
     getCompanyId,
     workers: cachedWorkersList,
-    updateWorkersList,
+    updateWorkers,
     addWorker,
     editWorker,
     deleteWorker,
@@ -198,7 +198,7 @@ export default function WorkersUsers() {
         .filter(Boolean);
 
       setWorkers(workersList);
-      await updateWorkersList(workersData);
+      await updateWorkers(workersData);
     } catch (error) {
       console.error('WorkersUsers loadWorkers error:', error);
       alert.error('Error', error.message || 'Failed to load workers.');
@@ -249,7 +249,7 @@ export default function WorkersUsers() {
         companyId,
       });
 
-      const workerUid = result?.data?.uid || result?.data?.workerId;
+      const workerUid = result?.data?.uid;
       if (!workerUid) {
         throw new Error('Worker UID was not returned from backend.');
       }

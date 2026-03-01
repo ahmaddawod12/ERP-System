@@ -12,13 +12,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
-import { auth, db, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
+import { auth, db, doc, getDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, shadows } from '../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { useCache, storage } from '../../contexts/CacheContext';
+import { useCache } from '../../contexts/CacheContext';
+import { storage } from '../../contexts/mmkv-storage';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 
 export default function Workerjob() {
@@ -58,9 +59,7 @@ export default function Workerjob() {
     title: 'My Assigned Jobs',
     noJobs: 'No jobs assigned yet',
     pending: 'Pending',
-    received: 'Received',
     waiting: 'Waiting for Approval',
-    accepted: 'Accepted',
     denied: 'Denied',
     assignedBy: 'Assigned by',
     clientName: 'Client Name',
@@ -68,7 +67,6 @@ export default function Workerjob() {
     timeWorked: 'Time Worked',
     location: 'Location',
     description: 'Description',
-    markReceived: 'Mark as Received',
     offlineMode: 'Offline Mode',
     pendingJobs: 'Pending Jobs',
     syncSuccess: 'Successfully synced pending jobs!',
@@ -157,15 +155,24 @@ export default function Workerjob() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'pending': return '#f59e0b';
-      case 'received': return '#8b5cf6';
       case 'waiting': return '#8b5cf6';
-      case 'accepted': return '#10b981';
+      case 'finished': return '#10b981';
       case 'denied': return '#ef4444';
       default: return '#6b7280';
     }
   };
 
-  // ─── Data Loading ───────────────────────────────────────────────
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'pending': return t.pending;
+      case 'waiting': return t.waiting;
+      case 'finished': return language === 'en' ? 'Finished' : language === 'he' ? 'Ã—â€Ã—â€¢Ã—Â©Ã—Å“Ã—Â' : 'Ã™â€¦Ã™â€ Ã˜ÂªÃ™â€¡Ã™Å ';
+      case 'denied': return t.denied;
+      default: return status || t.pending;
+    }
+  };
+
+  // â”€â”€â”€ Data Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   useEffect(() => {
     const initializeData = async () => {
@@ -209,7 +216,7 @@ export default function Workerjob() {
   /**
    * Sync offline-queued jobs. These were saved when the worker submitted a job
    * while offline. Each entry contains the full jobData that was already built
-   * by FillJob (or the legacy inline modal). We re-submit them to Firestore.
+   * by FillJob (or the inline modal). We re-submit them to Firestore.
    */
   const syncPendingJobs = async () => {
     try {
@@ -322,7 +329,7 @@ export default function Workerjob() {
 
   // ─── Actions ────────────────────────────────────────────────────
 
-  const handleMarkReceived = async (job) => {
+  const handleMoveToWaiting = async (job) => {
     try {
       const companyId = getCompanyId();
       if (!companyId) {
@@ -546,7 +553,7 @@ export default function Workerjob() {
                   {job.status === 'pending' && (
                     <TouchableOpacity
                       style={[styles.iconButton, styles.receiveIconButton]}
-                      onPress={(e) => { e.stopPropagation(); handleMarkReceived(job); }}
+                      onPress={(e) => { e.stopPropagation(); handleMoveToWaiting(job); }}
                       activeOpacity={0.7}
                     >
                       <MaterialCommunityIcons name="check-circle" size={24} color="white" />
@@ -617,7 +624,7 @@ export default function Workerjob() {
               {/* Status + Quick Actions Row */}
               <View style={styles.statusAndWazeRow}>
                 <View style={[styles.statusBadge, { backgroundColor: getStatusColor(job.status) }]}>
-                  <AppText style={styles.statusText}>{job.status === 'received' ? 'waiting' : (job.status || t.pending)}</AppText>
+                  <AppText style={styles.statusText}>{getStatusText(job.status)}</AppText>
                 </View>
                 {job.location && (
                   <TouchableOpacity

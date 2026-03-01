@@ -33,7 +33,6 @@ Next.js App Router website for Smart-Job ERP (TypeScript + Tailwind + Firebase W
 - `POST /api/onboarding/join-company` -> `joinCompanyV1`
 - `POST /api/upgrades/request` -> `requestUpgradeV1`
 - `POST /api/contact/request` -> `contactRequestV1` (no auth required)
-- `POST /api/documents/generate` -> `generateDocumentV1` (legacy/backward compatibility only)
 
 All endpoints return:
 
@@ -53,7 +52,6 @@ Current document flows:
 ## Auth + Security Notes
 
 - Production API calls require `Authorization: Bearer <Firebase ID token>`.
-- `uid` request-body fallback is accepted only in local development emulator mode.
 - Server routes validate request JSON with Zod before proxying.
 - Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate them.
 - Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).

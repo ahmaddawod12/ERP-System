@@ -14,7 +14,7 @@ import TaxInvoiceJobList from './TaxInvoiceJobList';
 import TaxInvoiceFormModal from './TaxInvoiceFormModal';
 import { useTaxInvoiceSubmission } from './useTaxInvoiceSubmission';
 
-export default function GenerateReceipt() {
+export default function GenerateTaxInvoice() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { language } = useLanguageContext();

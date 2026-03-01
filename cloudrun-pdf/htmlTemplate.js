@@ -41,7 +41,10 @@ function formatCentsToAmount(cents) {
 }
 
 /**
- * Document Type Codes (numeric)
+ * Document Type Codes (numeric) — mirrors @smart-job/contracts DOC_TYPE.
+ * Kept local because this Cloud Run service is deployed via Docker without
+ * access to the monorepo's file: dependency.  Keep in sync with contracts.
+ *
  * 10 = Price Proposal (הצעת מחיר)
  * 200 = Delivery Note (תעודת משלוח)
  * 210 = Return Certificate (תעודת החזרה)
@@ -58,6 +61,9 @@ const DOC_TYPE = {
   RECEIPT: 400
 };
 
+/** Israel VAT rate — mirrors @smart-job/contracts VAT_RATE. Keep in sync. */
+const VAT_RATE = 0.18;
+
 /**
  * Generate HTML template for documents
  */
@@ -71,8 +77,11 @@ function generateDocumentHTML(documentData) {
   // Convert type to number if it's a string (for backwards compatibility during transition)
   const numericType = typeof type === 'number' ? type : Number(type);
   
-  // Force Hebrew for all business documents
-  const effectiveLanguage = (numericType === DOC_TYPE.PRICE_PROPOSAL || numericType === DOC_TYPE.TAX_INVOICE || numericType === DOC_TYPE.RETURN_CERTIFICATE || numericType === DOC_TYPE.REFUND || numericType === DOC_TYPE.RECEIPT || numericType === DOC_TYPE.DELIVERY_NOTE) ? 'he' : language;
+  // Force Hebrew for all business documents.
+  // Israeli tax regulations require Hebrew on official documents.
+  // The en/ar label tables below are retained for future multi-language support
+  // if non-tax documents (e.g. internal reports) are added later.
+  const effectiveLanguage = 'he';
   const isPriceProposal = numericType === DOC_TYPE.PRICE_PROPOSAL;
   const isTaxInvoice = numericType === DOC_TYPE.TAX_INVOICE;
   const isReturnCertificate = numericType === DOC_TYPE.RETURN_CERTIFICATE;
@@ -232,7 +241,7 @@ function generateDocumentHTML(documentData) {
     };
   });
   
-  const vatCents = Math.round(subtotalCents * 0.18);
+  const vatCents = Math.round(subtotalCents * VAT_RATE);
   const grandTotalCents = subtotalCents + vatCents;
   
   // Convert back to display amounts

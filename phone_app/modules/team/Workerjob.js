@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   Image,
@@ -12,7 +11,6 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { auth, db, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, shadows } from '../../theme';
@@ -20,7 +18,7 @@ import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer 
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { useCache } from '../../contexts/CacheContext';
+import { useCache, storage } from '../../contexts/CacheContext';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 
 export default function Workerjob() {
@@ -199,7 +197,7 @@ export default function Workerjob() {
 
   const checkPendingJobCount = async () => {
     try {
-      const pending = await AsyncStorage.getItem('pendingWorkerJobs');
+      const pending = storage.getString('pendingWorkerJobs');
       if (pending) {
         setPendingJobCount(JSON.parse(pending).length);
       }
@@ -215,7 +213,7 @@ export default function Workerjob() {
    */
   const syncPendingJobs = async () => {
     try {
-      const pending = await AsyncStorage.getItem('pendingWorkerJobs');
+      const pending = storage.getString('pendingWorkerJobs');
       if (!pending) return;
       const pendingArray = JSON.parse(pending);
       if (pendingArray.length === 0) return;
@@ -254,11 +252,11 @@ export default function Workerjob() {
       }
 
       if (failedJobs.length > 0) {
-        await AsyncStorage.setItem('pendingWorkerJobs', JSON.stringify(failedJobs));
+        storage.set('pendingWorkerJobs', JSON.stringify(failedJobs));
         setPendingJobCount(failedJobs.length);
         alert.error(t.syncError || 'Some jobs failed to sync');
       } else {
-        await AsyncStorage.removeItem('pendingWorkerJobs');
+        storage.delete('pendingWorkerJobs');
         setPendingJobCount(0);
         alert.success(t.syncSuccess || 'All jobs synced successfully!');
         loadJobs();
@@ -356,7 +354,7 @@ export default function Workerjob() {
   const handleFillDetails = async (job) => {
     // Clear any existing draft for this job to prevent loading old data
     try {
-      await AsyncStorage.removeItem(`workerjobDraft_${job.id}`);
+      storage.delete(`workerjobDraft_${job.id}`);
     } catch (error) {
       console.error('Error clearing draft:', error);
     }

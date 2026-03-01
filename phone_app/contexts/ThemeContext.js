@@ -1,9 +1,8 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { Appearance } from 'react-native';
-import { createMMKV } from 'react-native-mmkv';
+import { storage } from './mmkv-storage';
 
 const THEME_KEY = 'app_theme';
-const themeStorage = createMMKV({ id: 'smart-job-preferences' });
 
 const ThemeContext = createContext();
 
@@ -21,7 +20,7 @@ export const ThemeProvider = ({ children }) => {
 
   useEffect(() => {
     try {
-      const savedTheme = themeStorage.getString(THEME_KEY);
+      const savedTheme = storage.getString(THEME_KEY);
       if (savedTheme === 'dark' || savedTheme === 'light') {
         setIsDarkModeState(savedTheme === 'dark');
       } else {
@@ -35,18 +34,18 @@ export const ThemeProvider = ({ children }) => {
     }
   }, []);
 
-  const setTheme = (isDark) => {
+  const setTheme = useCallback((isDark) => {
     try {
-      themeStorage.set(THEME_KEY, isDark ? 'dark' : 'light');
+      storage.set(THEME_KEY, isDark ? 'dark' : 'light');
       setIsDarkModeState(!!isDark);
     } catch (error) {
       console.error('Error saving theme preference:', error);
     }
-  };
+  }, []);
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     setTheme(!isDarkMode);
-  };
+  }, [isDarkMode, setTheme]);
 
   const value = useMemo(
     () => ({

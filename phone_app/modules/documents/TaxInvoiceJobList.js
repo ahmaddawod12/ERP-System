@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   View,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
@@ -9,7 +8,7 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { AppText, ScrollableContainer } from '../../components';
+import { AppInput, AppText, ScrollableContainer } from '../../components';
 import { spacing, borderRadius, typography, shadows } from '../../theme';
 
 /**
@@ -33,21 +32,19 @@ export default function TaxInvoiceJobList({
   return (
     <>
       {/* Search Bar */}
-      <View style={[styles.searchContainer, { backgroundColor: colors.surface }]}>
-        <Ionicons name="search" size={20} color={colors.textSecondary} style={styles.searchIcon} />
-        <TextInput
-          style={[styles.searchInput, { color: colors.textPrimary, backgroundColor: colors.surface, borderColor: colors.border }]}
-          placeholder={t.searchPlaceholder}
-          placeholderTextColor={colors.textSecondary}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {searchQuery.length > 0 && (
+      <AppInput
+        placeholder={t.searchPlaceholder}
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        colors={colors}
+        leftIcon={<Ionicons name="search" size={20} color={colors.textSecondary} />}
+        rightIcon={searchQuery.length > 0 ? (
           <TouchableOpacity onPress={() => setSearchQuery('')}>
             <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
-        )}
-      </View>
+        ) : null}
+        containerStyle={styles.searchContainer}
+      />
 
       {/* Jobs List */}
       <ScrollableContainer 

@@ -1,6 +1,21 @@
-export const ROLES = ["manager", "worker", "user", "basic", "dev"] as const;
-export type Role = (typeof ROLES)[number];
+import {
+  Role as ContractRole,
+  JobStatus as ContractJobStatus,
+  paths,
+  resolveCompanyScope,
+} from "@smart-job/contracts";
 
+export { paths, resolveCompanyScope };
+
+export const ROLES = ["manager", "worker", "user", "basic", "dev"] as const;
+export type Role = ContractRole extends never ? (typeof ROLES)[number] : (typeof ROLES)[number];
+
+/**
+ * Website-specific tiers (marketing names).
+ * Maps to contracts Tier: Basic→Basic, Solo→User, Team→Team, Enterprise→Dev.
+ * These are display labels for the website pricing page; the contracts Tier
+ * enum holds the canonical runtime values stored in Firestore.
+ */
 export const TIERS = ["Basic", "Solo", "Team", "Enterprise"] as const;
 export type Tier = (typeof TIERS)[number];
 

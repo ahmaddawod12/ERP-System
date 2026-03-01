@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -12,14 +11,13 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, db, storage, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
+import { auth, db, storage as fbStorage, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { useCache } from '../../contexts/CacheContext';
+import { useCache, storage } from '../../contexts/CacheContext';
 
 export default function Userjob() {
   const router = useRouter();
@@ -260,7 +258,7 @@ export default function Userjob() {
 
   const checkPendingJobCount = async () => {
     try {
-      const pending = await AsyncStorage.getItem('pendingJobs');
+      const pending = storage.getString('pendingJobs');
       if (pending) setPendingJobCount(JSON.parse(pending).length);
     } catch (error) {
       console.log('Error checking pending jobs:', error);
@@ -272,7 +270,7 @@ export default function Userjob() {
    */
   const checkForDraft = async () => {
     try {
-      const draft = await AsyncStorage.getItem('userjobDraft');
+      const draft = storage.getString('userjobDraft');
       if (draft) {
         const parsed = JSON.parse(draft);
         if (parsed.jobData && (parsed.jobData.title || parsed.jobData.description ||
@@ -285,7 +283,7 @@ export default function Userjob() {
                 text: t.discardDraft,
                 style: 'destructive',
                 onPress: async () => {
-                  await AsyncStorage.removeItem('userjobDraft');
+                  storage.delete('userjobDraft');
                 },
               },
               {
@@ -297,7 +295,7 @@ export default function Userjob() {
                 text: t.continueWithDraft,
                 style: 'default',
                 onPress: async () => {
-                  await AsyncStorage.removeItem('userjobDraft');
+                  storage.delete('userjobDraft');
                   // Navigate to FillJob with the draft data
                   router.push({
                     pathname: '/FillJob',
@@ -322,7 +320,7 @@ export default function Userjob() {
    */
   const syncPendingJobs = async () => {
     try {
-      const pending = await AsyncStorage.getItem('pendingJobs');
+      const pending = storage.getString('pendingJobs');
       if (!pending) return;
       const pendingArray = JSON.parse(pending);
       if (pendingArray.length === 0) return;
@@ -369,11 +367,11 @@ export default function Userjob() {
       }
 
       if (failedJobs.length > 0) {
-        await AsyncStorage.setItem('pendingJobs', JSON.stringify(failedJobs));
+        storage.set('pendingJobs', JSON.stringify(failedJobs));
         setPendingJobCount(failedJobs.length);
         alert.error(t.syncError);
       } else {
-        await AsyncStorage.removeItem('pendingJobs');
+        storage.delete('pendingJobs');
         setPendingJobCount(0);
         alert.success(
           language === 'en' ? 'Sync Complete' : language === 'he' ? 'סנכרון הושלם' : 'اكتمل التزامن',
@@ -481,7 +479,7 @@ export default function Userjob() {
       return;
     }
 
-    AsyncStorage.removeItem('userjobDraft').catch(() => {});
+    storage.delete('userjobDraft');
 
     router.push({
       pathname: '/FillJob',
@@ -533,7 +531,7 @@ export default function Userjob() {
 
               // Delete job files from storage
               try {
-                const jobFolderRef = storage().ref(`${uid}/jobs/${jobId}`);
+                const jobFolderRef = fbStorage().ref(`${uid}/jobs/${jobId}`);
                 const fileList = await jobFolderRef.listAll();
                 for (const fileRef of fileList.items) {
                   try { await fileRef.delete(); } catch (e) { /* ignore */ }

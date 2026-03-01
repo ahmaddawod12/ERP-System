@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View,
-  Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -19,14 +18,13 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, db, storage, FieldValue, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
+import { auth, db, storage as fbStorage, FieldValue, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
-import { useCache } from '../../contexts/CacheContext';
+import { useCache, storage } from '../../contexts/CacheContext';
 
 // Generate a temporary ID for file upload paths (not used as Firestore doc ID)
 function generateTempId() {
@@ -254,7 +252,7 @@ export default function FillJob() {
       console.log('📁 Storage path:', storagePath);
       
       // Get fresh download URL from Firebase Storage
-      const storageRef = storage().ref(storagePath);
+      const storageRef = fbStorage().ref(storagePath);
       const freshURL = await storageRef.getDownloadURL();
       
       console.log('✅ Fresh signature URL obtained');
@@ -399,7 +397,7 @@ export default function FillJob() {
         return uri;
       }
 
-      const storageRef = storage().ref(`${uid}/jobs/${jobId}/${fileName}`);
+      const storageRef = fbStorage().ref(`${uid}/jobs/${jobId}/${fileName}`);
       const response = await fetch(uri);
       const blob = await response.blob();
 
@@ -655,7 +653,7 @@ export default function FillJob() {
 
       // Clear draft
       const draftKey = mode === 'user' ? 'userjobDraft' : `workerjobDraft_${jobId}`;
-      await AsyncStorage.removeItem(draftKey);
+      storage.delete(draftKey);
 
       alert.hideLoading();
       alert.success('Success', t.success);
@@ -682,7 +680,7 @@ export default function FillJob() {
         travelDistance,
         timestamp: Date.now(),
       };
-      await AsyncStorage.setItem(draftKey, JSON.stringify(draftData));
+      storage.set(draftKey, JSON.stringify(draftData));
       alert.success('Success', t.draftSaved);
       router.back();
     } catch (error) {

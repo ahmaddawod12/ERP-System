@@ -13,6 +13,7 @@
   },
   "main": "index.js",
   "dependencies": {
+    "@smart-job/contracts": "file:../packages/contracts",
     "@google-cloud/pubsub": "^4.11.0",
     "axios": "^1.13.2",
     "axios-retry": "^4.5.0",

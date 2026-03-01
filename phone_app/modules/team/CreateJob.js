@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -12,7 +11,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { auth, db, collection, doc, getDocs, setDoc, functions, httpsCallable } from '../../firebase';
-import { colors, spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
+import { spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
 import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';

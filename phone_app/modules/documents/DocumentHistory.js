@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View,
-  Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   Modal,
   Platform,
   Linking,
@@ -25,24 +23,7 @@ import { AppText, GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorM
 import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-
-/**
- * Document Type Codes (numeric)
- * 10 = Price Proposal (הצעת מחיר)
- * 200 = Delivery Note (תעודת משלוח)
- * 210 = Return Certificate (תעודת החזרה)
- * 305 = Tax Invoice (חשבונית מס)
- * 330 = Refund (זיכוי)
- * 400 = Receipt (קבלה)
- */
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
+import { DOC_TYPE } from '@smart-job/contracts';
 
 export default function DocumentHistory() {
   const router = useRouter();

@@ -17,7 +17,7 @@ ERP-System/
 |-- functions/           # Firebase Cloud Functions
 |   |-- index.js         # Thin re-exporter (no logic)
 |   `-- src/             # Domain modules
-|       |-- shared.js    # Admin init, constants, helpers, auth
+|       |-- shared.js    # Admin init, constants, helpers, auth, busy-flag & Pub/Sub helpers
 |       |-- auth.js      # manageWorker, registerBusinessV1
 |       |-- jobs.js      # createJobV1, updateJobV1, deleteJobV1, triggers
 |       |-- clients.js   # addClientV1, deleteClientV1, updateClientV1
@@ -25,17 +25,19 @@ ERP-System/
 |       |-- tax.js       # Tax Authority OAuth + invoice approval (me-west1)
 |       |-- invites.js   # createInviteV1, joinCompanyV1
 |       |-- inventory.js # updateInventoryV1
-|       |-- profile.js   # updateProfileV1, push tokens, business info, cache
+|       |-- profile.js   # updateProfileV1 (syncs worker doc), push tokens, business info, cache
 |       `-- misc.js      # requestUpgradeV1, contactRequestV1
 |-- cloudrun-pdf/        # Cloud Run PDF service
 |-- cloudrun-archiver/   # Cloud Run archival job
+|-- packages/
+|   `-- contracts/       # @smart-job/contracts — shared enums, constants, DOC_TYPE, DOC_SUFFIX, VAT_RATE, Firestore paths
 |-- firebase.json
 |-- firestore.rules
 |-- firestore.indexes.json
 `-- storage.rules
 ```
 
-## Version Snapshot (2026-02-27)
+## Version Snapshot (2026-02-28)
 
 ### Phone app (`phone_app/package.json`)
 - Expo `~54.0.25`
@@ -43,17 +45,20 @@ ERP-System/
 - React Native `0.81.5`
 - React `19.1.0`
 - React Native Firebase `^23.8.6`
+- `@smart-job/contracts` (local workspace package)
 
 ### Website (`website/package.json`)
 - Next.js `16.1.6`
 - React / React DOM `19.2.3`
 - Firebase Web SDK `^12.9.0`
 - Firebase Admin `^13.6.1`
+- Tailwind CSS v4 with `tailwind-merge ^3.5.0`
 
 ### Functions (`functions/package.json`)
 - Node engine `22`
 - Firebase Functions `^7.0.0`
 - Firebase Admin `^13.6.0`
+- `@smart-job/contracts` (local workspace package)
 
 ## Shared Data Model Rules
 
@@ -84,12 +89,14 @@ ERP-System/
 
 ## Website Architecture
 
-- **Dashboard pages** (`/app/*`) use the server wrapper + client shell pattern:
+- **All page routes** use the server wrapper + client shell pattern:
   - `page.tsx` — server component with `export const metadata`, wraps a `<Suspense>` boundary around the client component.
   - `page-client.tsx` — `"use client"` shell containing hooks and interactivity.
+  - This applies to dashboard pages (`/app/*`) and auth pages (`/login`, `/register`, `/forgot-password`, `/onboarding`).
 - **Static marketing pages** (`/`, `/features`, `/pricing`, `/security`, `/contact`, `/terms`, `/privacy`, `/solutions/*`) export `revalidate = 3600` for 1-hour ISR caching.
 - **`middleware.ts`** handles auth redirect for all `/app/*` routes.
 - **`loading.tsx`** provides instant loading UI during dashboard route transitions.
+- **Auth cookie** (`firebase-auth-token`) `Secure` flag is conditional on HTTPS (omitted on localhost for dev).
 
 ## Canonical Firestore Paths
 

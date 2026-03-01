@@ -11,6 +11,7 @@ const {
   sendPushNotification,
   syncJobAssigneeFields,
   toBaseDocumentId,
+  MAX_JOB_ARRAY_LENGTH,
   HTTP_COMPANY_MANAGER_ROLES,
   HTTP_ALL_APP_ROLES,
 } = require('./shared');
@@ -504,7 +505,7 @@ exports.createJobV1 = onCall(async (request) => {
   const dbRef = admin.firestore();
   const companyRef = dbRef.doc(`companies/${companyId}`);
 
-  // N3: If an idempotency key was provided, check if a job with that key already exists
+  // N3: Pre-transaction idempotency check — serialized by Firestore transaction below
   if (idempotencyKey) {
     const existingQuery = await dbRef
       .collection(`companies/${companyId}/jobs`)
@@ -553,7 +554,6 @@ exports.createJobV1 = onCall(async (request) => {
     }
 
     // Validate array field lengths to prevent oversized documents
-    const MAX_JOB_ARRAY_LENGTH = 200;
     for (const arrField of ['parts', 'partsUsed', 'images', 'photos', 'tags']) {
       if (Array.isArray(jobPayload[arrField]) && jobPayload[arrField].length > MAX_JOB_ARRAY_LENGTH) {
         throw new HttpsError('invalid-argument', `${arrField} exceeds maximum length (${MAX_JOB_ARRAY_LENGTH})`);
@@ -594,6 +594,11 @@ exports.createJobV1 = onCall(async (request) => {
 
     return { jobId, jid: currentJid };
   });
+
+  // Handle idempotent duplicate detected inside transaction
+  if (result.duplicate) {
+    return { success: true, jobId: result.jobId, jid: result.jid, duplicate: true };
+  }
 
   logger.info('createJobV1: job created', {
     companyId, jobId: result.jobId, jid: result.jid, uid, jobType,
@@ -648,19 +653,34 @@ exports.updateJobV1 = onCall(async (request) => {
     ? data.updates
     : null;
 
-  // Build update payload — strip immutable/metadata fields
-  const updates = nestedUpdates ? { ...nestedUpdates } : { ...data };
-  delete updates.companyId;
-  delete updates.jobId;
-  delete updates.updates;
-  // Immutable fields workers cannot change
+  const raw = nestedUpdates ? { ...nestedUpdates } : { ...data };
+
+  // Positive field whitelist — only allow known job-data fields through
+  const ALLOWED_UPDATE_FIELDS = [
+    'title', 'description', 'name', 'clientName', 'clientId',
+    'clientPhone', 'clientEmail', 'clientAddress',
+    'workerId', 'completedBy', 'MUser', 'MName',
+    'parts', 'partsUsed', 'notes', 'priority', 'dueDate',
+    'location', 'address', 'category', 'tags', 'images',
+    'workerName', 'assignedTo', 'assignedBy',
+    'timeFrom', 'timeTo', 'travelDistance',
+    'signingPerson', 'photos', 'signature',
+    'finishedAt', 'status', 'isCert', 'deniedAt', 'deniedBy',
+  ];
+  const updates = {};
+  for (const key of ALLOWED_UPDATE_FIELDS) {
+    if (raw[key] !== undefined) {
+      updates[key] = raw[key];
+    }
+  }
+
+  // Role-specific restrictions for workers
   if (resolvedRole === 'worker') {
     delete updates.workerId;
     delete updates.completedBy;
-    delete updates.createdBy;
-    delete updates.createdAt;
-    delete updates.id;
-    delete updates.jid;
+    delete updates.isCert;
+    delete updates.deniedAt;
+    delete updates.deniedBy;
     // Workers cannot set status to finished or denied — must go through acceptJobV1
     const CANONICAL_STATUSES = ['pending', 'waiting'];
     if (updates.status && !CANONICAL_STATUSES.includes(updates.status)) {
@@ -681,6 +701,13 @@ exports.updateJobV1 = onCall(async (request) => {
   }
   if (existingJob.status === 'finished' && (updates.status === 'pending' || updates.status === 'waiting')) {
     throw new HttpsError('failed-precondition', 'Finished job cannot transition back to pending/waiting.');
+  }
+
+  // Validate array field lengths to prevent oversized documents on updates
+  for (const arrField of ['parts', 'partsUsed', 'images', 'photos', 'tags']) {
+    if (Array.isArray(updates[arrField]) && updates[arrField].length > MAX_JOB_ARRAY_LENGTH) {
+      throw new HttpsError('invalid-argument', `${arrField} exceeds maximum length (${MAX_JOB_ARRAY_LENGTH})`);
+    }
   }
 
   updates.updatedAt = new Date().toISOString();

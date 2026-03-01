@@ -15,6 +15,7 @@ const logger = require("firebase-functions/logger");
 const axios = require("axios");
 const axiosRetry = require("axios-retry").default;
 const crypto = require("crypto");
+const { DOC_TYPE, DOC_SUFFIX, VAT_RATE } = require("@smart-job/contracts");
 
 // ── Pub/Sub topics for document generation ────────────────────────────────
 const PREVIEW_TOPIC = 'document-preview';
@@ -50,42 +51,8 @@ axiosRetry(axios, {
 // ── Initialize Firebase Admin SDK ─────────────────────────────────────────
 admin.initializeApp();
 
-// ── Document type / suffix constants ──────────────────────────────────────
-/**
- * Document Type Codes (numeric)
- * 10 = Price Proposal (הצעת מחיר)
- * 200 = Delivery Note (תעודת משלוח)
- * 210 = Return Certificate (תעודת החזרה)
- * 305 = Tax Invoice (חשבונית מס)
- * 330 = Refund (זיכוי)
- * 400 = Receipt (קבלה)
- */
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
-
-/**
- * Document ID suffix codes
- * TI = Tax Invoice
- * PP = Price Proposal
- * RD = Refund
- * RC = Return Certificate
- * DN = Delivery Note
- * RT = Receipt
- */
-const DOC_SUFFIX = {
-  [DOC_TYPE.TAX_INVOICE]: 'TI',
-  [DOC_TYPE.PRICE_PROPOSAL]: 'PP',
-  [DOC_TYPE.REFUND]: 'RD',
-  [DOC_TYPE.RETURN_CERTIFICATE]: 'RC',
-  [DOC_TYPE.DELIVERY_NOTE]: 'DN',
-  [DOC_TYPE.RECEIPT]: 'RT'
-};
+// ── Document type / suffix / VAT constants ────────────────────────────────
+// DOC_TYPE, DOC_SUFFIX, VAT_RATE imported from @smart-job/contracts above.
 
 // ── Role / permission constants ───────────────────────────────────────────
 const GENERATE_DOCUMENT_ALLOWED_ROLES = ['manager', 'user', 'basic'];
@@ -93,6 +60,8 @@ const HTTP_COMPANY_CLIENT_ROLES = ['manager', 'user', 'basic', 'dev'];
 const HTTP_COMPANY_MANAGER_ROLES = ['manager', 'dev'];
 const HTTP_ALL_APP_ROLES = ['manager', 'worker', 'user', 'basic', 'dev'];
 const MAX_ITEMS_PER_DOCUMENT = 100; // Safety cap — also enforced in Cloud Run PDF service
+const MAX_JOB_ARRAY_LENGTH = 200;  // Max entries per array field in a job document
+// VAT_RATE imported from @smart-job/contracts above.
 
 // ── Global options ────────────────────────────────────────────────────────
 // P1-2: Enable App Check enforcement globally for all callable/onRequest functions
@@ -122,9 +91,13 @@ const CORS_ALLOWED_ORIGINS = _configuredCorsOrigins.length > 0
   );
 
 // ── Simple in-memory rate limiter for unauthenticated endpoints ───────────
+// NOTE: This limiter is per-instance. With maxInstances=25, the effective
+// limit across all instances could be up to RATE_LIMIT_MAX × 25.  This is
+// acceptable for low-sensitivity public endpoints (contactRequestV1, invites).
+// For stricter enforcement, use a distributed counter (e.g. Firestore or Redis).
 const _rateLimitMap = new Map(); // key → { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-const RATE_LIMIT_MAX = 5;            // max requests per window per key
+const RATE_LIMIT_MAX = 5;            // max requests per window per key per instance
 
 /**
  * Returns true if the caller identified by `key` has exceeded the rate limit.
@@ -770,6 +743,128 @@ async function deleteUserData(uid) {
   }
 }
 
+// ── Document busy-flag & Pub/Sub helpers ──────────────────────────────────
+
+/**
+ * Clear a company busy flag (document lock).
+ */
+async function clearCompanyBusyFlag(companyId, documentType) {
+  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
+  await busyRef.delete();
+}
+
+/**
+ * Atomically acquire a company busy flag.
+ * Prevents race conditions between check + set across concurrent requests.
+ */
+async function acquireCompanyBusyFlag(companyId, documentType, uid, taskId) {
+  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
+  const staleAfterMs = 5 * 60 * 1000;
+
+  await admin.firestore().runTransaction(async (tx) => {
+    const busyDoc = await tx.get(busyRef);
+    if (busyDoc.exists) {
+      const data = busyDoc.data() || {};
+      const lockTime = data.lockedAt?.toMillis?.() || 0;
+      const now = Date.now();
+      const isFreshLock = lockTime && (now - lockTime < staleAfterMs);
+
+      if (isFreshLock) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Another document is being generated. Please wait a few seconds and try again.',
+          { lockedBy: data.lockedBy || 'unknown' }
+        );
+      }
+    }
+
+    tx.set(busyRef, {
+      lockedBy: uid,
+      taskId,
+      lockedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+}
+
+/**
+ * Publish a Generate Task to Pub/Sub.
+ * Shared by documents.js (publishGenerateTask) and tax.js (getInvoiceApproval).
+ */
+async function publishGenerateTaskHelper({
+  documentType,
+  documentId,
+  documentNumber,
+  completeDocumentData,
+  documentData,
+  uid,
+  companyId,
+  createdByUid,
+  userRole
+}) {
+  const lockType = `generate_${documentType}`;
+  const taskId = `generate_${documentType}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  let lockAcquired = false;
+
+  await acquireCompanyBusyFlag(companyId, lockType, uid, taskId);
+  lockAcquired = true;
+
+  try {
+    const taskRef = admin.firestore().doc(`documentTasks/${taskId}`);
+    await taskRef.set({
+      taskId,
+      type: 'generate',
+      taskType: 'generate',
+      documentType,
+      companyId,
+      documentId,
+      documentNumber,
+      uid,
+      createdBy: createdByUid,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      documentData: completeDocumentData
+    });
+
+    const messageData = {
+      taskId,
+      documentType,
+      documentId,
+      documentNumber,
+      documentData: completeDocumentData,
+      uid,
+      companyId,
+      legacyDocumentData: documentData || null,
+      userRole: userRole || null,
+      confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
+    };
+
+    const topic = getPubSub().topic(GENERATE_TOPIC);
+    const messageBuffer = Buffer.from(JSON.stringify(messageData));
+    const messageId = await topic.publishMessage({ data: messageBuffer });
+
+    logger.info('Generate task published via helper', { taskId, messageId, documentType, documentId });
+
+    await taskRef.update({
+      status: 'queued',
+      pubsubMessageId: messageId,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return { taskId, messageId, published: true };
+  } catch (error) {
+    if (lockAcquired) {
+      try {
+        await clearCompanyBusyFlag(companyId, lockType);
+      } catch (unlockError) {
+        logger.error('Failed to clear busy flag after publishGenerateTaskHelper error', {
+          lockType, companyId, error: unlockError.message
+        });
+      }
+    }
+    throw error;
+  }
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────
 module.exports = {
   // Firebase / third-party references
@@ -800,6 +895,8 @@ module.exports = {
   HTTP_COMPANY_MANAGER_ROLES,
   HTTP_ALL_APP_ROLES,
   MAX_ITEMS_PER_DOCUMENT,
+  MAX_JOB_ARRAY_LENGTH,
+  VAT_RATE,
 
   // CORS
   CORS_ALLOWED_ORIGINS,
@@ -871,4 +968,9 @@ module.exports = {
   // Recursive delete & user data cleanup
   recursiveDelete,
   deleteUserData,
+
+  // Document busy-flag & Pub/Sub helpers (shared by documents.js & tax.js)
+  clearCompanyBusyFlag,
+  acquireCompanyBusyFlag,
+  publishGenerateTaskHelper,
 };

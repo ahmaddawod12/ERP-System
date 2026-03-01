@@ -1,10 +1,13 @@
 /**
  * Language Context Provider for Smart-Job App
- * Manages language state globally to avoid prop drilling
+ * Manages language state globally to avoid prop drilling.
+ * Uses MMKV for fast synchronous persistence (migrated from AsyncStorage).
  */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useContext, useState } from 'react';
+import { storage } from './CacheContext';
+
+const LANGUAGE_KEY = 'app_language';
 
 const LanguageContext = createContext();
 
@@ -17,33 +20,22 @@ export const useLanguageContext = () => {
 };
 
 export const LanguageProvider = ({ children }) => {
-  const [language, setLanguageState] = useState('en');
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    loadLanguagePreference();
-  }, []);
-
-  const loadLanguagePreference = async () => {
+  // MMKV reads are synchronous — no loading state needed
+  const [language, setLanguageState] = useState(() => {
     try {
-      const savedLanguage = await AsyncStorage.getItem('app_language');
-      if (savedLanguage) {
-        setLanguageState(savedLanguage);
-      }
-    } catch (error) {
-      console.error('Error loading language preference:', error);
-    } finally {
-      setIsLoading(false);
+      return storage.getString(LANGUAGE_KEY) || 'en';
+    } catch {
+      return 'en';
     }
-  };
+  });
 
-  const setLanguage = async (newLanguage) => {
+  const setLanguage = (newLanguage) => {
     try {
-      await AsyncStorage.setItem('app_language', newLanguage);
-      setLanguageState(newLanguage);
+      storage.set(LANGUAGE_KEY, newLanguage);
     } catch (error) {
       console.error('Error saving language preference:', error);
     }
+    setLanguageState(newLanguage);
   };
 
   const toggleLanguage = () => {
@@ -55,7 +47,7 @@ export const LanguageProvider = ({ children }) => {
     language,
     setLanguage,
     toggleLanguage,
-    isLoading,
+    isLoading: false,
   };
 
   return (

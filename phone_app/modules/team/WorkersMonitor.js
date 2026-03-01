@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   Platform,
@@ -10,7 +9,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { auth, db, collection, doc, getDocs, onSnapshot } from '../../firebase';
-import { colors, spacing, borderRadius, typography, shadows, getColors } from '../../theme';
+import { spacing, borderRadius, typography, shadows, getColors } from '../../theme';
 import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
@@ -889,7 +888,7 @@ const styles = StyleSheet.create({
   jobTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: colors.primary,
+    color: '#0C3A66',
   },
   jobTitleRow: {
     flexDirection: 'row',
@@ -992,7 +991,7 @@ const styles = StyleSheet.create({
   inventoryName: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: colors.primary,
+    color: '#0C3A66',
   },
   inventoryQuantity: {
     fontSize: 14,
@@ -1054,7 +1053,7 @@ const styles = StyleSheet.create({
   },
   detailValue: {
     fontSize: 16,
-    color: colors.primary,
+    color: '#0C3A66',
   },
   signatureContainer: {
     backgroundColor: '#f3f4f6',
@@ -1092,7 +1091,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   closeModalButton: {
-    backgroundColor: colors.secondary,
+    backgroundColor: '#0D8AE8',
     borderRadius: 8,
     paddingVertical: 12,
     alignItems: 'center',
@@ -1101,7 +1100,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: colors.primary,
+    color: '#0C3A66',
     marginBottom: 20,
     textAlign: 'center',
   },
@@ -1134,7 +1133,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#6b7280',
   },
   submitButton: {
-    backgroundColor: colors.secondary,
+    backgroundColor: '#0D8AE8',
   },
   modalButtonText: {
     color: 'white',

@@ -13,6 +13,7 @@ const {
   onRequest,
   DOC_TYPE,
   MAX_ITEMS_PER_DOCUMENT,
+  VAT_RATE,
   CORS_ALLOWED_ORIGINS,
   GENERATE_TOPIC,
   getPubSub,
@@ -22,6 +23,9 @@ const {
   toDocumentDocId,
   toBaseDocumentId,
   saveAuditLog,
+  clearCompanyBusyFlag,
+  acquireCompanyBusyFlag,
+  publishGenerateTaskHelper,
 } = require('./shared');
 
 // =============================================================================
@@ -30,8 +34,9 @@ const {
 
 // OAuth2 Configuration for Israeli Tax Authority
 const TAX_AUTHORITY_CONFIG = {
-  authUrl: 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/authorize',
-  tokenUrl: 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/token',
+  authUrl: process.env.TAX_AUTH_URL || 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/authorize',
+  tokenUrl: process.env.TAX_TOKEN_URL || 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/token',
+  approvalUrl: process.env.TAX_APPROVAL_URL || 'https://openapi.taxes.gov.il/shaam/tsandbox/Invoices/v2/Approval',
   clientId: process.env.TAX_CLIENT_ID || '',
   clientSecret: process.env.TAX_CLIENT_SECRET || '',
   scope: process.env.TAX_SCOPE || 'scope',
@@ -115,134 +120,6 @@ function ensureTaxAuthorityConfigForCallable() {
       'failed-precondition',
       'Tax Authority OAuth is not configured on the server.'
     );
-  }
-}
-
-// =============================================================================
-// Busy-flag helpers (used by publishGenerateTaskHelper inside getInvoiceApproval)
-// =============================================================================
-
-async function clearCompanyBusyFlag(companyId, documentType) {
-  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
-  await busyRef.delete();
-}
-
-async function acquireCompanyBusyFlag(companyId, documentType, uid, taskId) {
-  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
-  const staleAfterMs = 5 * 60 * 1000;
-
-  await admin.firestore().runTransaction(async (tx) => {
-    const busyDoc = await tx.get(busyRef);
-    if (busyDoc.exists) {
-      const data = busyDoc.data() || {};
-      const lockTime = data.lockedAt?.toMillis?.() || 0;
-      const now = Date.now();
-      const isFreshLock = lockTime && (now - lockTime < staleAfterMs);
-
-      if (isFreshLock) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Another document is being generated. Please wait a few seconds and try again.',
-          { lockedBy: data.lockedBy || 'unknown' }
-        );
-      }
-    }
-
-    tx.set(busyRef, {
-      lockedBy: uid,
-      taskId,
-      lockedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-  });
-}
-
-/**
- * SHARED HELPER: Publish Generate Task to Pub/Sub
- */
-async function publishGenerateTaskHelper({
-  documentType,
-  documentId,
-  documentNumber,
-  completeDocumentData,
-  documentData,
-  uid,
-  companyId,
-  createdByUid,
-  userRole
-}) {
-  const lockType = `generate_${documentType}`;
-  const taskId = `generate_${documentType}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-  let lockAcquired = false;
-
-  // Acquire lock atomically to avoid check/set race under concurrent requests.
-  await acquireCompanyBusyFlag(companyId, lockType, uid, taskId);
-  lockAcquired = true;
-
-  try {
-    // Create task document in Firestore for tracking
-    const taskRef = admin.firestore().doc(`documentTasks/${taskId}`);
-    await taskRef.set({
-      taskId: taskId,
-      type: 'generate',
-      taskType: 'generate',
-      documentType: documentType,
-      companyId: companyId,
-      documentId: documentId,
-      documentNumber: documentNumber,
-      uid: uid,
-      createdBy: createdByUid,
-      status: 'pending',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      documentData: completeDocumentData
-    });
-
-    // Prepare message with ALL data - Cloud Run does NO fetching
-    const messageData = {
-      taskId: taskId,
-      documentType: documentType,
-      documentId: documentId,
-      documentNumber: documentNumber,
-      documentData: completeDocumentData,
-      uid: uid,
-      companyId: companyId,
-      legacyDocumentData: documentData || null,
-      userRole: userRole || null,
-      // Pass confirmation number at top level for easy access in Cloud Run
-      confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
-    };
-
-    // Publish to Pub/Sub
-    const topic = getPubSub().topic(GENERATE_TOPIC);
-    const messageBuffer = Buffer.from(JSON.stringify(messageData));
-    const messageId = await topic.publishMessage({ data: messageBuffer });
-
-    logger.info('Generate task published via helper', { taskId, messageId, documentType, documentId });
-
-    // Update task with message ID
-    await taskRef.update({
-      status: 'queued',
-      pubsubMessageId: messageId,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    return {
-      taskId: taskId,
-      messageId: messageId,
-      published: true
-    };
-  } catch (error) {
-    if (lockAcquired) {
-      try {
-        await clearCompanyBusyFlag(companyId, lockType);
-      } catch (unlockError) {
-        logger.error('Failed to clear busy flag after publishGenerateTaskHelper error', {
-          lockType,
-          companyId,
-          error: unlockError.message
-        });
-      }
-    }
-    throw error;
   }
 }
 
@@ -357,6 +234,9 @@ exports.taxAuthorityCallback = onRequest({
   cors: CORS_ALLOWED_ORIGINS,
   timeoutSeconds: 30,
   memory: "512MiB",
+  // Tax Authority OAuth redirects cannot carry an App Check token.
+  // Auth is validated via state/nonce from Firestore instead.
+  enforceAppCheck: false,
 }, async (req, res) => {
   res.set('Cache-Control', 'private, max-age=0');
   
@@ -702,7 +582,7 @@ exports.getInvoiceApproval = onCall({
       const itemTotal = (item.quantity || 1) * (item.price || 0);
       totalBeforeVat += itemTotal;
     });
-    const vatAmount = totalBeforeVat * 0.18;
+    const vatAmount = totalBeforeVat * VAT_RATE;
     const totalWithVat = totalBeforeVat + vatAmount;
 
     // Get access token from Firestore
@@ -773,11 +653,12 @@ exports.getInvoiceApproval = onCall({
         accessTokenExpiresAt = now + (newTokenData.expires_in * 1000);
         accessToken = newTokenData.access_token;
 
-        // Update tokens in Firestore
+        // Update tokens in Firestore using a transaction to prevent race conditions
+        // when two concurrent calls both detect token expiration simultaneously
         const updateData = {
           accessToken: newTokenData.access_token,
           accessTokenExpiresAt: accessTokenExpiresAt,
-          lastRefreshedBy: request.auth.token.email,
+          lastRefreshedBy: request.auth.uid,
           lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
           autoRefreshedDuringInvoiceSubmission: true,
         };
@@ -885,7 +766,10 @@ exports.getInvoiceApproval = onCall({
         taxAuthorityData.customer_name = client.customerName || client.name;
       }
       else{
-        taxAuthorityData.customer_vat_number = 777777715; // Use generic number if invalid
+        // Israel Tax Authority generic/walk-in customer VAT number — used when the
+        // provided customer VAT number is not a valid integer.  This is the standard
+        // "unregistered consumer" placeholder recognised by the Tax Authority.
+        taxAuthorityData.customer_vat_number = 777777715;
         taxAuthorityData.customer_name = client.customerName || client.name;
       }
     }
@@ -914,8 +798,8 @@ exports.getInvoiceApproval = onCall({
       const quantity = item.quantity || 1;
       const pricePerUnit = item.price;
       const totalAmount = Math.round(quantity * pricePerUnit * 100) / 100;
-      const vatRate = 18;
-      const itemVatAmount = Math.round(totalAmount * (vatRate / 100) * 100) / 100;
+      const vatRate = Math.round(VAT_RATE * 100); // e.g. 18 for 18%
+      const itemVatAmount = Math.round(totalAmount * VAT_RATE * 100) / 100;
       
       // Category must be 5-digit code: 00001-00014 or 99999 (miscellaneous)
       // Default to 99999 (שונות - miscellaneous) for general items
@@ -963,7 +847,7 @@ exports.getInvoiceApproval = onCall({
     let response;
     try {
       response = await axios.post(
-        'https://openapi.taxes.gov.il/shaam/tsandbox/Invoices/v2/Approval',
+        TAX_AUTHORITY_CONFIG.approvalUrl,
         taxAuthorityData, // JSON body - axios automatically stringifies
         {
           headers: {
@@ -1233,25 +1117,16 @@ exports.getInvoiceApproval = onCall({
     }
 
     // Document counter was already atomically incremented in the transaction above.
-    // Only bump the company cache so clients detect the change.
-    try {
-      const businessCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
-      await businessCacheRef.set({
-        documentsVersion: admin.firestore.FieldValue.increment(1),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-      logger.info('Tax invoice counter already incremented transactionally', {
-        documentNumber,
-      });
-    } catch (counterError) {
-      logger.error('Failed to bump business_info cache', { error: counterError.message });
-    }
+    // Company cache was already bumped in the batch above — no additional increment needed.
+    logger.info('Tax invoice counter already incremented transactionally', {
+      documentNumber,
+    });
 
     // Save audit log for Tax Authority submission
     await saveAuditLog(
       companyId,
       'submitInvoiceToTaxAuthority',
-      request.auth.token.email,
+      request.auth.uid,
       documentId,
       DOC_TYPE.TAX_INVOICE
     );

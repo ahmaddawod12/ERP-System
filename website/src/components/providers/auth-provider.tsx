@@ -89,15 +89,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Only add the Secure flag when served over HTTPS (production).
+    // localhost uses plain HTTP, so Secure would silently prevent the cookie from being set.
+    const secureSuffix = globalThis.location?.protocol === "https:" ? "; Secure" : "";
+
     return onAuthStateChanged(auth, async (nextUser) => {
       try {
         setLoading(true);
         setUser(nextUser);
         if (nextUser) {
+          // Set auth cookie so middleware can gate /app/* routes server-side
+          const token = await nextUser.getIdToken();
+          document.cookie = `firebase-auth-token=${token}; path=/; max-age=${60 * 60}; SameSite=Lax${secureSuffix}`;
           const result = await loadUserProfile(nextUser.uid);
           setProfile(result.profile);
           setSubscription(result.subscription);
         } else {
+          // Clear auth cookie on sign-out
+          document.cookie =
+            `firebase-auth-token=; path=/; max-age=0; SameSite=Lax${secureSuffix}`;
           setProfile(null);
           setSubscription(null);
         }

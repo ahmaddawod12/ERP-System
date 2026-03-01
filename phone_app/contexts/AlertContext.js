@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, Modal } from 'react-native';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import { View, ActivityIndicator, StyleSheet, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import CustomAlert from '../components/CustomAlert';
+import { AppText } from '../components';
+import { gradients as themeGradients } from '../theme';
 
 const AlertContext = createContext();
 
@@ -21,7 +23,7 @@ export function AlertProvider({ children }) {
     message: '',
   });
 
-  const showAlert = (config) => {
+  const showAlert = useCallback((config) => {
     // Ensure loading is hidden first to avoid nested modals
     setLoadingConfig({ visible: false, title: '', message: '' });
     
@@ -36,13 +38,13 @@ export function AlertProvider({ children }) {
         icon: config.icon || null,
       });
     }, 100);
-  };
+  }, []);
 
-  const hideAlert = () => {
+  const hideAlert = useCallback(() => {
     setAlertConfig((prev) => ({ ...prev, visible: false }));
-  };
+  }, []);
 
-  const showLoading = (title, message) => {
+  const showLoading = useCallback((title, message) => {
     // Hide any existing alert first
     setAlertConfig({ visible: false, type: 'info', title: '', message: '', buttons: [], icon: null });
     
@@ -51,13 +53,13 @@ export function AlertProvider({ children }) {
       title: title || 'Please Wait',
       message: message || 'Processing...',
     });
-  };
+  }, []);
 
-  const hideLoading = () => {
+  const hideLoading = useCallback(() => {
     setLoadingConfig({ visible: false, title: '', message: '' });
-  };
+  }, []);
 
-  const alert = {
+  const alert = useMemo(() => ({
     show: showAlert,
     success: (title, message, buttons) => showAlert({ type: 'success', title, message, buttons }),
     error: (title, message, buttons) => showAlert({ type: 'error', title, message, buttons }),
@@ -67,7 +69,7 @@ export function AlertProvider({ children }) {
     confirm: (title, message, buttons) => showAlert({ type: 'confirm', title, message, buttons }),
     loading: showLoading,
     hideLoading: hideLoading,
-  };
+  }), [showAlert, showLoading, hideLoading]);
 
   return (
     <AlertContext.Provider value={alert}>
@@ -96,14 +98,14 @@ export function AlertProvider({ children }) {
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingBox}>
             <LinearGradient
-              colors={['#fbbf24', '#f59e0b']}
+              colors={themeGradients.yellowBox}
               style={styles.loadingGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
             >
               <Ionicons name="hourglass" size={40} color="#FFFFFF" />
-              <Text style={styles.loadingTitle}>{loadingConfig.title}</Text>
-              <Text style={styles.loadingMessage}>{loadingConfig.message}</Text>
+              <AppText style={styles.loadingTitle}>{loadingConfig.title}</AppText>
+              <AppText style={styles.loadingMessage}>{loadingConfig.message}</AppText>
               <ActivityIndicator size="large" color="#FFFFFF" style={styles.spinner} />
             </LinearGradient>
           </View>

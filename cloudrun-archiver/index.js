@@ -138,6 +138,12 @@ async function saveManifest(companyId, manifest) {
  * Query all documents in a collection within a date range.
  * Uses pagination to handle large datasets.
  * 
+ * NOTE: Date fields (finishedAt, createdAt) are stored as ISO-8601 strings
+ * by Cloud Functions (e.g. new Date().toISOString()). The range comparison
+ * uses ISO string ordering which works correctly for this format.
+ * If the schema ever migrates to Firestore Timestamps, the comparison
+ * values here must be converted to Timestamps as well.
+ * 
  * @param {string} collectionPath - Full Firestore collection path
  * @param {string} dateField - 'finishedAt' or 'createdAt'
  * @param {Date} startDate - Start of range (inclusive)

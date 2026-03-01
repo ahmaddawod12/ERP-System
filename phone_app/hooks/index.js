@@ -5,7 +5,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { auth, db, doc, getDoc, onAuthStateChanged, onSnapshot } from '../firebase';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const APP_ROLES = ['manager', 'worker', 'user', 'basic', 'dev'];
 
@@ -60,44 +59,6 @@ export const useAuth = () => {
 
   // Backward-compatible alias
   return { user, loading, error, uid, username: uid, userRole };
-};
-
-/**
- * Hook for managing language state with persistence
- * @returns {Object} { language, setLanguage, t }
- */
-export const useLanguage = (translations) => {
-  const [language, setLanguage] = useState('en');
-
-  useEffect(() => {
-    loadLanguagePreference();
-  }, []);
-
-  const loadLanguagePreference = async () => {
-    try {
-      const savedLanguage = await AsyncStorage.getItem('app_language');
-      if (savedLanguage) {
-        setLanguage(savedLanguage);
-      }
-    } catch (error) {
-      console.error('Error loading language preference:', error);
-    }
-  };
-
-  const changeLanguage = useCallback(async (newLanguage) => {
-    try {
-      await AsyncStorage.setItem('app_language', newLanguage);
-      setLanguage(newLanguage);
-    } catch (error) {
-      console.error('Error saving language preference:', error);
-    }
-  }, []);
-
-  const t = useMemo(() => {
-    return translations[language] || translations['en'];
-  }, [language, translations]);
-
-  return { language, setLanguage: changeLanguage, t };
 };
 
 /**

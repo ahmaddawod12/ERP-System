@@ -4,6 +4,7 @@ const {
   admin,
   logger,
   isValidEmail,
+  validateCompanyId,
   assertHttpCompanyAccess,
   HTTP_COMPANY_CLIENT_ROLES,
 } = require('./shared');
@@ -17,9 +18,7 @@ exports.addClientV1 = onCall(async (request) => {
   const data = request.data || {};
 
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
-  if (!companyId) {
-    throw new HttpsError('invalid-argument', 'companyId is required');
-  }
+  validateCompanyId(companyId);
 
   const name = typeof data.name === 'string' ? data.name.trim() : '';
   if (!name) {
@@ -169,7 +168,13 @@ exports.updateClientV1 = onCall(async (request) => {
 
   // Build update payload — strip metadata
   const updates = {};
-  if (data.name !== undefined) updates.name = String(data.name || '').trim();
+  if (data.name !== undefined) {
+    const trimmedName = String(data.name || '').trim();
+    if (!trimmedName) {
+      throw new HttpsError('invalid-argument', 'name cannot be empty');
+    }
+    updates.name = trimmedName;
+  }
   if (data.email !== undefined) {
     const email = String(data.email || '').trim();
     if (email && !isValidEmail(email)) {

@@ -13,7 +13,6 @@
 
 import React from 'react';
 import { View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   Linking,
@@ -27,18 +26,7 @@ import { getColors, spacing, borderRadius, typography, shadows } from '../../the
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
-
-/**
- * Document Type Codes (numeric)
- */
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
+import { DOC_TYPE } from '@smart-job/contracts';
 
 // Document type configurations
 const DOCUMENT_CONFIGS = {

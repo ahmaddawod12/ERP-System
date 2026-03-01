@@ -52,6 +52,34 @@ const DocTypeLabel = Object.freeze(
   Object.fromEntries(Object.entries(DocType).map(([k, v]) => [v, k]))
 );
 
+/**
+ * SCREAMING_SNAKE alias – used by functions/, cloudrun-pdf/, and phone_app/ modules
+ * that historically referenced DOC_TYPE.TAX_INVOICE etc.
+ */
+const DOC_TYPE = Object.freeze({
+  PRICE_PROPOSAL:     DocType.PriceProposal,
+  DELIVERY_NOTE:      DocType.DeliveryNote,
+  RETURN_CERTIFICATE: DocType.ReturnCertificate,
+  TAX_INVOICE:        DocType.TaxInvoice,
+  REFUND:             DocType.Refund,
+  RECEIPT:            DocType.Receipt,
+});
+
+/**
+ * Document ID suffix codes used when generating document IDs.
+ */
+const DOC_SUFFIX = Object.freeze({
+  [DOC_TYPE.TAX_INVOICE]:        'TI',
+  [DOC_TYPE.PRICE_PROPOSAL]:     'PP',
+  [DOC_TYPE.REFUND]:             'RD',
+  [DOC_TYPE.RETURN_CERTIFICATE]: 'RC',
+  [DOC_TYPE.DELIVERY_NOTE]:      'DN',
+  [DOC_TYPE.RECEIPT]:            'RT',
+});
+
+/** Israeli VAT rate (18%) — single source of truth across the monorepo. */
+const VAT_RATE = 0.18;
+
 // ── Subscription Tiers ─────────────────────────────────────────────────────
 const Tier = Object.freeze({
   Basic: 'Basic',
@@ -115,6 +143,9 @@ module.exports = {
   ACTIVE_JOB_STATUSES,
   DocType,
   DocTypeLabel,
+  DOC_TYPE,
+  DOC_SUFFIX,
+  VAT_RATE,
   Tier,
   SubStatus,
   paths,

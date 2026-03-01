@@ -1,5 +1,5 @@
-# Use the official Node.js 18 image with Puppeteer support
-FROM ghcr.io/puppeteer/puppeteer:22.0.0
+# Use the official Puppeteer image with Node.js 22 support
+FROM ghcr.io/puppeteer/puppeteer:24.2.1
 
 # Switch to root user for installation
 USER root

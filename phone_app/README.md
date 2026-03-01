@@ -17,7 +17,7 @@ The app now follows one design system so every screen stays visually consistent.
 - Mobile app no longer has `app/BusinessReg.js`.
 - Do not add mobile registration screens or routes unless product requirements change.
 
-## Version Snapshot (2026-02-26)
+## Version Snapshot (2026-02-28)
 
 From `phone_app/package.json`:
 
@@ -27,6 +27,7 @@ From `phone_app/package.json`:
 - React `19.1.0`
 - `@react-native-firebase/*` `^23.8.6`
 - MMKV `^4.1.1`
+- `@smart-job/contracts` (local workspace package)
 
 ## Core Features
 
@@ -42,15 +43,22 @@ From `phone_app/package.json`:
 ## Architecture
 
 ```text
-app/                 # Route files (mostly thin wrappers)
+app/                 # Route files (thin wrappers only)
 modules/             # Feature implementations
+  auth/              # Login screen logic
+  homepage/          # ManagerHomepage, WorkerHomepage, UserHomepage, BasicHomepage
+  settings/          # Settings screen logic
   team/
   solojob/
   documents/
   inventory/
-  shared/
+  shared/            # withGate, shared utilities
+  support/           # SupportChat screen logic
+  clients/           # ClientBook screen logic
 components/          # Shared UI components
-contexts/            # Theme, language, cache, alert providers
+contexts/            # Theme, language (MMKV), cache, alert providers
+  mmkv-storage.js    # Zero-React-dependency MMKV utilities (storage, getStorage, CACHE_KEYS, scope helpers)
+  CacheContext.js    # React cache provider, re-exports mmkv-storage for backward compat
 hooks/               # Custom hooks
 utils/               # Utilities
 ```
@@ -62,6 +70,11 @@ utils/               # Utilities
 3. Keep route files in `app/` minimal; business logic belongs in `modules/`.
 4. Use `withGate` for gated screens.
 5. Use `useAlert()` instead of `Alert.alert()`. All `Alert.alert()` / `RNAlert.alert()` calls have been eliminated from the codebase as of 2026-02-28.
+6. Prefer `AppInput` over raw `TextInput` from `react-native` in module screens. All module screens now use `AppInput` (migrated 2026-02-28). Component-level wrappers (e.g. `SearchInput`, `ClientSelector`) may use raw `TextInput` internally.
+7. For MMKV storage utilities in non-React code, import from `contexts/mmkv-storage.js`. `CacheContext` re-exports them for backward compatibility.
+8. Import shared constants (`DOC_TYPE`, `DOC_SUFFIX`, `VAT_RATE`, etc.) from `@smart-job/contracts` — do not define local duplicates.
+9. `ThemeContext` uses the shared MMKV store from `mmkv-storage.js` (not a separate MMKV instance).
+10. `AlertContext` values are memoized (`useCallback` / `useMemo`) to prevent unnecessary re-renders.
 
 ## Data and API Rules
 

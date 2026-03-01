@@ -45,10 +45,10 @@ exports.manageWorker = onCall(async (request) => {
 
     logger.info('manageWorker called', { 
       action,
-      email: normalizedEmail,
+      email: redactEmail(normalizedEmail),
       companyId,
       hasAuth: !!request.auth,
-      authEmail: request.auth?.token?.email
+      authEmail: request.auth?.token?.email ? redactEmail(request.auth.token.email) : undefined
     });
 
     // Validate action
@@ -60,6 +60,7 @@ exports.manageWorker = onCall(async (request) => {
     if (!normalizedEmail || !companyId) {
       throw new HttpsError('invalid-argument', 'Email and company name are required');
     }
+    validateCompanyId(companyId);
     if (!isValidEmail(normalizedEmail)) {
       throw new HttpsError('invalid-argument', 'Invalid worker email format');
     }
@@ -196,9 +197,7 @@ exports.manageWorker = onCall(async (request) => {
       if (workerDocSnap.empty && providedWorkerId) {
         workerDocSnap = await workersColRef.where('Wid', '==', Number(providedWorkerId)).limit(1).get();
       }
-      if (workerDocSnap.empty) {
-        workerDocSnap = await workersColRef.where('email', '==', normalizedEmail).limit(1).get();
-      }
+      // Email-based lookup removed — deprecated per P0-7
       if (!workerDocSnap.empty) {
         workerId = workerDocSnap.docs[0].id;
       }

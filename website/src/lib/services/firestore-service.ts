@@ -40,12 +40,13 @@ import type {
 /* ─── helpers ─── */
 
 /**
- * Company scope is always based on the profile companyId
- * returned by backend registration flows.
+ * Thin wrapper around the canonical resolveCompanyScope from @smart-job/contracts.
+ * The contracts version throws on empty input; this wrapper returns null instead
+ * to keep the website's existing null-check pattern working.
  */
-export function resolveCompanyScope(companyId: string | null): string | null {
-  const normalized = companyId?.trim() ?? "";
-  return normalized.length > 0 ? normalized : null;
+export function resolveCompanyScope(companyId: string | null | undefined): string | null {
+  const normalized = (companyId ?? "").trim();
+  return normalized || null;
 }
 
 /* ─── Profile ─── */

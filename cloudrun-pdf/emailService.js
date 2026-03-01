@@ -360,7 +360,19 @@ function getDocumentTitle(documentType, documentNumber, language = 'he') {
     },
   };
 
-  const typeTitle = titles[documentType] || titles.taxInvoice;
+  // Map numeric document type codes to string keys (callers pass numeric codes
+  // like 305, 400, etc. from DOC_TYPE constants)
+  const numericToKey = {
+    305: 'taxInvoice',
+    400: 'receipt',
+    10:  'priceProposal',
+    200: 'deliveryNote',
+    210: 'returnCertificate',
+    330: 'refund',
+  };
+
+  const resolvedKey = numericToKey[documentType] || documentType;
+  const typeTitle = titles[resolvedKey] || titles.taxInvoice;
   return typeTitle[language] || typeTitle.he;
 }
 

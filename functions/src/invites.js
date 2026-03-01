@@ -150,12 +150,14 @@ exports.joinCompanyV1 = onRequest({
     const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, auth.uid));
     const profileRef = admin.firestore().doc(userProfileDocPath(auth.uid));
     const companyCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
+    const companyRef = admin.firestore().doc(`companies/${companyId}`);
 
     const result = await admin.firestore().runTransaction(async (tx) => {
-      const [inviteSnap, workerSnap, profileSnap] = await Promise.all([
+      const [inviteSnap, workerSnap, profileSnap, companySnap] = await Promise.all([
         tx.get(inviteDocRef),
         tx.get(workerRef),
         tx.get(profileRef),
+        tx.get(companyRef),
       ]);
 
       if (!inviteSnap.exists) {
@@ -190,6 +192,13 @@ exports.joinCompanyV1 = onRequest({
 
       const isNewMembership = !workerSnap.exists;
 
+      // Allocate sequential wid for new workers (mirrors manageWorker in auth.js)
+      let workerSerial = null;
+      if (isNewMembership) {
+        workerSerial = Number(companySnap.data()?.wid || 1);
+        tx.set(companyRef, { wid: workerSerial + 1 }, { merge: true });
+      }
+
       tx.set(inviteDocRef, {
         usedBy: auth.uid,
         usedAt: nowIso,
@@ -204,6 +213,7 @@ exports.joinCompanyV1 = onRequest({
         name,
         phoneNumber,
         Uid: auth.uid,
+        ...(workerSerial !== null ? { wid: workerSerial, Wid: workerSerial } : {}),
         createdAt: workerSnap.exists ? (workerSnap.data()?.createdAt || nowIso) : nowIso,
         updatedAt: nowIso,
       }, { merge: true });

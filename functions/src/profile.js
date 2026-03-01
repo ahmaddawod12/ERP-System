@@ -9,6 +9,7 @@ const {
   logger,
   userProfileDocPath,
   userCacheDocPath,
+  companyWorkerDocPath,
   requireNonEmptyString,
   optionalTrimmedString,
   normalizeRole,
@@ -16,7 +17,6 @@ const {
   assertHttpCompanyAccess,
   assertTargetUserInCompany,
   HTTP_COMPANY_MANAGER_ROLES,
-  HTTP_COMPANY_CLIENT_ROLES,
 } = require('./shared');
 
 /**
@@ -56,6 +56,33 @@ exports.updateProfileV1 = onCall(async (request) => {
   if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
 
   await profileRef.update(updates);
+
+  // Sync name change to Firebase Auth displayName for consistency
+  if (name !== undefined) {
+    try {
+      await admin.auth().updateUser(uid, { displayName: name || undefined });
+    } catch (authUpdateErr) {
+      logger.warn('updateProfileV1: failed to sync displayName to Auth', { uid, error: authUpdateErr.message });
+    }
+  }
+
+  // Sync changed name/phone to the worker doc if the user belongs to a company
+  const profileData = profileSnap.data();
+  const companyId = profileData.companyId;
+  if (companyId) {
+    const workerUpdates = {};
+    if (name !== undefined) workerUpdates.name = name;
+    if (phoneNumber !== undefined) workerUpdates.phoneNumber = phoneNumber;
+    if (Object.keys(workerUpdates).length > 0) {
+      const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, uid));
+      const workerSnap = await workerRef.get();
+      if (workerSnap.exists) {
+        workerUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+        await workerRef.update(workerUpdates);
+        logger.info('updateProfileV1: synced worker doc', { uid, companyId, fields: Object.keys(workerUpdates) });
+      }
+    }
+  }
 
   logger.info('updateProfileV1: profile updated', { uid, fields: Object.keys(updates) });
   return { success: true };
@@ -129,7 +156,7 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
   await assertHttpCompanyAccess({
     uid,
     companyId,
-    allowedRoles: HTTP_COMPANY_CLIENT_ROLES, // manager, user, basic, dev
+    allowedRoles: HTTP_COMPANY_MANAGER_ROLES, // manager, dev only
     allowSoloScope: true,
   });
 
@@ -201,6 +228,16 @@ exports.updateCacheV1 = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'field is required');
   }
 
+  // Whitelist allowed cache field names to prevent arbitrary field injection
+  const ALLOWED_CACHE_FIELDS = [
+    'profile', 'inventory', 'subscription', 'lastUpdated',
+    'jobsVersion', 'documentsVersion', 'clientsVersion', 'workersVersion',
+    'updatedAt',
+  ];
+  if (!ALLOWED_CACHE_FIELDS.includes(field)) {
+    throw new HttpsError('invalid-argument', `Field '${field}' is not an allowed cache field`);
+  }
+
   // Access control
   if (isCompanyCache && companyId) {
     await assertHttpCompanyAccess({
@@ -233,10 +270,11 @@ exports.updateCacheV1 = onCall(async (request) => {
     : dbRef.doc(`users/${resolvedUid}/data/cache`);
 
   if (action === 'delete') {
-    await cacheRef.update({
+    // Use set+merge instead of update to avoid failure when cache doc doesn't exist yet
+    await cacheRef.set({
       [field]: admin.firestore.FieldValue.delete(),
       ...(isCompanyCache ? { updatedAt: admin.firestore.FieldValue.serverTimestamp() } : { lastUpdated: new Date().toISOString() }),
-    });
+    }, { merge: true });
   } else {
     await cacheRef.set({
       [field]: admin.firestore.FieldValue.increment(1),

@@ -20,15 +20,7 @@ import {
   AppText,
   GlobalHeader,
 } from '../../components';
-
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400,
-};
+import { DOC_TYPE } from '@smart-job/contracts';
 
 const translations = {
   en: {
@@ -39,6 +31,24 @@ const translations = {
     history: 'Document History',
     historyDesc: 'Review existing documents with filters',
     noResults: 'No document types matched your search.',
+  },
+  he: {
+    title: 'מסמכים כלליים',
+    subtitle: 'יצירה וניהול מסמכים רשמיים',
+    searchPlaceholder: 'חיפוש סוג מסמך',
+    createDocument: 'יצירת מסמך',
+    history: 'היסטוריית מסמכים',
+    historyDesc: 'סקירת מסמכים קיימים עם סינון',
+    noResults: 'לא נמצאו סוגי מסמכים תואמים.',
+  },
+  ar: {
+    title: 'مستندات عامة',
+    subtitle: 'إنشاء وإدارة المستندات الرسمية',
+    searchPlaceholder: 'بحث عن نوع المستند',
+    createDocument: 'إنشاء مستند',
+    history: 'سجل المستندات',
+    historyDesc: 'مراجعة المستندات الموجودة مع تصفية',
+    noResults: 'لم يتم العثور على أنواع مستندات مطابقة.',
   },
 };
 

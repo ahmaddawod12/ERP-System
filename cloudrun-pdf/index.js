@@ -224,6 +224,25 @@ async function processPreviewTask(taskData) {
   console.log(`[preview:${taskId}] Processing`, { documentType, uid, companyId });
   
   try {
+    // Verify requester identity — same checks as generateTask
+    if (!uid || !companyId) {
+      throw new Error('Missing required task identity fields (uid and companyId)');
+    }
+
+    const requesterProfileSnap = await db.doc(`users/${uid}/data/profile`).get();
+    if (!requesterProfileSnap.exists) {
+      throw new Error(`Requester profile not found for uid: ${uid}`);
+    }
+    const requesterProfile = requesterProfileSnap.data() || {};
+    const userRole = (requesterProfile.role || '').toLowerCase();
+
+    if (!['manager', 'user', 'basic', 'dev'].includes(userRole)) {
+      throw new Error(`Role not authorized for document preview: ${requesterProfile.role || 'unknown'}`);
+    }
+    if (!requesterProfile.companyId || requesterProfile.companyId !== companyId) {
+      throw new Error('Requester company mismatch');
+    }
+
     await acquireTab(taskId, 'preview');
     tabAcquired = true;
     

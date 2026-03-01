@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -85,7 +84,7 @@ export default function JobMonitor() {
     assignedBy: 'Assigned By',
     createdAt: 'Created At',
     status: 'Status',
-    title: 'Title',
+    fieldTitle: 'Title',
     description: 'Description',
     location: 'Location',
     dueDate: 'Due Date',
@@ -142,7 +141,7 @@ export default function JobMonitor() {
     assignedBy: 'הוקצה על ידי',
     createdAt: 'נוצר ב',
     status: 'סטטוס',
-    title: 'כותרת',
+    fieldTitle: 'כותרת',
     description: 'תיאור',
     location: 'מיקום',
     dueDate: 'תאריך יעד',
@@ -194,7 +193,7 @@ export default function JobMonitor() {
     assignedBy: 'تم التعيين بواسطة',
     createdAt: 'تم الإنشاء في',
     status: 'الحالة',
-    title: 'العنوان',
+    fieldTitle: 'العنوان',
     description: 'الوصف',
     location: 'الموقع',
     dueDate: 'تاريخ الاستحقاق',
@@ -740,7 +739,7 @@ export default function JobMonitor() {
         onClose={() => setSelectedJobDetails(null)}
         translations={{
           jobDetails: t.jobDetails,
-          jobTitle: t.title,
+          jobTitle: t.fieldTitle,
           description: t.description,
           location: t.location,
           dueDate: t.dueDate,

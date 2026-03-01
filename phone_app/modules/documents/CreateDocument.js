@@ -14,7 +14,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View,
-  Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -43,24 +42,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
 import { useAuth, useDocumentTask } from '../../hooks';
 import { middleEastFunctions, httpsCallable, db, doc, getDoc } from '../../firebase';
-
-/**
- * Document Type Codes (numeric)
- * 10 = Price Proposal (הצעת מחיר)
- * 200 = Delivery Note (תעודת משלוח)
- * 210 = Return Certificate (תעודת החזרה)
- * 305 = Tax Invoice (חשבונית מס)
- * 330 = Refund (זיכוי)
- * 400 = Receipt (קבלה)
- */
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
+import { DOC_TYPE } from '@smart-job/contracts';
 
 // Document type configurations (keyed by numeric type)
 const DOCUMENT_CONFIGS = {

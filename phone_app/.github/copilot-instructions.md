@@ -8,7 +8,7 @@ These instructions are specific to the mobile app.
 - Business registration is website-only.
 - `app/BusinessReg.js` was removed and must not be reintroduced.
 
-## Version Targets (2026-02-26)
+## Version Targets (2026-02-28)
 
 From `phone_app/package.json`:
 
@@ -28,9 +28,11 @@ Write code that is compatible with these versions.
 ## Architecture Rules
 
 1. File structure:
-- `modules/`: business logic screens by feature
-- `app/`: route entries (prefer thin wrappers)
+- `modules/`: business logic screens by feature (auth, homepage, settings, team, solojob, documents, inventory, support, clients, shared)
+- `app/`: route entries (thin wrappers only — `import Screen from '../modules/X/Y'; export default Screen;`)
 - `components/`: reusable design-system primitives
+- `contexts/mmkv-storage.js`: zero-React-dependency MMKV utilities (storage, getStorage, CACHE_KEYS, scope helpers)
+- `contexts/CacheContext.js`: React cache provider, re-exports mmkv-storage for backward compat
 
 2. Gating:
 - Use `withGate` for gated routes.
@@ -53,7 +55,11 @@ Write code that is compatible with these versions.
 - Surfaces: `AppCard`, `AppListItem`, `AppChip`, `AppEmptyState`
 - Layout/shell: `ScrollableContainer`, `GlobalHeader`
 
-3. Alerts:
+3. Inputs:
+- Prefer `AppInput` over raw `TextInput` from `react-native` in module screens.
+- Component-level wrappers (e.g. `SearchInput`, `ClientSelector`) may use raw `TextInput` internally.
+
+4. Alerts:
 - Never use `Alert.alert()` or `RNAlert.alert()`. All such calls were eliminated from the codebase on 2026-02-28.
 - Always use `useAlert()` from `contexts/AlertContext`.
 
@@ -92,3 +98,5 @@ Write code that is compatible with these versions.
 - Keeps `app/` routes lightweight and `modules/` focused.
 - Keeps uid/companyId naming and path conventions.
 - Avoids stale dependencies and legacy route references.
+- Uses MMKV via `storage` from `CacheContext` for local persistence (not `AsyncStorage`).
+- Uses `AppText` from `components/` in context providers (not raw `Text` from `react-native`).

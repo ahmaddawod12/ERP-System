@@ -73,3 +73,18 @@ The `useDocumentTask` hook is the canonical website workflow.
 - Legacy job/document status formats outside current schema
 - `node-fetch` or similar polyfills (Node 22 has native `fetch()`)
 - Direct Firestore writes to locked collections (`clients`, `jobs`, `documents`, `invites`, `workers`)
+
+## Auth Cookie for Middleware
+
+- `auth-provider.tsx` sets a `firebase-auth-token` cookie on sign-in and clears it on sign-out.
+- The `Secure` flag is conditional on HTTPS protocol (omitted on localhost for local development).
+- `middleware.ts` checks this cookie to gate `/app/*` routes server-side.
+- Do not remove the cookie-setting logic from auth-provider or the cookie check from middleware.
+
+## Page Route Pattern
+
+- All page routes (dashboard AND public auth pages) use the server wrapper + client shell pattern:
+  - `page.tsx` — server component with `export const metadata`, wraps `<Suspense>` around the client component.
+  - `page-client.tsx` — `"use client"` shell with hooks and interactivity.
+  - Do not add `"use client"` directly to `page.tsx` files.
+- Auth pages that follow this pattern: `/login`, `/register`, `/forgot-password`, `/onboarding`.

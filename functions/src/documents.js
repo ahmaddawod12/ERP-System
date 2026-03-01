@@ -16,6 +16,8 @@ const {
   CORS_ALLOWED_ORIGINS,
   GENERATE_DOCUMENT_ALLOWED_ROLES,
   HTTP_COMPANY_MANAGER_ROLES,
+  MAX_ITEMS_PER_DOCUMENT,
+  VAT_RATE,
   DOC_TYPE,
   DOC_SUFFIX,
   PREVIEW_TOPIC,
@@ -25,153 +27,10 @@ const {
   optionalTrimmedString,
   toDocumentDocId,
   toBaseDocumentId,
+  clearCompanyBusyFlag,
+  acquireCompanyBusyFlag,
+  publishGenerateTaskHelper,
 } = require('./shared');
-
-// ── Local helpers (not in shared) ─────────────────────────────────────────
-
-async function clearCompanyBusyFlag(companyId, documentType) {
-  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
-  await busyRef.delete();
-}
-
-/**
- * Atomically acquire a company busy flag.
- * Prevents race conditions between check + set across concurrent requests.
- */
-async function acquireCompanyBusyFlag(companyId, documentType, uid, taskId) {
-  const busyRef = admin.firestore().doc(`companies/${companyId}/documentLocks/${documentType}`);
-  const staleAfterMs = 5 * 60 * 1000;
-
-  await admin.firestore().runTransaction(async (tx) => {
-    const busyDoc = await tx.get(busyRef);
-    if (busyDoc.exists) {
-      const data = busyDoc.data() || {};
-      const lockTime = data.lockedAt?.toMillis?.() || 0;
-      const now = Date.now();
-      const isFreshLock = lockTime && (now - lockTime < staleAfterMs);
-
-      if (isFreshLock) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Another document is being generated. Please wait a few seconds and try again.',
-          { lockedBy: data.lockedBy || 'unknown' }
-        );
-      }
-    }
-
-    tx.set(busyRef, {
-      lockedBy: uid,
-      taskId,
-      lockedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-  });
-}
-
-/**
- * SHARED HELPER: Publish Generate Task to Pub/Sub
- * 
- * This helper is used by both publishGenerateTask and getInvoiceApproval
- * to avoid code duplication and ensure consistency.
- * 
- * @param {Object} params - Task parameters
- * @param {string} params.documentType - Type of document (taxInvoice, priceProposal, etc.)
- * @param {string} params.documentId - Pre-generated document ID
- * @param {number} params.documentNumber - Pre-assigned document number
- * @param {Object} params.completeDocumentData - Complete document data with all fields
- * @param {Object} params.documentData - Document data (for taxInvoice)
- * @param {string} params.uid - uid
- * @param {string} params.companyId - Company name
- * @param {string} params.createdByUid - User's Firebase UID
- * @param {string} [params.userRole] - Role for cache path determination
- * 
- * @returns {Object} { taskId, messageId, published: true }
- */
-async function publishGenerateTaskHelper({
-  documentType,
-  documentId,
-  documentNumber,
-  completeDocumentData,
-  documentData,
-  uid,
-  companyId,
-  createdByUid,
-  userRole
-}) {
-  const lockType = `generate_${documentType}`;
-  const taskId = `generate_${documentType}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-  let lockAcquired = false;
-
-  // Acquire lock atomically to avoid check/set race under concurrent requests.
-  await acquireCompanyBusyFlag(companyId, lockType, uid, taskId);
-  lockAcquired = true;
-
-  try {
-    // Create task document in Firestore for tracking
-    const taskRef = admin.firestore().doc(`documentTasks/${taskId}`);
-    await taskRef.set({
-      taskId: taskId,
-      type: 'generate',
-      taskType: 'generate',
-      documentType: documentType,
-      companyId: companyId,
-      documentId: documentId,
-      documentNumber: documentNumber,
-      uid: uid,
-      createdBy: createdByUid,
-      status: 'pending',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      documentData: completeDocumentData
-    });
-
-    // Prepare message with ALL data - Cloud Run does NO fetching
-    const messageData = {
-      taskId: taskId,
-      documentType: documentType,
-      documentId: documentId,
-      documentNumber: documentNumber,
-      documentData: completeDocumentData,
-      uid: uid,
-      companyId: companyId,
-      legacyDocumentData: documentData || null,
-      userRole: userRole || null,
-      // Pass confirmation number at top level for easy access in Cloud Run
-      confirmationNumber: completeDocumentData?.taxAuthorityConfirmationNumber || null,
-    };
-
-    // Publish to Pub/Sub
-    const topic = getPubSub().topic(GENERATE_TOPIC);
-    const messageBuffer = Buffer.from(JSON.stringify(messageData));
-    const messageId = await topic.publishMessage({ data: messageBuffer });
-
-    logger.info('Generate task published via helper', { taskId, messageId, documentType, documentId });
-
-    // Update task with message ID
-    await taskRef.update({
-      status: 'queued',
-      pubsubMessageId: messageId,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    return {
-      taskId: taskId,
-      messageId: messageId,
-      published: true
-    };
-  } catch (error) {
-    if (lockAcquired) {
-      try {
-        await clearCompanyBusyFlag(companyId, lockType);
-      } catch (unlockError) {
-        logger.error('Failed to clear busy flag after publishGenerateTaskHelper error', {
-          lockType,
-          companyId,
-          error: unlockError.message
-        });
-      }
-    }
-    throw error;
-  }
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Exported Cloud Functions
@@ -204,6 +63,12 @@ exports.generateDocumentV1 = onRequest({
     logger.warn('generateDocumentV1: Legacy endpoint called — migrate to Pub/Sub pipeline', {
       uid: auth.uid, companyId, type,
     });
+
+    // Validate item count even on legacy endpoint to enforce safety cap
+    const items = body.items || body.documentData?.items;
+    if (Array.isArray(items) && items.length > MAX_ITEMS_PER_DOCUMENT) {
+      return sendHttpError(res, 400, 'invalid-argument', `Too many items (max ${MAX_ITEMS_PER_DOCUMENT})`);
+    }
 
     const documentsRef = admin.firestore()
       .collection('companies')
@@ -307,6 +172,9 @@ exports.publishPreviewTask = onCall({
     if (!documentData.items || !Array.isArray(documentData.items) || documentData.items.length === 0) {
       throw new HttpsError('invalid-argument', 'At least one item is required');
     }
+    if (documentData.items.length > MAX_ITEMS_PER_DOCUMENT) {
+      throw new HttpsError('invalid-argument', `Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed per document`);
+    }
 
     const { role } = await getAuthenticatedUserProfile(request.auth, {
       allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
@@ -344,7 +212,7 @@ exports.publishPreviewTask = onCall({
     documentData.items.forEach(item => {
       totalBeforeVat += (item.quantity || 1) * (item.price || 0);
     });
-    const vatAmount = totalBeforeVat * 0.18;
+    const vatAmount = totalBeforeVat * VAT_RATE;
     const totalWithVat = totalBeforeVat + vatAmount;
 
     // Prepare complete document data for Cloud Run
@@ -474,6 +342,9 @@ exports.publishGenerateTask = onCall({
       if (!requestDocumentData.items || !Array.isArray(requestDocumentData.items) || requestDocumentData.items.length === 0) {
         throw new HttpsError('invalid-argument', 'At least one item is required');
       }
+      if (requestDocumentData.items.length > MAX_ITEMS_PER_DOCUMENT) {
+        throw new HttpsError('invalid-argument', `Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed per document`);
+      }
     }
 
     const { role } = await getAuthenticatedUserProfile(request.auth, {
@@ -576,7 +447,7 @@ exports.publishGenerateTask = onCall({
       items.forEach(item => {
         totalBeforeVat += (item.quantity || 1) * (item.price || 0);
       });
-      const vatAmount = totalBeforeVat * 0.18;
+      const vatAmount = totalBeforeVat * VAT_RATE;
       const totalWithVat = totalBeforeVat + vatAmount;
       
       // Prepare complete document data
@@ -585,7 +456,7 @@ exports.publishGenerateTask = onCall({
         items: items,
         company: companyData,
         language: language || 'he',
-        date: date || todayDate,
+        date: date || new Date().toISOString().slice(0, 10),
         notes: notes || null,
         totals: {
           totalBeforeVat: Math.round(totalBeforeVat * 100) / 100,
@@ -670,6 +541,13 @@ exports.deleteDocumentV1 = onCall(async (request) => {
   }
 
   await documentRef.delete();
+
+  // Bump cache version so clients refresh their documents list
+  await dbRef.doc(`companies/${companyId}/data/cache`).set({
+    documentsVersion: admin.firestore.FieldValue.increment(1),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
   const storagePath = typeof documentDataRecord.storagePath === 'string'
     ? documentDataRecord.storagePath.trim()
     : '';

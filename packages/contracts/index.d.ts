@@ -37,6 +37,22 @@ export declare const DocType: Readonly<{
 
 export declare const DocTypeLabel: Readonly<Record<DocTypeCode, string>>;
 
+/** SCREAMING_SNAKE alias for DOC_TYPE constants used across the monorepo. */
+export declare const DOC_TYPE: Readonly<{
+  PRICE_PROPOSAL: 10;
+  DELIVERY_NOTE: 200;
+  RETURN_CERTIFICATE: 210;
+  TAX_INVOICE: 305;
+  REFUND: 330;
+  RECEIPT: 400;
+}>;
+
+/** Document ID suffix codes. */
+export declare const DOC_SUFFIX: Readonly<Record<DocTypeCode, string>>;
+
+/** Israeli VAT rate (0.18). */
+export declare const VAT_RATE: 0.18;
+
 // ── Subscription ───────────────────────────────────────────────────────────
 export type TierValue = 'Basic' | 'User' | 'Team' | 'Dev';
 export type SubStatusValue = 'active' | 'trial' | 'expired';

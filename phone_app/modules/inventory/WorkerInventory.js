@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View,
-  Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   Platform,
@@ -15,7 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { auth, db, doc, getDoc, onSnapshot, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
-import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
+import { AppInput, AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -535,17 +533,12 @@ export default function WorkerInventory() {
       {/* Use Part Input */}
       {showUsePart === part.id && (
         <View style={styles.amountInput}>
-          <TextInput
-            style={[styles.amountTextInput, {
-              backgroundColor: colors.background,
-              borderColor: colors.border,
-              color: colors.textPrimary,
-            }]}
+          <AppInput
             value={useAmount}
             onChangeText={setUseAmount}
             placeholder={t.amount}
-            placeholderTextColor={colors.textSecondary}
             keyboardType="numeric"
+            colors={colors}
           />
           <View style={styles.buttonRow}>
             <TouchableOpacity onPress={() => handleUsePart(part.id)} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
@@ -564,17 +557,12 @@ export default function WorkerInventory() {
       {/* Add Quantity Input */}
       {showAddQuantity === part.id && (
         <View style={styles.amountInput}>
-          <TextInput
-            style={[styles.amountTextInput, {
-              backgroundColor: colors.background,
-              borderColor: colors.border,
-              color: colors.textPrimary,
-            }]}
+          <AppInput
             value={addAmount}
             onChangeText={setAddAmount}
             placeholder={t.amount}
-            placeholderTextColor={colors.textSecondary}
             keyboardType="numeric"
+            colors={colors}
           />
           <View style={styles.buttonRow}>
             <TouchableOpacity onPress={() => handleAddQuantityToPart(part.id)} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
@@ -641,16 +629,12 @@ export default function WorkerInventory() {
         ) : (
           <>
             {/* Search */}
-            <TextInput
-              style={[styles.searchInput, {
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                color: colors.textPrimary,
-              }]}
+            <AppInput
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder={t.searchParts}
-              placeholderTextColor={colors.textSecondary}
+              colors={colors}
+              containerStyle={styles.searchInput}
             />
 
             {/* Low Stock Parts */}
@@ -705,26 +689,24 @@ export default function WorkerInventory() {
 
               <View style={styles.inputGroup}>
                 <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.initialQuantity}</AppText>
-                <TextInput
-                  style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
+                <AppInput
                   value={addQuantity}
                   onChangeText={setAddQuantity}
                   placeholder={t.howMany}
-                  placeholderTextColor={colors.textSecondary}
                   keyboardType="numeric"
                   autoFocus
+                  colors={colors}
                 />
               </View>
 
               <View style={styles.inputGroup}>
                 <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.lowStockAlert}</AppText>
-                <TextInput
-                  style={[styles.formInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.textPrimary }]}
+                <AppInput
                   value={addLowThreshold}
                   onChangeText={setAddLowThreshold}
                   placeholder={t.alertAt}
-                  placeholderTextColor={colors.textSecondary}
                   keyboardType="numeric"
+                  colors={colors}
                 />
               </View>
 
@@ -743,16 +725,12 @@ export default function WorkerInventory() {
           ) : (
             // No selection yet → show list of company parts
             <>
-              <TextInput
-                style={[styles.pickerSearch, {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                  color: colors.textPrimary,
-                }]}
+              <AppInput
                 value={companyPickerSearch}
                 onChangeText={setCompanyPickerSearch}
                 placeholder={t.searchCompanyParts}
-                placeholderTextColor={colors.textSecondary}
+                colors={colors}
+                containerStyle={styles.pickerSearch}
               />
 
               {isLoadingCompanyParts ? (

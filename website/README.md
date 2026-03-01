@@ -8,6 +8,7 @@ Next.js App Router website for Smart-Job ERP (TypeScript + Tailwind + Firebase W
 - Firebase Web SDK (Auth + Firestore)
 - Firebase Admin SDK (API routes + privileged proxy/auth checks)
 - React Hook Form + Zod
+- Tailwind CSS v4 with `tailwind-merge` (via `cn()` utility in `src/lib/utils.ts`)
 - EN/HE/AR i18n with RTL
 - Dark/light theme persistence
 
@@ -57,6 +58,8 @@ Current document flows:
 - Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate them.
 - Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).
 - Firestore rules remain least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`).
+- Auth cookie `Secure` flag is conditional on HTTPS (omitted on localhost for development).
+- All page routes (dashboard and public auth pages) follow the server+client pattern: `page.tsx` (server, exports metadata) + `page-client.tsx` (client shell).
 
 ## Data Model
 

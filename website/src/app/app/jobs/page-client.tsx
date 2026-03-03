@@ -24,16 +24,16 @@ import type { JobRecord, WorkerProfile } from "@/lib/types";
 
 interface JobFormState {
   title: string;
-  clientName: string;
+  cname: string;
   description: string;
-  workerId: string;
+  wid: string;
 }
 
 const initialState: JobFormState = {
   title: "",
-  clientName: "",
+  cname: "",
   description: "",
-  workerId: "",
+  wid: "",
 };
 
 export default function JobsClient() {
@@ -50,7 +50,7 @@ export default function JobsClient() {
   const isSoloUser = role === "user" && profile?.accountType === "solo";
 
   const workerNameMap = useMemo(
-    () => Object.fromEntries(workers.map((worker) => [worker.workerId, worker.name || worker.email])),
+    () => Object.fromEntries(workers.map((worker) => [worker.wid, worker.name || worker.email])),
     [workers],
   );
 
@@ -78,7 +78,7 @@ export default function JobsClient() {
   }, [loadJobs]);
 
   const createNewJob = async () => {
-    if (!form.title || !form.clientName || !uid || !scopeId) {
+    if (!form.title || !form.cname || !uid || !scopeId) {
       toast({ title: "Missing fields", description: "Title and client are required.", variant: "error" });
       return;
     }
@@ -87,19 +87,17 @@ export default function JobsClient() {
       if (isSoloUser) {
         await createFinishedJob(scopeId, {
           title: form.title,
-          clientName: form.clientName,
+          cname: form.cname,
           description: form.description,
-          workerId: uid,
-          completedBy: uid,
+          wid: uid,
         });
       } else {
         await createJob(scopeId, {
           title: form.title,
-          clientName: form.clientName,
+          cname: form.cname,
           description: form.description,
           status: "pending",
-          workerId: form.workerId || uid,
-          completedBy: form.workerId || uid,
+          wid: form.wid || uid,
         });
       }
       await loadJobs();
@@ -161,8 +159,8 @@ export default function JobsClient() {
               />
               <Input
                 label="Client name"
-                value={form.clientName}
-                onChange={(event) => setForm((prev) => ({ ...prev, clientName: event.target.value }))}
+                value={form.cname}
+                onChange={(event) => setForm((prev) => ({ ...prev, cname: event.target.value }))}
               />
               <label className="md:col-span-2">
                 <span className="mb-1.5 inline-flex text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -179,13 +177,13 @@ export default function JobsClient() {
                 <label className="flex flex-col gap-1.5">
                   <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Assign worker</span>
                   <select
-                    value={form.workerId}
-                    onChange={(event) => setForm((prev) => ({ ...prev, workerId: event.target.value }))}
+                    value={form.wid}
+                    onChange={(event) => setForm((prev) => ({ ...prev, wid: event.target.value }))}
                     className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
                   >
                     <option value="">Unassigned</option>
                     {workers.map((worker) => (
-                      <option key={worker.workerId} value={worker.workerId}>
+                      <option key={worker.wid} value={worker.wid}>
                         {worker.name || worker.email}
                       </option>
                     ))}
@@ -221,7 +219,7 @@ export default function JobsClient() {
                     render: (row) => (
                       <div>
                         <p className="font-medium">{row.title}</p>
-                        <p className="text-xs text-slate-500">{row.clientName}</p>
+                        <p className="text-xs text-slate-500">{row.cname}</p>
                       </div>
                     ),
                   },
@@ -235,7 +233,7 @@ export default function JobsClient() {
                     header: "Worker",
                     render: (row) => (
                       <span className="text-sm text-slate-600 dark:text-slate-300">
-                        {row.workerId ? workerNameMap[row.workerId] || row.workerId : "Unassigned"}
+                        {row.wid ? workerNameMap[row.wid] || row.wid : "Unassigned"}
                       </span>
                     ),
                   },
@@ -246,15 +244,15 @@ export default function JobsClient() {
                       <div className="flex flex-wrap gap-2">
                         {canManageCompanyJobs ? (
                           <select
-                            defaultValue={row.workerId ?? ""}
+                            defaultValue={row.wid ?? ""}
                             onChange={(event) => {
-                              void handleJobUpdate(row.id, { workerId: event.target.value || null });
+                              void handleJobUpdate(row.id, { wid: event.target.value || null });
                             }}
                             className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                           >
                             <option value="">Unassigned</option>
                             {workers.map((worker) => (
-                              <option key={worker.workerId} value={worker.workerId}>
+                              <option key={worker.wid} value={worker.wid}>
                                 {worker.name || worker.email}
                               </option>
                             ))}
@@ -301,14 +299,14 @@ export default function JobsClient() {
                     render: (row) => (
                       <div>
                         <p className="font-medium">{row.title}</p>
-                        <p className="text-xs text-slate-500">{row.clientName}</p>
+                        <p className="text-xs text-slate-500">{row.cname}</p>
                       </div>
                     ),
                   },
                   {
                     key: "worker",
                     header: "Worker",
-                    render: (row) => workerNameMap[row.workerId ?? ""] || row.workerId || "N/A",
+                    render: (row) => workerNameMap[row.wid ?? ""] || row.wid || "N/A",
                   },
                   {
                     key: "status",

@@ -61,9 +61,9 @@ const JobCard = memo(function JobCard({
               <AppText variant="caption" color={palette.textSecondary} numberOfLines={1}>
                 {t.worker}: {job.workerName || t.unknownWorker}
               </AppText>
-              {job.clientName ? (
+              {job.cname ? (
                 <AppText variant="caption" color={palette.textSecondary} numberOfLines={1}>
-                  {t.clientName}: {job.clientName}
+                  {t.clientName}: {job.cname}
                 </AppText>
               ) : null}
               {job.location ? (
@@ -173,17 +173,17 @@ export default function ManageJobs() {
   const [selectedJobDetails, setSelectedJobDetails] = useState(null);
   const [highlightedJobId, setHighlightedJobId] = useState(null);
 
-  const workerNameByUid = useMemo(() => {
+  const workerNameByWid = useMemo(() => {
     const source = cachedWorkersList || {};
     if (Array.isArray(source)) {
       return source.reduce((acc, worker) => {
-        if (worker?.uid) acc[worker.uid] = worker.name || worker.email || worker.uid;
+        if (worker?.wid) acc[worker.wid] = worker.name || worker.email || worker.wid;
         return acc;
       }, {});
     }
-    return Object.keys(source).reduce((acc, uid) => {
-      const worker = source[uid] || {};
-      acc[uid] = worker.name || worker.email || uid;
+    return Object.keys(source).reduce((acc, wid) => {
+      const worker = source[wid] || {};
+      acc[wid] = worker.name || worker.email || wid;
       return acc;
     }, {});
   }, [cachedWorkersList]);
@@ -194,15 +194,11 @@ export default function ManageJobs() {
     setJobs(
       list.map((job) => ({
         ...job,
-        workerName:
-          job.name ||
-          workerNameByUid[job.completedBy] ||
-          workerNameByUid[job.assignedTo] ||
-          workerNameByUid[job.workerId],
+        workerName: job.wname || workerNameByWid[job.wid],
       }))
     );
     setLoading(false);
-  }, [cachedPendingJobs, workerNameByUid]);
+  }, [cachedPendingJobs, workerNameByWid]);
 
   useEffect(() => {
     if (!jobId || loading) return;

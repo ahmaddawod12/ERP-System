@@ -3,52 +3,6 @@
  * Centralized common functions to reduce code duplication
  */
 
-// Base62 characters for generating short unique IDs
-const BASE62_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-
-/**
- * Generate a unique 5-character Base62 ID
- * ~916 million unique combinations (62^5)
- * Uses crypto random for better uniqueness
- * @returns {string} 5-character Base62 ID
- */
-export const generateBase62Id = () => {
-  let id = '';
-  const randomValues = new Uint8Array(5);
-  
-  // Use crypto.getRandomValues if available, otherwise fallback to Math.random
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(randomValues);
-    for (let i = 0; i < 5; i++) {
-      id += BASE62_CHARS[randomValues[i] % 62];
-    }
-  } else {
-    // Fallback for environments without crypto
-    for (let i = 0; i < 5; i++) {
-      id += BASE62_CHARS[Math.floor(Math.random() * 62)];
-    }
-  }
-  
-  return id;
-};
-
-/**
- * Generate a unique job ID using Base62
- * Format: 5 character Base62 string
- * @returns {string} Unique job ID
- */
-export const generateJobId = () => {
-  return generateBase62Id();
-};
-
-/**
- * Generate a unique document ID using Base62
- * Format: 5 character Base62 string
- * @returns {string} Unique document ID
- */
-export const generateDocumentId = () => {
-  return generateBase62Id();
-};
 
 /**
  * Format date to localized string

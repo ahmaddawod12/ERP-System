@@ -348,7 +348,7 @@ export default function GenerateTaxInvoice() {
             .filter(job => !job.isCert)
             .map(job => ({
               ...job,
-              workerName: job.workerName || job.assignedTo || job.completedBy || job.assignedBy || 'Unknown',
+              wname: job.wname || 'Unknown',
             }));
 
           // Sort by finishedAt (newest first)
@@ -384,24 +384,9 @@ export default function GenerateTaxInvoice() {
         for (const docSnap of snapshot.docs) {
           const jobData = { id: docSnap.id, ...docSnap.data() };
           
-          // Fetch worker/user name
-          // Check assignedTo first (for jobs assigned to workers)
-          // Then check completedBy (for manager's/user's own jobs)
-          // Finally check assignedBy as fallback
-          const userToFetch = jobData.assignedTo || jobData.completedBy || jobData.assignedBy || jobData.workerId;
-          
-          if (userToFetch) {
-            try {
-              const userProfileRef = doc(db, 'users', userToFetch, 'data', 'profile');
-              const userProfileSnap = await getDoc(userProfileRef);
-              if (userProfileSnap.exists()) {
-                jobData.workerName = userProfileSnap.data().name || userToFetch;
-              } else {
-                jobData.workerName = userToFetch;
-              }
-            } catch (error) {
-              jobData.workerName = userToFetch;
-            }
+          // Use wname directly from the job document
+          if (!jobData.wname) {
+            jobData.wname = 'Unknown';
           }
           
           jobsData.push(jobData);
@@ -433,7 +418,7 @@ export default function GenerateTaxInvoice() {
       setFilteredJobs(finishedJobs);
     } else {
       const filtered = finishedJobs.filter(job =>
-        job.workerName?.toLowerCase().includes(searchQuery.toLowerCase())
+        job.wname?.toLowerCase().includes(searchQuery.toLowerCase())
       );
       setFilteredJobs(filtered);
     }
@@ -521,10 +506,10 @@ export default function GenerateTaxInvoice() {
     if (primaryJob.clientId && cachedClients && cachedClients.length > 0) {
       clientFromBook = cachedClients.find(c => c.id === primaryJob.clientId);
     }
-    // Fallback: match by clientName
-    if (!clientFromBook && primaryJob.clientName && cachedClients && cachedClients.length > 0) {
+    // Fallback: match by cname
+    if (!clientFromBook && primaryJob.cname && cachedClients && cachedClients.length > 0) {
       clientFromBook = cachedClients.find(c => 
-        c.name && c.name.toLowerCase() === primaryJob.clientName.toLowerCase()
+        c.name && c.name.toLowerCase() === primaryJob.cname.toLowerCase()
       );
     }
 
@@ -538,9 +523,9 @@ export default function GenerateTaxInvoice() {
     
     // Pre-fill customer data: prefer client book data, fallback to primary job data
     setInvoiceData({
-      customerName: clientFromBook?.name || primaryJob.clientName || '',
+      customerName: clientFromBook?.name || primaryJob.cname || '',
       customerVatNumber: clientFromBook?.vatNumber || '',
-      customerPhone: clientFromBook?.phone || primaryJob.clientPhone || '',
+      customerPhone: clientFromBook?.phone || primaryJob.cphone || '',
       customerAddress: clientFromBook?.address || primaryJob.location || '',
       customerCity: clientFromBook?.city || '',
       customerEmail: clientFromBook?.email || '',
@@ -550,7 +535,7 @@ export default function GenerateTaxInvoice() {
     });
 
     // Find matching price proposals for this client
-    findMatchingProposals(primaryJob.clientId, clientFromBook, primaryJob.clientName);
+    findMatchingProposals(primaryJob.clientId, clientFromBook, primaryJob.cname);
 
     // Merge parts from ALL selected jobs
     const mergedParts = mergePartsFromJobs(jobs);
@@ -586,7 +571,7 @@ export default function GenerateTaxInvoice() {
     if (matched.length === 0 && (clientObj?.name || clientName)) {
       const nameToMatch = (clientObj?.name || clientName || '').toLowerCase();
       matched = proposals.filter(p => 
-        p.clientName && p.clientName.toLowerCase() === nameToMatch
+        p.cname && p.cname.toLowerCase() === nameToMatch
       );
     }
 

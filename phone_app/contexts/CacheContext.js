@@ -82,6 +82,7 @@ export function CacheProvider({ children }) {
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
   const getUserRole = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_ROLE), []);
   const getCompanyId = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID), []);
+  const getWid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_WID), []);
 
   /**
    * Pause Firestore listeners when app is backgrounded (CRITICAL for Android)
@@ -295,12 +296,11 @@ export function CacheProvider({ children }) {
             const workersData = {};
             snapshot.forEach(docSnap => {
               const workerDoc = docSnap.data() || {};
-              // Workers are now keyed by UID in Firestore
-              const workerUid = docSnap.id;
-              workersData[workerUid] = {
+              // Workers are keyed by wid (sequential ID) in Firestore
+              const wid = docSnap.id;
+              workersData[wid] = {
                 ...workerDoc,
-                uid: workerUid,
-                workerId: workerDoc.workerId || workerUid,
+                wid,
               };
             });
             return workersData;
@@ -415,17 +415,20 @@ export function CacheProvider({ children }) {
         console.log(`Fetched ${documentsData.length} documents for manager`);
         
       } else if (role === 'worker') {
-        // Worker: fetch assigned jobs
+        // Worker: fetch assigned jobs by wid (worker sequential ID)
+        const wid = getWid();
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        const workerQuery = query(jobsRef, where('completedBy', '==', uid));
-        const jobsSnapshot = await getDocs(workerQuery);
-        const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        jobsData = allJobs.filter(j => {
-          if (j.status === 'pending' || j.status === 'waiting') return true;
-          const dateField = j.updatedAt || j.createdAt;
-          if (!dateField) return true;
-          return dateField >= ninetyDaysAgo;
-        });
+        if (wid) {
+          const workerQuery = query(jobsRef, where('wid', '==', wid));
+          const jobsSnapshot = await getDocs(workerQuery);
+          const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          jobsData = allJobs.filter(j => {
+            if (j.status === 'pending' || j.status === 'waiting') return true;
+            const dateField = j.updatedAt || j.createdAt;
+            if (!dateField) return true;
+            return dateField >= ninetyDaysAgo;
+          });
+        }
         console.log(`Fetched ${jobsData.length} jobs for worker`);
         
       } else if (role === 'user') {
@@ -492,6 +495,7 @@ export function CacheProvider({ children }) {
    */
   const setupCacheListeners = useCallback((uid, role, companyId) => {
     console.log(`Setting up cache listeners for ${role}...`);
+    const wid = getWid();
     
     // Dev role doesn't need cache listeners
     if (role === 'dev') {
@@ -599,7 +603,7 @@ export function CacheProvider({ children }) {
                   if (role === 'worker') {
                     deltaQuery = query(jobsRef,
                       where('updatedAt', '>', lastSync),
-                      where('completedBy', '==', uid)
+                      where('wid', '==', wid)
                     );
                   } else {
                     deltaQuery = query(jobsRef, where('updatedAt', '>', lastSync));
@@ -631,7 +635,7 @@ export function CacheProvider({ children }) {
                   // First sync — full fetch (fallback)
                   let jobsSnapshot;
                   if (role === 'worker') {
-                    const workerQuery = query(jobsRef, where('completedBy', '==', uid));
+                    const workerQuery = query(jobsRef, where('wid', '==', wid));
                     jobsSnapshot = await getDocs(workerQuery);
                   } else {
                     jobsSnapshot = await getDocs(jobsRef);
@@ -781,7 +785,7 @@ export function CacheProvider({ children }) {
     listenersActiveRef.current = true;
     
     console.log(`Cache listeners set up for ${role}`);
-  }, [fetchDataFromFirebase, fetchDocumentById, saveToLocalCache]);
+  }, [fetchDataFromFirebase, fetchDocumentById, saveToLocalCache, getWid]);
 
   /**
    * Initialize cache for a user (called on login/app start)
@@ -850,6 +854,8 @@ export function CacheProvider({ children }) {
         if (uid) mmkvHelpers.setString(CACHE_KEYS.UID, uid);
         if (role) mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, role);
         if (companyId) mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, companyId);
+        // Store worker sequential ID for job queries (workers only)
+        if (profileData?.wid) mmkvHelpers.setString(CACHE_KEYS.USER_WID, String(profileData.wid));
 
         // P2-4: Set MMKV scope so all subsequent reads/writes are user-namespaced
         setMmkvScope(uid, companyId);
@@ -1206,10 +1212,10 @@ export function CacheProvider({ children }) {
    * 1. Local cache workers list
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker ID 
+   * @param {string} wid - Worker ID 
    * @param {object} workerData - { email, name, phoneNumber, uid }
    */
-  const addWorker = useCallback(async (workerId, workerData) => {
+  const addWorker = useCallback(async (wid, workerData) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1223,15 +1229,14 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`?? Adding worker ${workerId} to cache...`);
+    console.log(`?? Adding worker ${wid} to cache...`);
     
     try {
       // 1. Update local cache
       const updatedWorkers = {
         ...workers,
-        [workerId]: {
-          uid: workerData.uid || workerId,
-          workerId: workerData.workerId || workerId,
+        [wid]: {
+          uid: workerData.uid,
           wid: workerData.wid ?? null,
           email: workerData.email,
           name: workerData.name,
@@ -1245,7 +1250,7 @@ export function CacheProvider({ children }) {
       // 2. Pre-increment local workersVersion (CF handles Firebase bump)
       preIncrementVersion('workersVersion', true);
       
-      console.log(`Worker ${workerId} added to cache successfully`);
+      console.log(`Worker ${wid} added to cache successfully`);
       
     } catch (error) {
       console.error('Error adding worker to cache:', error);
@@ -1258,10 +1263,10 @@ export function CacheProvider({ children }) {
    * Can update: name, phoneNumber
    * CANNOT update: email (immutable)
    * 
-   * @param {string} workerId - Worker ID to edit in cache  
+   * @param {string} wid - Worker ID to edit in cache  
    * @param {object} updates - { name?, phoneNumber? }
    */
-  const editWorker = useCallback(async (workerId, updates) => {
+  const editWorker = useCallback(async (wid, updates) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1275,11 +1280,11 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`?? Editing worker ${workerId} in cache...`);
+    console.log(`?? Editing worker ${wid} in cache...`);
     
     try {
       // 1. Update local cache
-      const currentWorker = workers[workerId];
+      const currentWorker = workers[wid];
       if (!currentWorker) {
         throw new Error('Worker not found in cache');
       }
@@ -1293,14 +1298,14 @@ export function CacheProvider({ children }) {
       
       const updatedWorkers = {
         ...workers,
-        [workerId]: updatedWorkerData
+        [wid]: updatedWorkerData
       };
       saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
       
       // 2. Pre-increment local workersVersion (CF handles Firebase bump)
       preIncrementVersion('workersVersion', true);
       
-      console.log(`Worker ${workerId} updated in cache successfully`);
+      console.log(`Worker ${wid} updated in cache successfully`);
       
     } catch (error) {
       console.error('Error editing worker in cache:', error);
@@ -1314,9 +1319,9 @@ export function CacheProvider({ children }) {
    * 1. Worker from local cache
    * 2. Increment cache version
    * 
-   * @param {string} workerId - Worker ID to delete from cache
+   * @param {string} wid - Worker ID to delete from cache
    */
-  const deleteWorker = useCallback(async (workerId) => {
+  const deleteWorker = useCallback(async (wid) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     
@@ -1330,17 +1335,17 @@ export function CacheProvider({ children }) {
       throw new Error('No company name found');
     }
     
-    console.log(`??? Deleting worker ${workerId} from cache...`);
+    console.log(`??? Deleting worker ${wid} from cache...`);
     
     try {
       // 1. Remove from local cache
-      const { [workerId]: deletedWorker, ...remainingWorkers } = workers;
+      const { [wid]: deletedWorker, ...remainingWorkers } = workers;
       saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
       
       // 2. Pre-increment local workersVersion (CF handles Firebase bump)
       preIncrementVersion('workersVersion', true);
       
-      console.log(`Worker ${workerId} deleted from cache successfully`);
+      console.log(`Worker ${wid} deleted from cache successfully`);
       
     } catch (error) {
       console.error('Error deleting worker from cache:', error);
@@ -1622,6 +1627,7 @@ export function CacheProvider({ children }) {
   const getDataForMonth = useCallback(async (monthDate, dataType) => {
     const role = getUserRole();
     const uid = getUid();
+    const wid = getWid();
     const companyId = getCompanyId();
     
     // Calculate month boundaries
@@ -1681,7 +1687,7 @@ export function CacheProvider({ children }) {
               where('status', '==', 'finished'),
               where('finishedAt', '>=', monthStart.toISOString()),
               where('finishedAt', '<', cacheStartDate.toISOString()),
-              where('completedBy', '==', uid)
+              where('wid', '==', wid)
             );
           } else {
             q = query(jobsRef,
@@ -1731,7 +1737,7 @@ export function CacheProvider({ children }) {
             where('status', '==', 'finished'),
             where('finishedAt', '>=', monthStart.toISOString()),
             where('finishedAt', '<=', monthEnd.toISOString()),
-            where('completedBy', '==', uid)
+            where('wid', '==', wid)
           );
         } else {
           q = query(jobsRef,
@@ -1775,8 +1781,8 @@ export function CacheProvider({ children }) {
         if (archivedData && archivedData.length > 0) {
           // For non-manager roles, filter by user
           if (dataType === 'finishedJobs' && role !== 'manager') {
-            const filtered = archivedData.filter(item => item.completedBy === uid);
-            console.log(`?? Filtered archived data: ${filtered.length}/${archivedData.length} docs for user ${uid}`);
+            const filtered = archivedData.filter(item => String(item.wid) === wid);
+            console.log(`?? Filtered archived data: ${filtered.length}/${archivedData.length} docs for wid ${wid}`);
             return filtered;
           }
           if (dataType === 'documents' && role !== 'manager') {
@@ -1798,7 +1804,7 @@ export function CacheProvider({ children }) {
       console.error('Error fetching month data:', error);
       return [];
     }
-  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
+  }, [getUserRole, getUid, getWid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
   /**
    * Get data for a date range with smart caching
@@ -1807,6 +1813,7 @@ export function CacheProvider({ children }) {
   const getDataForDateRange = useCallback(async (startDate, endDate, dataType) => {
     const role = getUserRole();
     const uid = getUid();
+    const wid = getWid();
     const companyId = getCompanyId();
     
     const startMs = startDate.getTime();
@@ -1857,7 +1864,7 @@ export function CacheProvider({ children }) {
             where('status', '==', 'finished'),
             where('finishedAt', '>=', startDate.toISOString()),
             where('finishedAt', '<', getCacheStartDate().toISOString()),
-            where('completedBy', '==', uid)
+            where('wid', '==', wid)
           );
         } else {
           q = query(jobsRef,
@@ -1879,7 +1886,7 @@ export function CacheProvider({ children }) {
             where('status', 'in', ['pending', 'waiting']),
             where('createdAt', '>=', startDate.toISOString()),
             where('createdAt', '<', getCacheStartDate().toISOString()),
-            where('completedBy', '==', uid)
+            where('wid', '==', wid)
           );
         } else {
           q = query(jobsRef,
@@ -1924,8 +1931,9 @@ export function CacheProvider({ children }) {
               
               // Apply user filter for non-managers
               if (role !== 'manager') {
-                const userField = dataType === 'finishedJobs' ? 'completedBy' : 'createdByUid';
-                const userFiltered = filtered.filter(item => item[userField] === uid);
+                const userField = dataType === 'finishedJobs' ? 'wid' : 'createdByUid';
+                const userValue = dataType === 'finishedJobs' ? wid : uid;
+                const userFiltered = filtered.filter(item => String(item[userField]) === userValue);
                 archivedDocs.push(...userFiltered);
               } else {
                 archivedDocs.push(...filtered);
@@ -1948,7 +1956,7 @@ export function CacheProvider({ children }) {
       console.error('Error fetching data for date range:', error);
       return cachedPortion;
     }
-  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
+  }, [getUserRole, getUid, getWid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
   /**
    * Refresh specific cache data

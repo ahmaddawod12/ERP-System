@@ -78,9 +78,9 @@ export async function listWorkers(companyId: string): Promise<WorkerProfile[]> {
  * Update worker role via manageWorker Cloud Function (admin-only rules block direct writes).
  * Fetches the worker doc first to get the email (required by manageWorker).
  */
-export async function updateWorkerRole(companyId: string, workerId: string, role: Role) {
+export async function updateWorkerRole(companyId: string, wid: string, role: Role) {
   // Get the worker's email from their worker doc
-  const workerSnap = await getDoc(doc(db, "companies", companyId, "workers", workerId));
+  const workerSnap = await getDoc(doc(db, "companies", companyId, "workers", wid));
   const workerEmail = workerSnap.exists() ? (workerSnap.data() as WorkerProfile).email : "";
 
   const manageWorkerFn = httpsCallable<
@@ -90,7 +90,7 @@ export async function updateWorkerRole(companyId: string, workerId: string, role
   await manageWorkerFn({
     action: "edit",
     companyId,
-    workerUid: workerId,
+    wid,
     email: workerEmail,
     role,
   });
@@ -114,7 +114,7 @@ export async function listJobs(
   companyId: string,
   opts?: {
     role?: Role;
-    uid?: string;
+    wid?: string;
     pageSize?: number;
     lastDoc?: DocumentSnapshot;
   },
@@ -122,8 +122,8 @@ export async function listJobs(
   const pageSize = opts?.pageSize || DEFAULT_PAGE_SIZE;
   const constraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
 
-  if (opts?.role === "worker" && opts.uid) {
-    constraints.unshift(where("completedBy", "==", opts.uid));
+  if (opts?.role === "worker" && opts.wid) {
+    constraints.unshift(where("wid", "==", opts.wid));
   }
 
   if (opts?.lastDoc) {

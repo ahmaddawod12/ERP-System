@@ -338,8 +338,6 @@ export default function Userjob() {
 
           const jobPayload = {
             ...pendingJob.jobData,
-            completedBy: uid,
-            name: profile?.name || '',
           };
 
           // Use createJobV1 Cloud Function for atomic creation
@@ -411,7 +409,6 @@ export default function Userjob() {
       if (dateFilter.startDate < ninetyDaysAgo) {
         const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs');
         const filtered = olderJobs
-          .filter(job => job.completedBy === uid)
           .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt));
         setJobs(filtered);
         setLoading(false);
@@ -421,11 +418,11 @@ export default function Userjob() {
       // Recent data — use cache
       let jobsList = [];
       if (role === 'manager') {
-        jobsList = (cachedCompanyJobs || []).filter(job => job.status === 'finished' && job.completedBy === uid);
+        jobsList = (cachedCompanyJobs || []).filter(job => job.status === 'finished');
       } else if (role === 'user') {
         jobsList = (cachedJobs || []).filter(job => job.status === 'finished');
       } else {
-        jobsList = (cachedJobs || []).filter(job => job.status === 'finished' && job.completedBy === uid);
+        jobsList = (cachedJobs || []).filter(job => job.status === 'finished');
       }
 
       // Apply date filter
@@ -438,7 +435,7 @@ export default function Userjob() {
       if (clientFilter.trim()) {
         const q = clientFilter.toLowerCase();
         jobsList = jobsList.filter(job =>
-          (job.clientName && job.clientName.toLowerCase().includes(q)) ||
+          (job.cname && job.cname.toLowerCase().includes(q)) ||
           (job.signingPerson && job.signingPerson.toLowerCase().includes(q)) ||
           (job.customer && job.customer.toLowerCase().includes(q))
         );
@@ -493,8 +490,8 @@ export default function Userjob() {
           timeTo: job.timeTo || '',
           location: job.location || '',
           description: job.description || '',
-          clientName: job.clientName || job.customerName || '',
-          clientPhone: job.clientPhone || job.customerPhone || '',
+          clientName: job.cname || '',
+          clientPhone: job.cphone || '',
           signingPerson: job.signingPerson || '',
           photos: job.photos || [],
           signature: job.signature || null,
@@ -695,10 +692,10 @@ export default function Userjob() {
               <AppText style={[styles.jobLocation, { color: colors.textSecondary }]}>
                 <AppText style={styles.locationLabel}>{t.location}: </AppText>{job.location}
               </AppText>
-              {job.clientName && (
+              {job.cname && (
                 <AppText style={[styles.jobCustomer, { color: colors.textSecondary }]}>
-                  {t.clientName}: {job.clientName}
-                  {job.clientPhone && `   ${t.clientPhone}: ${job.clientPhone}`}
+                  {t.clientName}: {job.cname}
+                  {job.cphone && `   ${t.clientPhone}: ${job.cphone}`}
                 </AppText>
               )}
             </TouchableOpacity>

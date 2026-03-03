@@ -228,8 +228,11 @@ function userCacheDocPath(uid) {
   return userDataDocPath(uid, 'cache');
 }
 
-function companyWorkerDocPath(companyId, uid) {
-  return `companies/${companyId}/workers/${uid}`;
+function companyWorkerDocPath(companyId, wid) {
+  return `companies/${companyId}/workers/${wid}`;
+}
+function companyManagerDocPath(companyId, mid) {
+  return `companies/${companyId}/managers/${mid}`;
 }
 
 // ── Auth / HTTP helpers ───────────────────────────────────────────────────
@@ -428,33 +431,9 @@ function toBaseDocumentId(documentId) {
   return String(documentId || '').trim();
 }
 
-// ── Job assignee helpers ──────────────────────────────────────────────────
-function normalizeJobAssigneeValue(value) {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  const normalized = String(value).trim();
-  return normalized ? normalized : null;
-}
-
-function syncJobAssigneeFields(jobLike) {
-  const hasWorkerId = Object.prototype.hasOwnProperty.call(jobLike, 'workerId');
-  const hasCompletedBy = Object.prototype.hasOwnProperty.call(jobLike, 'completedBy');
-
-  if (hasWorkerId) {
-    jobLike.workerId = normalizeJobAssigneeValue(jobLike.workerId);
-  }
-  if (hasCompletedBy) {
-    jobLike.completedBy = normalizeJobAssigneeValue(jobLike.completedBy);
-  }
-
-  if (hasWorkerId && !hasCompletedBy) {
-    jobLike.completedBy = jobLike.workerId ?? null;
-  } else if (hasCompletedBy && !hasWorkerId) {
-    jobLike.workerId = jobLike.completedBy ?? null;
-  }
-
-  return jobLike;
-}
+// ── Job field helpers ─────────────────────────────────────────────────────
+// Legacy syncJobAssigneeFields removed — jobs now use clean wid/wname/mid/mname
+// fields with no duplication.
 
 // ── Push notifications ────────────────────────────────────────────────────
 /**
@@ -885,6 +864,7 @@ module.exports = {
   userProfileDocPath,
   userCacheDocPath,
   companyWorkerDocPath,
+  companyManagerDocPath,
 
   // Environment helpers
   isFunctionsEmulator,
@@ -911,10 +891,6 @@ module.exports = {
   toDocumentDocId,
   getClientIp,
   toBaseDocumentId,
-
-  // Job assignee helpers
-  normalizeJobAssigneeValue,
-  syncJobAssigneeFields,
 
   // Push notifications
   sendPushNotification,

@@ -58,7 +58,7 @@ export default function FillJob() {
   const existingDraft = params.draft ? JSON.parse(params.draft) : null;
 
   const [selectedClientObj, setSelectedClientObj] = useState(
-    editingJob?.clientId ? { id: editingJob.clientId, name: editingJob.clientName || '', phone: editingJob.clientPhone || '' } : null
+    (editingJob?.cid || editingJob?.clientId) ? { id: editingJob.cid || editingJob.clientId, name: editingJob.cname || editingJob.clientName || '', phone: editingJob.cphone || editingJob.clientPhone || '' } : null
   );
 
   const [jobData, setJobData] = useState({
@@ -67,8 +67,8 @@ export default function FillJob() {
     timeTo: editingJob?.timeTo || existingDraft?.timeTo || '',
     location: editingJob?.location || existingDraft?.location || '',
     description: editingJob?.description || existingDraft?.description || '',
-    clientName: editingJob?.clientName || editingJob?.customerName || existingDraft?.clientName || '',
-    clientPhone: editingJob?.clientPhone || editingJob?.customerPhone || existingDraft?.clientPhone || '',
+    cname: editingJob?.cname || editingJob?.clientName || existingDraft?.cname || existingDraft?.clientName || '',
+    cphone: editingJob?.cphone || editingJob?.clientPhone || existingDraft?.cphone || existingDraft?.clientPhone || '',
     photos: editingJob?.photos || existingDraft?.photos || [],
     signingPerson: editingJob?.signingPerson || existingDraft?.signingPerson || '',
     signature: editingJob?.signature || existingDraft?.signature || null,
@@ -110,10 +110,7 @@ export default function FillJob() {
     clientNamePlaceholder: 'Enter client name',
     clientPhone: 'Client Phone',
     clientPhonePlaceholder: 'Enter phone number',
-    clientEmail: 'Client Email',
-    clientEmailPlaceholder: 'Enter email address',
-    clientAddress: 'Client Address',
-    clientAddressPlaceholder: 'Enter address',
+
     jobDescription: 'Job Description',
     descriptionPlaceholder: 'Describe what you did...',
     photos: 'Photos',
@@ -155,10 +152,7 @@ export default function FillJob() {
     clientNamePlaceholder: 'הזן שם לקוח',
     clientPhone: 'טלפון לקוח',
     clientPhonePlaceholder: 'הזן מספר טלפון',
-    clientEmail: 'אימייל לקוח',
-    clientEmailPlaceholder: 'הזן כתובת אימייל',
-    clientAddress: 'כתובת לקוח',
-    clientAddressPlaceholder: 'הזן כתובת',
+
     jobDescription: 'תיאור העבודה',
     descriptionPlaceholder: 'תאר מה עשית...',
     photos: 'תמונות',
@@ -200,10 +194,7 @@ export default function FillJob() {
     clientNamePlaceholder: 'أدخل اسم العميل',
     clientPhone: 'هاتف العميل',
     clientPhonePlaceholder: 'أدخل رقم الهاتف',
-    clientEmail: 'بريد العميل الإلكتروني',
-    clientEmailPlaceholder: 'أدخل البريد الإلكتروني',
-    clientAddress: 'عنوان العميل',
-    clientAddressPlaceholder: 'أدخل العنوان',
+
     jobDescription: 'وصف العمل',
     descriptionPlaceholder: 'صف ما قمت به...',
     photos: 'الصور',
@@ -443,7 +434,7 @@ export default function FillJob() {
     }
 
     if (!jobData.timeFrom || !jobData.timeTo || !jobData.location || 
-        !jobData.description || !jobData.clientName || !jobData.signingPerson) {
+        !jobData.description || !jobData.cname || !jobData.signingPerson) {
       alert.error('Error', t.fillAllFields);
       return false;
     }
@@ -554,14 +545,12 @@ export default function FillJob() {
 
       // Auto-save new client or update existing client with missing fields
       let clientId = selectedClientObj?.id || null;
-      if (selectedClientObj && jobData.clientName.trim()) {
+      if (selectedClientObj && jobData.cname.trim()) {
         // Update existing client with any newly filled fields
         try {
           const updates = {};
-          if (jobData.clientName.trim() && jobData.clientName.trim() !== (selectedClientObj.name || '')) updates.name = jobData.clientName.trim();
-          if (jobData.clientPhone?.trim() && jobData.clientPhone.trim() !== (selectedClientObj.phone || '')) updates.phone = jobData.clientPhone.trim();
-          if (jobData.clientEmail?.trim() && jobData.clientEmail.trim() !== (selectedClientObj.email || '')) updates.email = jobData.clientEmail.trim();
-          if (jobData.clientAddress?.trim() && jobData.clientAddress.trim() !== (selectedClientObj.address || '')) updates.address = jobData.clientAddress.trim();
+          if (jobData.cname.trim() && jobData.cname.trim() !== (selectedClientObj.name || '')) updates.name = jobData.cname.trim();
+          if (jobData.cphone?.trim() && jobData.cphone.trim() !== (selectedClientObj.phone || '')) updates.phone = jobData.cphone.trim();
           if (Object.keys(updates).length > 0) {
             await updateClient(selectedClientObj.id, updates);
             console.log('✅ Updated existing client with new fields:', Object.keys(updates));
@@ -569,13 +558,11 @@ export default function FillJob() {
         } catch (e) {
           console.log('Update client failed (non-critical):', e);
         }
-      } else if (!selectedClientObj && jobData.clientName.trim()) {
+      } else if (!selectedClientObj && jobData.cname.trim()) {
         // Save as new client
         try {
-          const clientToSave = { name: jobData.clientName.trim() };
-          if (jobData.clientPhone?.trim()) clientToSave.phone = jobData.clientPhone.trim();
-          if (jobData.clientEmail?.trim()) clientToSave.email = jobData.clientEmail.trim();
-          if (jobData.clientAddress?.trim()) clientToSave.address = jobData.clientAddress.trim();
+          const clientToSave = { name: jobData.cname.trim() };
+          if (jobData.cphone?.trim()) clientToSave.phone = jobData.cphone.trim();
           const savedClient = await addClient(clientToSave);
           if (savedClient) clientId = savedClient.id;
         } catch (e) {
@@ -590,15 +577,14 @@ export default function FillJob() {
         location: jobData.location,
         travelDistance: travelDistance ? parseFloat(travelDistance) : null,
         description: jobData.description,
-        clientName: jobData.clientName,
-        clientPhone: jobData.clientPhone || '',
-        ...(clientId && { clientId }),
+        cname: jobData.cname,
+        cphone: jobData.cphone || '',
+        ...(clientId && { cid: clientId }),
         signingPerson: jobData.signingPerson,
         photos: photoURLs,
         signature: signatureURL,
         status: mode === 'user' ? 'finished' : 'waiting',
-        completedBy: uid,
-        name: profile?.name || '',
+        ...(mode !== 'user' && { wname: profile?.name || '' }),
         finishedAt: currentDate.toISOString(),
         updatedAt: currentDate.toISOString(),
         isCert: false, // New field for tax invoice tracking
@@ -751,16 +737,14 @@ export default function FillJob() {
                 setSelectedClientObj(client);
                 setJobData(prev => ({
                   ...prev,
-                  clientName: client.name || '',
-                  clientPhone: client.phone || '',
-                  clientEmail: client.email || '',
-                  clientAddress: client.address || '',
+                  cname: client.cname || client.name || '',
+                  cphone: client.cphone || client.phone || '',
                 }));
               }}
               selectedClient={selectedClientObj}
               onClear={() => {
                 setSelectedClientObj(null);
-                setJobData(prev => ({ ...prev, clientName: '', clientPhone: '', clientEmail: '', clientAddress: '' }));
+                setJobData(prev => ({ ...prev, cname: '', cphone: '' }));
               }}
               colors={colors}
               language={language}
@@ -771,33 +755,18 @@ export default function FillJob() {
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.clientName + ' *'}
               placeholderTextColor={colors.textSecondary}
-              value={jobData.clientName}
-              onChangeText={(text) => setJobData({ ...jobData, clientName: text })}
+              value={jobData.cname}
+              onChangeText={(text) => setJobData({ ...jobData, cname: text })}
             />
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.clientPhone}
               placeholderTextColor={colors.textSecondary}
-              value={jobData.clientPhone}
-              onChangeText={(text) => setJobData({ ...jobData, clientPhone: text })}
+              value={jobData.cphone}
+              onChangeText={(text) => setJobData({ ...jobData, cphone: text })}
               keyboardType="phone-pad"
             />
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
-              placeholder={t.clientEmail}
-              placeholderTextColor={colors.textSecondary}
-              value={jobData.clientEmail || ''}
-              onChangeText={(text) => setJobData({ ...jobData, clientEmail: text })}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
-              placeholder={t.clientAddress}
-              placeholderTextColor={colors.textSecondary}
-              value={jobData.clientAddress || ''}
-              onChangeText={(text) => setJobData({ ...jobData, clientAddress: text })}
-            />
+
           </View>
 
           {/* Time Worked Card */}

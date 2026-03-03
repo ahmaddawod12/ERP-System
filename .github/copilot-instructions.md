@@ -44,9 +44,11 @@ When generating code, prefer compatibility with these versions.
 
 3. Job model:
 - All jobs live in a single `jobs` collection; status determines lifecycle phase.
-- Job IDs are server-generated plain Base62 from `jid` (no prefix).
+- Job IDs are server-generated plain Base62 from `counters/jnext` (no prefix).
 - Document IDs are plain Base62 (no prefix).
 - Valid statuses: `pending`, `waiting`, `finished`, `denied`
+- Job fields use short canonical names: `wid`/`wname` (worker), `mid`/`mname` (manager), `cid`/`cname`/`cphone` (client).
+- Do not use old field names: `workerId`, `completedBy`, `assignedTo`, `assignedBy`, `MUser`, `MName`, `clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `name`.
 
 4. Writes:
 - Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate them.
@@ -108,13 +110,16 @@ When generating code, prefer compatibility with these versions.
 - All shared utilities must be imported from `./shared.js`.
 - Keep role checks explicit.
 - Preserve App Check and auth verification behavior where already enforced.
-- Avoid schema drift: use canonical field names (`uid`, `companyId`, `workerId`, `he_name`, `en_name`, `vat_number`).
+- Avoid schema drift: use canonical field names (`uid`, `companyId`, `wid`, `wname`, `mid`, `mname`, `cid`, `cname`, `cphone`, `he_name`, `en_name`, `vat_number`).
+- Counters live in `companies/{companyId}/counters/{wnext|mnext|cnext|jnext}` subcollection, each doc has `{ next: <number> }`.
+- Workers are keyed by `wid` (sequential ID) at `companies/{companyId}/workers/{wid}`, not by Firebase Auth UID.
+- Profile stores `wid` for workers and `mid` for managers.
 - Node 22 runtime provides native `fetch()` — do not add `node-fetch` or similar polyfills.
 - Validate array field lengths against `MAX_JOB_ARRAY_LENGTH` (200) in job mutation functions.
 - Validate item counts against `MAX_ITEMS_PER_DOCUMENT` (100) in document generation functions.
 - PubSub is lazy-loaded via `getPubSub()` — do not import `@google-cloud/pubsub` at top level.
 - Busy-flag helpers (`clearCompanyBusyFlag`, `acquireCompanyBusyFlag`, `publishGenerateTaskHelper`) live in `shared.js` — do not duplicate them in domain modules.
-- `updateProfileV1` syncs name/phone changes to the worker doc. Preserve this sync when modifying profile logic.
+- `updateProfileV1` syncs name/phone changes to the worker doc (looked up by `wid` from profile). Preserve this sync when modifying profile logic.
 - `updateCacheV1` has an `ALLOWED_CACHE_FIELDS` whitelist. Do not accept arbitrary fields.
 - `updateBusinessInfoV1` is restricted to manager roles only.
 
@@ -154,3 +159,6 @@ When generating code, prefer compatibility with these versions.
 - `Alert.alert()` or `RNAlert.alert()` in mobile code (use `useAlert()` only)
 - `AsyncStorage` for language preference or hidden conversations (use MMKV via `storage` from `CacheContext`)
 - Raw `Text` from `react-native` in context providers (use `AppText` from `components/`)
+- Old job field names: `workerId`, `completedBy`, `assignedTo`, `assignedBy`, `MUser`, `MName`, `clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `name`, `id`, `jid`, `createdBy`
+- Counters on company root doc (use `counters/` subcollection)
+- Workers keyed by UID (use `wid` sequential ID)

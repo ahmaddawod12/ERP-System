@@ -51,6 +51,7 @@ export const CACHE_KEYS = {
   USER_ROLE: 'cache_user_role',
   UID: 'cache_uid',
   COMPANY_ID: 'cache_company_id',
+  USER_WID: 'cache_user_wid',
   
   // Incremental sync timestamps (C1 optimization)
   JOBS_LAST_SYNC: 'cache_jobs_last_sync',

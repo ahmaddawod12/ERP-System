@@ -292,10 +292,8 @@ exports.publishGenerateTask = onCall({
       // Build complete data from existing document
       completeDocumentData = {
         client: {
-          name: existingDocumentData.clientName,
-          email: existingDocumentData.clientEmail || '',
-          phone: existingDocumentData.clientPhone || '',
-          address: existingDocumentData.clientAddress || '',
+          name: existingDocumentData.cname || existingDocumentData.clientName,
+          phone: existingDocumentData.cphone || existingDocumentData.clientPhone || '',
         },
         items: existingDocumentData.items,
         company: companyData,

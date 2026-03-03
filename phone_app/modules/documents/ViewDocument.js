@@ -188,10 +188,8 @@ export default function ViewDocument() {
   
   // Get client data from various possible locations
   const clientData = document.documentData?.client || {
-    name: document.clientName,
-    email: document.clientEmail,
-    phone: document.clientPhone,
-    address: document.clientAddress,
+    name: document.cname,
+    phone: document.cphone,
     clientVatNumber: document.clientVatNumber,
   };
 

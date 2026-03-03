@@ -77,13 +77,14 @@ export interface BusinessInfo {
 }
 
 export interface WorkerProfile {
-  workerId: string;
+  wid: string;
   uid?: string;
   email: string;
   role: Role;
   name: string;
   phoneNumber: string;
-  wid?: number | null;
+  /** @deprecated Use wid instead */
+  workerId?: string;
   createdAt: string;
   updatedAt?: string;
 }
@@ -97,20 +98,17 @@ export interface JobRecord {
   title: string;
   description: string;
   location?: string;
-  clientName: string;
-  clientPhone?: string;
-  clientEmail?: string;
-  clientAddress?: string;
+  cname: string;
+  cphone?: string;
   clientId?: string;
   /**
    * Canonical statuses: pending → waiting → finished | denied
    */
   status: "pending" | "waiting" | "denied" | "finished";
-  workerId: string | null;
+  wid: string | null;
   name?: string;
-  MName?: string;
-  MUser?: string;
-  completedBy?: string;
+  mname?: string;
+  mid?: string;
   createdAt: string;
   updatedAt?: string;
   /** Worker-submitted fields */
@@ -181,11 +179,9 @@ export interface DocumentRecord {
   documentType?: number;
   documentNumber?: number;
   documentId?: string;
-  clientName?: string;
+  cname?: string;
   clientId?: string;
-  clientEmail?: string;
-  clientPhone?: string;
-  clientAddress?: string;
+  cphone?: string;
   clientCity?: string;
   clientVatNumber?: string;
   createdAt: string;

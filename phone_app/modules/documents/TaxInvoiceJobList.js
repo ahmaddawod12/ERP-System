@@ -96,22 +96,22 @@ export default function TaxInvoiceJobList({
                 <View style={styles.detailRow}>
                   <MaterialCommunityIcons name="account" size={18} color={colors.textSecondary} />
                   <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.worker}:</AppText>
-                  <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.workerName || 'N/A'}</AppText>
+                  <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.wname || 'N/A'}</AppText>
                 </View>
 
-                {job.clientName && (
+                {job.cname && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="account-tie" size={18} color={colors.textSecondary} />
                     <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.customer}:</AppText>
-                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.clientName}</AppText>
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.cname}</AppText>
                   </View>
                 )}
 
-                {job.clientPhone && (
+                {job.cphone && (
                   <View style={styles.detailRow}>
                     <MaterialCommunityIcons name="phone" size={18} color={colors.textSecondary} />
                     <AppText style={[styles.detailLabel, { color: colors.textSecondary }]}>{t.phone || 'Phone'}:</AppText>
-                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.clientPhone}</AppText>
+                    <AppText style={[styles.detailValue, { color: colors.textPrimary }]}>{job.cphone}</AppText>
                   </View>
                 )}
 

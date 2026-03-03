@@ -147,17 +147,16 @@ exports.joinCompanyV1 = onRequest({
     }
 
     const inviteDocRef = inviteQuery.docs[0].ref;
-    const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, auth.uid));
+    const workerRef = admin.firestore().doc(`companies/${companyId}/workers/pending_${auth.uid}`);
     const profileRef = admin.firestore().doc(userProfileDocPath(auth.uid));
     const companyCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
-    const companyRef = admin.firestore().doc(`companies/${companyId}`);
+    const wnextRef = admin.firestore().doc(`companies/${companyId}/counters/wnext`);
 
     const result = await admin.firestore().runTransaction(async (tx) => {
-      const [inviteSnap, workerSnap, profileSnap, companySnap] = await Promise.all([
+      const [inviteSnap, profileSnap, counterSnap] = await Promise.all([
         tx.get(inviteDocRef),
-        tx.get(workerRef),
         tx.get(profileRef),
-        tx.get(companyRef),
+        tx.get(wnextRef),
       ]);
 
       if (!inviteSnap.exists) {
@@ -182,22 +181,15 @@ exports.joinCompanyV1 = onRequest({
       }
 
       const resolvedRole = toProfileRole(
-        workerSnap.exists
-          ? workerSnap.data()?.role
-          : (inviteData.targetRole || requestedRole || 'worker')
+        inviteData.targetRole || requestedRole || 'worker'
       );
       if (!['worker', 'user', 'basic'].includes(resolvedRole)) {
         throw new HttpsError('failed-precondition', 'Invite target role is invalid');
       }
 
-      const isNewMembership = !workerSnap.exists;
-
-      // Allocate sequential wid for new workers (mirrors manageWorker in auth.js)
-      let workerSerial = null;
-      if (isNewMembership) {
-        workerSerial = Number(companySnap.data()?.wid || 1);
-        tx.set(companyRef, { wid: workerSerial + 1 }, { merge: true });
-      }
+      // Allocate sequential wid for new workers from counter subcollection
+      const workerSerial = Number(counterSnap.data()?.next || 1);
+      tx.set(wnextRef, { next: workerSerial + 1 });
 
       tx.set(inviteDocRef, {
         usedBy: auth.uid,
@@ -205,17 +197,18 @@ exports.joinCompanyV1 = onRequest({
         status: 'used',
       }, { merge: true });
 
-      tx.set(workerRef, {
-        workerId: auth.uid,
+      // Worker doc keyed by wid
+      const actualWorkerRef = admin.firestore().doc(`companies/${companyId}/workers/${workerSerial}`);
+      tx.set(actualWorkerRef, {
         uid: auth.uid,
         email,
         role: resolvedRole,
         name,
         phoneNumber,
-        ...(workerSerial !== null ? { wid: workerSerial } : {}),
-        createdAt: workerSnap.exists ? (workerSnap.data()?.createdAt || nowIso) : nowIso,
+        wid: workerSerial,
+        createdAt: nowIso,
         updatedAt: nowIso,
-      }, { merge: true });
+      });
 
       tx.set(profileRef, {
         uid: auth.uid,
@@ -225,22 +218,17 @@ exports.joinCompanyV1 = onRequest({
         accountType: 'business',
         name,
         phoneNumber,
+        wid: workerSerial,
         createdAt: profileSnap.exists ? (profileSnap.data()?.createdAt || nowIso) : nowIso,
         updatedAt: nowIso,
       }, { merge: true });
 
-      if (isNewMembership) {
-        tx.set(companyCacheRef, {
-          workersVersion: admin.firestore.FieldValue.increment(1),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      } else {
-        tx.set(companyCacheRef, {
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      }
+      tx.set(companyCacheRef, {
+        workersVersion: admin.firestore.FieldValue.increment(1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
 
-      return { companyId, role: resolvedRole };
+      return { companyId, role: resolvedRole, wid: workerSerial };
     });
 
     return sendHttpOk(res, result);

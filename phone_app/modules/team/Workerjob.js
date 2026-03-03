@@ -243,7 +243,6 @@ export default function Workerjob() {
               status: 'waiting',
               submittedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              completedBy: pendingJob.uid || getUid(),
             };
             await updateJob(jobId, updatedJob, true);
             const updateJobFn = httpsCallable(functions, 'updateJobV1');
@@ -296,7 +295,7 @@ export default function Workerjob() {
       if (dateFilter.startDate < ninetyDaysAgo) {
         const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs');
         const filtered = olderJobs
-          .filter(job => job.completedBy === uid || job.assignedTo === uid)
+          .filter(job => job.wid === profile?.wid)
           .sort((a, b) => new Date(b.finishedAt || b.createdAt) - new Date(a.finishedAt || a.createdAt));
         setJobs(filtered);
         setLoading(false);
@@ -339,7 +338,7 @@ export default function Workerjob() {
 
       const updates = {
         status: 'waiting',
-        name: profile.name || '',
+        wname: profile.name || '',
         receivedAt: new Date().toISOString(),
       };
 
@@ -378,13 +377,13 @@ export default function Workerjob() {
           timeTo: job.timeTo || '',
           location: job.location || '',
           description: job.workDescription || job.description || '',
-          clientName: job.clientName || '',
-          clientPhone: job.clientPhone || '',
+          clientName: job.cname || '',
+          clientPhone: job.cphone || '',
           photos: job.photos || [],
           signingPerson: job.signingPerson || '',
           signature: job.signature || null,
           partsUsed: job.partsUsed || [],
-          assignedBy: job.assignedBy || '',
+          mname: job.mname || '',
         }),
       },
     });
@@ -598,16 +597,16 @@ export default function Workerjob() {
 
               {/* Job Info */}
               <AppText style={[styles.jobDescription, { color: colors.textSecondary }]}>{job.description}</AppText>
-              {job.assignedBy && (
+              {job.mname && (
                 <AppText style={[styles.jobDetails, { color: colors.textSecondary }]}>
-                  {t.assignedBy}: {job.assignedBy}
+                  {t.assignedBy}: {job.mname}
                 </AppText>
               )}
-              {(job.clientName || job.clientPhone) && (
+              {(job.cname || job.cphone) && (
                 <AppText style={[styles.jobCustomer, { color: colors.textSecondary }]}>
-                  {job.clientName && `${t.clientName}: ${job.clientName}`}
-                  {job.clientName && job.clientPhone ? ' • ' : ''}
-                  {job.clientPhone && `${t.clientPhone}: ${job.clientPhone}`}
+                  {job.cname && `${t.clientName}: ${job.cname}`}
+                  {job.cname && job.cphone ? ' • ' : ''}
+                  {job.cphone && `${t.clientPhone}: ${job.cphone}`}
                 </AppText>
               )}
               {job.dueDate && (
@@ -635,19 +634,19 @@ export default function Workerjob() {
                     <Image source={require('../../assets/icons8-waze-48.png')} style={styles.wazeIcon} />
                   </TouchableOpacity>
                 )}
-                {job.clientPhone && (
+                {job.cphone && (
                   <TouchableOpacity
                     style={styles.phoneButton}
-                    onPress={(e) => { e.stopPropagation(); handleCallClient(job.clientPhone); }}
+                    onPress={(e) => { e.stopPropagation(); handleCallClient(job.cphone); }}
                     activeOpacity={0.7}
                   >
                     <AppText style={styles.phoneIcon}>📞</AppText>
                   </TouchableOpacity>
                 )}
-                {job.clientPhone && (
+                {job.cphone && (
                   <TouchableOpacity
                     style={styles.whatsappButton}
-                    onPress={(e) => { e.stopPropagation(); handleOpenWhatsApp(job.clientPhone); }}
+                    onPress={(e) => { e.stopPropagation(); handleOpenWhatsApp(job.cphone); }}
                     activeOpacity={0.7}
                   >
                     <Ionicons name="logo-whatsapp" size={22} color="#000000" />

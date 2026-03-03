@@ -627,12 +627,10 @@ async function processGenerateTask(taskData) {
     if (isNewDocument) {
       await documentRef.set({
         type: documentType,
-        clientName: client.name,
-        clientEmail: client.email || null,
-        clientPhone: client.phone || null,
-        clientAddress: client.address || null,
-        ...(client.clientId && { clientId: client.clientId }),
-        ...(client.id && !client.clientId && { clientId: client.id }),
+        cname: client.name,
+        cphone: client.phone || null,
+        ...(client.clientId && { cid: client.clientId }),
+        ...(client.id && !client.clientId && { cid: client.id }),
         items: items.map(item => ({
           description: item.description,
           quantity: item.quantity,

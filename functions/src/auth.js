@@ -19,6 +19,7 @@ const {
   userProfileDocPath,
   userCacheDocPath,
   companyWorkerDocPath,
+  companyManagerDocPath,
   saveAuditLog,
   deleteUserData,
   sendPushNotification,
@@ -38,7 +39,7 @@ exports.manageWorker = onCall(async (request) => {
       phoneNumber,
       companyId,
       workerUid: providedWorkerUid, // For delete/edit action (UID-based)
-      workerId: providedWorkerId, // For delete/edit action (company worker doc ID)
+      wid: providedWid,             // For delete/edit action (company worker wid)
       newPassword
     } = request.data || {};
     const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -78,12 +79,12 @@ exports.manageWorker = onCall(async (request) => {
       }
       await verifyManagerAuth(request.auth, null, companyId);
 
-      const companyRef = admin.firestore().doc(`companies/${companyId}`);
+      const wnextRef = admin.firestore().doc(`companies/${companyId}/counters/wnext`);
       const workerSerial = await admin.firestore().runTransaction(async (tx) => {
-        const companySnap = await tx.get(companyRef);
-        const currentWorkerId = Number(companySnap.data()?.wid || 1);
-        tx.set(companyRef, { wid: currentWorkerId + 1 }, { merge: true });
-        return currentWorkerId;
+        const counterSnap = await tx.get(wnextRef);
+        const currentWid = Number(counterSnap.data()?.next || 1);
+        tx.set(wnextRef, { next: currentWid + 1 });
+        return currentWid;
       });
 
       // I8: Create Firebase Auth user and Firestore docs with orphan cleanup on failure
@@ -102,10 +103,10 @@ exports.manageWorker = onCall(async (request) => {
 
       logger.info(`Created Authentication user for worker: ${redactEmail(normalizedEmail)}`, { uid: workerUid });
 
-      // Canonical worker paths (UID-keyed)
+      // Canonical worker paths (worker doc now keyed by wid)
       const workerProfileRef = admin.firestore().doc(userProfileDocPath(workerUid));
       const workerCacheRef = admin.firestore().doc(userCacheDocPath(workerUid));
-      const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, workerUid));
+      const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(workerSerial)));
 
       try {
         const batch = admin.firestore().batch();
@@ -116,7 +117,6 @@ exports.manageWorker = onCall(async (request) => {
           companyId: companyId,
           name: String(name || '').trim(),
           phoneNumber: String(phoneNumber || ''),
-          workerId: workerUid,
           wid: workerSerial,
           accountType: 'business',
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -127,13 +127,10 @@ exports.manageWorker = onCall(async (request) => {
           lastUpdated: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
         batch.set(workerListRef, {
-          workerId: workerUid,
           uid: workerUid,
           email: normalizedEmail,
           name: String(name || '').trim(),
           phoneNumber: String(phoneNumber || ''),
-          Uid: workerUid,
-          Wid: workerSerial,
           wid: workerSerial,
           role: 'worker',
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -166,14 +163,13 @@ exports.manageWorker = onCall(async (request) => {
       return {
         success: true,
         uid: workerUid,
-        workerId: workerUid,
         wid: workerSerial,
         message: 'Worker account created successfully'
       };
     }
 
     let workerUid = providedWorkerUid || null;
-    let workerId = providedWorkerId || null;
+    let wid = providedWid || null;
 
     // P0-7: Require workerUid for edit/delete — email-based lookup is deprecated
     if (!workerUid) {
@@ -182,28 +178,23 @@ exports.manageWorker = onCall(async (request) => {
 
     await verifyManagerAuth(request.auth, workerUid, companyId);
 
-    const canonicalWorkerRef = admin.firestore().doc(companyWorkerDocPath(companyId, workerUid));
-    const canonicalWorkerSnap = await canonicalWorkerRef.get();
-    if (canonicalWorkerSnap.exists) {
-      workerId = workerUid;
+    // Look up the worker's wid from their profile if not provided
+    if (!wid) {
+      const workerProfile = await admin.firestore().doc(userProfileDocPath(workerUid)).get();
+      if (workerProfile.exists) {
+        wid = workerProfile.data()?.wid ?? null;
+      }
     }
-
-    if (!workerId) {
+    // Also try to find by querying workers collection by uid
+    if (!wid) {
       const workersColRef = admin.firestore().collection(`companies/${companyId}/workers`);
-      let workerDocSnap = await workersColRef.where('Uid', '==', workerUid).limit(1).get();
-      if (workerDocSnap.empty) {
-        workerDocSnap = await workersColRef.where('uid', '==', workerUid).limit(1).get();
-      }
-      if (workerDocSnap.empty && providedWorkerId) {
-        workerDocSnap = await workersColRef.where('Wid', '==', Number(providedWorkerId)).limit(1).get();
-      }
-      // Email-based lookup removed — deprecated per P0-7
+      const workerDocSnap = await workersColRef.where('uid', '==', workerUid).limit(1).get();
       if (!workerDocSnap.empty) {
-        workerId = workerDocSnap.docs[0].id;
+        wid = workerDocSnap.docs[0].data()?.wid ?? workerDocSnap.docs[0].id;
       }
     }
 
-    if (!workerId) {
+    if (!wid) {
       throw new HttpsError('not-found', 'Worker record not found in company workers list');
     }
 
@@ -223,10 +214,7 @@ exports.manageWorker = onCall(async (request) => {
       await deleteUserData(workerUid);
 
       const workerBatch = admin.firestore().batch();
-      workerBatch.delete(admin.firestore().doc(companyWorkerDocPath(companyId, workerUid)));
-      if (workerId && workerId !== workerUid) {
-        workerBatch.delete(admin.firestore().doc(`companies/${companyId}/workers/${workerId}`));
-      }
+      workerBatch.delete(admin.firestore().doc(companyWorkerDocPath(companyId, String(wid))));
       await workerBatch.commit();
       logger.info(`Removed worker from company list: ${companyId}`);
 
@@ -234,7 +222,7 @@ exports.manageWorker = onCall(async (request) => {
       try {
         const jobsRef = admin.firestore().collection(`companies/${companyId}/jobs`);
         const assignedJobsSnap = await jobsRef
-          .where('workerId', '==', workerUid)
+          .where('wid', '==', String(wid))
           .where('status', 'in', ['pending', 'waiting'])
           .get();
         if (!assignedJobsSnap.empty) {
@@ -243,9 +231,8 @@ exports.manageWorker = onCall(async (request) => {
           assignedJobsSnap.docs.forEach((doc) => {
             // Unassign the worker from the job rather than deleting it
             cleanupBatch.update(doc.ref, {
-              workerId: admin.firestore.FieldValue.delete(),
-              workerName: admin.firestore.FieldValue.delete(),
-              assignedTo: admin.firestore.FieldValue.delete(),
+              wid: admin.firestore.FieldValue.delete(),
+              wname: admin.firestore.FieldValue.delete(),
               status: 'pending',
               updatedAt: new Date().toISOString(),
             });
@@ -328,11 +315,6 @@ exports.manageWorker = onCall(async (request) => {
         firestoreUpdates.role = newRole;
       }
       firestoreUpdates.email = normalizedEmail;
-      firestoreUpdates.workerId = workerUid;
-      const numericWorkerId = Number(workerId);
-      if (Number.isFinite(numericWorkerId)) {
-        firestoreUpdates.wid = numericWorkerId;
-      }
       firestoreUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       // Update worker profile in Firestore
@@ -341,17 +323,12 @@ exports.manageWorker = onCall(async (request) => {
         logger.info(`Updated Firestore profile for worker: ${redactEmail(normalizedEmail)} (uid: ${workerUid})`);
       }
 
-      // Update company's worker list (canonical UID key)
-      const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, workerUid));
+      // Update company's worker list (keyed by wid)
+      const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
       const updateData = {};
-      updateData.workerId = workerUid;
       updateData.uid = workerUid;
       updateData.email = normalizedEmail;
-      updateData.Uid = workerUid;
-      if (Number.isFinite(numericWorkerId)) {
-        updateData.Wid = numericWorkerId;
-        updateData.wid = numericWorkerId;
-      }
+      updateData.wid = Number(wid);
       updateData.role = newRole || existingRole;
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
       if (name !== undefined) {
@@ -363,12 +340,7 @@ exports.manageWorker = onCall(async (request) => {
       updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       if (Object.keys(updateData).length > 0) {
-        const workerBatch = admin.firestore().batch();
-        workerBatch.set(workerListRef, updateData, { merge: true });
-        if (workerId && workerId !== workerUid) {
-          workerBatch.delete(admin.firestore().doc(`companies/${companyId}/workers/${workerId}`));
-        }
-        await workerBatch.commit();
+        await workerListRef.set(updateData, { merge: true });
         logger.info(`Updated worker in company list: ${companyId}`);
       }
 
@@ -542,6 +514,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
       accountType,
       name,
       phoneNumber,
+      ...(role === 'manager' ? { mid: 1 } : {}),
       createdAt: now,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
@@ -553,20 +526,23 @@ exports.registerBusinessV1 = onCall(async (request) => {
     }, { merge: true });
 
     if (role === 'manager' && accountType === 'business') {
-      // 3. Company root doc
+      // 3. Company root doc (clean — no counters on root)
       tx.set(dbRef.doc(`companies/${companyId}`), {
         companyId,
         createdBy: uid,
         createdAt: now,
-        cid: 1,
-        wid: 1,
-        jid: 1,
       });
 
-      // 4. Worker (manager) record
-      tx.set(dbRef.doc(companyWorkerDocPath(companyId, uid)), {
-        workerId: uid,
+      // 4. Counter documents (each in its own doc for safe concurrent writes)
+      tx.set(dbRef.doc(`companies/${companyId}/counters/wnext`), { next: 1 });
+      tx.set(dbRef.doc(`companies/${companyId}/counters/mnext`), { next: 2 }); // manager 1 is the creator
+      tx.set(dbRef.doc(`companies/${companyId}/counters/cnext`), { next: 1 });
+      tx.set(dbRef.doc(`companies/${companyId}/counters/jnext`), { next: 1 });
+
+      // 5. Manager record in workers collection (keyed by mid=1)
+      tx.set(dbRef.doc(companyManagerDocPath(companyId, '1')), {
         uid,
+        mid: 1,
         role: profileRole,
         email,
         name,
@@ -575,10 +551,10 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: now,
       });
 
-      // 5. Business info
+      // 6. Business info
       tx.set(dbRef.doc(`companies/${companyId}/data/business_info`), businessData);
 
-      // 6. Subscription
+      // 7. Subscription
       tx.set(dbRef.doc(`companies/${companyId}/data/subscription`), {
         tier,
         status: 'active',
@@ -586,14 +562,14 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: now,
       });
 
-      // 7. Empty inventory
+      // 8. Empty inventory
       tx.set(dbRef.doc(`companies/${companyId}/data/inventory`), {
         parts: [],
         nextId: 1,
         lastUpdated: now,
       });
 
-      // 8. Company cache (summary-based)
+      // 9. Company cache (summary-based)
       tx.set(dbRef.doc(`companies/${companyId}/data/cache`), {
         jobsVersion: 0,
         documentsVersion: 0,
@@ -607,9 +583,13 @@ exports.registerBusinessV1 = onCall(async (request) => {
         companyId,
         createdBy: uid,
         createdAt: now,
-        cid: 1,
-        jid: 1,
-      }, { merge: true });
+      });
+
+      // Counter documents (all roles get counters for upgrade compatibility)
+      tx.set(dbRef.doc(`companies/${companyId}/counters/wnext`), { next: 1 });
+      tx.set(dbRef.doc(`companies/${companyId}/counters/mnext`), { next: 1 });
+      tx.set(dbRef.doc(`companies/${companyId}/counters/cnext`), { next: 1 });
+      tx.set(dbRef.doc(`companies/${companyId}/counters/jnext`), { next: 1 });
 
       tx.set(dbRef.doc(`companies/${companyId}/data/business_info`), businessData);
 
@@ -620,8 +600,8 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: now,
       });
 
-      tx.set(dbRef.doc(companyWorkerDocPath(companyId, uid)), {
-        workerId: uid,
+      // Solo user membership record (no wid/mid — user role has none)
+      tx.set(dbRef.doc(`companies/${companyId}/workers/${uid}`), {
         uid,
         role: profileRole,
         email,

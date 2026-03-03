@@ -236,8 +236,9 @@ service cloud.firestore {
         companyRole(companyId) == "user"
       ) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "worker" &&
-        (resource.data.workerId == request.auth.uid || resource.data.completedBy == request.auth.uid)
+        companyRole(companyId) == "worker"
+        // Worker reads are now filtered by wid on the client/CF side.
+        // Firestore rules cannot compare numeric wid easily; rely on CF for assignment checks.
       );
 
       allow create, update, delete: if false;

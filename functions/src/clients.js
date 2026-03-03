@@ -44,32 +44,29 @@ exports.addClientV1 = onCall(async (request) => {
   });
 
   const db = admin.firestore();
-  const companyRef = db.doc(`companies/${companyId}`);
+  const cnextRef = db.doc(`companies/${companyId}/counters/cnext`);
 
   const newClient = await db.runTransaction(async (tx) => {
-    const companySnap = await tx.get(companyRef);
-    if (!companySnap.exists) {
-      throw new HttpsError('not-found', 'Company not found');
+    const counterSnap = await tx.get(cnextRef);
+    if (!counterSnap.exists) {
+      throw new HttpsError('failed-precondition', 'Company client counter not initialized');
     }
-    const cid = companySnap.data().cid;
-    if (typeof cid !== 'number') {
-      throw new HttpsError('failed-precondition', 'Company not initialized — missing cid counter');
-    }
+    const cid = Number(counterSnap.data()?.next || 1);
 
     const clientId = String(cid);
     const clientRef = db.doc(`companies/${companyId}/clients/${clientId}`);
     const now = new Date().toISOString();
 
-    // Build client doc — only include fields that have a value (matches phone app)
-    const clientDoc = { name, createdAt: now };
+    // Build client doc — only cid, cname, cphone + optional extras
+    const clientDoc = { cid, cname: name, createdAt: now };
+    if (phone)     clientDoc.cphone   = phone;
     if (email)     clientDoc.email     = email;
-    if (phone)     clientDoc.phone     = phone;
     if (address)   clientDoc.address   = address;
     if (city)      clientDoc.city      = city;
     if (vatNumber) clientDoc.vatNumber = vatNumber;
     if (notes)     clientDoc.notes     = notes;
 
-    tx.set(companyRef, { cid: cid + 1 }, { merge: true });
+    tx.set(cnextRef, { next: cid + 1 });
     tx.set(clientRef, clientDoc);
 
     // Bump cache version inside transaction for atomicity

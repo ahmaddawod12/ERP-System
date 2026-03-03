@@ -107,8 +107,10 @@ const paths = {
   subscription:       (cid) => `companies/${cid}/data/subscription`,
   companyInventory:   (cid) => `companies/${cid}/data/inventory`,
   companyCache:       (cid) => `companies/${cid}/data/cache`,
-  worker:             (cid, uid) => `companies/${cid}/workers/${uid}`,
+  worker:             (cid, wid) => `companies/${cid}/workers/${wid}`,
   workers:            (cid) => `companies/${cid}/workers`,
+  manager:            (cid, mid) => `companies/${cid}/managers/${mid}`,
+  managers:           (cid) => `companies/${cid}/managers`,
   client:             (cid, clientId) => `companies/${cid}/clients/${clientId}`,
   clients:            (cid) => `companies/${cid}/clients`,
   job:                (cid, jobId) => `companies/${cid}/jobs/${jobId}`,
@@ -116,6 +118,12 @@ const paths = {
   document:           (cid, docId) => `companies/${cid}/documents/${docId}`,
   documents:          (cid) => `companies/${cid}/documents`,
   invite:             (cid, inviteId) => `companies/${cid}/invites/${inviteId}`,
+
+  // Counters (each counter is a separate doc with a single `next` field)
+  counterWnext:       (cid) => `companies/${cid}/counters/wnext`,
+  counterMnext:       (cid) => `companies/${cid}/counters/mnext`,
+  counterCnext:       (cid) => `companies/${cid}/counters/cnext`,
+  counterJnext:       (cid) => `companies/${cid}/counters/jnext`,
 
   // Top-level collections
   upgradeRequest:     (id) => `upgrade_requests/${id}`,

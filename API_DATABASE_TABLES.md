@@ -7,14 +7,15 @@ Canonical long-form reference remains: `DATA_STRUCTURES.md`.
 
 | Path | Domain | Core Fields |
 | --- | --- | --- |
-| `users/{uid}/data/profile` | Auth | `uid`, `email`, `role`, `companyId`, `name`, `phoneNumber`, `accountType`, `pushToken*` |
+| `users/{uid}/data/profile` | Auth | `uid`, `email`, `role`, `companyId`, `name`, `phoneNumber`, `accountType`, `wid` (workers), `mid` (managers), `pushToken*` |
 | `users/{uid}/data/cache` | Cache | `profile`, `inventory`, `subscription`, `lastUpdated` |
 | `users/{uid}/data/inventory` | Inventory | `parts[]`, `nextId`, `lastUpdated` |
-| `companies/{companyId}` | Company | `companyId`, `createdBy`, `cid`, `wid`, `jid` |
-| `companies/{companyId}/workers/{uid}` | Auth | `workerId`, `uid`, `role`, `email`, `name`, `phoneNumber`, `wid` |
-| `companies/{companyId}/clients/{clientId}` | Clients | `name`, contact fields, `vatNumber`, `notes`, `createdAt`, `updatedAt` |
-| `companies/{companyId}/jobs/{jobId}` | Jobs | `id`, `jid`, `status`, assignment fields, client fields, execution fields, `isCert` |
-| `companies/{companyId}/documents/{docId}` | Documents | `type`, client fields, `items`, totals, tax metadata, `downloadURL`, `storagePath` |
+| `companies/{companyId}` | Company | `companyId`, `createdBy` |
+| `companies/{companyId}/counters/{wnext\|mnext\|cnext\|jnext}` | Counters | `next` |
+| `companies/{companyId}/workers/{wid}` | Auth | `uid`, `wid`, `role`, `email`, `name`, `phoneNumber` |
+| `companies/{companyId}/clients/{clientId}` | Clients | `cid`, `cname`, `cphone`, `vatNumber`, `notes`, `createdAt`, `updatedAt` |
+| `companies/{companyId}/jobs/{jobId}` | Jobs | `status`, `wid`/`wname`, `mid`/`mname`, `cid`/`cname`/`cphone`, execution fields, `isCert` |
+| `companies/{companyId}/documents/{docId}` | Documents | `type`, `cname`, `cphone`, `items`, totals, tax metadata, `downloadURL`, `storagePath` |
 | `companies/{companyId}/invites/{inviteId}` | Auth | `code`, `targetRole`, `status`, `expiresAt`, `usedBy`, `usedAt` |
 | `companies/{companyId}/data/business_info` | Auth/Documents | `vat_number`, `document_numbers`, business contact fields |
 | `companies/{companyId}/data/subscription` | Billing/Auth | `tier`, `status`, `enabledModules`, `expiresAt`, `updatedAt` |

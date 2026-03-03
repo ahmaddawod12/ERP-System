@@ -27,7 +27,7 @@ export default function EditJob() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId, updateJob } = useCache();
+  const { getCompanyId, updateJob, workers: cachedWorkersList } = useCache();
   const colors = getColors(isDarkMode);
 
   const job = params.job ? JSON.parse(params.job) : null;
@@ -40,8 +40,8 @@ export default function EditJob() {
     status: '',
     timeFrom: '',
     timeTo: '',
-    clientName: '',
-    clientPhone: '',
+    cname: '',
+    cphone: '',
     signingPerson: '',
     partsUsed: [],
   });
@@ -115,8 +115,10 @@ export default function EditJob() {
       // All jobs are in the unified 'jobs' collection
       const jobRef = doc(db, 'companies', companyId, 'jobs', editingJob.id);
 
-      // Get worker uid
-      const workerId = editingJob.completedBy || editingJob.assignedTo;
+      // Get worker uid from wid for inventory access
+      const workerWid = editingJob.wid;
+      const workerEntry = cachedWorkersList ? cachedWorkersList[workerWid] : null;
+      const workerId = workerEntry?.uid || null;
       
       // Fetch the CURRENT job data from Firestore to get actual original parts
       if (workerId && editingJob.partsUsed) {
@@ -208,8 +210,8 @@ export default function EditJob() {
         status: editingJob.status,
         timeFrom: editingJob.timeFrom || '',
         timeTo: editingJob.timeTo || '',
-        clientName: editingJob.clientName || '',
-        clientPhone: editingJob.clientPhone || '',
+        cname: editingJob.cname || '',
+        cphone: editingJob.cphone || '',
         signingPerson: editingJob.signingPerson || '',
         partsUsed: editingJob.partsUsed || [],
       };
@@ -311,8 +313,8 @@ export default function EditJob() {
             <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.clientName}</AppText>
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
-              value={editingJob.clientName}
-              onChangeText={(text) => setEditingJob({ ...editingJob, clientName: text })}
+              value={editingJob.cname}
+              onChangeText={(text) => setEditingJob({ ...editingJob, cname: text })}
               placeholder={t.clientName}
               placeholderTextColor={colors.textSecondary}
             />
@@ -320,8 +322,8 @@ export default function EditJob() {
             <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.clientPhone}</AppText>
             <TextInput
               style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
-              value={editingJob.clientPhone}
-              onChangeText={(text) => setEditingJob({ ...editingJob, clientPhone: text })}
+              value={editingJob.cphone}
+              onChangeText={(text) => setEditingJob({ ...editingJob, cphone: text })}
               placeholder={t.clientPhone}
               placeholderTextColor={colors.textSecondary}
               keyboardType="phone-pad"

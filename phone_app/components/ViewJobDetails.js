@@ -107,11 +107,11 @@ export default function ViewJobDetails({
                 labelColor={palette.textSecondary}
               />
               <DetailRow label={translations.location || 'Location'} value={job.location} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.clientName || 'Client'} value={job.clientName} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.clientPhone || 'Phone'} value={job.clientPhone} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.clientName || 'Client'} value={job.cname} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.clientPhone || 'Phone'} value={job.cphone} labelColor={palette.textSecondary} />
               <DetailRow
                 label={translations.assignedBy || 'Assigned By'}
-                value={job.assignedBy || job.MName}
+                value={job.mname}
                 labelColor={palette.textSecondary}
               />
               <DetailRow label={translations.createdAt || 'Created'} value={formatDate(job.createdAt)} labelColor={palette.textSecondary} />

@@ -263,7 +263,7 @@ export default function JobMonitor() {
             if (jobDate >= dateFilter.startDate && jobDate <= dateFilter.endDate) {
               const jobData = {
                 ...job,
-                workerName: job.name || job.workerName || 'Unknown',
+                workerName: job.wname || job.workerName || 'Unknown',
               };
               
               const status = jobData.status?.toLowerCase();
@@ -308,7 +308,7 @@ export default function JobMonitor() {
         const finishedJobsList = finishedJobsData
           .map((job) => ({
             ...job,
-            workerName: job.name || job.workerName || 'Unknown',
+            workerName: job.wname || job.workerName || 'Unknown',
           }))
           .sort((a, b) => new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0));
         
@@ -336,7 +336,7 @@ export default function JobMonitor() {
         const query = clientFilter.toLowerCase();
         return jobsList.filter(job => 
           (job.signingPersonName && job.signingPersonName.toLowerCase().includes(query)) ||
-          (job.clientName && job.clientName.toLowerCase().includes(query))
+          (job.cname && job.cname.toLowerCase().includes(query))
         );
       };
       
@@ -509,7 +509,7 @@ export default function JobMonitor() {
     
     // Load worker's inventory if we have the worker UID
     // Try multiple possible fields for worker UID
-    const workerUid = job.workerId || job.completedBy || job.assignedTo || job.workerUid || job.uid;
+    const workerUid = job.wid;
     console.log('Worker UID identified:', workerUid);
     
     if (workerUid) {
@@ -522,7 +522,7 @@ export default function JobMonitor() {
 
   const JobCard = ({ job }) => {
     // Use the name field from job data (never display raw UIDs)
-    const displayName = job.workerName || job.name || 'Unknown Worker';
+    const displayName = job.workerName || job.wname || 'Unknown Worker';
     
     // Check if this job is currently highlighted
     const isHighlighted = highlightedJobId === job.id;
@@ -723,7 +723,7 @@ export default function JobMonitor() {
             <AppText style={styles.emptyText}>{t.noJobs}</AppText>
           </View>
         ) : (
-          filteredJobs.map((job) => <JobCard key={`${job.workerId}-${job.id}`} job={job} />)
+          filteredJobs.map((job) => <JobCard key={`${job.wid}-${job.id}`} job={job} />)
         )}
       </ScrollableContainer>
 

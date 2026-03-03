@@ -219,10 +219,10 @@ export default function CreateDocument() {
                    (cert.createdAt ? new Date(cert.createdAt) : new Date()),
         documentData: cert.documentData || {
           client: {
-            name: cert.clientName || cert.client?.name || 'Unknown',
-            email: cert.clientEmail || cert.client?.email || '',
-            phone: cert.clientPhone || cert.client?.phone || '',
-            address: cert.clientAddress || cert.client?.address || '',
+            name: cert.cname || cert.client?.name || 'Unknown',
+            email: cert.client?.email || '',
+            phone: cert.cphone || cert.client?.phone || '',
+            address: cert.client?.address || '',
           },
           items: cert.items || [],
         },
@@ -324,7 +324,7 @@ export default function CreateDocument() {
     // Fallback: match by clientName
     if (matched.length === 0 && clientObj?.name) {
       const nameToMatch = clientObj.name.toLowerCase();
-      matched = proposals.filter(p => p.clientName && p.clientName.toLowerCase() === nameToMatch);
+      matched = proposals.filter(p => p.cname && p.cname.toLowerCase() === nameToMatch);
     }
 
     // Sort by creation date (newest first)

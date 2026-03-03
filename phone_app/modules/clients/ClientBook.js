@@ -368,10 +368,8 @@ export default function ClientBook() {
       const clientName = client.name?.toLowerCase()?.trim();
 
       const matched = (allData || []).filter(item => {
-        if (clientId && item.clientId?.toString() === clientId) return true;
-        if (clientName && item.clientName?.toLowerCase()?.trim() === clientName) return true;
-        // Also check customerName for jobs
-        if (clientName && item.customerName?.toLowerCase()?.trim() === clientName) return true;
+        if (clientId && (item.cid || item.clientId)?.toString() === clientId) return true;
+        if (clientName && (item.cname || item.clientName || item.customerName)?.toLowerCase()?.trim() === clientName) return true;
         return false;
       });
 
@@ -564,11 +562,11 @@ export default function ClientBook() {
               {t.createdOn}: {formatDate(item.createdAt)}
             </AppText>
           </View>
-          {item.clientName && (
+          {(item.cname || item.clientName) && (
             <View style={styles.dataDetailRow}>
               <Ionicons name="person-outline" size={14} color={colors.textSecondary} />
               <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.clientName}
+                {item.cname || item.clientName}
               </AppText>
             </View>
           )}

@@ -158,10 +158,10 @@ async function seed() {
   await db.collection("companies").doc(companyId).collection("jobs").doc("00001").set(
     {
       title: "AC maintenance visit",
-      clientName: "Demo Client",
+      cname: "Demo Client",
       description: "Inspect rooftop unit and replace filter",
       status: "pending",
-      workerId: workerUid,
+      wid: workerUid,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },

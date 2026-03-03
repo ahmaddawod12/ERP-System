@@ -39,7 +39,7 @@ Primary source files:
 - `business_info` is snake_case. Most other documents are camelCase.
 - Many timestamps are stored as ISO strings. Some writers use `FieldValue.serverTimestamp()`, so clients may temporarily see Firestore `Timestamp` values on some fields.
 - `companyId` is allocated from `system/data/comid` and is a numeric string.
-- Job IDs are currently `String(jid)` from the company root counter.
+- Job IDs are plain Base62 strings from `companies/{companyId}/counters/jnext`.
 - Generated document IDs are currently `${suffix}${documentNumber}-${companyId}` such as `TI12-42` or `PP3-42`.
 - Support chat currently stores messages inline on the conversation document as `message1`, `message2`, ... even though rules also define a `messages` subcollection path.
 
@@ -141,15 +141,15 @@ Fields:
 - `accountType: "solo" | "business"`
 - `createdAt: string | Timestamp`
 - `updatedAt?: string | Timestamp`
-- `workerId?: string`
-- `wid?: number`
+- `wid?: number` (workers only — sequential worker ID)
+- `mid?: number` (managers only — sequential manager ID)
 - `pushToken?: string`
 - `pushTokenUpdatedAt?: string`
 - `pushTokenPlatform?: string`
 - `pushTokenType?: string`
 
 Notes:
-- Worker profiles include both `uid` and `workerId`, and `workerId` is currently the same as `uid`.
+- Worker profiles include `wid` (sequential worker ID). Manager profiles include `mid` (sequential manager ID).
 - `pushToken*` fields are only written by the push-token Cloud Functions.
 
 ### `users/{uid}/data/cache`
@@ -182,18 +182,15 @@ Notes:
 - User-picked parts may include `sourcePartId`.
 
 ### `companies/{companyId}`
-Purpose: company root and counters.
+Purpose: company root document.
 
 Fields:
 - `companyId: string`
 - `createdBy: string`
 - `createdAt: string`
-- `cid?: number`
-- `wid?: number`
-- `jid?: number`
 
 Notes:
-- `cid`, `wid`, and `jid` are the active counters for clients, workers, and jobs.
+- Counters have moved to the `companies/{companyId}/counters/` subcollection. See `counters/{wnext|mnext|cnext|jnext}` below.
 
 ### `companies/{companyId}/data/business_info`
 Purpose: business registration and document numbering.
@@ -278,34 +275,31 @@ Fields:
 - `tokenInvalidatedAt?: Timestamp`
 - `tokenInvalidatedReason?: string`
 
-### `companies/{companyId}/workers/{uid}`
+### `companies/{companyId}/workers/{wid}`
 Purpose: company membership record for a manager, worker, user, or basic user.
 
 Fields:
-- `workerId: string`
 - `uid: string`
-- `email: string`
+- `wid: number`
 - `role: "manager" | "worker" | "user" | "basic" | "dev"`
+- `email: string`
 - `name: string`
 - `phoneNumber: string`
 - `createdAt: string | Timestamp`
 - `updatedAt?: string | Timestamp`
-- `wid?: number`
-- Legacy aliases still written by `manageWorker add`:
-  - `Uid?: string`
-  - `Wid?: number`
 
 Notes:
-- The worker document ID is the member's `uid`.
+- The worker document ID is the member's sequential `wid` (not their Firebase Auth `uid`).
 
 ### `companies/{companyId}/clients/{clientId}`
 Purpose: client record.
 
 Fields:
-- `name: string`
+- `cid: number`
+- `cname: string`
 - `createdAt: string`
 - `email?: string`
-- `phone?: string`
+- `cphone?: string`
 - `address?: string`
 - `city?: string`
 - `vatNumber?: string`
@@ -313,33 +307,28 @@ Fields:
 - `updatedAt?: string`
 
 Notes:
-- `clientId` is currently `String(cid)` from the company root counter.
-- Website code also exposes optional `numericId`, but current backend writers do not store it.
+- `clientId` is `String(cid)` from the `companies/{companyId}/counters/cnext` counter.
 
 ### `companies/{companyId}/jobs/{jobId}`
 Purpose: unified jobs collection for both pending and finished work.
 
 Core fields always expected from current backend:
-- `id: string`
-- `jid: number`
 - `status: "pending" | "waiting" | "finished" | "denied"`
-- `createdBy: string`
 - `createdAt: string`
 - `updatedAt: string`
+
+Assignment and client fields (canonical short names):
+- `wid?: number` (worker sequential ID)
+- `wname?: string` (worker name)
+- `mid?: number` (manager sequential ID)
+- `mname?: string` (manager name)
+- `cid?: string` (client ID)
+- `cname?: string` (client name)
+- `cphone?: string` (client phone)
 
 Whitelisted job content fields:
 - `title?: string`
 - `description?: string`
-- `name?: string`
-- `clientName?: string`
-- `clientId?: string`
-- `clientPhone?: string`
-- `clientEmail?: string`
-- `clientAddress?: string`
-- `workerId?: string | null`
-- `completedBy?: string | null`
-- `MUser?: string`
-- `MName?: string`
 - `parts?: unknown[]`
 - `partsUsed?: unknown[]`
 - `notes?: string`
@@ -350,9 +339,6 @@ Whitelisted job content fields:
 - `category?: string`
 - `tags?: unknown[]`
 - `images?: unknown[]`
-- `workerName?: string`
-- `assignedTo?: string`
-- `assignedBy?: string`
 - `timeFrom?: string`
 - `timeTo?: string`
 - `travelDistance?: number | null`
@@ -372,7 +358,6 @@ Backend-added lifecycle and bookkeeping fields:
 - `idempotencyKey?: string`
 
 Notes:
-- `syncJobAssigneeFields()` keeps `workerId` and `completedBy` aligned.
 - Finished jobs created directly by solo users are still stored in this same collection.
 - `parts` and `partsUsed` are intentionally loose arrays in current code; the common shape is usually `{ id, name, quantity }`.
 
@@ -381,10 +366,8 @@ Purpose: generated business documents.
 
 Shared fields seen across current writers:
 - `type: number`
-- `clientName?: string`
-- `clientEmail?: string | null`
-- `clientPhone?: string | null`
-- `clientAddress?: string | null`
+- `cname?: string`
+- `cphone?: string | null`
 - `clientId?: string | null`
 - `items?: unknown[]`
 - `notes?: string | null`
@@ -453,18 +436,21 @@ Fields:
 - `taskId: string`
 - `lockedAt: Timestamp`
 
-### `companies/{companyId}/counters/{counterId}`
-Purpose: legacy or auxiliary counter documents.
+### `companies/{companyId}/counters/{wnext|mnext|cnext|jnext}`
+Purpose: sequential ID allocators for workers, managers, clients, and jobs.
 
-Observed shapes:
-- `companies/{companyId}/counters/clients`
-  - `lastNumber: number`
-- `companies/{companyId}/counters/{counterName}/shards/{shardId}`
-  - `count: number`
+Each document has:
+- `next: number`
+
+Documents:
+- `counters/wnext` — next worker ID
+- `counters/mnext` — next manager ID
+- `counters/cnext` — next client ID
+- `counters/jnext` — next job ID
 
 Notes:
-- The active create flows currently use `cid`, `wid`, and `jid` on the company root document.
-- Distributed counter shard helpers exist in `shared.js` but are not used by the current business flows.
+- All create flows allocate IDs by reading and incrementing `next` inside a transaction.
+- These replace the former `cid`, `wid`, and `jid` fields on the company root document.
 
 ### `documentTasks/{taskId}`
 Purpose: preview/generate task tracking for document workflows.
@@ -728,7 +714,7 @@ Fields:
 - `name?: string`
 - `phoneNumber?: string`
 - `workerUid?: string`
-- `workerId?: string`
+- `wid?: number`
 - `role?: "worker" | "user" | "basic"`
 
 Notes:
@@ -790,9 +776,9 @@ Fields:
 ### `addClientV1`
 Fields:
 - `companyId: string`
-- `name: string`
+- `cname: string`
 - `email?: string`
-- `phone?: string`
+- `cphone?: string`
 - `address?: string`
 - `city?: string`
 - `vatNumber?: string`
@@ -802,9 +788,9 @@ Fields:
 Fields:
 - `companyId: string`
 - `clientId: string`
-- `name?: string`
+- `cname?: string`
 - `email?: string`
-- `phone?: string`
+- `cphone?: string`
 - `address?: string`
 - `city?: string`
 - `vatNumber?: string`
@@ -823,16 +809,13 @@ Fields:
 - Allowed job payload fields:
   - `title`
   - `description`
-  - `name`
-  - `clientName`
-  - `clientId`
-  - `clientPhone`
-  - `clientEmail`
-  - `clientAddress`
-  - `workerId`
-  - `completedBy`
-  - `MUser`
-  - `MName`
+  - `wid`
+  - `wname`
+  - `mid`
+  - `mname`
+  - `cid`
+  - `cname`
+  - `cphone`
   - `parts`
   - `partsUsed`
   - `notes`
@@ -843,9 +826,6 @@ Fields:
   - `category`
   - `tags`
   - `images`
-  - `workerName`
-  - `assignedTo`
-  - `assignedBy`
   - `timeFrom`
   - `timeTo`
   - `travelDistance`

@@ -162,12 +162,11 @@ export default function WorkersUsers() {
       if (!companyId) return;
 
       if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
-        const workersList = Object.keys(cachedWorkersList).map((uid) => {
-          const worker = cachedWorkersList[uid] || {};
+        const workersList = Object.keys(cachedWorkersList).map((docKey) => {
+          const worker = cachedWorkersList[docKey] || {};
           return {
-            uid,
-            workerId: worker.workerId || uid,
-            wid: worker.wid ?? null,
+            uid: worker.uid || docKey,
+            wid: worker.wid || docKey,
             email: worker.email || '',
             phoneNumber: worker.phoneNumber || '',
             name: worker.name || '',
@@ -183,17 +182,16 @@ export default function WorkersUsers() {
       const workersList = workersSnapshot.docs
         .map((docSnap) => {
           const data = docSnap.data() || {};
-          const uid = docSnap.id;
+          const wid = docSnap.id;
           if (!data.email) return null;
-          workersData[uid] = {
-            uid,
-            workerId: data.workerId || uid,
-            wid: data.wid ?? null,
+          workersData[wid] = {
+            uid: data.uid || wid,
+            wid: data.wid || wid,
             email: data.email || '',
             phoneNumber: data.phoneNumber || '',
             name: data.name || '',
           };
-          return workersData[uid];
+          return workersData[wid];
         })
         .filter(Boolean);
 
@@ -250,14 +248,14 @@ export default function WorkersUsers() {
       });
 
       const workerUid = result?.data?.uid;
-      if (!workerUid) {
-        throw new Error('Worker UID was not returned from backend.');
+      const workerWid = result?.data?.wid;
+      if (!workerUid || !workerWid) {
+        throw new Error('Worker UID or wid was not returned from backend.');
       }
 
-      await addWorker(workerUid, {
+      await addWorker(workerWid, {
         uid: workerUid,
-        workerId: workerUid,
-        wid: result?.data?.wid ?? null,
+        wid: workerWid,
         email,
         name: newWorker.name.trim(),
         phoneNumber: newWorker.phoneNumber || '',
@@ -305,7 +303,7 @@ export default function WorkersUsers() {
         phoneNumber: editingWorker.phoneNumber || '',
         companyId,
         workerUid: editingWorker.uid,
-        workerId: editingWorker.workerId || editingWorker.uid,
+        wid: editingWorker.wid,
       };
 
       if (editingWorker.password) {
@@ -315,7 +313,7 @@ export default function WorkersUsers() {
       const manageWorkerFn = httpsCallable(functions, 'manageWorker');
       await manageWorkerFn(payload);
 
-      await editWorker(editingWorker.uid, {
+      await editWorker(editingWorker.wid, {
         name: editingWorker.name?.trim() || '',
         phoneNumber: editingWorker.phoneNumber || '',
       });
@@ -360,10 +358,10 @@ export default function WorkersUsers() {
               email: normalizeEmail(worker.email),
               companyId,
               workerUid: worker.uid,
-              workerId: worker.workerId || worker.uid,
+              wid: worker.wid,
             });
 
-            await deleteWorker(worker.uid);
+            await deleteWorker(worker.wid);
             alert.success('Success', t.workerDeleted);
             await loadWorkers();
           } catch (error) {
@@ -506,7 +504,7 @@ export default function WorkersUsers() {
 
       <FlatList
         data={workers}
-        keyExtractor={(item) => String(item.uid)}
+        keyExtractor={(item) => String(item.wid)}
         renderItem={renderWorker}
         contentContainerStyle={{
           paddingTop: Platform.OS === 'ios' ? 108 : 96,

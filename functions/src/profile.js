@@ -69,17 +69,18 @@ exports.updateProfileV1 = onCall(async (request) => {
   // Sync changed name/phone to the worker doc if the user belongs to a company
   const profileData = profileSnap.data();
   const companyId = profileData.companyId;
-  if (companyId) {
+  const wid = profileData.wid;
+  if (companyId && wid) {
     const workerUpdates = {};
     if (name !== undefined) workerUpdates.name = name;
     if (phoneNumber !== undefined) workerUpdates.phoneNumber = phoneNumber;
     if (Object.keys(workerUpdates).length > 0) {
-      const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, uid));
+      const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
       const workerSnap = await workerRef.get();
       if (workerSnap.exists) {
         workerUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
         await workerRef.update(workerUpdates);
-        logger.info('updateProfileV1: synced worker doc', { uid, companyId, fields: Object.keys(workerUpdates) });
+        logger.info('updateProfileV1: synced worker doc', { uid, companyId, wid, fields: Object.keys(workerUpdates) });
       }
     }
   }

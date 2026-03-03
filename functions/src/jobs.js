@@ -9,7 +9,8 @@ const {
   assertHttpCompanyAccess,
   userProfileDocPath,
   sendPushNotification,
-  syncJobAssigneeFields,
+  companyWorkerDocPath,
+  companyManagerDocPath,
   MAX_JOB_ARRAY_LENGTH,
   HTTP_COMPANY_MANAGER_ROLES,
   HTTP_ALL_APP_ROLES,
@@ -28,19 +29,30 @@ exports.onJobAssignTrigger = onDocumentCreated({
     const jobId = event.params.jobId;
 
     // Only proceed if status is 'pending' and job is assigned to a worker
-    if (!jobData || jobData.status !== 'pending' || !jobData.completedBy) {
+    if (!jobData || jobData.status !== 'pending' || !jobData.wid) {
       logger.info('Job not eligible for assignment notification', {
         jobId,
         status: jobData?.status,
-        hasCompletedBy: !!jobData?.completedBy
+        hasWid: !!jobData?.wid
       });
       return;
     }
 
-    const workerUserId = jobData.completedBy;
+    // Look up the worker's uid from the workers collection using wid
+    const workerDocRef = admin.firestore().doc(companyWorkerDocPath(companyId, jobData.wid));
+    const workerDocSnap = await workerDocRef.get();
+    if (!workerDocSnap.exists) {
+      logger.warn('Worker doc not found for job assignment notification', { wid: jobData.wid, companyId });
+      return;
+    }
+    const workerUserId = workerDocSnap.data()?.uid;
+    if (!workerUserId) {
+      logger.warn('Worker doc missing uid field', { wid: jobData.wid });
+      return;
+    }
+
     const jobTitle = jobData.title || 'Untitled Job';
-    const managerUserId = jobData.MUser;
-    const managerName = jobData.MName;
+    const managerName = jobData.mname;
 
     logger.info('Job assignment detected', {
       jobId,
@@ -169,16 +181,26 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       return;
     }
 
-    const workerUserId = afterData.completedBy || 'Unknown Worker';
+    const workerUserId = afterData.wid ? null : 'Unknown Worker'; // resolved below
     const jobTitle = afterData.title || 'Untitled Job';
-    const managerUserId = afterData.MUser;
-    const workerName = afterData.name;
+    const workerName = afterData.wname;
+
+    // Look up manager uid from their mid
+    const managerMid = afterData.mid;
+    let managerUserId = null;
+    if (managerMid) {
+      const managerDocRef = admin.firestore().doc(companyManagerDocPath(companyId, managerMid));
+      const managerDocSnap = await managerDocRef.get();
+      if (managerDocSnap.exists) {
+        managerUserId = managerDocSnap.data()?.uid;
+      }
+    }
 
     logger.info('Job submission detected', {
       jobId,
       jobTitle,
-      workerUserId,
-      managerUserId,
+      workerWid: afterData.wid,
+      managerMid,
       companyId
     });
 
@@ -198,7 +220,7 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
 
     // Determine manager userId
     if (!managerUserId) {
-      logger.warn('No manager userId (MUser) found in job', { jobId, companyId });
+      logger.warn('No manager uid resolved from mid', { jobId, companyId, mid: afterData.mid });
       return;
     }
 
@@ -333,7 +355,10 @@ exports.deleteJobV1 = onCall(async (request) => {
 
   // Worker can only delete their own assigned jobs
   if (resolvedRole === 'worker') {
-    if (jobData.workerId !== uid) {
+    // Look up worker's wid from profile to compare with job wid
+    const workerProfile = await admin.firestore().doc(userProfileDocPath(uid)).get();
+    const workerWid = workerProfile.exists ? String(workerProfile.data()?.wid || '') : '';
+    if (String(jobData.wid || '') !== workerWid) {
       throw new HttpsError('permission-denied', 'Workers can only delete their own jobs');
     }
   }
@@ -415,10 +440,20 @@ exports.acceptJobV1 = onCall(async (request) => {
 
     // Deduct worker inventory if partsUsed exists
     const partsUsed = jobData.partsUsed || jobData.parts || [];
-    const workerId = jobData.workerId || jobData.completedBy;
+    const jobWid = jobData.wid;
 
-    if (Array.isArray(partsUsed) && partsUsed.length > 0 && workerId) {
-      const workerInvRef = dbRef.doc(`users/${workerId}/data/inventory`);
+    // Resolve worker UID from wid for inventory deduction
+    let workerUid = null;
+    if (jobWid) {
+      const workerDocRef = dbRef.doc(companyWorkerDocPath(companyId, jobWid));
+      const workerDocSnap = await tx.get(workerDocRef);
+      if (workerDocSnap.exists) {
+        workerUid = workerDocSnap.data()?.uid;
+      }
+    }
+
+    if (Array.isArray(partsUsed) && partsUsed.length > 0 && workerUid) {
+      const workerInvRef = dbRef.doc(`users/${workerUid}/data/inventory`);
       const workerInvSnap = await tx.get(workerInvRef);
 
       if (workerInvSnap.exists) {
@@ -440,7 +475,7 @@ exports.acceptJobV1 = onCall(async (request) => {
         });
 
         // Bump worker cache version
-        const workerCacheRef = dbRef.doc(`users/${workerId}/data/cache`);
+        const workerCacheRef = dbRef.doc(`users/${workerUid}/data/cache`);
         tx.set(workerCacheRef, {
           inventory: admin.firestore.FieldValue.increment(1),
           lastUpdated: now,
@@ -455,7 +490,7 @@ exports.acceptJobV1 = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return { jobId, workerId };
+    return { jobId, wid: jobWid };
   });
 
   logger.info('acceptJobV1: job accepted', {
@@ -498,7 +533,7 @@ exports.createJobV1 = onCall(async (request) => {
   }
 
   const dbRef = admin.firestore();
-  const companyRef = dbRef.doc(`companies/${companyId}`);
+  const jnextRef = dbRef.doc(`companies/${companyId}/counters/jnext`);
 
   // N3: Pre-transaction idempotency check — serialized by Firestore transaction below
   if (idempotencyKey) {
@@ -510,18 +545,18 @@ exports.createJobV1 = onCall(async (request) => {
     if (!existingQuery.empty) {
       const existingJob = existingQuery.docs[0];
       logger.info('createJobV1: idempotent duplicate detected', { idempotencyKey, existingJobId: existingJob.id });
-      return { success: true, jobId: existingJob.id, jid: existingJob.data()?.jid, duplicate: true };
+      return { success: true, jobId: existingJob.id, duplicate: true };
     }
   }
 
   const result = await dbRef.runTransaction(async (tx) => {
-    const companySnap = await tx.get(companyRef);
-    if (!companySnap.exists) {
-      throw new HttpsError('not-found', 'Company not found');
+    const counterSnap = await tx.get(jnextRef);
+    if (!counterSnap.exists) {
+      throw new HttpsError('failed-precondition', 'Company job counter not initialized');
     }
 
-    const currentJid = Number(companySnap.data()?.jid || 1);
-    tx.set(companyRef, { jid: currentJid + 1 }, { merge: true });
+    const currentJid = Number(counterSnap.data()?.next || 1);
+    tx.set(jnextRef, { next: currentJid + 1 });
 
     // No prefix — plain sequential ID
     const jobId = String(currentJid);
@@ -529,14 +564,13 @@ exports.createJobV1 = onCall(async (request) => {
 
     const now = new Date().toISOString();
 
-    // Build job document from provided payload — explicit whitelist to prevent field injection
+    // Build job document — clean field whitelist (no duplicates)
     const ALLOWED_JOB_FIELDS = [
-      'title', 'description', 'name', 'clientName', 'clientId',
-      'clientPhone', 'clientEmail', 'clientAddress',
-      'workerId', 'completedBy', 'MUser', 'MName',
-      'parts', 'partsUsed', 'notes', 'priority', 'dueDate',
-      'location', 'address', 'category', 'tags', 'images',
-      'workerName', 'assignedTo', 'assignedBy',
+      'title', 'description', 'notes', 'location', 'address',
+      'category', 'priority', 'dueDate', 'tags', 'images',
+      'wname', 'wid', 'mname', 'mid',
+      'cid', 'cname', 'cphone',
+      'parts', 'partsUsed',
       'timeFrom', 'timeTo', 'travelDistance',
       'signingPerson', 'photos', 'signature',
       'finishedAt',
@@ -555,17 +589,14 @@ exports.createJobV1 = onCall(async (request) => {
       }
     }
 
-    syncJobAssigneeFields(jobPayload);
+    // No more syncJobAssigneeFields — clean fields only
     if (jobType !== 'finished') {
       delete jobPayload.finishedAt;
     }
 
     const jobDoc = {
       ...jobPayload,
-      id: jobId,
-      jid: currentJid,
       status: jobType === 'pending' ? 'pending' : 'finished',
-      createdBy: uid,
       createdAt: now,
       updatedAt: now,
       ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -573,8 +604,6 @@ exports.createJobV1 = onCall(async (request) => {
 
     if (jobType === 'finished') {
       jobDoc.isCert = false;
-      jobDoc.workerId = jobPayload.workerId || uid;
-      jobDoc.completedBy = jobPayload.completedBy || uid;
       jobDoc.finishedAt = jobPayload.finishedAt || now;
     }
 
@@ -587,19 +616,19 @@ exports.createJobV1 = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return { jobId, jid: currentJid };
+    return { jobId };
   });
 
   // Handle idempotent duplicate detected inside transaction
   if (result.duplicate) {
-    return { success: true, jobId: result.jobId, jid: result.jid, duplicate: true };
+    return { success: true, jobId: result.jobId, duplicate: true };
   }
 
   logger.info('createJobV1: job created', {
-    companyId, jobId: result.jobId, jid: result.jid, uid, jobType,
+    companyId, jobId: result.jobId, uid, jobType,
   });
 
-  return { success: true, jobId: result.jobId, jid: result.jid };
+  return { success: true, jobId: result.jobId };
 });
 
 exports.updateJobV1 = onCall(async (request) => {
@@ -636,7 +665,10 @@ exports.updateJobV1 = onCall(async (request) => {
 
   // Worker can only update their own assigned jobs
   if (resolvedRole === 'worker') {
-    if (existingJob.workerId !== uid && existingJob.completedBy !== uid) {
+    // Look up worker's wid from profile
+    const workerProfile = await admin.firestore().doc(userProfileDocPath(uid)).get();
+    const workerWid = workerProfile.exists ? String(workerProfile.data()?.wid || '') : '';
+    if (String(existingJob.wid || '') !== workerWid) {
       throw new HttpsError('permission-denied', 'Workers can only update their own assigned jobs');
     }
   }
@@ -645,12 +677,11 @@ exports.updateJobV1 = onCall(async (request) => {
 
   // Positive field whitelist — only allow known job-data fields through
   const ALLOWED_UPDATE_FIELDS = [
-    'title', 'description', 'name', 'clientName', 'clientId',
-    'clientPhone', 'clientEmail', 'clientAddress',
-    'workerId', 'completedBy', 'MUser', 'MName',
-    'parts', 'partsUsed', 'notes', 'priority', 'dueDate',
-    'location', 'address', 'category', 'tags', 'images',
-    'workerName', 'assignedTo', 'assignedBy',
+    'title', 'description', 'notes', 'location', 'address',
+    'category', 'priority', 'dueDate', 'tags', 'images',
+    'wname', 'wid', 'mname', 'mid',
+    'cid', 'cname', 'cphone',
+    'parts', 'partsUsed',
     'timeFrom', 'timeTo', 'travelDistance',
     'signingPerson', 'photos', 'signature',
     'finishedAt', 'status', 'isCert', 'deniedAt', 'deniedBy',
@@ -664,8 +695,8 @@ exports.updateJobV1 = onCall(async (request) => {
 
   // Role-specific restrictions for workers
   if (resolvedRole === 'worker') {
-    delete updates.workerId;
-    delete updates.completedBy;
+    delete updates.wid;
+    delete updates.mid;
     delete updates.isCert;
     delete updates.deniedAt;
     delete updates.deniedBy;
@@ -674,8 +705,6 @@ exports.updateJobV1 = onCall(async (request) => {
     if (updates.status && !CANONICAL_STATUSES.includes(updates.status)) {
       throw new HttpsError('permission-denied', 'Workers cannot set status to ' + updates.status);
     }
-  } else {
-    syncJobAssigneeFields(updates);
   }
 
   // Validate status is canonical if provided

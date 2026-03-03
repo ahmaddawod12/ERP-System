@@ -6,9 +6,13 @@ Source of truth: `functions/src/auth.js`, `functions/src/profile.js`, `functions
 
 | Path | Purpose | Key Fields |
 | --- | --- | --- |
-| `users/{uid}/data/profile` | Canonical user profile | `uid`, `email`, `role`, `companyId`, `name`, `phoneNumber`, `accountType`, `createdAt`, `updatedAt`, `pushToken*` |
+| `users/{uid}/data/profile` | Canonical user profile | `uid`, `email`, `role`, `companyId`, `name`, `phoneNumber`, `accountType`, `wid` (workers), `mid` (managers), `createdAt`, `updatedAt`, `pushToken*` |
 | `users/{uid}/data/cache` | User cache counters | `profile`, `inventory`, `subscription`, `lastUpdated` |
-| `companies/{companyId}/workers/{uid}` | Company membership doc | `workerId`, `uid`, `role`, `email`, `name`, `phoneNumber`, `wid`, `createdAt`, `updatedAt` |
+| `companies/{companyId}/workers/{wid}` | Company membership doc (keyed by wid) | `uid`, `wid`, `role`, `email`, `name`, `phoneNumber`, `createdAt`, `updatedAt` |
+| `companies/{companyId}/counters/wnext` | Worker ID counter | `next` |
+| `companies/{companyId}/counters/mnext` | Manager ID counter | `next` |
+| `companies/{companyId}/counters/cnext` | Client ID counter | `next` |
+| `companies/{companyId}/counters/jnext` | Job ID counter | `next` |
 | `companies/{companyId}/data/business_info` | Business registration data | `he_name`, `en_name`, `vat_number`, `business_type`, `city`, `address`, `document_numbers`, `last_updated` |
 | `companies/{companyId}/data/subscription` | Tier and module gates | `tier`, `status`, `enabledModules`, `expiresAt`, `updatedAt` |
 | `companies/{companyId}/data/cache` | Company cache summary | `jobsVersion`, `documentsVersion`, `clientsVersion`, `workersVersion`, `updatedAt` |
@@ -22,9 +26,9 @@ Source of truth: `functions/src/auth.js`, `functions/src/profile.js`, `functions
 
 | Function | Type | Main Inputs | Main Writes |
 | --- | --- | --- | --- |
-| `registerBusinessV1` | Callable | `role`, `accountType`, profile fields, business fields | profile, user cache, company root, workers, business info, subscription, inventory, company cache, `system/data/comid` |
-| `manageWorker` | Callable | `action=add/edit/delete`, `companyId`, `email`, optional password and role fields | auth user, worker profile, worker cache, workers membership, company counters/cache |
-| `updateProfileV1` | Callable | `name?`, `phoneNumber?` | `users/{uid}/data/profile` and mirror update to `companies/{companyId}/workers/{uid}` |
+| `registerBusinessV1` | Callable | `role`, `accountType`, profile fields, business fields | profile, user cache, company root, workers, business info, subscription, inventory, company cache, counter docs (`wnext`, `mnext`, `cnext`, `jnext`), `system/data/comid` |
+| `manageWorker` | Callable | `action=add/edit/delete`, `companyId`, `email`, optional password and role fields | auth user, worker profile (`wid` assigned), worker cache, workers membership (keyed by wid), company counters/cache |
+| `updateProfileV1` | Callable | `name?`, `phoneNumber?` | `users/{uid}/data/profile` and mirror update to `companies/{companyId}/workers/{wid}` |
 | `updatePushTokenV1` | Callable | `pushToken`, `pushTokenPlatform?`, `pushTokenType?` | push token fields on profile |
 | `clearPushTokenV1` | Callable | none | deletes push token fields from profile |
 | `updateBusinessInfoV1` | Callable | `companyId` + editable business fields | business info doc + company cache `updatedAt` |

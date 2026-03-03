@@ -244,7 +244,7 @@ export default function TaxInvoiceFormModal({
                                   color={isSelected ? colors.primary : colors.textSecondary} 
                                 />
                                 <AppText style={[styles.proposalTitle, { color: colors.textPrimary }]} numberOfLines={1}>
-                                  {proposal.clientName || t.priceProposals}
+                                  {proposal.cname || t.priceProposals}
                                 </AppText>
                               </View>
                               {isSelected && (

@@ -44,7 +44,7 @@ export default function SecurityPage() {
           <ul className="mt-4 grid gap-2 text-sm text-slate-700 dark:text-slate-200">
             <li>Primary account identity: Firebase Auth `uid`</li>
             <li>Company context: `companyId`</li>
-            <li>Worker assignments: `workerId` equals Firebase `uid`</li>
+            <li>Worker assignments: `wid`  is sequential within a company</li>
           </ul>
         </Card>
       </section>

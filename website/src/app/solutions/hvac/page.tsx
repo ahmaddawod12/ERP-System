@@ -7,7 +7,7 @@ export const revalidate = 3600;
 
 const bullets = [
   "Dispatch preventive maintenance and emergency repair jobs quickly.",
-  "Assign licensed technicians and preserve service logs by workerId.",
+  "Assign licensed technicians and preserve service logs by worker ID.",
   "Track filters, sensors, compressors, and parts with low-threshold alerts.",
   "Generate documents and compliance PDFs for clients after completion.",
 ];

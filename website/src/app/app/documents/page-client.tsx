@@ -761,7 +761,7 @@ export default function DocumentsClient() {
                     {
                       key: "client",
                       header: "Client",
-                      render: (row) => row.clientName || "—",
+                      render: (row) => row.cname || "—",
                     },
                     {
                       key: "total",
@@ -988,7 +988,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
       </div>
 
       {/* Client Info */}
-      {documentRecord.clientName && (
+      {documentRecord.cname && (
         <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <h4 className="mb-2 font-semibold text-slate-900 dark:text-slate-100">
             Client
@@ -996,24 +996,12 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
           <div className="grid grid-cols-2 gap-1">
             <p>
               <span className="text-slate-500">Name: </span>
-              {documentRecord.clientName}
+              {documentRecord.cname}
             </p>
-            {documentRecord.clientPhone && (
+            {documentRecord.cphone && (
               <p>
                 <span className="text-slate-500">Phone: </span>
-                {documentRecord.clientPhone}
-              </p>
-            )}
-            {documentRecord.clientEmail && (
-              <p>
-                <span className="text-slate-500">Email: </span>
-                {documentRecord.clientEmail}
-              </p>
-            )}
-            {documentRecord.clientAddress && (
-              <p>
-                <span className="text-slate-500">Address: </span>
-                {documentRecord.clientAddress}
+                {documentRecord.cphone}
               </p>
             )}
             {documentRecord.clientCity && (

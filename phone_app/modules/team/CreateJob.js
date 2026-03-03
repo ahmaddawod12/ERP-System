@@ -38,6 +38,7 @@ export default function CreateJob() {
   const themeColors = getColors(isDarkMode);
   const [workers, setWorkers] = useState([]);
   const [selectedWorker, setSelectedWorker] = useState(null);
+  const [selectedWorkerWid, setSelectedWorkerWid] = useState(null);
   const [selectedWorkerName, setSelectedWorkerName] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,10 +47,8 @@ export default function CreateJob() {
     title: '',
     description: '',
     location: '',
-    clientName: '',
-    clientPhone: '',
-    clientEmail: '',
-    clientAddress: '',
+    cname: '',
+    cphone: '',
   });
 
   const t = language === 'en' ? {
@@ -64,8 +63,6 @@ export default function CreateJob() {
     location: 'Location',
     clientName: 'Client Name',
     clientPhone: 'Client Phone Number',
-    clientEmail: 'Client Email',
-    clientAddress: 'Client Address',
     submit: 'Create Job',
     cancel: 'Cancel',
     assignedTo: 'Assigned to',
@@ -84,8 +81,6 @@ export default function CreateJob() {
     location: 'מיקום',
     clientName: 'שם הלקוח',
     clientPhone: 'טלפון הלקוח',
-    clientEmail: 'אימייל הלקוח',
-    clientAddress: 'כתובת הלקוח',
     submit: 'צור משימה',
     cancel: 'ביטול',
     assignedTo: 'מוקצה ל',
@@ -104,8 +99,6 @@ export default function CreateJob() {
     location: 'الموقع',
     clientName: 'اسم العميل',
     clientPhone: 'رقم هاتف العميل',
-    clientEmail: 'بريد العميل الإلكتروني',
-    clientAddress: 'عنوان العميل',
     submit: 'إنشاء مهمة',
     cancel: 'إلغاء',
     assignedTo: 'مخصص لـ',
@@ -147,12 +140,13 @@ export default function CreateJob() {
         return;
       }
 
-      // Use cached workers list if available (keyed by UID)
+      // Use cached workers list if available (keyed by wid or uid)
       if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
         const workersArray = Object.keys(cachedWorkersList).map((key) => {
           const workerData = cachedWorkersList[key] || {};
           return {
             uid: workerData.uid || key,
+            wid: workerData.wid || key,
             email: workerData.email || '',
             name: workerData.name || '',
             phoneNumber: workerData.phoneNumber || '',
@@ -163,7 +157,7 @@ export default function CreateJob() {
         return;
       }
 
-      // Fallback to Firebase (workers docs are keyed by UID)
+      // Fallback to Firebase (workers docs are now keyed by wid)
       const workersRef = collection(db, 'companies', companyId, 'workers');
       const workersSnapshot = await getDocs(workersRef);
 
@@ -171,10 +165,12 @@ export default function CreateJob() {
         const workersData = {};
         workersSnapshot.forEach(docSnap => {
           const workerData = docSnap.data() || {};
+          const wid = workerData.wid || docSnap.id;
           const uid = workerData.uid || docSnap.id;
-          workersData[uid] = {
+          workersData[wid] = {
             ...workerData,
             uid,
+            wid,
           };
         });
         
@@ -196,7 +192,7 @@ export default function CreateJob() {
   };
 
   const handleCreateJob = async () => {
-    if (!newJob.title || !newJob.description || !newJob.location || !newJob.clientName || !newJob.clientPhone) {
+    if (!newJob.title || !newJob.description || !newJob.location || !newJob.cname || !newJob.cphone) {
       alert.error('Error', t.fillAllFields);
       return;
     }
@@ -224,45 +220,49 @@ export default function CreateJob() {
       }
 
       // Auto-save new client or update existing client with missing fields
-      let clientId = selectedClientObj?.id || null;
-      if (selectedClientObj && newJob.clientName.trim()) {
+      let clientCid = selectedClientObj?.id || null;
+      if (selectedClientObj && newJob.cname.trim()) {
         // Update existing client with any newly filled fields
         try {
           const updates = {};
-          if (newJob.clientName.trim() && newJob.clientName.trim() !== (selectedClientObj.name || '')) updates.name = newJob.clientName.trim();
-          if (newJob.clientPhone.trim() && newJob.clientPhone.trim() !== (selectedClientObj.phone || '')) updates.phone = newJob.clientPhone.trim();
-          if (newJob.clientEmail.trim() && newJob.clientEmail.trim() !== (selectedClientObj.email || '')) updates.email = newJob.clientEmail.trim();
-          if (newJob.clientAddress.trim() && newJob.clientAddress.trim() !== (selectedClientObj.address || '')) updates.address = newJob.clientAddress.trim();
+          if (newJob.cname.trim() && newJob.cname.trim() !== (selectedClientObj.cname || selectedClientObj.name || '')) updates.name = newJob.cname.trim();
+          if (newJob.cphone.trim() && newJob.cphone.trim() !== (selectedClientObj.cphone || selectedClientObj.phone || '')) updates.phone = newJob.cphone.trim();
           if (Object.keys(updates).length > 0) {
             await updateClient(selectedClientObj.id, updates);
-            console.log('✅ Updated existing client with new fields:', Object.keys(updates));
+            console.log('Updated existing client with new fields:', Object.keys(updates));
           }
         } catch (e) {
           console.log('Update client failed (non-critical):', e);
         }
-      } else if (!selectedClientObj && newJob.clientName.trim()) {
+      } else if (!selectedClientObj && newJob.cname.trim()) {
         // Save as new client
         try {
-          const clientToSave = { name: newJob.clientName.trim() };
-          if (newJob.clientPhone.trim()) clientToSave.phone = newJob.clientPhone.trim();
-          if (newJob.clientEmail.trim()) clientToSave.email = newJob.clientEmail.trim();
-          if (newJob.clientAddress.trim()) clientToSave.address = newJob.clientAddress.trim();
+          const clientToSave = { name: newJob.cname.trim() };
+          if (newJob.cphone.trim()) clientToSave.phone = newJob.cphone.trim();
           const savedClient = await addClient(clientToSave);
-          if (savedClient) clientId = savedClient.id;
+          if (savedClient) clientCid = savedClient.id;
         } catch (e) {
           console.log('Auto-save client failed (non-critical):', e);
         }
       }
       
+      // Build clean job payload using new field names
+      const selectedWorkerObj = workers.find(w => w.uid === selectedWorker);
+      const workerWid = selectedWorkerObj?.wid || selectedWorkerWid;
+      const managerMid = profile?.mid || null;
+
       const jobData = {
-        ...newJob,
+        title: newJob.title,
+        description: newJob.description,
+        location: newJob.location,
         status: 'pending',
-        MName: managerName,
-        completedBy: selectedWorker,  // Worker UID for filtering
-        workerId: selectedWorker,     // Canonical worker identifier
-        name: selectedWorkerName,      // Worker name for display
-        MUser: managerUid,        // Manager UID
-        ...(clientId && { clientId }),
+        mname: managerName,
+        mid: managerMid ? String(managerMid) : null,
+        wid: workerWid ? String(workerWid) : null,
+        wname: selectedWorkerName,
+        cname: newJob.cname.trim(),
+        cphone: newJob.cphone.trim(),
+        ...(clientCid && { cid: clientCid }),
       };
 
       // Use createJobV1 Cloud Function for atomic job creation with sequential ID
@@ -280,9 +280,10 @@ export default function CreateJob() {
       await addJob(createdJob, true, selectedWorker);
 
       alert.success('Success', t.jobCreated);
-      setNewJob({ title: '', description: '', location: '', clientName: '', clientPhone: '' });
+      setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
       setSelectedWorker(null);
       setSelectedWorkerName('');
+      setSelectedWorkerWid(null);
       setSelectedClientObj(null);
       
       // Navigate back to manager homepage
@@ -356,13 +357,15 @@ export default function CreateJob() {
                         // Deselect worker, clear form, and show all workers again
                         setSelectedWorker(null);
                         setSelectedWorkerName('');
+                        setSelectedWorkerWid(null);
                         setSearchQuery(''); // Clear search when deselecting
-                        setNewJob({ title: '', description: '', location: '', clientName: '', clientPhone: '', clientEmail: '', clientAddress: '' });
+                        setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
                       } else {
                         // Select new worker, clear form, and hide other workers
                         setSelectedWorker(worker.uid);
                         setSelectedWorkerName(worker.name || worker.email);
-                        setNewJob({ title: '', description: '', location: '', clientName: '', clientPhone: '', clientEmail: '', clientAddress: '' });
+                        setSelectedWorkerWid(worker.wid);
+                        setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
                       }
                     }}
                   >
@@ -441,16 +444,14 @@ export default function CreateJob() {
                     setSelectedClientObj(client);
                     setNewJob(prev => ({
                       ...prev,
-                      clientName: client.name || '',
-                      clientPhone: client.phone || '',
-                      clientEmail: client.email || '',
-                      clientAddress: client.address || '',
+                      cname: client.cname || client.name || '',
+                      cphone: client.cphone || client.phone || '',
                     }));
                   }}
                   selectedClient={selectedClientObj}
                   onClear={() => {
                     setSelectedClientObj(null);
-                    setNewJob(prev => ({ ...prev, clientName: '', clientPhone: '', clientEmail: '', clientAddress: '' }));
+                    setNewJob(prev => ({ ...prev, cname: '', cphone: '' }));
                   }}
                   colors={themeColors}
                   language={language}
@@ -460,49 +461,25 @@ export default function CreateJob() {
                 <TextInput
                   style={[styles.input, { 
                     backgroundColor: themeColors.surface, 
-                    borderColor: newJob.clientName ? themeColors.secondary : themeColors.border,
+                    borderColor: newJob.cname ? themeColors.secondary : themeColors.border,
                     color: themeColors.textPrimary 
                   }]}
                   placeholder={t.clientName + ' *'}
                   placeholderTextColor={themeColors.textLight}
-                  value={newJob.clientName}
-                  onChangeText={(text) => setNewJob({ ...newJob, clientName: text })}
+                  value={newJob.cname}
+                  onChangeText={(text) => setNewJob({ ...newJob, cname: text })}
                 />
                 <TextInput
                   style={[styles.input, { 
                     backgroundColor: themeColors.surface, 
-                    borderColor: newJob.clientPhone ? themeColors.secondary : themeColors.border,
+                    borderColor: newJob.cphone ? themeColors.secondary : themeColors.border,
                     color: themeColors.textPrimary 
                   }]}
                   placeholder={t.clientPhone}
                   placeholderTextColor={themeColors.textLight}
-                  value={newJob.clientPhone}
-                  onChangeText={(text) => setNewJob({ ...newJob, clientPhone: text })}
+                  value={newJob.cphone}
+                  onChangeText={(text) => setNewJob({ ...newJob, cphone: text })}
                   keyboardType="phone-pad"
-                />
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: themeColors.surface, 
-                    borderColor: newJob.clientEmail ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.clientEmail}
-                  placeholderTextColor={themeColors.textLight}
-                  value={newJob.clientEmail}
-                  onChangeText={(text) => setNewJob({ ...newJob, clientEmail: text })}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: themeColors.surface, 
-                    borderColor: newJob.clientAddress ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.clientAddress}
-                  placeholderTextColor={themeColors.textLight}
-                  value={newJob.clientAddress}
-                  onChangeText={(text) => setNewJob({ ...newJob, clientAddress: text })}
                 />
               </View>
 
@@ -573,10 +550,11 @@ export default function CreateJob() {
                   style={styles.cancelButtonWrapper}
                   onPress={() => {
                     setSelectedWorker(null);
+                    setSelectedWorkerWid(null);
                     setSelectedWorkerName('');
                     setSearchQuery(''); // Clear search when canceling
                     setSelectedClientObj(null);
-                    setNewJob({ title: '', description: '', location: '', clientName: '', clientPhone: '', clientEmail: '', clientAddress: '' });
+                    setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
                   }}
                 >
                   <View style={[styles.cancelButton, { borderColor: themeColors.border, backgroundColor: themeColors.background }]}>

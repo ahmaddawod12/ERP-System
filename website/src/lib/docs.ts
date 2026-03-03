@@ -229,7 +229,7 @@ export const docs: DocEntry[] = [
           [
             "companies/{companyId}/jobs/{jobId}",
             "Unified job record",
-            "id, jid, status, createdBy, createdAt, updatedAt, workerId/completedBy, client fields, parts/partsUsed, timing/signature fields, isCert",
+            " status, createdAt, updatedAt, wid,mid,mname,wname, client fields, parts/partsUsed, timing/signature fields, isCert",
           ],
           [
             "companies/{companyId}/data/cache",

@@ -397,7 +397,7 @@ export default function DocumentHistory() {
     if (clientFilter.trim()) {
       const query = clientFilter.toLowerCase();
       filtered = filtered.filter(doc =>
-        (doc.clientName && doc.clientName.toLowerCase().includes(query))
+        (doc.cname && doc.cname.toLowerCase().includes(query))
       );
     }
 
@@ -850,11 +850,11 @@ export default function DocumentHistory() {
                 </View>
 
                 <View style={styles.documentDetails}>
-                  {doc.clientName && (
+                  {doc.cname && (
                     <View style={styles.detailRow}>
                       <Ionicons name="person-outline" size={16} color={colors.textSecondary} />
                       <AppText style={[styles.detailText, { color: colors.textPrimary }]}>
-                        {t.client}: {String(doc.clientName || '')}
+                        {t.client}: {String(doc.cname || '')}
                       </AppText>
                     </View>
                   )}
@@ -973,11 +973,11 @@ export default function DocumentHistory() {
                     </AppText>
                   </View>
 
-                  {selectedDocument.clientName && (
+                  {selectedDocument.cname && (
                     <View style={styles.previewRow}>
                       <AppText style={[styles.previewLabel, { color: colors.textSecondary }]}>{t.client}:</AppText>
                       <AppText style={[styles.previewValue, { color: colors.textPrimary }]}>
-                        {selectedDocument.clientName}
+                        {selectedDocument.cname}
                       </AppText>
                     </View>
                   )}

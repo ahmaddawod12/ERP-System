@@ -235,8 +235,12 @@ export default function WorkersMonitor() {
     
     if (selectedWorker && user) {
       const setupListener = async () => {
-        // loadWorkerData sets up the inventory listener and returns cleanup function
-        unsubscribe = await loadWorkerData(selectedWorker);
+        // Find the Firebase Auth UID for this worker (selectedWorker is wid)
+        const workerObj = workers.find(w => w.wid === selectedWorker);
+        const workerUid = workerObj?.uid;
+        if (workerUid) {
+          unsubscribe = await loadWorkerData(workerUid);
+        }
       };
       setupListener();
     }
@@ -255,10 +259,10 @@ export default function WorkersMonitor() {
     
     // Filter jobs from cache by selected worker (no Firebase reads)
     const pendingJobs = (cachedPendingJobs || []).filter(
-      job => job.workerId === selectedWorker || job.completedBy === selectedWorker || job.assignedTo === selectedWorker
+      job => job.wid === selectedWorker
     );
     const finishedJobs = (cachedFinishedJobs || []).filter(
-      job => job.workerId === selectedWorker || job.completedBy === selectedWorker || job.assignedTo === selectedWorker
+      job => job.wid === selectedWorker
     );
     
     // Combine and sort
@@ -300,11 +304,12 @@ export default function WorkersMonitor() {
       // Use cached workers list if available
       if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
         console.log('📦 [CACHE READ] WorkersMonitor - workers list from cache:', Object.keys(cachedWorkersList).length, 'workers');
-        const workersList = Object.keys(cachedWorkersList).map((key) => {
-          const workerData = cachedWorkersList[key] || {};
+        const workersList = Object.keys(cachedWorkersList).map((wid) => {
+          const workerData = cachedWorkersList[wid] || {};
           return {
+            wid,
             email: workerData.email || '',
-            uid: workerData.uid || key,
+            uid: workerData.uid || wid,
             name: workerData.name || '',
           };
         });
@@ -322,10 +327,10 @@ export default function WorkersMonitor() {
         const workersData = {};
         workersSnapshot.forEach(docSnap => {
           const workerData = docSnap.data() || {};
-          const uid = workerData.uid || docSnap.id;
-          workersData[uid] = {
+          const wid = docSnap.id;
+          workersData[wid] = {
             ...workerData,
-            uid,
+            wid,
           };
         });
         
@@ -333,11 +338,12 @@ export default function WorkersMonitor() {
         await updateWorkersList(workersData);
         
         // Keys are UIDs
-        const workersList = Object.keys(workersData).map((uid) => {
-          const workerData = workersData[uid] || {};
+        const workersList = Object.keys(workersData).map((wid) => {
+          const workerData = workersData[wid] || {};
           return {
+            wid,
             email: workerData.email || '',
-            uid: workerData.uid || uid,
+            uid: workerData.uid || wid,
             name: workerData.name || '',
           };
         });
@@ -459,9 +465,9 @@ export default function WorkersMonitor() {
                   );
                 })
                 .map((worker) => {
-                  const isSelected = selectedWorker === worker.uid;
+                  const isSelected = selectedWorker === worker.wid;
                   return (
-                    <View key={worker.uid}>
+                    <View key={worker.wid}>
                       <TouchableOpacity
                         style={[
                           styles.workerCard,
@@ -480,8 +486,8 @@ export default function WorkersMonitor() {
                             setWorkerInventory([]);
                           } else {
                             // Select different worker
-                            setSelectedWorker(worker.uid);
-                            setSelectedWorkerName(worker.name || worker.uid);
+                            setSelectedWorker(worker.wid);
+                            setSelectedWorkerName(worker.name || worker.wid);
                           }
                         }}
                       >

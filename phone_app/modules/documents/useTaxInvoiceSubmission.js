@@ -296,7 +296,7 @@ export function useTaxInvoiceSubmission({
         jobsData: selectedJobs.length > 0 ? selectedJobs.map(job => ({
           jobId: job.id,
           jobTitle: job.title,
-          worker: job.workerName || 'N/A',
+          worker: job.wname || 'N/A',
         })) : undefined,
         // Price proposal reference (to mark as used)
         priceProposalId: selectedPriceProposal?.id || null,

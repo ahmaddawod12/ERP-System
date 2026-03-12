@@ -135,37 +135,47 @@ exports.updateInventoryV1 = onCall(async (request) => {
     }
 
     if (action === 'pickParts') {
+      if (scope !== 'company') {
+        throw new HttpsError('invalid-argument', 'pickParts action is only allowed with scope=company');
+      }
+
       const partsToPick = data.partsToPick;
       if (!Array.isArray(partsToPick) || partsToPick.length === 0) {
         throw new HttpsError('invalid-argument', 'partsToPick array is required');
       }
+      for (const pick of partsToPick) {
+        if (typeof pick?.id !== 'number' || !Number.isFinite(pick.id)) {
+          throw new HttpsError('invalid-argument', 'Each picked part must include a numeric id');
+        }
+        if (typeof pick?.quantity !== 'number' || !Number.isFinite(pick.quantity) || pick.quantity <= 0) {
+          throw new HttpsError('invalid-argument', 'Each picked part must include a positive numeric quantity');
+        }
+      }
 
       // Validate company inventory stock and deduct picked quantities
-      if (scope === 'company') {
-        // invRef is already the company inventory ref; parts is the current company parts
-        const insufficientParts = [];
-        for (const pick of partsToPick) {
-          const companyPart = parts.find((p) => p.id === pick.id);
-          if (!companyPart) {
-            insufficientParts.push({ id: pick.id, name: pick.name, requested: pick.quantity, available: 0 });
-          } else if ((companyPart.quantity || 0) < (pick.quantity || 0)) {
-            insufficientParts.push({ id: pick.id, name: companyPart.name, requested: pick.quantity, available: companyPart.quantity || 0 });
-          }
+      // invRef is already the company inventory ref; parts is the current company parts
+      const insufficientParts = [];
+      for (const pick of partsToPick) {
+        const companyPart = parts.find((p) => p.id === pick.id);
+        if (!companyPart) {
+          insufficientParts.push({ id: pick.id, name: pick.name, requested: pick.quantity, available: 0 });
+        } else if ((companyPart.quantity || 0) < (pick.quantity || 0)) {
+          insufficientParts.push({ id: pick.id, name: companyPart.name, requested: pick.quantity, available: companyPart.quantity || 0 });
         }
-        if (insufficientParts.length > 0) {
-          throw new HttpsError('failed-precondition', `Insufficient stock for parts: ${insufficientParts.map(p => `${p.name} (need ${p.requested}, have ${p.available})`).join(', ')}`);
-        }
-
-        // Deduct picked quantities from company inventory
-        const updatedCompanyParts = parts.map((p) => {
-          const pick = partsToPick.find((pk) => pk.id === p.id);
-          if (pick && typeof pick.quantity === 'number') {
-            return { ...p, quantity: Math.max(0, (p.quantity || 0) - pick.quantity) };
-          }
-          return p;
-        });
-        tx.update(invRef, { parts: updatedCompanyParts, lastUpdated: now });
       }
+      if (insufficientParts.length > 0) {
+        throw new HttpsError('failed-precondition', `Insufficient stock for parts: ${insufficientParts.map(p => `${p.name} (need ${p.requested}, have ${p.available})`).join(', ')}`);
+      }
+
+      // Deduct picked quantities from company inventory
+      const updatedCompanyParts = parts.map((p) => {
+        const pick = partsToPick.find((pk) => pk.id === p.id);
+        if (pick && typeof pick.quantity === 'number') {
+          return { ...p, quantity: Math.max(0, (p.quantity || 0) - pick.quantity) };
+        }
+        return p;
+      });
+      tx.update(invRef, { parts: updatedCompanyParts, lastUpdated: now });
 
       // For pick: read user inventory, add/merge picked parts
       const userInvRef = dbRef.doc(`users/${targetUid}/data/inventory`);

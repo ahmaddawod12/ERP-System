@@ -1074,7 +1074,7 @@ exports.getInvoiceApproval = onCall({
         const cacheRef = admin.firestore().doc(cachePath);
         cacheUpdates.documentsVersion = admin.firestore.FieldValue.increment(1);
         cacheUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-        batch.update(cacheRef, cacheUpdates);
+        batch.set(cacheRef, cacheUpdates, { merge: true });
         logger.info('Queued cache update', { cachePath, cacheUpdates });
         
         // Commit all updates in one batch
@@ -1092,6 +1092,13 @@ exports.getInvoiceApproval = onCall({
             priceProposalId
           });
         }
+      } else {
+        const cacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
+        await cacheRef.set({
+          documentsVersion: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        logger.info('Cache updated for tax invoice without linked jobs', { companyId, documentId });
       }
 
     } catch (firestoreError) {

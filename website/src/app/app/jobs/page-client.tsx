@@ -64,14 +64,14 @@ export default function JobsClient() {
     }
     setLoading(true);
     const [jobsResult, workersResult] = await Promise.all([
-      listJobs(scopeId, { role: role ?? undefined, uid: uid ?? undefined }),
+      listJobs(scopeId, { role: role ?? undefined }),
       canManageCompanyJobs ? listWorkers(scopeId) : Promise.resolve([]),
     ]);
     setPendingJobs(jobsResult.pending);
     setFinishedJobs(jobsResult.finished);
     setWorkers(workersResult);
     setLoading(false);
-  }, [scopeId, canManageCompanyJobs, role, uid]);
+  }, [scopeId, canManageCompanyJobs, role]);
 
   useEffect(() => {
     void loadJobs();

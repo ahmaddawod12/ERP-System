@@ -47,35 +47,69 @@ service cloud.firestore {
       );
     }
 
-    function workerPath(companyId, userId) {
-      return /databases/$(database)/documents/companies/$(companyId)/workers/$(userId);
+    function currentWid() {
+      return currentProfileExists() ? userProfile(request.auth.uid).wid : null;
     }
 
-    function workerExists(companyId, userId) {
-      return exists(workerPath(companyId, userId));
+    function currentMid() {
+      return currentProfileExists() ? userProfile(request.auth.uid).mid : null;
     }
 
-    function workerRole(companyId, userId) {
-      return workerExists(companyId, userId) ? get(workerPath(companyId, userId)).data.role : null;
+    function workerPath(companyId, wid) {
+      return /databases/$(database)/documents/companies/$(companyId)/workers/$(wid);
+    }
+
+    function managerPath(companyId, mid) {
+      return /databases/$(database)/documents/companies/$(companyId)/managers/$(mid);
+    }
+
+    function workerExistsByWid(companyId, wid) {
+      return wid != null && exists(workerPath(companyId, wid));
+    }
+
+    function managerExistsByMid(companyId, mid) {
+      return mid != null && exists(managerPath(companyId, mid));
+    }
+
+    function workerRoleByWid(companyId, wid) {
+      return workerExistsByWid(companyId, wid) ? get(workerPath(companyId, wid)).data.role : null;
+    }
+
+    function managerRoleByMid(companyId, mid) {
+      return managerExistsByMid(companyId, mid) ? get(managerPath(companyId, mid)).data.role : null;
     }
 
     function companyRole(companyId) {
-      return signedIn() ? workerRole(companyId, request.auth.uid) : null;
+      return !signedIn()
+        ? null
+        : (
+            workerExistsByWid(companyId, currentWid())
+              ? workerRoleByWid(companyId, currentWid())
+              : (
+                  managerExistsByMid(companyId, currentMid())
+                    ? managerRoleByMid(companyId, currentMid())
+                    : null
+                )
+          );
     }
 
     function isSoloScope(companyId) {
       return currentProfileExists() &&
         currentAccountType() == "solo" &&
-        request.auth.uid == companyId;
+        currentCompanyId() == companyId;
     }
 
     function isCompanyWorker(companyId) {
-      return signedIn() && workerExists(companyId, request.auth.uid);
+      return signedIn() && workerExistsByWid(companyId, currentWid());
+    }
+
+    function isCompanyManager(companyId) {
+      return signedIn() && managerExistsByMid(companyId, currentMid());
     }
 
     function isCompanyMember(companyId) {
       return signedIn() && (
-        (currentCompanyId() == companyId && isCompanyWorker(companyId)) ||
+        (currentCompanyId() == companyId && (isCompanyWorker(companyId) || isCompanyManager(companyId))) ||
         isSoloScope(companyId)
       );
     }
@@ -86,24 +120,32 @@ service cloud.firestore {
 
     function canManageCompany(companyId) {
       return isAdmin() || (
-        isCompanyWorker(companyId) &&
+        (isCompanyWorker(companyId) || isCompanyManager(companyId)) &&
         companyRole(companyId) in ["manager", "dev"]
       );
     }
 
     // manager/user/basic can read company data (shared role set)
     function isManagerUserBasic(companyId) {
-      return isCompanyWorker(companyId) &&
+      return (isCompanyWorker(companyId) || isCompanyManager(companyId)) &&
         companyRole(companyId) in ["manager", "user", "basic", "dev"];
+    }
+
+    function targetUserWid(userId) {
+      return userProfileExists(userId) ? userProfile(userId).wid : null;
+    }
+
+    function workerExistsByUid(companyId, userId) {
+      return targetUserWid(userId) != null && workerExistsByWid(companyId, targetUserWid(userId));
     }
 
     // Check if caller is a manager in their own company and the target user is in the same company
     function canManagerAccessWorkerData(userId) {
       return signedIn() &&
         currentCompanyId() != null &&
-        isCompanyWorker(currentCompanyId()) &&
+        (isCompanyWorker(currentCompanyId()) || isCompanyManager(currentCompanyId())) &&
         companyRole(currentCompanyId()) in ["manager", "dev"] &&
-        workerExists(currentCompanyId(), userId);
+        workerExistsByUid(currentCompanyId(), userId);
     }
 
     // ── Profile: READ-ONLY from client. Updates via Cloud Function only ──

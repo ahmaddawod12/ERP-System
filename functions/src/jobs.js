@@ -53,6 +53,15 @@ exports.onJobAssignTrigger = onDocumentCreated({
 
     const jobTitle = jobData.title || 'Untitled Job';
     const managerName = jobData.mname;
+    let managerUserId = null;
+    const managerMid = jobData.mid;
+    if (managerMid) {
+      const managerDocRef = admin.firestore().doc(companyManagerDocPath(companyId, managerMid));
+      const managerDocSnap = await managerDocRef.get();
+      if (managerDocSnap.exists) {
+        managerUserId = managerDocSnap.data()?.uid || null;
+      }
+    }
 
     logger.info('Job assignment detected', {
       jobId,
@@ -181,7 +190,14 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       return;
     }
 
-    const workerUserId = afterData.wid ? null : 'Unknown Worker'; // resolved below
+    let workerUserId = null;
+    if (afterData.wid) {
+      const workerDocRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(afterData.wid)));
+      const workerDocSnap = await workerDocRef.get();
+      if (workerDocSnap.exists) {
+        workerUserId = workerDocSnap.data()?.uid || null;
+      }
+    }
     const jobTitle = afterData.title || 'Untitled Job';
     const workerName = afterData.wname;
 
@@ -550,6 +566,17 @@ exports.createJobV1 = onCall(async (request) => {
   }
 
   const result = await dbRef.runTransaction(async (tx) => {
+    if (idempotencyKey) {
+      const existingQuery = dbRef
+        .collection(`companies/${companyId}/jobs`)
+        .where('idempotencyKey', '==', idempotencyKey)
+        .limit(1);
+      const existingSnap = await tx.get(existingQuery);
+      if (!existingSnap.empty) {
+        return { jobId: existingSnap.docs[0].id, duplicate: true };
+      }
+    }
+
     const counterSnap = await tx.get(jnextRef);
     if (!counterSnap.exists) {
       throw new HttpsError('failed-precondition', 'Company job counter not initialized');

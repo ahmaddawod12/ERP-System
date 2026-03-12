@@ -360,9 +360,34 @@ async function assertTargetUserInCompany(targetUid, companyId) {
     throw new HttpsError('permission-denied', 'Target user is not in this company');
   }
 
-  const membershipSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, targetUid)).get();
+  const targetRole = normalizeRole(targetProfile.role);
+  if (targetRole === 'manager') {
+    const targetMid = String(targetProfile.mid || '').trim();
+    let managerSnap = null;
+    if (targetMid) {
+      managerSnap = await admin.firestore().doc(companyManagerDocPath(companyId, targetMid)).get();
+    }
+    if (!managerSnap || !managerSnap.exists) {
+      const managerQuery = await admin.firestore()
+        .collection(`companies/${companyId}/managers`)
+        .where('uid', '==', targetUid)
+        .limit(1)
+        .get();
+      if (managerQuery.empty) {
+        throw new HttpsError('permission-denied', 'Target manager membership record not found');
+      }
+    }
+    return;
+  }
+
+  const targetWid = String(targetProfile.wid || '').trim();
+  if (!targetWid) {
+    throw new HttpsError('permission-denied', 'Target user has no wid membership key');
+  }
+
+  const membershipSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, targetWid)).get();
   if (!membershipSnap.exists) {
-    throw new HttpsError('permission-denied', 'Target user membership record not found');
+    throw new HttpsError('permission-denied', 'Target worker membership record not found');
   }
 }
 
@@ -393,15 +418,45 @@ async function assertHttpCompanyAccess(params) {
       throw new HttpsError('permission-denied', 'Company mismatch');
     }
 
-    workerSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, uid)).get();
-    if (!workerSnap.exists && profileRole !== 'dev') {
-      throw new HttpsError('permission-denied', 'Company membership record not found');
+    const profileWid = String(profile.wid || '').trim();
+    const profileMid = String(profile.mid || '').trim();
+
+    if (profileWid) {
+      workerSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, profileWid)).get();
     }
-    if (workerSnap.exists) {
+
+    if (workerSnap && workerSnap.exists) {
       const workerRole = normalizeRole(workerSnap.data()?.role);
       if (workerRole) {
         resolvedRole = workerRole;
       }
+    }
+
+    if ((!workerSnap || !workerSnap.exists) && profileRole === 'manager') {
+      let managerSnap = null;
+      if (profileMid) {
+        managerSnap = await admin.firestore().doc(companyManagerDocPath(companyId, profileMid)).get();
+      }
+      if ((!managerSnap || !managerSnap.exists) && profileRole !== 'dev') {
+        const managerQuery = await admin.firestore()
+          .collection(`companies/${companyId}/managers`)
+          .where('uid', '==', uid)
+          .limit(1)
+          .get();
+        if (!managerQuery.empty) {
+          managerSnap = managerQuery.docs[0];
+        }
+      }
+      if (managerSnap && managerSnap.exists) {
+        const managerRole = normalizeRole(managerSnap.data()?.role);
+        if (managerRole) {
+          resolvedRole = managerRole;
+        }
+      } else if (profileRole !== 'dev') {
+        throw new HttpsError('permission-denied', 'Company manager membership record not found');
+      }
+    } else if ((!workerSnap || !workerSnap.exists) && profileRole !== 'dev') {
+      throw new HttpsError('permission-denied', 'Company worker membership record not found');
     }
   }
 

@@ -607,18 +607,9 @@ async function processGenerateTask(taskData) {
     
     const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
     
-    // Determine cache path based on user role
-    // manager: companies/{companyId}/data/cache
-    // user/basic/dev: users/{uid}/data/cache
-    const getCachePath = () => {
-      if (userRole === 'manager') {
-        return `companies/${companyId}/data/cache`;
-      } else {
-        return `users/${uid}/data/cache`;
-      }
-    };
-    const cachePath = getCachePath();
-    console.log(`[generate:${taskId}] Using cache path: ${cachePath} for role: ${userRole}`);
+    // Documents are company-scoped; always bump the company cache summary version.
+    const cachePath = `companies/${companyId}/data/cache`;
+    console.log(`[generate:${taskId}] Using cache path: ${cachePath}`);
     
     // Save/update document data
     const documentRef = db.doc(`companies/${companyId}/documents/${documentDocId}`);
@@ -657,10 +648,10 @@ async function processGenerateTask(taskData) {
       });
     }
     
-    // Update document cache version based on role
+    // Summary cache version used by phone/web listeners.
     await db.doc(cachePath).set({
-      [documentDocId]: 1,
-      lastUpdated: new Date().toISOString(),
+      documentsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
     console.log(`[generate:${taskId}] Updated document cache at ${cachePath}`);
 

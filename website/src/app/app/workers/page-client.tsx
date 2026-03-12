@@ -78,9 +78,9 @@ export default function WorkersClient() {
     }
   };
 
-  const handleRoleChange = async (wid: string, role: Role) => {
+  const handleRoleChange = async (wid: string | number, role: Role) => {
     if (!companyId) return;
-    await updateWorkerRole(companyId, wid, role);
+    await updateWorkerRole(companyId, String(wid), role);
     await load();
     toast({ title: "Worker role updated", variant: "success" });
   };

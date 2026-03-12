@@ -58,8 +58,11 @@ exports.addClientV1 = onCall(async (request) => {
     const now = new Date().toISOString();
 
     // Build client doc — only cid, cname, cphone + optional extras
-    const clientDoc = { cid, cname: name, createdAt: now };
-    if (phone)     clientDoc.cphone   = phone;
+    const clientDoc = { cid, cname: name, name, createdAt: now };
+    if (phone) {
+      clientDoc.cphone = phone;
+      clientDoc.phone = phone;
+    }
     if (email)     clientDoc.email     = email;
     if (address)   clientDoc.address   = address;
     if (city)      clientDoc.city      = city;
@@ -165,12 +168,14 @@ exports.updateClientV1 = onCall(async (request) => {
 
   // Build update payload — strip metadata
   const updates = {};
-  if (data.name !== undefined) {
-    const trimmedName = String(data.name || '').trim();
+  const incomingName = data.name !== undefined ? data.name : data.cname;
+  if (incomingName !== undefined) {
+    const trimmedName = String(incomingName || '').trim();
     if (!trimmedName) {
       throw new HttpsError('invalid-argument', 'name cannot be empty');
     }
-    updates.name = trimmedName;
+    updates.cname = trimmedName;
+    updates.name = trimmedName; // Backward compatibility for website/legacy readers.
   }
   if (data.email !== undefined) {
     const email = String(data.email || '').trim();
@@ -179,7 +184,12 @@ exports.updateClientV1 = onCall(async (request) => {
     }
     updates.email = email;
   }
-  if (data.phone !== undefined) updates.phone = String(data.phone || '').trim();
+  const incomingPhone = data.phone !== undefined ? data.phone : data.cphone;
+  if (incomingPhone !== undefined) {
+    const trimmedPhone = String(incomingPhone || '').trim();
+    updates.cphone = trimmedPhone;
+    updates.phone = trimmedPhone; // Backward compatibility for website/legacy readers.
+  }
   if (data.address !== undefined) updates.address = String(data.address || '').trim();
   if (data.city !== undefined) updates.city = String(data.city || '').trim();
   if (data.vatNumber !== undefined) updates.vatNumber = String(data.vatNumber || '').trim();

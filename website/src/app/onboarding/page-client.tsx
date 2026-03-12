@@ -150,7 +150,7 @@ const steps = [
 const profileDocPath = "users/{uid}/data/profile";
 const userCacheDocPath = "users/{uid}/data/cache";
 const companyRootDocPath = "companies/{companyId}";
-const companyWorkerDocPath = "companies/{companyId}/workers/{uid}";
+const companyWorkerDocPath = "companies/{companyId}/workers/{wid}";
 
 export default function OnboardingClient() {
   const router = useRouter();

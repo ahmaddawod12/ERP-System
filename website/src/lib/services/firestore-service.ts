@@ -79,9 +79,14 @@ export async function listWorkers(companyId: string): Promise<WorkerProfile[]> {
  * Fetches the worker doc first to get the email (required by manageWorker).
  */
 export async function updateWorkerRole(companyId: string, wid: string, role: Role) {
-  // Get the worker's email from their worker doc
   const workerSnap = await getDoc(doc(db, "companies", companyId, "workers", wid));
-  const workerEmail = workerSnap.exists() ? (workerSnap.data() as WorkerProfile).email : "";
+  if (!workerSnap.exists()) {
+    throw new Error("Worker record not found");
+  }
+  const workerData = workerSnap.data() as WorkerProfile;
+  if (!workerData.uid) {
+    throw new Error("Worker UID is missing from worker record");
+  }
 
   const manageWorkerFn = httpsCallable<
     Record<string, unknown>,
@@ -90,8 +95,9 @@ export async function updateWorkerRole(companyId: string, wid: string, role: Rol
   await manageWorkerFn({
     action: "edit",
     companyId,
+    workerUid: workerData.uid,
     wid,
-    email: workerEmail,
+    email: workerData.email,
     role,
   });
 }
@@ -320,7 +326,32 @@ export async function listClients(
   }
 
   const snap = await getDocs(query(companyClientsCollection(companyId), ...constraints));
-  const clients = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<ClientRecord, "id">) }));
+  const clients = snap.docs.map((docSnap) => {
+    const raw = docSnap.data() as Record<string, unknown>;
+    const createdAt =
+      typeof raw.createdAt === "string" && raw.createdAt.trim()
+        ? raw.createdAt
+        : new Date().toISOString();
+
+    return {
+      id: docSnap.id,
+      numericId:
+        typeof raw.cid === "number"
+          ? raw.cid
+          : Number.isFinite(Number(docSnap.id))
+            ? Number(docSnap.id)
+            : undefined,
+      name: String(raw.name ?? raw.cname ?? ""),
+      email: typeof raw.email === "string" ? raw.email : undefined,
+      phone: typeof raw.phone === "string" ? raw.phone : (typeof raw.cphone === "string" ? raw.cphone : undefined),
+      address: typeof raw.address === "string" ? raw.address : undefined,
+      notes: typeof raw.notes === "string" ? raw.notes : undefined,
+      city: typeof raw.city === "string" ? raw.city : undefined,
+      vatNumber: typeof raw.vatNumber === "string" ? raw.vatNumber : undefined,
+      createdAt,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
+    } satisfies ClientRecord;
+  });
   // Sort by numeric document ID — matches phone app behaviour where doc ID = String(cid)
   clients.sort((a, b) => parseInt(a.id) - parseInt(b.id));
   return {

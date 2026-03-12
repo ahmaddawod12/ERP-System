@@ -394,17 +394,28 @@ export function CacheProvider({ children }) {
       let documentsData = [];
       
       if (role === 'manager') {
-        // Manager: fetch all company jobs (pending + recent finished)
+        // Manager: fetch pending/waiting jobs + recent jobs (avoid full collection scan).
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        const jobsSnapshot = await getDocs(jobsRef);
-        const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        // Keep all pending/waiting + finished within 90 days
-        jobsData = allJobs.filter(j => {
-          if (j.status === 'pending' || j.status === 'waiting') return true;
-          const dateField = j.updatedAt || j.createdAt;
-          if (!dateField) return true;
-          return dateField >= ninetyDaysAgo;
-        });
+        try {
+          const [pendingSnapshot, recentSnapshot] = await Promise.all([
+            getDocs(query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
+            getDocs(query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
+          ]);
+          const merged = new Map();
+          pendingSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+          recentSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+          jobsData = Array.from(merged.values());
+        } catch (queryError) {
+          // Fallback for environments missing required composite indexes.
+          const jobsSnapshot = await getDocs(jobsRef);
+          const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          jobsData = allJobs.filter(j => {
+            if (j.status === 'pending' || j.status === 'waiting') return true;
+            const dateField = j.updatedAt || j.createdAt;
+            if (!dateField) return true;
+            return dateField >= ninetyDaysAgo;
+          });
+        }
         console.log(`Fetched ${jobsData.length} jobs for manager`);
         
         // Manager: fetch all company documents (within 90 days)
@@ -419,8 +430,43 @@ export function CacheProvider({ children }) {
         const wid = getWid();
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
         if (wid) {
-          const workerQuery = query(jobsRef, where('wid', '==', wid));
-          const jobsSnapshot = await getDocs(workerQuery);
+          try {
+            const [pendingSnapshot, recentSnapshot] = await Promise.all([
+              getDocs(query(jobsRef, where('wid', '==', wid), where('status', 'in', ['pending', 'waiting']))),
+              getDocs(query(jobsRef, where('wid', '==', wid), where('createdAt', '>=', ninetyDaysAgo))),
+            ]);
+            const merged = new Map();
+            pendingSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+            recentSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+            jobsData = Array.from(merged.values());
+          } catch (queryError) {
+            const workerQuery = query(jobsRef, where('wid', '==', wid));
+            const jobsSnapshot = await getDocs(workerQuery);
+            const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            jobsData = allJobs.filter(j => {
+              if (j.status === 'pending' || j.status === 'waiting') return true;
+              const dateField = j.updatedAt || j.createdAt;
+              if (!dateField) return true;
+              return dateField >= ninetyDaysAgo;
+            });
+          }
+        }
+        console.log(`Fetched ${jobsData.length} jobs for worker`);
+        
+      } else if (role === 'user') {
+        // User: fetch pending/waiting jobs + recent jobs (avoid full collection scan).
+        const jobsRef = collection(db, 'companies', companyId, 'jobs');
+        try {
+          const [pendingSnapshot, recentSnapshot] = await Promise.all([
+            getDocs(query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
+            getDocs(query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
+          ]);
+          const merged = new Map();
+          pendingSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+          recentSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+          jobsData = Array.from(merged.values());
+        } catch (queryError) {
+          const jobsSnapshot = await getDocs(jobsRef);
           const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
           jobsData = allJobs.filter(j => {
             if (j.status === 'pending' || j.status === 'waiting') return true;
@@ -429,19 +475,6 @@ export function CacheProvider({ children }) {
             return dateField >= ninetyDaysAgo;
           });
         }
-        console.log(`Fetched ${jobsData.length} jobs for worker`);
-        
-      } else if (role === 'user') {
-        // User: fetch all jobs (solo user - within 90 days for finished)
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        const jobsSnapshot = await getDocs(jobsRef);
-        const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        jobsData = allJobs.filter(j => {
-          if (j.status === 'pending' || j.status === 'waiting') return true;
-          const dateField = j.updatedAt || j.createdAt;
-          if (!dateField) return true;
-          return dateField >= ninetyDaysAgo;
-        });
         console.log(`Fetched ${jobsData.length} jobs for user`);
         
         // User: fetch documents (within 90 days)

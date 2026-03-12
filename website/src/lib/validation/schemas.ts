@@ -45,7 +45,6 @@ export const joinCompanySchema = z
 export const createClientSchema = z
   .object({
     companyId: companyIdSchema,
-    requestId: requiredText(8, 120, "requestId"),
     name: requiredText(2, 140, "name"),
     email: z
       .union([z.literal(""), z.string().trim().email("Valid email is required")])

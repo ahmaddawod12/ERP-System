@@ -143,7 +143,7 @@ export const docs: DocEntry[] = [
             "profile, inventory, subscription, lastUpdated",
           ],
           [
-            "companies/{companyId}/workers/{uid}",
+            "companies/{companyId}/workers/{wid}",
             "Company membership",
             "workerId, uid, role, email, name, phoneNumber, wid, createdAt, updatedAt",
           ],
@@ -191,7 +191,7 @@ export const docs: DocEntry[] = [
           [
             "updateProfileV1 (callable)",
             "name and/or phoneNumber",
-            "profile doc and workers/{uid} mirror update",
+            "profile doc and workers/{wid} mirror update",
           ],
           [
             "updatePushTokenV1 / clearPushTokenV1 (callable)",
@@ -464,7 +464,7 @@ export const docs: DocEntry[] = [
           ["users/{uid}/data/cache", "Cache", "profile, inventory, subscription, lastUpdated"],
           ["users/{uid}/data/inventory", "Inventory", "parts[], nextId, lastUpdated"],
           ["companies/{companyId}", "Company", "companyId, cid, wid, jid, createdBy"],
-          ["companies/{companyId}/workers/{uid}", "Auth", "workerId, uid, role, email, wid"],
+          ["companies/{companyId}/workers/{wid}", "Auth", "workerId, uid, role, email, wid"],
           ["companies/{companyId}/clients/{clientId}", "Clients", "name, contact fields, vatNumber, notes"],
           ["companies/{companyId}/jobs/{jobId}", "Jobs", "id, jid, status, assignment, client fields, work result fields"],
           ["companies/{companyId}/documents/{docId}", "Documents", "type, client fields, totals, downloadURL, storagePath, tax fields"],

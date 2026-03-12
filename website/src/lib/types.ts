@@ -1,5 +1,4 @@
 import {
-  Role as ContractRole,
   paths,
   resolveCompanyScope,
 } from "@smart-job/contracts";
@@ -7,7 +6,7 @@ import {
 export { paths, resolveCompanyScope };
 
 export const ROLES = ["manager", "worker", "user", "basic", "dev"] as const;
-export type Role = ContractRole extends never ? (typeof ROLES)[number] : (typeof ROLES)[number];
+export type Role = (typeof ROLES)[number];
 
 /**
  * Website-specific tiers (marketing names).
@@ -26,6 +25,8 @@ export interface UserProfile {
   email: string;
   role: Role;
   companyId: string | null;
+  wid?: string | number;
+  mid?: string | number;
   name: string;
   phoneNumber: string;
   accountType: AccountType;
@@ -77,7 +78,7 @@ export interface BusinessInfo {
 }
 
 export interface WorkerProfile {
-  wid: string;
+  wid: string | number;
   uid?: string;
   email: string;
   role: Role;

@@ -71,7 +71,7 @@ companies/{companyId}/data/subscription       -> { tier, status, enabledModules 
 companies/{companyId}/data/business_info      -> business registration data
 companies/{companyId}/data/inventory          -> { parts: [...], nextId, lastUpdated }
 companies/{companyId}/data/cache              -> company cache versioning
-companies/{companyId}/workers/{uid}           -> worker membership + role
+companies/{companyId}/workers/{wid}           -> worker membership + role
 companies/{companyId}/clients/{clientId}      -> client records
 companies/{companyId}/jobs/{jobId}            -> all jobs (status determines lifecycle)
 companies/{companyId}/documents/{docId}       -> generated documents

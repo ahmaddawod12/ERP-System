@@ -29,14 +29,34 @@ export async function getUserProfileOrThrow(uid: string): Promise<UserProfile> {
 
 export async function getWorkerRoleForCompany(
   companyId: string,
-  uid: string,
+  wid: string | number | undefined,
 ): Promise<Role | null> {
-  const workerRef = adminDb().collection("companies").doc(companyId).collection("workers").doc(uid);
+  const widValue = String(wid ?? "").trim();
+  if (!widValue) {
+    return null;
+  }
+  const workerRef = adminDb().collection("companies").doc(companyId).collection("workers").doc(widValue);
   const workerSnap = await workerRef.get();
   if (!workerSnap.exists) {
     return null;
   }
   return normalizeRoleValue(workerSnap.data()?.role);
+}
+
+export async function getManagerRoleForCompany(
+  companyId: string,
+  mid: string | number | undefined,
+): Promise<Role | null> {
+  const midValue = String(mid ?? "").trim();
+  if (!midValue) {
+    return null;
+  }
+  const managerRef = adminDb().collection("companies").doc(companyId).collection("managers").doc(midValue);
+  const managerSnap = await managerRef.get();
+  if (!managerSnap.exists) {
+    return null;
+  }
+  return normalizeRoleValue(managerSnap.data()?.role);
 }
 
 export async function assertCompanyAccess(params: {
@@ -46,15 +66,25 @@ export async function assertCompanyAccess(params: {
 }): Promise<CompanyAccessResult> {
   const { uid, companyId, allowedRoles } = params;
   const profile = await getUserProfileOrThrow(uid);
+  const isSoloScope =
+    String(profile.accountType ?? "").toLowerCase() === "solo" &&
+    profile.companyId === companyId;
 
   if (profile.companyId !== companyId && profile.role !== "dev") {
     throw new ApiRouteError(403, "company_mismatch", "User does not belong to this company");
   }
 
-  const workerRole = await getWorkerRoleForCompany(companyId, uid);
-  const resolvedRole = workerRole ?? normalizeRoleValue(profile.role);
+  let membershipRole: Role | null = null;
+  if (!isSoloScope && profile.role !== "dev") {
+    membershipRole = await getWorkerRoleForCompany(companyId, profile.wid);
+    if (!membershipRole && profile.role === "manager") {
+      membershipRole = await getManagerRoleForCompany(companyId, profile.mid);
+    }
+  }
 
-  if (!workerRole && profile.role !== "dev") {
+  const resolvedRole = membershipRole ?? normalizeRoleValue(profile.role);
+
+  if (!isSoloScope && !membershipRole && profile.role !== "dev") {
     throw new ApiRouteError(
       403,
       "membership_missing",

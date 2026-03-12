@@ -6,6 +6,7 @@ const {
   onDocumentUpdated,
   getAuthenticatedUserProfile,
   assertHttpCompanyAccess,
+  validateCompanyId,
   GENERATE_DOCUMENT_ALLOWED_ROLES,
   MAX_ITEMS_PER_DOCUMENT,
   VAT_RATE,

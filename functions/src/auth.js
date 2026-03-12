@@ -515,6 +515,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
       name,
       phoneNumber,
       ...(role === 'manager' ? { mid: 1 } : {}),
+      ...(role !== 'manager' ? { wid: 1 } : {}),
       createdAt: now,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
@@ -578,7 +579,9 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     } else {
-      // Solo user uses companyId allocated from system/data/comid
+      // Non-manager/single-user workspace uses companyId allocated from system/data/comid
+      const hasWorkerMembership = role !== 'manager';
+
       tx.set(dbRef.doc(`companies/${companyId}`), {
         companyId,
         createdBy: uid,
@@ -586,7 +589,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
       });
 
       // Counter documents (all roles get counters for upgrade compatibility)
-      tx.set(dbRef.doc(`companies/${companyId}/counters/wnext`), { next: 1 });
+      tx.set(dbRef.doc(`companies/${companyId}/counters/wnext`), { next: hasWorkerMembership ? 2 : 1 });
       tx.set(dbRef.doc(`companies/${companyId}/counters/mnext`), { next: 1 });
       tx.set(dbRef.doc(`companies/${companyId}/counters/cnext`), { next: 1 });
       tx.set(dbRef.doc(`companies/${companyId}/counters/jnext`), { next: 1 });
@@ -600,16 +603,19 @@ exports.registerBusinessV1 = onCall(async (request) => {
         updatedAt: now,
       });
 
-      // Solo user membership record (no wid/mid — user role has none)
-      tx.set(dbRef.doc(`companies/${companyId}/workers/${uid}`), {
-        uid,
-        role: profileRole,
-        email,
-        name,
-        phoneNumber,
-        createdAt: now,
-        updatedAt: now,
-      });
+      if (hasWorkerMembership) {
+        // Canonical non-manager membership record keyed by wid.
+        tx.set(dbRef.doc(companyWorkerDocPath(companyId, '1')), {
+          uid,
+          wid: 1,
+          role: profileRole,
+          email,
+          name,
+          phoneNumber,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
 
       tx.set(dbRef.doc(`companies/${companyId}/data/inventory`), {
         parts: [],
@@ -622,7 +628,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
         jobsVersion: 0,
         documentsVersion: 0,
         clientsVersion: 0,
-        workersVersion: 0,
+        workersVersion: hasWorkerMembership ? 1 : 0,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     }

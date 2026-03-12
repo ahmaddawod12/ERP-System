@@ -24,6 +24,14 @@ service firebase.storage {
     function getProfile(uid) {
       return firestore.get(profilePath(uid)).data;
     }
+
+    function getProfileWid(uid) {
+      return profileExists(uid) && ('wid' in getProfile(uid)) ? getProfile(uid).wid : null;
+    }
+
+    function getProfileMid(uid) {
+      return profileExists(uid) && ('mid' in getProfile(uid)) ? getProfile(uid).mid : null;
+    }
     
     // Helper function to check if user is a manager with access to worker's data
     function isManagerOfWorker(workerId) {
@@ -55,11 +63,18 @@ service firebase.storage {
       return isAuthenticated() &&
              profileExists(getUid()) &&
              (
-               firestore.exists(/databases/(default)/documents/companies/$(companyId)/workers/$(request.auth.uid)) ||
+               (
+                 getProfileWid(getUid()) != null &&
+                 firestore.exists(/databases/(default)/documents/companies/$(companyId)/workers/$(getProfileWid(getUid())))
+               ) ||
+               (
+                 getProfileMid(getUid()) != null &&
+                 firestore.exists(/databases/(default)/documents/companies/$(companyId)/managers/$(getProfileMid(getUid())))
+               ) ||
                (
                  'accountType' in getProfile(getUid()) &&
                  getProfile(getUid()).accountType == 'solo' &&
-                 getUid() == companyId
+                 getProfile(getUid()).companyId == companyId
                )
              );
     }

@@ -27,6 +27,8 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { DOC_TYPE } from '@smart-job/contracts';
+import { safeJsonParse } from '../../utils/helpers';
+import { useAlert } from '../../contexts/AlertContext';
 
 // Document type configurations
 const DOCUMENT_CONFIGS = {
@@ -86,10 +88,11 @@ export default function ViewDocument() {
   const insets = useSafeAreaInsets();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
+  const alert = useAlert();
   const colors = getColors(isDarkMode);
   
   // Parse document from params (passed from DocumentHistory)
-  const document = params.document ? JSON.parse(params.document) : null;
+  const document = safeJsonParse(params.document);
 
   // Translations
   const t = getTranslations(language);
@@ -240,7 +243,10 @@ export default function ViewDocument() {
         {document.downloadURL && (
           <TouchableOpacity
             style={styles.downloadButton}
-            onPress={() => Linking.openURL(document.downloadURL).catch(() => {})}
+            onPress={() => Linking.openURL(document.downloadURL).catch(() => {
+              alert(language === 'en' ? 'Error' : language === 'he' ? 'שגיאה' : 'خطأ',
+                language === 'en' ? 'Could not open PDF' : language === 'he' ? 'לא ניתן לפתוח את ה-PDF' : 'تعذر فتح ملف PDF');
+            })}
             activeOpacity={0.8}
           >
             <LinearGradient

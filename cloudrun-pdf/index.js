@@ -56,28 +56,48 @@ const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCO
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
 
+const MAX_LOGO_SIZE = 1 * 1024 * 1024; // 1MB max logo size
+
+// In-memory logo cache: companyId -> { dataUrl, fetchedAt }
+const logoCache = new Map();
+const LOGO_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const LOGO_CACHE_MAX_SIZE = 100;
+
+function evictLogoCacheIfNeeded() {
+  if (logoCache.size <= LOGO_CACHE_MAX_SIZE) return;
+  // Evict oldest entries by fetchedAt
+  const sorted = [...logoCache.entries()].sort((a, b) => a[1].fetchedAt - b[1].fetchedAt);
+  const toRemove = sorted.slice(0, sorted.length - LOGO_CACHE_MAX_SIZE);
+  for (const [key] of toRemove) logoCache.delete(key);
+}
+
 
 /** Document IDs are now plain Base62 — no prefix stripping needed. */
 function toBaseDocumentId(documentId) {
   return String(documentId || '').trim();
 }
 
-function toDocumentDocId(documentId) {
-  return toBaseDocumentId(documentId);
-}
+/** Alias kept for call-site clarity (Firestore doc ID vs display ID). */
+const toDocumentDocId = toBaseDocumentId;
 // ============================================================================
 // SHARED BROWSER MANAGEMENT (Singleton)
 // ============================================================================
 let browserInstance = null;
 let activeTabs = 0;
+let browserGeneration = 0; // Track browser instance generation for disconnect safety
+
+// Promise-based tab queue to replace busy-wait polling
+const tabWaiters = [];
 
 /**
- * Get or create shared browser instance
- * Browser is shared between preview and generate tasks
+ * Get or create shared browser instance.
+ * Tracks a generation counter so in-flight requests can detect stale browsers.
  */
 async function getBrowser() {
   if (!browserInstance) {
     console.log('Launching new shared browser instance...');
+    browserGeneration++;
+    const myGeneration = browserGeneration;
     browserInstance = await puppeteer.launch({
       headless: 'new',
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
@@ -96,46 +116,77 @@ async function getBrowser() {
       console.log('Browser disconnected, will create new instance on next request');
       browserInstance = null;
       activeTabs = 0;
+      // Reject all waiting tab requests so they can retry with a fresh browser
+      while (tabWaiters.length > 0) {
+        const waiter = tabWaiters.shift();
+        waiter.reject(new Error('Browser disconnected while waiting for tab'));
+      }
     });
   }
   return browserInstance;
 }
 
 /**
- * Acquire a browser tab slot (blocks until available)
+ * Acquire a browser tab slot using a promise-based queue.
+ * Avoids CPU-wasting busy-wait polling.
+ * Returns the browser generation at time of acquisition for disconnect safety.
  */
 async function acquireTab(taskId, taskType) {
-  const waitStartTime = Date.now();
-  
-  while (activeTabs >= MAX_CONCURRENT_TABS) {
-    const waitElapsed = Date.now() - waitStartTime;
-    
-    if (waitElapsed > TAB_WAIT_TIMEOUT) {
-      throw new Error(`Timeout waiting for available browser tab (${waitElapsed}ms)`);
-    }
-    
-    console.log(`[${taskType}:${taskId}] Waiting for tab. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
-    await new Promise(resolve => setTimeout(resolve, 100));
+  if (activeTabs < MAX_CONCURRENT_TABS) {
+    activeTabs++;
+    console.log(`[${taskType}:${taskId}] Tab acquired. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+    return browserGeneration;
   }
-  
-  activeTabs++;
-  console.log(`[${taskType}:${taskId}] Tab acquired. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+
+  // Queue a promise that will be resolved when a tab is released
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      const idx = tabWaiters.findIndex(w => w.taskId === taskId);
+      if (idx !== -1) tabWaiters.splice(idx, 1);
+      reject(new Error(`Timeout waiting for available browser tab (${TAB_WAIT_TIMEOUT}ms)`));
+    }, TAB_WAIT_TIMEOUT);
+
+    tabWaiters.push({
+      taskId,
+      resolve: () => {
+        clearTimeout(timeoutId);
+        activeTabs++;
+        console.log(`[${taskType}:${taskId}] Tab acquired (from queue). Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+        resolve(browserGeneration);
+      },
+      reject: (err) => {
+        clearTimeout(timeoutId);
+        reject(err);
+      },
+    });
+    console.log(`[${taskType}:${taskId}] Queued for tab. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}, waiting: ${tabWaiters.length}`);
+  });
 }
 
 /**
- * Release a browser tab slot
+ * Release a browser tab slot and wake the next waiter if any.
  */
 function releaseTab(taskId, taskType) {
   if (activeTabs > 0) {
     activeTabs--;
   }
   console.log(`[${taskType}:${taskId}] Tab released. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
+
+  // Wake the next queued waiter
+  if (tabWaiters.length > 0 && activeTabs < MAX_CONCURRENT_TABS) {
+    const next = tabWaiters.shift();
+    next.resolve();
+  }
 }
 
 // ============================================================================
 // HTML TEMPLATE GENERATOR
 // ============================================================================
 const generateDocumentHTML = require('./htmlTemplate');
+const {
+  buildHtmlPayload,
+  buildStoredDocumentRecord,
+} = require('./document-payload');
 
 /**
  * Request verification for Pub/Sub push endpoints.
@@ -169,9 +220,12 @@ async function verifyPubSubRequest(req, res, next) {
         const email = String(payload?.email || '').toLowerCase();
         const issuerValid = issuer === 'https://accounts.google.com' || issuer === 'accounts.google.com';
         const emailValid = Boolean(payload?.email_verified) && email.length > 0;
-        const serviceAccountAllowed =
-          PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length > 0 &&
-          PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
+        // Fail closed: if allowlist is empty, reject all tokens
+        if (PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
+          console.warn('PUBSUB_ALLOWED_SERVICE_ACCOUNTS is empty — rejecting OIDC token (fail closed)');
+          return res.status(403).send('Service account allowlist not configured');
+        }
+        const serviceAccountAllowed = PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
 
         if (issuerValid && emailValid && serviceAccountAllowed) {
           // Valid OIDC token; allow request
@@ -213,6 +267,59 @@ async function verifyPubSubRequest(req, res, next) {
 }
 
 // ============================================================================
+// LOGO HELPER (cached, size-validated)
+// ============================================================================
+
+/**
+ * Fetch and cache company logo as a base64 data URL.
+ * Returns null if no logo exists, the logo is too large, or on error.
+ */
+async function fetchCompanyLogo(companyId, taskId, taskType) {
+  if (!companyId) return null;
+
+  // Check in-memory cache
+  const cached = logoCache.get(companyId);
+  if (cached && (Date.now() - cached.fetchedAt) < LOGO_CACHE_TTL) {
+    console.log(`[${taskType}:${taskId}] Logo served from cache for ${companyId}`);
+    return cached.dataUrl;
+  }
+
+  try {
+    const bucket = storage.bucket();
+    const logoPath = `companies/${companyId}/logo.png`;
+    const logoFile = bucket.file(logoPath);
+    const [exists] = await logoFile.exists();
+
+    if (!exists) {
+      console.log(`[${taskType}:${taskId}] No logo found at ${logoPath}`);
+      logoCache.set(companyId, { dataUrl: null, fetchedAt: Date.now() });
+      return null;
+    }
+
+    // Check size before downloading
+    const [metadata] = await logoFile.getMetadata();
+    const fileSize = parseInt(metadata.size, 10) || 0;
+    if (fileSize > MAX_LOGO_SIZE) {
+      console.warn(`[${taskType}:${taskId}] Logo too large (${fileSize} bytes, max ${MAX_LOGO_SIZE}). Skipping.`);
+      logoCache.set(companyId, { dataUrl: null, fetchedAt: Date.now() });
+      return null;
+    }
+
+    const [logoBuffer] = await logoFile.download();
+    const base64Logo = logoBuffer.toString('base64');
+    const dataUrl = `data:image/png;base64,${base64Logo}`;
+    console.log(`[${taskType}:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
+
+    logoCache.set(companyId, { dataUrl, fetchedAt: Date.now() });
+    evictLogoCacheIfNeeded();
+    return dataUrl;
+  } catch (logoError) {
+    console.warn(`[${taskType}:${taskId}] Error fetching logo:`, logoError.message);
+    return null;
+  }
+}
+
+// ============================================================================
 // PREVIEW TASK PROCESSOR
 // ============================================================================
 async function processPreviewTask(taskData) {
@@ -243,61 +350,38 @@ async function processPreviewTask(taskData) {
       throw new Error('Requester company mismatch');
     }
 
-    await acquireTab(taskId, 'preview');
+    const acquiredGen = await acquireTab(taskId, 'preview');
     tabAcquired = true;
     
-    const { type, client, items, company, language, documentNumber, date, notes } = documentData;
+    const { items } = documentData;
     
     // Validate items
     if (items && items.length > MAX_ITEMS_PER_DOCUMENT) {
       throw new Error(`Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed`);
     }
     
-    // Fetch logo from Firebase Storage
-    let logoUrl = null;
-    if (companyId) {
-      try {
-        const bucket = storage.bucket();
-        const logoPath = `companies/${companyId}/logo.png`;
-        const logoFile = bucket.file(logoPath);
-        const [exists] = await logoFile.exists();
-        
-        if (exists) {
-          // Download the logo file content
-          const [logoBuffer] = await logoFile.download();
-          // Convert to base64 data URL
-          const base64Logo = logoBuffer.toString('base64');
-          logoUrl = `data:image/png;base64,${base64Logo}`;
-          console.log(`[preview:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
-        } else {
-          console.log(`[preview:${taskId}] No logo found at ${logoPath}`);
-        }
-      } catch (logoError) {
-        console.warn(`[preview:${taskId}] Error fetching logo:`, logoError.message);
-      }
-    }
+    // Fetch logo from Firebase Storage (cached, size-validated)
+    let logoUrl = await fetchCompanyLogo(companyId, taskId, 'preview');
     
     // Generate HTML - for preview, confirmationNumber is empty (not yet approved by Tax Authority)
-    const html = generateDocumentHTML({
-      type: type || documentType,
-      client,
-      items,
-      company,
-      language: language || 'he',
-      documentNumber,
-      date,
-      notes,
+    const html = generateDocumentHTML(buildHtmlPayload({
+      documentType,
+      documentData,
+      documentNumber: documentData.documentNumber,
       logoUrl,
-      confirmationNumber: '', // Empty for preview - will be filled after Tax Authority approval
-    });
+      confirmationNumber: '',
+    }));
     
     const htmlSize = Buffer.byteLength(html, 'utf8');
     if (htmlSize > MAX_HTML_SIZE) {
       throw new Error(`Document HTML too large (${htmlSize} bytes)`);
     }
     
-    // Generate PDF using shared browser
+    // Generate PDF using shared browser (validate generation to detect browser restarts)
     const browser = await getBrowser();
+    if (browserGeneration !== acquiredGen) {
+      throw new Error('Browser was recycled during tab wait — retry');
+    }
     page = await browser.newPage();
     
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
@@ -473,7 +557,7 @@ async function processGenerateTask(taskData) {
       claimedUserRole: claimedUserRole || null,
     });
 
-    await acquireTab(taskId, 'generate');
+    const acquiredGen = await acquireTab(taskId, 'generate');
     tabAcquired = true;
     
     if (!documentId) {
@@ -489,7 +573,14 @@ async function processGenerateTask(taskData) {
       throw new Error('Document data is required');
     }
     
-    const { client, items, company, language, date, notes, totals } = documentData;
+    const htmlPayload = buildHtmlPayload({
+      documentType,
+      documentData,
+      documentNumber: documentNumber || normalizedDocumentId,
+      logoUrl: null,
+      confirmationNumber,
+    });
+    const { client, items, company, language, date, totals } = htmlPayload;
     
     if (!client || !client.name) {
       throw new Error('Client name is required');
@@ -516,42 +607,13 @@ async function processGenerateTask(taskData) {
       totalWithVat = totalBeforeVat + vatAmount;
     }
     
-    // Fetch logo from Firebase Storage
-    let logoUrl = null;
-    if (companyId) {
-      try {
-        const bucket = storage.bucket();
-        const logoPath = `companies/${companyId}/logo.png`;
-        const logoFile = bucket.file(logoPath);
-        const [exists] = await logoFile.exists();
-        
-        if (exists) {
-          // Download the logo file content
-          const [logoBuffer] = await logoFile.download();
-          // Convert to base64 data URL
-          const base64Logo = logoBuffer.toString('base64');
-          logoUrl = `data:image/png;base64,${base64Logo}`;
-          console.log(`[generate:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
-        } else {
-          console.log(`[generate:${taskId}] No logo found at ${logoPath}`);
-        }
-      } catch (logoError) {
-        console.warn(`[generate:${taskId}] Error fetching logo:`, logoError.message);
-      }
-    }
+    // Fetch logo from Firebase Storage (cached, size-validated)
+    let logoUrl = await fetchCompanyLogo(companyId, taskId, 'generate');
     
     // Generate HTML with all document data including confirmation number
     const html = generateDocumentHTML({
-      type: documentType,
-      client,
-      items,
-      company,
-      language: language || 'he',
-      documentNumber: documentNumber || normalizedDocumentId,
-      date,
-      notes,
+      ...htmlPayload,
       logoUrl,
-      confirmationNumber, // Tax Authority confirmation number
     });
     
     const htmlSize = Buffer.byteLength(html, 'utf8');
@@ -559,8 +621,11 @@ async function processGenerateTask(taskData) {
       throw new Error('Document HTML too large');
     }
     
-    // Generate PDF using shared browser
+    // Generate PDF using shared browser (validate generation to detect browser restarts)
     const browser = await getBrowser();
+    if (browserGeneration !== acquiredGen) {
+      throw new Error('Browser was recycled during tab wait — retry');
+    }
     page = await browser.newPage();
     
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
@@ -616,27 +681,18 @@ async function processGenerateTask(taskData) {
     const isNewDocument = documentType !== 305;
     
     if (isNewDocument) {
-      await documentRef.set({
-        type: documentType,
-        cname: client.name,
-        cphone: client.phone || null,
-        ...(client.clientId && { cid: client.clientId }),
-        ...(client.id && !client.clientId && { cid: client.id }),
-        items: items.map(item => ({
-          description: item.description,
-          quantity: item.quantity,
-          price: item.price,
-          id: item.partId || null,
-        })),
-        notes: notes || null,
-        createdBy: uid,
+      await documentRef.set(buildStoredDocumentRecord({
+        documentType,
+        documentData,
+        uid,
         createdAt: (new Date()).toISOString(),
-        totalBeforeVat: Math.round(totalBeforeVat * 100) / 100,
-        vatAmount: Math.round(vatAmount * 100) / 100,
-        totalWithVat: Math.round(totalWithVat * 100) / 100,
+        totalBeforeVat,
+        vatAmount,
+        totalWithVat,
         downloadURL,
         storagePath: filePath,
-      });
+        normalizedDocumentId,
+      }));
       // NOTE: document_numbers counter is already incremented transactionally
       // in publishGenerateTask Cloud Function. Do NOT increment here again
       // to avoid double-counting.
@@ -758,7 +814,7 @@ async function processGenerateTask(taskData) {
 app.post('/preview', verifyPubSubRequest, async (req, res) => {
   try {
     if (!req.body || !req.body.message || !req.body.message.data) {
-      return res.status(400).send('Invalid Pub/Sub message format');
+      return res.status(200).send('Invalid Pub/Sub message format — not retryable');
     }
 
     let messageData;
@@ -767,7 +823,7 @@ app.post('/preview', verifyPubSubRequest, async (req, res) => {
         Buffer.from(req.body.message.data, 'base64').toString()
       );
     } catch (parseError) {
-      return res.status(400).send('Invalid Pub/Sub message payload');
+      return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
     }
     
     console.log('Received preview task:', messageData.taskId);
@@ -776,7 +832,14 @@ app.post('/preview', verifyPubSubRequest, async (req, res) => {
     
   } catch (error) {
     console.error('Preview task error:', error.message);
-    res.status(500).send(`Error: ${error.message}`);
+    // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
+    // Only transient errors (browser crash, timeout) should trigger retry via 500.
+    const isTransient = error.message?.includes('retry') ||
+      error.message?.includes('Protocol error') ||
+      error.message?.includes('Navigation timeout') ||
+      error.message?.includes('Timeout');
+    const status = isTransient ? 500 : 200;
+    res.status(status).send(`Error: ${error.message}`);
   }
 });
 
@@ -786,7 +849,7 @@ app.post('/preview', verifyPubSubRequest, async (req, res) => {
 app.post('/generate', verifyPubSubRequest, async (req, res) => {
   try {
     if (!req.body || !req.body.message || !req.body.message.data) {
-      return res.status(400).send('Invalid Pub/Sub message format');
+      return res.status(200).send('Invalid Pub/Sub message format — not retryable');
     }
 
     let messageData;
@@ -795,7 +858,7 @@ app.post('/generate', verifyPubSubRequest, async (req, res) => {
         Buffer.from(req.body.message.data, 'base64').toString()
       );
     } catch (parseError) {
-      return res.status(400).send('Invalid Pub/Sub message payload');
+      return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
     }
     
     console.log('Received generate task:', messageData.taskId);
@@ -804,20 +867,35 @@ app.post('/generate', verifyPubSubRequest, async (req, res) => {
     
   } catch (error) {
     console.error('Generate task error:', error.message);
-    res.status(500).send(`Error: ${error.message}`);
+    // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
+    // Only transient errors (browser crash, timeout) should trigger retry via 500.
+    const isTransient = error.message?.includes('retry') ||
+      error.message?.includes('Protocol error') ||
+      error.message?.includes('Navigation timeout') ||
+      error.message?.includes('Timeout');
+    const status = isTransient ? 500 : 200;
+    res.status(status).send(`Error: ${error.message}`);
   }
 });
 
 /**
  * GET /health - Health check endpoint
  */
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  let browserOk = false;
+  if (browserInstance) {
+    try {
+      browserOk = browserInstance.isConnected();
+    } catch (_) { /* browser disconnected */ }
+  }
+  const status = browserInstance && !browserOk ? 'degraded' : 'healthy';
   res.status(200).json({
-    status: 'healthy',
+    status,
     service: 'pdf-service',
     activeTabs,
     maxTabs: MAX_CONCURRENT_TABS,
     hasBrowser: !!browserInstance,
+    browserConnected: browserOk,
     endpoints: ['/preview', '/generate', '/health']
   });
 });

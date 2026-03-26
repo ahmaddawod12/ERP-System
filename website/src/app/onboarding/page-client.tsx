@@ -287,7 +287,8 @@ export default function OnboardingClient() {
           phoneNumber: values.phoneNumber,
           he_name:
             values.accountType === "solo" ? values.name : (values.companyName ?? ""),
-          en_name: "",
+          en_name:
+            values.accountType === "solo" ? values.name : (values.companyName ?? ""),
           vat_number: values.businessNumber ?? "",
           business_type:
             values.accountType === "solo" ? "solo" : (values.businessType ?? ""),

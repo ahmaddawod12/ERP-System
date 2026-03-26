@@ -22,6 +22,12 @@ import {
   companyWorkersCollection,
   userInventoryRef,
 } from "@/lib/firestore-paths";
+import {
+  buildMembershipQueryValues,
+  canListCompanyJobs,
+  normalizeMembershipId,
+  roleUsesScopedJobAccess,
+} from "@/lib/job-access";
 import type {
   DocumentRecord,
   ClientRecord,
@@ -125,11 +131,27 @@ export async function listJobs(
     lastDoc?: DocumentSnapshot;
   },
 ) {
+  if (!canListCompanyJobs(opts?.role, opts?.wid ?? null)) {
+    return {
+      jobs: [],
+      pending: [],
+      finished: [],
+      lastDoc: null,
+      hasMore: false,
+    };
+  }
+
   const pageSize = opts?.pageSize || DEFAULT_PAGE_SIZE;
   const constraints: QueryConstraint[] = [orderBy("createdAt", "desc"), limit(pageSize)];
+  const workerWid = normalizeMembershipId(opts?.wid);
+  const membershipQueryValues = buildMembershipQueryValues(workerWid);
 
-  if (opts?.role === "worker" && opts.wid) {
-    constraints.unshift(where("wid", "==", opts.wid));
+  if (roleUsesScopedJobAccess(opts?.role) && membershipQueryValues.length > 0) {
+    constraints.unshift(
+      membershipQueryValues.length === 1
+        ? where("wid", "==", membershipQueryValues[0])
+        : where("wid", "in", [...membershipQueryValues]),
+    );
   }
 
   if (opts?.lastDoc) {
@@ -373,8 +395,73 @@ export async function updateClient(companyId: string, clientId: string, payload:
 
 export async function listDocuments(companyId: string): Promise<DocumentRecord[]> {
   const snap = await getDocs(query(companyDocumentsCollection(companyId), orderBy("createdAt", "desc")));
-  return snap.docs.map((docSnap) => ({
-    id: docSnap.id,
-    ...(docSnap.data() as Omit<DocumentRecord, "id">),
-  }));
+  return snap.docs.map((docSnap) => {
+    const raw = docSnap.data() as Record<string, unknown>;
+    const rawType = raw.documentType ?? raw.type;
+    const documentType =
+      typeof rawType === "number"
+        ? rawType
+        : Number.isFinite(Number(rawType))
+          ? Number(rawType)
+          : undefined;
+
+    return {
+      id: docSnap.id,
+      ...(raw as Omit<DocumentRecord, "id">),
+      type:
+        typeof raw.type === "number" || typeof raw.type === "string"
+          ? (raw.type as DocumentRecord["type"])
+          : (documentType ?? "document"),
+      documentType,
+      documentId:
+        typeof raw.documentId === "string" && raw.documentId.trim()
+          ? raw.documentId
+          : docSnap.id,
+      cname: typeof raw.cname === "string" ? raw.cname : (typeof raw.clientName === "string" ? raw.clientName : undefined),
+      cphone:
+        typeof raw.cphone === "string"
+          ? raw.cphone
+          : (typeof raw.clientPhone === "string" ? raw.clientPhone : undefined),
+      clientCity:
+        typeof raw.clientCity === "string"
+          ? raw.clientCity
+          : (typeof raw.city === "string" ? raw.city : undefined),
+      clientVatNumber:
+        typeof raw.clientVatNumber === "string"
+          ? raw.clientVatNumber
+          : (
+              typeof raw.customerVatNumber === "string"
+                ? raw.customerVatNumber
+                : (typeof raw.vatNumber === "string" ? raw.vatNumber : undefined)
+            ),
+      confirmationNumber:
+        typeof raw.confirmationNumber === "string"
+          ? raw.confirmationNumber
+          : (typeof raw.taxAuthorityConfirmationNumber === "string"
+              ? raw.taxAuthorityConfirmationNumber
+              : undefined),
+      paymentMethod:
+        typeof raw.paymentMethod === "string"
+          ? raw.paymentMethod
+          : (raw.documentData &&
+              typeof raw.documentData === "object" &&
+              raw.documentData !== null &&
+              "paymentMethod" in raw.documentData
+              ? String((raw.documentData as Record<string, unknown>).paymentMethod)
+              : undefined),
+      createdByUid:
+        typeof raw.createdByUid === "string"
+          ? raw.createdByUid
+          : (typeof raw.createdBy === "string" ? raw.createdBy : undefined),
+      paymentInfo:
+        raw.paymentInfo !== undefined
+          ? (raw.paymentInfo as DocumentRecord["paymentInfo"])
+          : (raw.documentData &&
+              typeof raw.documentData === "object" &&
+              raw.documentData !== null &&
+              "paymentInfo" in raw.documentData
+              ? (raw.documentData as Record<string, unknown>).paymentInfo as DocumentRecord["paymentInfo"]
+              : undefined),
+    } satisfies DocumentRecord;
+  });
 }

@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, doc, getCountFromServer, getDoc } from "firebase/firestore";
+import { collection, doc, getCountFromServer, getDoc, query, where } from "firebase/firestore";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { db } from "@/lib/firebase/client";
 import { useAppContext } from "@/hooks/use-app-context";
+import { buildMembershipQueryValues, roleUsesScopedJobAccess } from "@/lib/job-access";
 import { resolveCompanyScope } from "@/lib/services/firestore-service";
 import type { InventoryDoc } from "@/lib/types";
 
@@ -29,9 +30,26 @@ export default function AppOverviewClient() {
         return;
       }
 
-      const jobsCount = await getCountFromServer(collection(db, "companies", scopeId, "jobs"));
+      const jobsCollection = collection(db, "companies", scopeId, "jobs");
+      const workerQueryValues = buildMembershipQueryValues(profile.wid);
+      const jobsCount =
+        roleUsesScopedJobAccess(profile.role)
+          ? workerQueryValues.length > 0
+            ? await getCountFromServer(
+                query(
+                  jobsCollection,
+                  workerQueryValues.length === 1
+                    ? where("wid", "==", workerQueryValues[0])
+                    : where("wid", "in", [...workerQueryValues]),
+                ),
+              )
+            : null
+          : await getCountFromServer(jobsCollection);
       const clientsCount = await getCountFromServer(collection(db, "companies", scopeId, "clients"));
-      items.push({ label: "Total Jobs", value: jobsCount.data().count });
+      items.push({
+        label: roleUsesScopedJobAccess(profile.role) ? "My Jobs" : "Total Jobs",
+        value: jobsCount?.data().count ?? 0,
+      });
       items.push({ label: "Clients", value: clientsCount.data().count });
 
       // Inventory parts count from single-doc

@@ -177,12 +177,12 @@ exports.updateInventoryV1 = onCall(async (request) => {
       });
       tx.update(invRef, { parts: updatedCompanyParts, lastUpdated: now });
 
-      // For pick: read user inventory, add/merge picked parts
+      // For pick: read user inventory, add/merge picked parts (deep copy to prevent mutation of snapshot data)
       const userInvRef = dbRef.doc(`users/${targetUid}/data/inventory`);
       const userSnap = await tx.get(userInvRef);
       const userData = userSnap.exists ? (userSnap.data() || {}) : { parts: [], nextId: 1, lastUpdated: '' };
       let userNextId = userData.nextId || 1;
-      const userParts = Array.isArray(userData.parts) ? [...userData.parts] : [];
+      const userParts = Array.isArray(userData.parts) ? userData.parts.map(p => ({ ...p })) : [];
 
       for (const pick of partsToPick) {
         const pickId = typeof pick.id === 'number' ? pick.id : null;

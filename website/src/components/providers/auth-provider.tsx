@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import type { User } from "firebase/auth";
-import { onAuthStateChanged, signOut } from "firebase/auth";
+import { onIdTokenChanged, signOut } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase/client";
 import type { UserProfile, UserSubscription } from "@/lib/types";
@@ -66,6 +66,13 @@ async function loadUserProfile(uid: string) {
   };
 }
 
+function syncAuthCookie(token: string | null) {
+  const secureSuffix = globalThis.location?.protocol === "https:" ? "; Secure" : "";
+  const maxAge = token ? 60 * 60 : 0;
+  const cookieValue = token ?? "";
+  document.cookie = `firebase-auth-token=${cookieValue}; path=/; max-age=${maxAge}; SameSite=Lax${secureSuffix}`;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -89,29 +96,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Only add the Secure flag when served over HTTPS (production).
-    // localhost uses plain HTTP, so Secure would silently prevent the cookie from being set.
-    const secureSuffix = globalThis.location?.protocol === "https:" ? "; Secure" : "";
-
-    return onAuthStateChanged(auth, async (nextUser) => {
+    return onIdTokenChanged(auth, async (nextUser) => {
       try {
         setLoading(true);
         setUser(nextUser);
         if (nextUser) {
-          // Set auth cookie so middleware can gate /app/* routes server-side
           const token = await nextUser.getIdToken();
-          document.cookie = `firebase-auth-token=${token}; path=/; max-age=${60 * 60}; SameSite=Lax${secureSuffix}`;
-          const result = await loadUserProfile(nextUser.uid);
-          setProfile(result.profile);
-          setSubscription(result.subscription);
+          syncAuthCookie(token);
+          try {
+            const result = await loadUserProfile(nextUser.uid);
+            setProfile(result.profile);
+            setSubscription(result.subscription);
+          } catch {
+            setProfile(null);
+            setSubscription(null);
+          }
         } else {
-          // Clear auth cookie on sign-out
-          document.cookie =
-            `firebase-auth-token=; path=/; max-age=0; SameSite=Lax${secureSuffix}`;
+          syncAuthCookie(null);
           setProfile(null);
           setSubscription(null);
         }
       } catch {
+        if (!nextUser) {
+          syncAuthCookie(null);
+        }
         setProfile(null);
         setSubscription(null);
       } finally {

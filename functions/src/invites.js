@@ -18,7 +18,7 @@ const {
   HTTP_COMPANY_MANAGER_ROLES,
   generateInviteCode,
   userProfileDocPath,
-  companyWorkerDocPath,
+  userCacheDocPath,
   requireNonEmptyString,
   optionalTrimmedString,
   toProfileRole,
@@ -29,6 +29,7 @@ const {
   normalizeRole,
   normalizeAccountType,
 } = require('./shared');
+const { resolveJoinCompanyMembership } = require('./invite-membership');
 
 /**
  * HTTP Function: createInviteV1
@@ -147,8 +148,8 @@ exports.joinCompanyV1 = onRequest({
     }
 
     const inviteDocRef = inviteQuery.docs[0].ref;
-    const workerRef = admin.firestore().doc(`companies/${companyId}/workers/pending_${auth.uid}`);
     const profileRef = admin.firestore().doc(userProfileDocPath(auth.uid));
+    const userCacheRef = admin.firestore().doc(userCacheDocPath(auth.uid));
     const companyCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
     const wnextRef = admin.firestore().doc(`companies/${companyId}/counters/wnext`);
 
@@ -187,6 +188,27 @@ exports.joinCompanyV1 = onRequest({
         throw new HttpsError('failed-precondition', 'Invite target role is invalid');
       }
 
+      const membershipResolution = resolveJoinCompanyMembership({
+        profileData: profileSnap.data() || {},
+        requestedCompanyId: companyId,
+        authUid: auth.uid,
+        inviteUsedBy,
+      });
+
+      if (membershipResolution.mode === 'reuse_existing') {
+        tx.set(inviteDocRef, {
+          usedBy: auth.uid,
+          usedAt: nowIso,
+          status: 'used',
+        }, { merge: true });
+
+        return membershipResolution.membership;
+      }
+
+      if (membershipResolution.mode === 'reject') {
+        throw new HttpsError(membershipResolution.code, membershipResolution.message);
+      }
+
       // Allocate sequential wid for new workers from counter subcollection
       const workerSerial = Number(counterSnap.data()?.next || 1);
       tx.set(wnextRef, { next: workerSerial + 1 });
@@ -221,6 +243,11 @@ exports.joinCompanyV1 = onRequest({
         wid: workerSerial,
         createdAt: profileSnap.exists ? (profileSnap.data()?.createdAt || nowIso) : nowIso,
         updatedAt: nowIso,
+      }, { merge: true });
+
+      tx.set(userCacheRef, {
+        profile: 1,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
 
       tx.set(companyCacheRef, {

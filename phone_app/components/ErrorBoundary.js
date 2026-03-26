@@ -1,6 +1,7 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { borderRadius, getColors, shadows, spacing, typography } from '../theme';
+import AppText from './AppText';
 
 const palette = getColors(false);
 
@@ -33,8 +34,8 @@ export class ErrorBoundary extends React.Component {
     return (
       <View style={[styles.container, { backgroundColor: palette.background }]}>
         <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[styles.title, { color: palette.error }]}>Something went wrong</Text>
-          <Text style={[styles.message, { color: palette.textSecondary }]}>{this.state.errorMessage}</Text>
+          <AppText variant="title" color={palette.error}>Something went wrong</AppText>
+          <AppText variant="body" color={palette.textSecondary} style={styles.message}>{this.state.errorMessage}</AppText>
           <Pressable
             style={({ pressed }) => [
               styles.button,
@@ -46,7 +47,7 @@ export class ErrorBoundary extends React.Component {
             ]}
             onPress={this.resetError}
           >
-            <Text style={styles.buttonText}>Try again</Text>
+            <AppText variant="bodyStrong" color="#FFFFFF">Try again</AppText>
           </Pressable>
         </View>
       </View>
@@ -71,14 +72,10 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   title: {
-    fontSize: typography.xxl,
-    fontWeight: typography.bold,
-    letterSpacing: -0.2,
+    // Handled by AppText variant="title"
   },
   message: {
     marginBottom: spacing.sm,
-    fontSize: typography.base,
-    lineHeight: 22,
   },
   button: {
     minHeight: 48,
@@ -89,10 +86,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     ...shadows.primary,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontWeight: typography.semibold,
-    fontSize: typography.base,
   },
 });

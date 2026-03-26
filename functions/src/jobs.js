@@ -123,13 +123,22 @@ exports.onJobAssignTrigger = onDocumentCreated({
       timestamp: new Date().toISOString()
     };
 
-    // Send push notification
-    const notificationResult = await sendPushNotification(
-      workerPushToken,
-      notificationTitle,
-      notificationBody,
-      notificationData
-    );
+    // Send push notification (with retry)
+    let notificationResult = { success: false };
+    const MAX_NOTIFICATION_RETRIES = 2;
+    for (let attempt = 0; attempt <= MAX_NOTIFICATION_RETRIES; attempt++) {
+      notificationResult = await sendPushNotification(
+        workerPushToken,
+        notificationTitle,
+        notificationBody,
+        notificationData
+      );
+      if (notificationResult.success) break;
+      if (attempt < MAX_NOTIFICATION_RETRIES) {
+        logger.warn('Push notification failed, retrying', { attempt: attempt + 1, jobId });
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
 
     // Log notification to prevent duplicates
     if (notificationResult.success) {
@@ -745,6 +754,10 @@ exports.updateJobV1 = onCall(async (request) => {
   }
   if (existingJob.status === 'finished' && (updates.status === 'pending' || updates.status === 'waiting')) {
     throw new HttpsError('failed-precondition', 'Finished job cannot transition back to pending/waiting.');
+  }
+  // Denied jobs cannot be reopened — they are terminal
+  if (existingJob.status === 'denied' && updates.status && updates.status !== 'denied') {
+    throw new HttpsError('failed-precondition', 'Denied job cannot be reopened. Create a new job instead.');
   }
 
   // Validate array field lengths to prevent oversized documents on updates

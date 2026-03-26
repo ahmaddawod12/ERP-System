@@ -154,7 +154,7 @@ export default function ManageJobs() {
   const insets = useSafeAreaInsets();
   const {
     companyJobs,
-    cachedWorkersList,
+    workers,
     getCompanyId,
     getUid,
     acceptJob,
@@ -174,7 +174,7 @@ export default function ManageJobs() {
   const [highlightedJobId, setHighlightedJobId] = useState(null);
 
   const workerNameByWid = useMemo(() => {
-    const source = cachedWorkersList || {};
+    const source = workers || {};
     if (Array.isArray(source)) {
       return source.reduce((acc, worker) => {
         if (worker?.wid) acc[worker.wid] = worker.name || worker.email || worker.wid;
@@ -186,7 +186,7 @@ export default function ManageJobs() {
       acc[wid] = worker.name || worker.email || wid;
       return acc;
     }, {});
-  }, [cachedWorkersList]);
+  }, [workers]);
 
   useEffect(() => {
     const list = Array.isArray(cachedPendingJobs) ? [...cachedPendingJobs] : [];

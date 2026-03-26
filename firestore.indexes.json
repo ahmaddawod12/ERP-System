@@ -27,7 +27,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "completedBy",
+          "fieldPath": "mid",
           "order": "ASCENDING"
         },
         {
@@ -41,7 +41,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "workerId",
+          "fieldPath": "wid",
           "order": "ASCENDING"
         },
         {
@@ -59,7 +59,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "completedBy",
+          "fieldPath": "mid",
           "order": "ASCENDING"
         },
         {
@@ -87,7 +87,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "completedBy",
+          "fieldPath": "mid",
           "order": "ASCENDING"
         },
         {
@@ -101,7 +101,7 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "createdBy",
+          "fieldPath": "mid",
           "order": "ASCENDING"
         },
         {
@@ -114,6 +114,12 @@
   "fieldOverrides": [
     {
       "collectionGroup": "notificationLog",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "documentTasks",
       "fieldPath": "expireAt",
       "ttl": true,
       "indexes": []

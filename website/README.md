@@ -57,6 +57,10 @@ Current document flows:
 - Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).
 - Firestore rules remain least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`).
 - Auth cookie `Secure` flag is conditional on HTTPS (omitted on localhost for development).
+- Login redirect validation blocks `//` prefix URLs to prevent open redirects.
+- `buildAuthedJsonHeaders()` calls `getIdToken(true)` to force-refresh the Firebase ID token.
+- `/api/contact/request` has in-memory IP-based rate limiting (5 req/min per IP).
+- CSP includes `base-uri 'self'` and `form-action 'self'` directives. `'unsafe-inline'` in `script-src` is required by Next.js hydration — migrate to nonce-based CSP when Next.js supports it.
 - All page routes (dashboard and public auth pages) follow the server+client pattern: `page.tsx` (server, exports metadata) + `page-client.tsx` (client shell).
 
 ## Data Model

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { I18nManager, Text } from 'react-native';
 import { getColors, typography } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
@@ -57,7 +57,7 @@ export default function AppText({
   const { language } = useLanguageContext();
   const palette = getColors(isDarkMode);
   const isRTL = language === 'he' || language === 'ar' || I18nManager.isRTL;
-  const resolvedVariant = buildVariantStyle(variant, weight);
+  const resolvedVariant = useMemo(() => buildVariantStyle(variant, weight), [variant, weight]);
 
   return (
     <Text

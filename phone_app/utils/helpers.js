@@ -123,3 +123,20 @@ export const deepClone = (obj) => {
     return obj;
   }
 };
+
+/**
+ * Safely parse a JSON string, returning a fallback value on failure.
+ * Prevents crashes from malformed navigation params or corrupted storage data.
+ * @param {string} jsonString - The JSON string to parse
+ * @param {*} fallback - Value to return on parse failure (default: null)
+ * @returns {*} Parsed value or fallback
+ */
+export const safeJsonParse = (jsonString, fallback = null) => {
+  if (!jsonString || typeof jsonString !== 'string') return fallback;
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    console.error('safeJsonParse: failed to parse JSON:', error.message);
+    return fallback;
+  }
+};

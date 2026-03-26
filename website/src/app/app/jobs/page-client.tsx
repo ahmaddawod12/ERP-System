@@ -20,6 +20,14 @@ import {
   resolveCompanyScope,
   updateJob,
 } from "@/lib/services/firestore-service";
+import {
+  buildJobAssignmentPatch,
+  buildListJobsOptions,
+  buildManagedJobCreatePayload,
+  buildSoloFinishedJobPayload,
+  getWorkerDisplayName,
+  normalizeMembershipId,
+} from "@/lib/job-access";
 import type { JobRecord, WorkerProfile } from "@/lib/types";
 
 interface JobFormState {
@@ -48,11 +56,20 @@ export default function JobsClient() {
   const scopeId = resolveCompanyScope(companyId);
   const canManageCompanyJobs = role === "manager" || role === "dev";
   const isSoloUser = role === "user" && profile?.accountType === "solo";
+  const ownWorkerWid = normalizeMembershipId(profile?.wid);
 
-  const workerNameMap = useMemo(
-    () => Object.fromEntries(workers.map((worker) => [worker.wid, worker.name || worker.email])),
-    [workers],
-  );
+  const workerNameMap = useMemo(() => {
+    const entries = workers.map((worker) => [
+      normalizeMembershipId(worker.wid) ?? String(worker.wid),
+      getWorkerDisplayName(worker) ?? String(worker.wid),
+    ]);
+
+    if (ownWorkerWid) {
+      entries.push([ownWorkerWid, profile?.name || profile?.email || ownWorkerWid]);
+    }
+
+    return Object.fromEntries(entries);
+  }, [ownWorkerWid, profile?.email, profile?.name, workers]);
 
   const loadJobs = useCallback(async () => {
     if (!scopeId) {
@@ -64,14 +81,14 @@ export default function JobsClient() {
     }
     setLoading(true);
     const [jobsResult, workersResult] = await Promise.all([
-      listJobs(scopeId, { role: role ?? undefined }),
+      listJobs(scopeId, buildListJobsOptions(role, profile)),
       canManageCompanyJobs ? listWorkers(scopeId) : Promise.resolve([]),
     ]);
     setPendingJobs(jobsResult.pending);
     setFinishedJobs(jobsResult.finished);
     setWorkers(workersResult);
     setLoading(false);
-  }, [scopeId, canManageCompanyJobs, role]);
+  }, [scopeId, canManageCompanyJobs, profile, role]);
 
   useEffect(() => {
     void loadJobs();
@@ -85,20 +102,12 @@ export default function JobsClient() {
 
     try {
       if (isSoloUser) {
-        await createFinishedJob(scopeId, {
-          title: form.title,
-          cname: form.cname,
-          description: form.description,
-          wid: uid,
-        });
+        await createFinishedJob(scopeId, buildSoloFinishedJobPayload(form, profile));
       } else {
-        await createJob(scopeId, {
-          title: form.title,
-          cname: form.cname,
-          description: form.description,
-          status: "pending",
-          wid: form.wid || uid,
-        });
+        const assignee =
+          workers.find((worker) => normalizeMembershipId(worker.wid) === form.wid) ?? null;
+
+        await createJob(scopeId, buildManagedJobCreatePayload(form, profile, assignee));
       }
       await loadJobs();
       setForm(initialState);
@@ -246,7 +255,10 @@ export default function JobsClient() {
                           <select
                             defaultValue={row.wid ?? ""}
                             onChange={(event) => {
-                              void handleJobUpdate(row.id, { wid: event.target.value || null });
+                              const selectedWid = event.target.value;
+                              const assignee =
+                                workers.find((worker) => normalizeMembershipId(worker.wid) === selectedWid) ?? null;
+                              void handleJobUpdate(row.id, buildJobAssignmentPatch(assignee, profile));
                             }}
                             className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                           >

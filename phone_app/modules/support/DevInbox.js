@@ -26,13 +26,14 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { db, auth, FieldValue, collection, doc, getDoc, getDocs, updateDoc, query, where, orderBy, runTransaction, signOut } from '../../firebase';
+import { db, auth, collection, doc, getDocs, updateDoc, query, where, orderBy, signOut } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
 import { AppText, GlobalHeader } from '../../components';
+import { appendConversationMessage, loadConversationThread } from './support-message-store';
 
 export default function DevInbox() {
   const router = useRouter();
@@ -92,36 +93,6 @@ export default function DevInbox() {
     conversationClosed: 'تم إغلاق المحادثة',
   };
 
-  // Helper: Extract messages from conversation doc (message1, message2, etc.)
-  const extractMessagesFromDoc = (convData) => {
-    const msgs = [];
-    let i = 1;
-    while (convData[`message${i}`]) {
-      const msg = convData[`message${i}`];
-      msgs.push({
-        id: `message${i}`,
-        senderUid: msg.senderUid,
-        text: msg.text,
-        index: i,
-      });
-      i++;
-    }
-    return msgs;
-  };
-
-  // Helper: Get next message number from conversation data
-  const getNextMessageNumber = (convData) => {
-    let maxNum = 0;
-    Object.keys(convData).forEach(key => {
-      const match = key.match(/^message(\d+)$/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNum) maxNum = num;
-      }
-    });
-    return maxNum + 1;
-  };
-
   // Load conversations (one-time fetch, no realtime)
   const loadConversations = async () => {
     try {
@@ -166,19 +137,13 @@ export default function DevInbox() {
   // Load messages for a specific conversation (one-time fetch)
   const loadConversationMessages = async (convId) => {
     try {
-      const convRef = doc(db, 'conversations', convId);
-      const convSnap = await getDoc(convRef);
+      const msgs = await loadConversationThread(convId);
+      setMessages(msgs);
       
-      if (convSnap.exists) {
-        const convData = convSnap.data();
-        const msgs = extractMessagesFromDoc(convData);
-        setMessages(msgs);
-        
-        // Scroll to bottom
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: false });
-        }, 100);
-      }
+      // Scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, 100);
     } catch (error) {
       console.error('Error loading messages:', error);
     }
@@ -228,29 +193,12 @@ export default function DevInbox() {
     setSending(true);
     
     try {
-      const convRef = doc(db, 'conversations', selectedConversation.id);
-      
-      // Use transaction to safely add next message
-      await runTransaction(db, async (transaction) => {
-        const convSnap = await transaction.get(convRef);
-        if (!convSnap.exists) {
-          throw new Error('Conversation not found');
-        }
-        
-        const convData = convSnap.data();
-        const nextNum = getNextMessageNumber(convData);
-        const messageKey = `message${nextNum}`;
-        
-        transaction.update(convRef, {
-          [messageKey]: {
-            senderUid: 'dev',
-            text: trimmedReply,
-          },
-          lastMessage: trimmedReply,
-          lastMessageAt: FieldValue.serverTimestamp(),
-          unreadForUser: (convData.unreadForUser || 0) + 1,
-          unreadForDev: 0,
-        });
+      await appendConversationMessage({
+        conversationId: selectedConversation.id,
+        senderUid: 'dev',
+        text: trimmedReply,
+        unreadForUserDelta: 1,
+        unreadForDevValue: 0,
       });
       
       // Refresh messages after sending

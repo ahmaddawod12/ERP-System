@@ -1,21 +1,26 @@
-# Use the official Puppeteer image with Node.js 22 support
-FROM ghcr.io/puppeteer/puppeteer:24.2.1
+# Stage 1: Install dependencies
+FROM ghcr.io/puppeteer/puppeteer:24.2.1 AS deps
 
-# Switch to root user for installation
 USER root
-
-# Set working directory
 WORKDIR /cloudrun-pdf
 
-# Skip downloading Chrome - use the one bundled with the Docker image
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Stage 2: Production image
+FROM ghcr.io/puppeteer/puppeteer:24.2.1
+
+USER root
+WORKDIR /cloudrun-pdf
+
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV HOME=/tmp
 
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies as root
-RUN npm ci --only=production
+# Copy dependencies from build stage (leverages Docker layer caching)
+COPY --from=deps /cloudrun-pdf/node_modules ./node_modules
 
 # Copy application code
 COPY . .
@@ -25,6 +30,10 @@ RUN chown -R pptruser:pptruser /cloudrun-pdf
 
 # Cloud Run uses PORT environment variable
 ENV PORT=8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:8080/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"
 
 # Run as non-root user (puppeteer image already has pptruser)
 USER pptruser

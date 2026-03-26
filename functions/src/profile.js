@@ -51,11 +51,32 @@ exports.updateProfileV1 = onCall(async (request) => {
     throw new HttpsError('not-found', 'User profile not found');
   }
 
+  const profileData = profileSnap.data();
+  const companyId = profileData.companyId;
+  const wid = profileData.wid;
+
   const updates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
   if (name !== undefined) updates.name = name;
   if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
 
-  await profileRef.update(updates);
+  // If user belongs to a company with a wid, use a transaction to keep
+  // the profile and worker docs in sync atomically.
+  if (companyId && wid) {
+    const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
+    await admin.firestore().runTransaction(async (tx) => {
+      const workerSnap = await tx.get(workerRef);
+      tx.update(profileRef, updates);
+      if (workerSnap.exists) {
+        const workerUpdates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+        if (name !== undefined) workerUpdates.name = name;
+        if (phoneNumber !== undefined) workerUpdates.phoneNumber = phoneNumber;
+        tx.update(workerRef, workerUpdates);
+        logger.info('updateProfileV1: synced worker doc atomically', { uid, companyId, wid, fields: Object.keys(workerUpdates) });
+      }
+    });
+  } else {
+    await profileRef.update(updates);
+  }
 
   // Sync name change to Firebase Auth displayName for consistency
   if (name !== undefined) {
@@ -63,25 +84,6 @@ exports.updateProfileV1 = onCall(async (request) => {
       await admin.auth().updateUser(uid, { displayName: name || undefined });
     } catch (authUpdateErr) {
       logger.warn('updateProfileV1: failed to sync displayName to Auth', { uid, error: authUpdateErr.message });
-    }
-  }
-
-  // Sync changed name/phone to the worker doc if the user belongs to a company
-  const profileData = profileSnap.data();
-  const companyId = profileData.companyId;
-  const wid = profileData.wid;
-  if (companyId && wid) {
-    const workerUpdates = {};
-    if (name !== undefined) workerUpdates.name = name;
-    if (phoneNumber !== undefined) workerUpdates.phoneNumber = phoneNumber;
-    if (Object.keys(workerUpdates).length > 0) {
-      const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
-      const workerSnap = await workerRef.get();
-      if (workerSnap.exists) {
-        workerUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-        await workerRef.update(workerUpdates);
-        logger.info('updateProfileV1: synced worker doc', { uid, companyId, wid, fields: Object.keys(workerUpdates) });
-      }
     }
   }
 

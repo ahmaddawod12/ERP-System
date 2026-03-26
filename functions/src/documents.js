@@ -137,7 +137,8 @@ exports.publishPreviewTask = onCall({
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdBy: request.auth.uid,
-      documentData: completeDocumentData
+      documentData: completeDocumentData,
+      expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // TTL: auto-delete after 30 days
     });
 
     // Prepare message for Pub/Sub - complete data, no fetching needed

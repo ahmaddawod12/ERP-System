@@ -19,6 +19,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
+import { safeJsonParse } from '../../utils/helpers';
 
 export default function Userjob() {
   const router = useRouter();
@@ -260,7 +261,7 @@ export default function Userjob() {
   const checkPendingJobCount = async () => {
     try {
       const pending = storage.getString('pendingJobs');
-      if (pending) setPendingJobCount(JSON.parse(pending).length);
+      if (pending) setPendingJobCount((safeJsonParse(pending, [])).length);
     } catch (error) {
       console.log('Error checking pending jobs:', error);
     }
@@ -273,7 +274,7 @@ export default function Userjob() {
     try {
       const draft = storage.getString('userjobDraft');
       if (draft) {
-        const parsed = JSON.parse(draft);
+        const parsed = safeJsonParse(draft);
         if (parsed.jobData && (parsed.jobData.title || parsed.jobData.description ||
             parsed.jobData.photos?.length > 0 || parsed.selectedParts?.length > 0)) {
           alert.confirm(
@@ -323,7 +324,7 @@ export default function Userjob() {
     try {
       const pending = storage.getString('pendingJobs');
       if (!pending) return;
-      const pendingArray = JSON.parse(pending);
+      const pendingArray = safeJsonParse(pending, []);
       if (pendingArray.length === 0) return;
 
       setIsSyncing(true);

@@ -64,6 +64,7 @@ When generating code, prefer compatibility with these versions.
 - Use shared primitives (`AppText`, `AppInput`, `AppButton`, `AppCard`, etc.) before custom one-off UI.
 - Prefer `AppInput` over raw `TextInput` from `react-native` in module screens. Component-level wrappers (e.g. `SearchInput`, `ClientSelector`) may use raw `TextInput` internally.
 - Use `useAlert()` and never `Alert.alert()`.
+- Use `safeJsonParse()` from `utils/helpers` instead of raw `JSON.parse()` for route params and cached data. Never use unguarded `JSON.parse()` in screen modules.
 - Keep `GlobalHeader` usage consistent with existing screen patterns.
 - MMKV utilities (`storage`, `getStorage`, `CACHE_KEYS`, scope helpers) live in `contexts/mmkv-storage.js`. Import from there for non-React code; `CacheContext` re-exports them for backward compatibility.
 - `ThemeContext` uses the shared MMKV store from `mmkv-storage.js` — do not create separate MMKV instances for preferences.
@@ -92,6 +93,10 @@ When generating code, prefer compatibility with these versions.
 - Static marketing pages (`/`, `/features`, `/pricing`, `/security`, `/contact`, `/terms`, `/privacy`, `/solutions/*`) use `export const revalidate = 3600` for ISR.
 - `middleware.ts` handles auth redirect for `/app/*` routes.
 - Auth cookie (`firebase-auth-token`) is set by `auth-provider.tsx` on sign-in and cleared on sign-out. The `Secure` flag is conditional on HTTPS (omitted on localhost). Middleware uses this cookie for server-side route guarding.
+- Login redirect validation blocks `//` prefix URLs to prevent open redirects.
+- `buildAuthedJsonHeaders()` in `client-auth.ts` calls `getIdToken(true)` to force-refresh the token.
+- `/api/contact/request` has in-memory IP-based rate limiting (5 req/min).
+- CSP includes `base-uri 'self'` and `form-action 'self'` directives. `'unsafe-inline'` in `script-src` is required by Next.js hydration — migrate to nonce-based CSP when Next.js supports it.
 
 ## Functions Rules (`functions/`)
 
@@ -119,9 +124,14 @@ When generating code, prefer compatibility with these versions.
 - Validate item counts against `MAX_ITEMS_PER_DOCUMENT` (100) in document generation functions.
 - PubSub is lazy-loaded via `getPubSub()` — do not import `@google-cloud/pubsub` at top level.
 - Busy-flag helpers (`clearCompanyBusyFlag`, `acquireCompanyBusyFlag`, `publishGenerateTaskHelper`) live in `shared.js` — do not duplicate them in domain modules.
-- `updateProfileV1` syncs name/phone changes to the worker doc (looked up by `wid` from profile). Preserve this sync when modifying profile logic.
+- `updateProfileV1` syncs name/phone changes to the worker doc (looked up by `wid` from profile) inside a Firestore transaction. Preserve atomic profile+worker sync when modifying profile logic.
 - `updateCacheV1` has an `ALLOWED_CACHE_FIELDS` whitelist. Do not accept arbitrary fields.
 - `updateBusinessInfoV1` is restricted to manager roles only.
+- `tax.js` token refresh uses a Firestore transaction to avoid race conditions when multiple concurrent requests attempt to refresh the same OAuth token.
+- `auth.js` writes a marker document to `system/orphaned_users/pending/{uid}` when orphaned auth user cleanup fails, for later reconciliation.
+- `shared.js` in-memory rate limiter has a size cap (`RATE_LIMIT_MAP_MAX_SIZE = 10_000`) and periodic cleanup to prevent unbounded memory growth.
+- `shared.js` email validation (`isValidEmail`) requires a minimum 2-char TLD and max 254-char total length.
+- `documentTasks` documents include an `expireAt` TTL field (30 days) for automatic cleanup.
 
 ## Cloud Run Services
 
@@ -132,11 +142,15 @@ When generating code, prefer compatibility with these versions.
 - `@google-cloud/pubsub` is NOT a direct dependency — messages arrive via HTTP push, not pull.
 - `VAT_RATE` constant (0.18) is defined locally in `htmlTemplate.js` for Israeli tax rate (sync note references `@smart-job/contracts`).
 - All document HTML is forced to Hebrew (`effectiveLanguage = 'he'`) per Israeli tax regulations. The en/ar label tables are retained for future non-tax document types.
+- `acquireTab()` returns the browser generation counter. Callers must validate the generation hasn't changed before using the browser, to detect browser restarts during tab waits.
+- Logo cache has a size cap (`LOGO_CACHE_MAX_SIZE = 100`) with LRU eviction.
+- Pub/Sub push handlers return `200` for permanent failures (bad payload, validation errors) to prevent infinite retries. Only transient errors (browser crash, timeout) return `500` for Pub/Sub retry.
 
 ### `cloudrun-archiver/`
 - Batch Cloud Run Job that archives old Firestore data (finished jobs + documents) to Cloud Storage.
 - Date fields (`finishedAt`, `createdAt`) are stored as ISO-8601 strings — queries must use string comparison, not Firestore Timestamps.
 - Idempotent via per-company manifest files in Cloud Storage.
+- Archives include SHA-256 checksums in Storage metadata; `verifyArchive()` validates both doc count and integrity.
 
 ## Shared Contracts Package (`packages/contracts/`)
 

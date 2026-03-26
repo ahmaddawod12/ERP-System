@@ -13,25 +13,18 @@ import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { useDocumentTask } from "@/hooks/use-document-task";
+import {
+  DOC_TYPE,
+  DOCUMENT_TYPES,
+  getDocumentTypeLabel,
+  type DocumentTypeCode,
+  VAT_RATE,
+  VAT_RATE_PERCENT,
+} from "@/lib/document-types";
 import { listDocuments, listClients, resolveCompanyScope } from "@/lib/services/firestore-service";
 import type { DocumentRecord, ClientRecord } from "@/lib/types";
 
 /* ─── Document type codes (matches phone app) ─── */
-
-const DOCUMENT_TYPES = [
-  { code: 10, label: "Price Proposal", suffix: "PP" },
-  { code: 200, label: "Delivery Note", suffix: "DN" },
-  { code: 210, label: "Return Certificate", suffix: "RC" },
-  { code: 305, label: "Tax Invoice", suffix: "TI" },
-  { code: 330, label: "Refund", suffix: "RF" },
-  { code: 400, label: "Receipt", suffix: "RE" },
-] as const;
-
-type DocTypeCode = (typeof DOCUMENT_TYPES)[number]["code"];
-
-function getDocTypeLabel(code: number): string {
-  return DOCUMENT_TYPES.find((dt) => dt.code === code)?.label ?? `Type ${code}`;
-}
 
 /* ─── Item row ─── */
 
@@ -63,7 +56,7 @@ export default function DocumentsClient() {
   const [viewingDocument, setViewingDocument] = useState<DocumentRecord | null>(null);
 
   /* ── Create form state ── */
-  const [docType, setDocType] = useState<DocTypeCode>(10);
+  const [docType, setDocType] = useState<DocumentTypeCode>(DOC_TYPE.PRICE_PROPOSAL);
   const [language, setLanguage] = useState<"he" | "en" | "ar">("he");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
@@ -193,13 +186,14 @@ export default function DocumentsClient() {
       (sum, i) => sum + i.price * i.quantity,
       0,
     );
-    const vatAmount = Math.round(totalBeforeVat * 0.18 * 100) / 100;
+    const vatAmount = Math.round(totalBeforeVat * VAT_RATE * 100) / 100;
     const totalWithVat = Math.round((totalBeforeVat + vatAmount) * 100) / 100;
     return { totalBeforeVat, vatAmount, totalWithVat };
   }, [items]);
 
   /* ── Build document data payload (matches phone app) ── */
   const buildDocumentData = useCallback(() => {
+    const clientVatNumber = clientData.vatNumber.trim();
     const validItems = items
       .filter((i) => i.description.trim() && i.price > 0)
       .map((i) => ({
@@ -217,6 +211,12 @@ export default function DocumentsClient() {
         address: clientData.address,
         city: clientData.city,
         vatNumber: clientData.vatNumber,
+        ...(clientVatNumber
+          ? {
+              clientVatNumber,
+              customerVatNumber: clientVatNumber,
+            }
+          : {}),
         ...(clientData.clientId ? { clientId: clientData.clientId } : {}),
       },
       items: validItems,
@@ -228,7 +228,7 @@ export default function DocumentsClient() {
       totalWithVat: totals.totalWithVat,
     };
 
-    if (docType === 400) {
+    if (docType === DOC_TYPE.RECEIPT) {
       data.paymentMethod = paymentMethod;
       data.paymentInfo = paymentInfo;
     }
@@ -239,7 +239,7 @@ export default function DocumentsClient() {
   /* ── Validation ── */
   const validate = useCallback((): string | null => {
     if (!clientData.name.trim()) return "Client name is required";
-    if (docType === 305 && !clientData.vatNumber?.trim()) {
+    if (docType === DOC_TYPE.TAX_INVOICE && !clientData.vatNumber?.trim()) {
       return "VAT number is required for Tax Invoices";
     }
     const validItems = items.filter((i) => i.description.trim() && i.price > 0);
@@ -283,13 +283,13 @@ export default function DocumentsClient() {
 
     setShowPreviewModal(false);
 
-    if (docType === 305) {
+    if (docType === DOC_TYPE.TAX_INVOICE) {
       // Tax Invoice → getInvoiceApproval on me-west1
       try {
         const docData = buildDocumentData();
         const result = await getInvoiceApproval({
           companyId: companyScopeId,
-          type: 305,
+          type: DOC_TYPE.TAX_INVOICE,
           // Spread top-level fields as backend expects (not nested under documentData)
           client: docData.client as Record<string, unknown>,
           items: docData.items as Array<Record<string, unknown>>,
@@ -329,7 +329,7 @@ export default function DocumentsClient() {
 
   /* ── Reset form ── */
   const resetForm = () => {
-    setDocType(10);
+    setDocType(DOC_TYPE.PRICE_PROPOSAL);
     setLanguage("he");
     setDate(new Date().toISOString().slice(0, 10));
     setNotes("");
@@ -411,7 +411,7 @@ export default function DocumentsClient() {
                 {DOCUMENT_TYPES.map((dt) => (
                   <button
                     key={dt.code}
-                    onClick={() => setDocType(dt.code as DocTypeCode)}
+                    onClick={() => setDocType(dt.code)}
                     className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
                       docType === dt.code
                         ? "bg-sky-500 text-white shadow-sm"
@@ -549,7 +549,7 @@ export default function DocumentsClient() {
                     }
                   />
                   <Input
-                    label={docType === 305 ? "VAT Number *" : "VAT Number"}
+                    label={docType === DOC_TYPE.TAX_INVOICE ? "VAT Number *" : "VAT Number"}
                     value={manualClient.vatNumber}
                     onChange={(e) =>
                       setManualClient((p) => ({ ...p, vatNumber: e.target.value }))
@@ -625,7 +625,7 @@ export default function DocumentsClient() {
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span>VAT (18%)</span>
+                  <span>VAT ({VAT_RATE_PERCENT}%)</span>
                   <span className="font-medium">₪{totals.vatAmount.toFixed(2)}</span>
                 </div>
                 <div className="mt-2 flex justify-between border-t pt-2 text-base font-semibold">
@@ -636,7 +636,7 @@ export default function DocumentsClient() {
             </Card>
 
             {/* Payment (receipt only) */}
-            {docType === 400 && (
+            {docType === DOC_TYPE.RECEIPT && (
               <Card>
                 <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
                   Payment Details
@@ -718,7 +718,7 @@ export default function DocumentsClient() {
                 onClick={() => void handleGenerate()}
                 disabled={taskLoading}
               >
-                {docType === 305 ? "Submit to Tax Authority" : "Generate Document"}
+                {docType === DOC_TYPE.TAX_INVOICE ? "Submit to Tax Authority" : "Generate Document"}
               </Button>
             </div>
           </>
@@ -745,7 +745,7 @@ export default function DocumentsClient() {
                       render: (row) => (
                         <Badge variant="info">
                           {row.documentType
-                            ? getDocTypeLabel(row.documentType)
+                            ? getDocumentTypeLabel(row.documentType)
                             : row.type || "Document"}
                         </Badge>
                       ),
@@ -847,7 +847,7 @@ export default function DocumentsClient() {
                     onClick={handleGenerateFromPreview}
                     disabled={taskLoading}
                   >
-                    {docType === 305
+                    {docType === DOC_TYPE.TAX_INVOICE
                       ? "Submit to Tax Authority"
                       : "Create Document"}
                   </Button>
@@ -917,8 +917,10 @@ export default function DocumentsClient() {
           open={viewingDocument !== null}
           title={
             viewingDocument?.documentType
-              ? getDocTypeLabel(viewingDocument.documentType)
-              : viewingDocument?.type || "Document Details"
+              ? getDocumentTypeLabel(viewingDocument.documentType)
+              : (viewingDocument?.type != null
+                  ? String(viewingDocument.type)
+                  : "Document Details")
           }
           onClose={() => setViewingDocument(null)}
           className="max-w-2xl"
@@ -940,7 +942,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
         {documentRecord.documentType != null && (
           <div>
             <span className="text-xs text-slate-500">Type</span>
-            <p className="font-medium">{getDocTypeLabel(documentRecord.documentType)}</p>
+            <p className="font-medium">{getDocumentTypeLabel(documentRecord.documentType)}</p>
           </div>
         )}
         {(documentRecord.documentNumber ?? documentRecord.documentId) && (
@@ -1059,7 +1061,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
             <span>₪{Number(documentRecord.totalBeforeVat ?? 0).toFixed(2)}</span>
           </div>
           <div className="flex justify-between">
-            <span>VAT (18%)</span>
+            <span>VAT ({VAT_RATE_PERCENT}%)</span>
             <span>₪{Number(documentRecord.vatAmount ?? 0).toFixed(2)}</span>
           </div>
           <div className="mt-1 flex justify-between border-t pt-1 font-semibold">
@@ -1077,6 +1079,13 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
             <span className="text-slate-500">Method: </span>
             {documentRecord.paymentMethod}
           </p>
+          {typeof documentRecord.paymentInfo === "string" &&
+            documentRecord.paymentInfo.trim() && (
+              <p>
+                <span className="text-slate-500">Info: </span>
+                {documentRecord.paymentInfo}
+              </p>
+            )}
           {documentRecord.paymentInfo &&
             typeof documentRecord.paymentInfo === "object" &&
             Object.entries(documentRecord.paymentInfo).map(([k, v]) => (

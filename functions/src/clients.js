@@ -57,11 +57,10 @@ exports.addClientV1 = onCall(async (request) => {
     const clientRef = db.doc(`companies/${companyId}/clients/${clientId}`);
     const now = new Date().toISOString();
 
-    // Build client doc — only cid, cname, cphone + optional extras
-    const clientDoc = { cid, cname: name, name, createdAt: now };
+    // Build client doc — canonical fields: cid, cname, cphone + optional extras
+    const clientDoc = { cid, cname: name, createdAt: now };
     if (phone) {
       clientDoc.cphone = phone;
-      clientDoc.phone = phone;
     }
     if (email)     clientDoc.email     = email;
     if (address)   clientDoc.address   = address;

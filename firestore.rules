@@ -51,6 +51,12 @@ service cloud.firestore {
       return currentProfileExists() ? userProfile(request.auth.uid).wid : null;
     }
 
+    function currentWidString() {
+      return currentWid() == null
+        ? null
+        : (currentWid() is string ? currentWid() : string(currentWid()));
+    }
+
     function currentMid() {
       return currentProfileExists() ? userProfile(request.auth.uid).mid : null;
     }
@@ -129,6 +135,13 @@ service cloud.firestore {
     function isManagerUserBasic(companyId) {
       return (isCompanyWorker(companyId) || isCompanyManager(companyId)) &&
         companyRole(companyId) in ["manager", "user", "basic", "dev"];
+    }
+
+    function jobAssignedToCurrentMember(jobData) {
+      return currentWid() != null && currentWidString() != null && (
+        (jobData.wid is int && string(jobData.wid) == currentWidString()) ||
+        (jobData.wid is string && jobData.wid == currentWidString())
+      );
     }
 
     function targetUserWid(userId) {
@@ -275,12 +288,8 @@ service cloud.firestore {
     match /companies/{companyId}/jobs/{jobId} {
       allow read: if isAdmin() || canManageCompany(companyId) || (
         isCompanyWorker(companyId) &&
-        companyRole(companyId) == "user"
-      ) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) == "worker"
-        // Worker reads are now filtered by wid on the client/CF side.
-        // Firestore rules cannot compare numeric wid easily; rely on CF for assignment checks.
+        companyRole(companyId) in ["user", "worker"] &&
+        jobAssignedToCurrentMember(resource.data)
       );
 
       allow create, update, delete: if false;

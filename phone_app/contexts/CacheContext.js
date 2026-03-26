@@ -25,7 +25,7 @@
  * - Dev: no listeners
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 
@@ -43,9 +43,27 @@ import {
   isWithinCacheRange,
   getDocumentType,
 } from './mmkv-storage';
+import {
+  isProfileCacheOwnedByUser,
+  resolveCachedSessionIdentity,
+} from './cache-identity';
+import {
+  buildJobMembershipQueryValues,
+  roleUsesScopedJobAccess,
+} from './job-membership';
 
 // Create context
 const CacheContext = createContext(null);
+
+function buildJobMembershipConstraints(wid) {
+  const values = buildJobMembershipQueryValues(wid);
+  if (values.length === 0) return [];
+  return [
+    values.length === 1
+      ? where('wid', '==', values[0])
+      : where('wid', 'in', values),
+  ];
+}
 
 // Custom hook to use cache
 export const useCache = () => {
@@ -71,6 +89,21 @@ export function CacheProvider({ children }) {
   const [companyInventory, setCompanyInventory] = useState([]);
   const [cacheVersions, setCacheVersions] = useState({});
   const [companyVersions, setCompanyVersions] = useState({});
+
+  const resetCacheState = useCallback(() => {
+    setProfile(null);
+    setInventory([]);
+    setJobs([]);
+    setWorkers({});
+    setCompanyJobs([]);
+    setDocuments([]);
+    setClients([]);
+    setSubscription(null);
+    setCompanyInventory([]);
+    setCacheVersions({});
+    setCompanyVersions({});
+    setIsInitialized(false);
+  }, []);
   
   // Refs for cleanup
   const unsubscribeRef = useRef(null);
@@ -178,17 +211,53 @@ export function CacheProvider({ children }) {
   /**
    * Load data from local cache
    */
-  const loadFromLocalCache = useCallback(() => {
+  const loadFromLocalCache = useCallback((expectedUid = null) => {
     console.log('[CACHE READ] Loading from local MMKV cache...');
     
     const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
     const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
     const cachedCompanyId = mmkvHelpers.getString(CACHE_KEYS.COMPANY_ID);
+    const identity = resolveCachedSessionIdentity({
+      expectedUid,
+      cachedUid,
+      cachedRole,
+      cachedCompanyId,
+    });
 
-    // P2-4: Set scope BEFORE reading any scoped keys
-    setMmkvScope(cachedUid, cachedCompanyId);
+    // Never trust scoped cache for a different authenticated user.
+    setMmkvScope(identity.uid, identity.canReadScopedCache ? identity.companyId : null);
+
+    if (!identity.canReadScopedCache) {
+      return {
+        hasCache: false,
+        uid: identity.uid,
+        role: identity.role,
+        companyId: identity.companyId,
+        profile: null,
+        hasBusinessInfo: false,
+        versions: {},
+        companyVersions: {},
+        identityMismatch: identity.identityMismatch,
+      };
+    }
 
     const cachedProfile = mmkvHelpers.getObject(CACHE_KEYS.PROFILE);
+    if (!isProfileCacheOwnedByUser(cachedProfile, identity.uid)) {
+      console.warn('[CACHE READ] Ignoring scoped profile cache for a different user');
+      setMmkvScope(identity.uid, null);
+      return {
+        hasCache: false,
+        uid: identity.uid,
+        role: null,
+        companyId: null,
+        profile: null,
+        hasBusinessInfo: false,
+        versions: {},
+        companyVersions: {},
+        identityMismatch: true,
+      };
+    }
+
     const cachedInventory = mmkvHelpers.getObject(CACHE_KEYS.INVENTORY);
     const cachedJobs = mmkvHelpers.getObject(CACHE_KEYS.JOBS);
     const cachedWorkers = mmkvHelpers.getObject(CACHE_KEYS.WORKERS);
@@ -213,13 +282,14 @@ export function CacheProvider({ children }) {
     
     return {
       hasCache: !!cachedProfile,
-      uid: cachedUid,
-      role: cachedRole,
-      companyId: cachedCompanyId,
+      uid: identity.uid,
+      role: identity.role,
+      companyId: identity.companyId,
       profile: cachedProfile,
       hasBusinessInfo: cachedHasBusinessInfo === 'true',
       versions: cachedVersions || {},
       companyVersions: cachedCompanyVersions || {},
+      identityMismatch: identity.identityMismatch,
     };
   }, []);
 
@@ -425,22 +495,23 @@ export function CacheProvider({ children }) {
         documentsData = documentsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         console.log(`Fetched ${documentsData.length} documents for manager`);
         
-      } else if (role === 'worker') {
-        // Worker: fetch assigned jobs by wid (worker sequential ID)
+      } else if (role === 'worker' || role === 'user') {
+        // Worker/user: fetch assigned jobs by wid (worker sequential ID)
         const wid = getWid();
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (wid) {
+        const scopedConstraints = buildJobMembershipConstraints(wid);
+        if (scopedConstraints.length > 0) {
           try {
             const [pendingSnapshot, recentSnapshot] = await Promise.all([
-              getDocs(query(jobsRef, where('wid', '==', wid), where('status', 'in', ['pending', 'waiting']))),
-              getDocs(query(jobsRef, where('wid', '==', wid), where('createdAt', '>=', ninetyDaysAgo))),
+              getDocs(query(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))),
+              getDocs(query(jobsRef, ...scopedConstraints, where('createdAt', '>=', ninetyDaysAgo))),
             ]);
             const merged = new Map();
             pendingSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
             recentSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
             jobsData = Array.from(merged.values());
           } catch (queryError) {
-            const workerQuery = query(jobsRef, where('wid', '==', wid));
+            const workerQuery = query(jobsRef, ...scopedConstraints);
             const jobsSnapshot = await getDocs(workerQuery);
             const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             jobsData = allJobs.filter(j => {
@@ -451,38 +522,16 @@ export function CacheProvider({ children }) {
             });
           }
         }
-        console.log(`Fetched ${jobsData.length} jobs for worker`);
-        
-      } else if (role === 'user') {
-        // User: fetch pending/waiting jobs + recent jobs (avoid full collection scan).
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        try {
-          const [pendingSnapshot, recentSnapshot] = await Promise.all([
-            getDocs(query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
-            getDocs(query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
-          ]);
-          const merged = new Map();
-          pendingSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
-          recentSnapshot.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
-          jobsData = Array.from(merged.values());
-        } catch (queryError) {
-          const jobsSnapshot = await getDocs(jobsRef);
-          const allJobs = jobsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-          jobsData = allJobs.filter(j => {
-            if (j.status === 'pending' || j.status === 'waiting') return true;
-            const dateField = j.updatedAt || j.createdAt;
-            if (!dateField) return true;
-            return dateField >= ninetyDaysAgo;
-          });
-        }
-        console.log(`Fetched ${jobsData.length} jobs for user`);
+        console.log(`Fetched ${jobsData.length} jobs for ${role}`);
         
         // User: fetch documents (within 90 days)
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
-        const documentsSnapshot = await getDocs(documentsQuery);
-        documentsData = documentsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        console.log(`Fetched ${documentsData.length} documents for user`);
+        if (role === 'user') {
+          const documentsRef = collection(db, 'companies', companyId, 'documents');
+          const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
+          const documentsSnapshot = await getDocs(documentsQuery);
+          documentsData = documentsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          console.log(`Fetched ${documentsData.length} documents for user`);
+        }
       } else if (role === 'basic') {
         // Basic: documents only (NO jobs)
         const documentsRef = collection(db, 'companies', companyId, 'documents');
@@ -633,10 +682,15 @@ export function CacheProvider({ children }) {
                 // C1: Incremental sync — only fetch jobs updated since lastSync
                 if (lastSync) {
                   let deltaQuery;
-                  if (role === 'worker') {
+                  if (roleUsesScopedJobAccess(role)) {
+                    const scopedConstraints = buildJobMembershipConstraints(wid);
+                    if (scopedConstraints.length === 0) {
+                      versionUpdates.jobsVersion = remoteJobsVersion;
+                      return;
+                    }
                     deltaQuery = query(jobsRef,
                       where('updatedAt', '>', lastSync),
-                      where('wid', '==', wid)
+                      ...scopedConstraints
                     );
                   } else {
                     deltaQuery = query(jobsRef, where('updatedAt', '>', lastSync));
@@ -667,8 +721,13 @@ export function CacheProvider({ children }) {
                 } else {
                   // First sync — full fetch (fallback)
                   let jobsSnapshot;
-                  if (role === 'worker') {
-                    const workerQuery = query(jobsRef, where('wid', '==', wid));
+                  if (roleUsesScopedJobAccess(role)) {
+                    const scopedConstraints = buildJobMembershipConstraints(wid);
+                    if (scopedConstraints.length === 0) {
+                      versionUpdates.jobsVersion = remoteJobsVersion;
+                      return;
+                    }
+                    const workerQuery = query(jobsRef, ...scopedConstraints);
                     jobsSnapshot = await getDocs(workerQuery);
                   } else {
                     jobsSnapshot = await getDocs(jobsRef);
@@ -835,17 +894,19 @@ export function CacheProvider({ children }) {
     setIsLoading(true);
     
     try {
+      resetCacheState();
+
       // STEP 1: Load from local cache first
-      const cachedData = loadFromLocalCache();
+      const cachedData = loadFromLocalCache(userId);
       
       // STEP 2: Determine uid (UID), role, and companyId
-      let uid = cachedData.uid;
+      let uid = userId || cachedData.uid;
       let role = cachedData.role;
       let companyId = cachedData.companyId;
       let profileData = cachedData.profile;
       
       // If we have cached metadata, use it
-      if (uid && role && companyId && profileData) {
+      if (!cachedData.identityMismatch && uid && role && companyId && profileData) {
         console.log(`?? Using cached credentials: ${uid} (${role})`);
       } else {
         // Try to get from cached profile
@@ -883,16 +944,17 @@ export function CacheProvider({ children }) {
           role = role.toLowerCase();
         }
 
-        // Save metadata to local cache
-        if (uid) mmkvHelpers.setString(CACHE_KEYS.UID, uid);
-        if (role) mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, role);
-        if (companyId) mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, companyId);
-        // Store worker sequential ID for job queries (workers only)
-        if (profileData?.wid) mmkvHelpers.setString(CACHE_KEYS.USER_WID, String(profileData.wid));
-
-        // P2-4: Set MMKV scope so all subsequent reads/writes are user-namespaced
-        setMmkvScope(uid, companyId);
       }
+
+      // Save metadata to local cache using the authenticated user as the source of truth.
+      setMmkvScope(uid, companyId);
+      if (uid) mmkvHelpers.setString(CACHE_KEYS.UID, uid);
+      if (role) mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, role);
+      else mmkvHelpers.delete(CACHE_KEYS.USER_ROLE);
+      if (companyId) mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, companyId);
+      else mmkvHelpers.delete(CACHE_KEYS.COMPANY_ID);
+      if (profileData?.wid) mmkvHelpers.setString(CACHE_KEYS.USER_WID, String(profileData.wid));
+      else mmkvHelpers.delete(CACHE_KEYS.USER_WID);
       
       console.log(`?? Cache init: ${uid} (${role}) @ ${companyId}`);
       
@@ -925,7 +987,7 @@ export function CacheProvider({ children }) {
     } finally {
       setIsLoading(false);
     }
-  }, [loadFromLocalCache, fetchDataFromFirebase, saveToLocalCache, setupCacheListeners]);
+  }, [loadFromLocalCache, fetchDataFromFirebase, resetCacheState, saveToLocalCache, setupCacheListeners]);
 
   /**
    * Fetch all data fresh from Firebase (first-time login)
@@ -1560,26 +1622,15 @@ export function CacheProvider({ children }) {
     mmkvHelpers.clearAll();
     
     // P2-4: Reset scope prefix
-    _mmkvScopePrefix = '';
+    setMmkvScope(null, null);
     
     // Reset state
-    setProfile(null);
-    setInventory([]);
-    setJobs([]);
-    setWorkers({});
-    setCompanyJobs([]);
-    setDocuments([]);
-    setClients([]);
-    setSubscription(null);
-    setCompanyInventory([]);
-    setCacheVersions({});
-    setCompanyVersions({});
-    setIsInitialized(false);
+    resetCacheState();
     
     listenersActiveRef.current = false;
     
     console.log('? Cache cleared');
-  }, []);
+  }, [resetCacheState]);
 
   /**
    * Download archived month data from Cloud Storage.
@@ -1715,12 +1766,16 @@ export function CacheProvider({ children }) {
         
         if (dataType === 'finishedJobs') {
           const jobsRef = collection(db, 'companies', companyId, 'jobs');
-          if (role == 'worker') {
+          if (roleUsesScopedJobAccess(role)) {
+            const scopedConstraints = buildJobMembershipConstraints(wid);
+            if (scopedConstraints.length === 0) {
+              return cachedMonthData;
+            }
             q = query(jobsRef,
               where('status', '==', 'finished'),
               where('finishedAt', '>=', monthStart.toISOString()),
               where('finishedAt', '<', cacheStartDate.toISOString()),
-              where('wid', '==', wid)
+              ...scopedConstraints
             );
           } else {
             q = query(jobsRef,
@@ -1765,15 +1820,19 @@ export function CacheProvider({ children }) {
       
       if (dataType === 'finishedJobs') {
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (role == 'worker') {
-          q = query(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', monthStart.toISOString()),
-            where('finishedAt', '<=', monthEnd.toISOString()),
-            where('wid', '==', wid)
-          );
-        } else {
-          q = query(jobsRef,
+          if (roleUsesScopedJobAccess(role)) {
+            const scopedConstraints = buildJobMembershipConstraints(wid);
+            if (scopedConstraints.length === 0) {
+              return [];
+            }
+            q = query(jobsRef,
+              where('status', '==', 'finished'),
+              where('finishedAt', '>=', monthStart.toISOString()),
+              where('finishedAt', '<=', monthEnd.toISOString()),
+              ...scopedConstraints
+            );
+          } else {
+            q = query(jobsRef,
             where('status', '==', 'finished'),
             where('finishedAt', '>=', monthStart.toISOString()),
             where('finishedAt', '<=', monthEnd.toISOString())
@@ -1892,12 +1951,16 @@ export function CacheProvider({ children }) {
       
       if (dataType === 'finishedJobs') {
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (role == 'worker') {
+        if (roleUsesScopedJobAccess(role)) {
+          const scopedConstraints = buildJobMembershipConstraints(wid);
+          if (scopedConstraints.length === 0) {
+            return cachedPortion;
+          }
           q = query(jobsRef,
             where('status', '==', 'finished'),
             where('finishedAt', '>=', startDate.toISOString()),
             where('finishedAt', '<', getCacheStartDate().toISOString()),
-            where('wid', '==', wid)
+            ...scopedConstraints
           );
         } else {
           q = query(jobsRef,
@@ -1914,12 +1977,16 @@ export function CacheProvider({ children }) {
         );
       } else if (dataType === 'pendingJobs') {
         const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (role !== 'manager') {
+        if (roleUsesScopedJobAccess(role)) {
+          const scopedConstraints = buildJobMembershipConstraints(wid);
+          if (scopedConstraints.length === 0) {
+            return cachedPortion;
+          }
           q = query(jobsRef,
             where('status', 'in', ['pending', 'waiting']),
             where('createdAt', '>=', startDate.toISOString()),
             where('createdAt', '<', getCacheStartDate().toISOString()),
-            where('wid', '==', wid)
+            ...scopedConstraints
           );
         } else {
           q = query(jobsRef,
@@ -2006,8 +2073,9 @@ export function CacheProvider({ children }) {
     }
   }, [getUid, getUserRole, getCompanyId, fetchDataFromFirebase, saveToLocalCache]);
 
-  // Context value
-  const value = {
+  // Context value — memoized to avoid unnecessary re-renders of consumers
+  // that don't depend on the changed state slice.
+  const value = useMemo(() => ({
     // State
     isInitialized,
     isLoading,
@@ -2068,7 +2136,19 @@ export function CacheProvider({ children }) {
     
     // Direct storage access (for special cases)
     storage: mmkvHelpers,
-  };
+  }), [
+    isInitialized, isLoading, profile, inventory, jobs, workers,
+    companyJobs, documents, clients, subscription, companyInventory,
+    getUid, getUserRole, getCompanyId,
+    initializeCache, clearCache,
+    updateProfile, updateInventory,
+    addJob, updateJob, removeJob, acceptJob,
+    updateWorkers, addWorker, editWorker, deleteWorker,
+    addDocument,
+    fetchClients, addClient, updateClient, deleteClient,
+    getDataForMonth, getDataForDateRange, fetchFromArchive,
+    refreshCache, preIncrementVersion,
+  ]);
 
   return (
     <CacheContext.Provider value={value}>

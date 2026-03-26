@@ -147,10 +147,24 @@ exports.manageWorker = onCall(async (request) => {
           await admin.auth().deleteUser(workerUid);
           logger.info('Orphaned Auth user cleaned up successfully', { uid: workerUid });
         } catch (cleanupErr) {
-          logger.error('Failed to clean up orphaned Auth user', {
+          logger.error('Failed to clean up orphaned Auth user — manual intervention required', {
             uid: workerUid,
+            email: normalizedEmail,
             cleanupError: cleanupErr.message,
           });
+          // Write a marker document so orphaned users can be reconciled later
+          try {
+            await admin.firestore().doc(`system/orphaned_users/pending/${workerUid}`).set({
+              uid: workerUid,
+              email: normalizedEmail,
+              companyId,
+              reason: 'firestore_batch_failed',
+              cleanupError: cleanupErr.message,
+              createdAt: new Date().toISOString(),
+            });
+          } catch (_markerErr) {
+            // Best effort — already logged above
+          }
         }
         throw new HttpsError('internal', 'Failed to create worker Firestore documents');
       }

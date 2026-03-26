@@ -34,7 +34,8 @@ export default function LoginClient() {
     try {
       await signInWithEmailAndPassword(auth, values.email, values.password);
       const redirect = searchParams.get("redirect");
-      if (redirect && redirect.startsWith("/")) {
+      // Validate redirect is a safe internal path (no protocol-relative URLs like //evil.com)
+      if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
         router.push(redirect);
         return;
       }

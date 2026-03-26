@@ -98,6 +98,7 @@ const CORS_ALLOWED_ORIGINS = _configuredCorsOrigins.length > 0
 const _rateLimitMap = new Map(); // key → { count, resetAt }
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 5;            // max requests per window per key per instance
+const RATE_LIMIT_MAP_MAX_SIZE = 10_000; // cap to prevent unbounded memory growth
 
 /**
  * Returns true if the caller identified by `key` has exceeded the rate limit.
@@ -108,6 +109,12 @@ function isRateLimited(key) {
   if (!entry || now > entry.resetAt) {
     entry = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
     _rateLimitMap.set(key, entry);
+    if (_rateLimitMap.size > RATE_LIMIT_MAP_MAX_SIZE) {
+      // Evict expired entries when map gets too large
+      for (const [k, v] of _rateLimitMap) {
+        if (now > v.resetAt) _rateLimitMap.delete(k);
+      }
+    }
     return false;
   }
   entry.count += 1;
@@ -141,7 +148,7 @@ function redactEmail(email) {
  * Basic email shape validation.
  */
 function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) && email.length <= 254;
 }
 
 function generateInviteCode(length = 8) {
@@ -818,7 +825,8 @@ async function publishGenerateTaskHelper({
       createdBy: createdByUid,
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      documentData: completeDocumentData
+      documentData: completeDocumentData,
+      expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // TTL: auto-delete after 30 days
     });
 
     const messageData = {

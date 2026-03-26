@@ -42,7 +42,8 @@ export function ThemeProvider({
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem(STORAGE_KEY, theme);
-    document.cookie = `${COOKIE_KEY}=${theme}; path=/; max-age=31536000; samesite=lax; Secure`;
+    const secureSuffix = globalThis.location?.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `${COOKIE_KEY}=${theme}; path=/; max-age=31536000; samesite=lax${secureSuffix}`;
   }, [theme]);
 
   const value = useMemo(

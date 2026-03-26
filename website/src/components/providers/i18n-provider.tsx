@@ -46,7 +46,8 @@ export function I18nProvider({
     const rtl = rtlLocales.includes(locale);
     document.documentElement.lang = locale;
     document.documentElement.dir = rtl ? "rtl" : "ltr";
-    document.cookie = `sj_locale=${locale}; path=/; max-age=31536000; samesite=lax; Secure`;
+    const secureSuffix = globalThis.location?.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `sj_locale=${locale}; path=/; max-age=31536000; samesite=lax${secureSuffix}`;
     window.localStorage.setItem(STORAGE_KEY, locale);
   }, [locale]);
 

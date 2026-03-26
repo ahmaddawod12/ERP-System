@@ -20,6 +20,7 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
+import { safeJsonParse } from '../../utils/helpers';
 
 export default function EditJob() {
   const router = useRouter();
@@ -30,7 +31,7 @@ export default function EditJob() {
   const { getCompanyId, updateJob, workers: cachedWorkersList } = useCache();
   const colors = getColors(isDarkMode);
 
-  const job = params.job ? JSON.parse(params.job) : null;
+  const job = safeJsonParse(params.job);
   
   const [isSaving, setIsSaving] = useState(false);
   const [editingJob, setEditingJob] = useState(job || {

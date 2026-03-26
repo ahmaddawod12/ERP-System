@@ -78,6 +78,11 @@ ERP-System/
   - All writes to `clients`, `jobs`, `documents`, `invites`, and `workers` are locked in Firestore rules (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate these collections.
   - Protected writes must go through the corresponding Cloud Function (`createJobV1`, `updateJobV1`, `updateClientV1`, `updateInventoryV1`, etc.).
   - Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).
+- TTL:
+  - `documentTasks` documents include an `expireAt` field (30-day TTL) with Firestore TTL policy for automatic cleanup.
+- Transactions:
+  - `updateProfileV1` uses a Firestore transaction for atomic profile + worker doc sync.
+  - `tax.js` token refresh uses a Firestore transaction to prevent concurrent refresh race conditions.
 
 ## Registration and Onboarding Flow
 
@@ -97,6 +102,9 @@ ERP-System/
 - **`middleware.ts`** handles auth redirect for all `/app/*` routes.
 - **`loading.tsx`** provides instant loading UI during dashboard route transitions.
 - **Auth cookie** (`firebase-auth-token`) `Secure` flag is conditional on HTTPS (omitted on localhost for dev).
+- **Login redirect** validates against `//` prefix to prevent open redirects.
+- **API rate limiting**: `/api/contact/request` uses IP-based in-memory rate limiting (5 req/min).
+- **CSP** includes `base-uri 'self'` and `form-action 'self'` directives.
 
 ## Canonical Firestore Paths
 

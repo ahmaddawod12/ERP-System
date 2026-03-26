@@ -71,8 +71,10 @@ export declare const paths: {
   subscription(companyId: string): string;
   companyInventory(companyId: string): string;
   companyCache(companyId: string): string;
-  worker(companyId: string, uid: string): string;
+  worker(companyId: string, wid: string): string;
   workers(companyId: string): string;
+  manager(companyId: string, mid: string): string;
+  managers(companyId: string): string;
   client(companyId: string, clientId: string): string;
   clients(companyId: string): string;
   job(companyId: string, jobId: string): string;
@@ -80,6 +82,11 @@ export declare const paths: {
   document(companyId: string, docId: string): string;
   documents(companyId: string): string;
   invite(companyId: string, inviteId: string): string;
+
+  counterWnext(companyId: string): string;
+  counterMnext(companyId: string): string;
+  counterCnext(companyId: string): string;
+  counterJnext(companyId: string): string;
 
   upgradeRequest(id: string): string;
   contactRequest(id: string): string;

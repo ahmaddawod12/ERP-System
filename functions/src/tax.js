@@ -27,6 +27,12 @@ const {
   acquireCompanyBusyFlag,
   publishGenerateTaskHelper,
 } = require('./shared');
+const {
+  buildStoredTaxInvoiceDocument,
+  getClientVatNumber,
+  normalizeInvoiceDate,
+  normalizeTaxInvoiceClient,
+} = require('./tax-invoice');
 
 // =============================================================================
 // ISRAELI TAX AUTHORITY OAuth2 TOKEN MANAGEMENT
@@ -501,7 +507,7 @@ exports.getInvoiceApproval = onCall({
     logger.info('Processing invoice for user', { uid });
 
     const {
-      type, client, items, company, companyId,
+      type, client, items, companyId,
       language, date, notes, jobsData, priceProposalId
     } = request.data || {};
 
@@ -531,16 +537,13 @@ exports.getInvoiceApproval = onCall({
     if (items.length > MAX_ITEMS_PER_DOCUMENT) {
       throw new HttpsError('invalid-argument', `Too many items (max ${MAX_ITEMS_PER_DOCUMENT})`);
     }
-    if (!company || !company.name) {
-      throw new HttpsError('invalid-argument', 'Company ID is required');
-    }
-
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
     const businessRegRef = admin.firestore().doc(`companies/${companyId}/data/business_info`);
 
     // CRITICAL FIX: Use transaction to atomically read + increment document number
-    // This prevents two concurrent requests from getting the same invoice number
+    // This prevents two concurrent requests from getting the same invoice number.
+    // If Tax Authority later rejects, the counter is decremented to avoid gaps.
     const { documentNumber, documentId, businessInfoData } = await admin.firestore().runTransaction(async (tx) => {
       const businessRegDoc = await tx.get(businessRegRef);
       if (!businessRegDoc.exists) {
@@ -565,7 +568,9 @@ exports.getInvoiceApproval = onCall({
     });
     
     businessInfo = businessInfoData;
-    const todayDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const todayDate = new Date().toISOString().split('T')[0];
+    const invoiceDate = normalizeInvoiceDate(date, todayDate);
+    const normalizedClient = normalizeTaxInvoiceClient(client);
 
     logger.info('Preparing Tax Authority submission', {
       documentId,
@@ -592,7 +597,7 @@ exports.getInvoiceApproval = onCall({
       throw new HttpsError('failed-precondition', 'No access token found. Please authorize with Tax Authority first.');
     }
 
-    const tokenData = tokenDoc.data();
+    let tokenData = tokenDoc.data();
     let accessToken = tokenData.accessToken;
     let accessTokenExpiresAt = tokenData.accessTokenExpiresAt;
     const refreshToken = tokenData.refreshToken;
@@ -615,31 +620,40 @@ exports.getInvoiceApproval = onCall({
         throw new HttpsError('failed-precondition', 'Refresh token expired. Please re-authorize with Tax Authority.');
       }
 
-      try {
-        // Refresh access token using axios (axios-retry handles retries automatically)
-        logger.info('Sending token refresh request...');
+      // Use a transaction to prevent two concurrent calls from both refreshing
+      // and overwriting each other's token. The transaction re-reads the token doc
+      // and skips the refresh if another call already updated it.
+      const refreshResult = await admin.firestore().runTransaction(async (tx) => {
+        const freshTokenDoc = await tx.get(tokenRef);
+        const freshData = freshTokenDoc.data();
+        const freshExpiresAt = freshData?.accessTokenExpiresAt || 0;
+
+        // If another concurrent call already refreshed, use the fresh token
+        if (Date.now() + (5 * 60 * 1000) < freshExpiresAt) {
+          logger.info('Token already refreshed by concurrent call, using existing token');
+          return { accessToken: freshData.accessToken, accessTokenExpiresAt: freshExpiresAt, skipped: true };
+        }
+
+        // Perform the actual refresh outside-transaction data is OK here because
+        // the transaction will retry if the doc changed underneath us
         const tokenRefreshStartTime = Date.now();
-        
         const tokenResponse = await axios.post(
           TAX_AUTHORITY_CONFIG.tokenUrl,
           new URLSearchParams({
             client_id: TAX_AUTHORITY_CONFIG.clientId,
             scope: TAX_AUTHORITY_CONFIG.scope,
-            refresh_token: refreshToken,
+            refresh_token: freshData.refreshToken || refreshToken,
             grant_type: 'refresh_token',
             client_secret: TAX_AUTHORITY_CONFIG.clientSecret,
           }).toString(),
           {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             timeout: 15000,
           }
         );
 
         const newTokenData = tokenResponse.data;
         const tokenRefreshTime = Date.now() - tokenRefreshStartTime;
-        
         logger.info('Token refresh successful', { 
           hasAccessToken: !!newTokenData.access_token,
           hasNewRefreshToken: !!newTokenData.refresh_token,
@@ -647,89 +661,40 @@ exports.getInvoiceApproval = onCall({
           refreshTime: tokenRefreshTime
         });
 
-        // Calculate new expiration timestamp
         const now = Date.now();
-        accessTokenExpiresAt = now + (newTokenData.expires_in * 1000);
-        accessToken = newTokenData.access_token;
+        const newExpiresAt = now + (newTokenData.expires_in * 1000);
 
-        // Update tokens in Firestore using a transaction to prevent race conditions
-        // when two concurrent calls both detect token expiration simultaneously
         const updateData = {
           accessToken: newTokenData.access_token,
-          accessTokenExpiresAt: accessTokenExpiresAt,
+          accessTokenExpiresAt: newExpiresAt,
           lastRefreshedBy: request.auth.uid,
           lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
           autoRefreshedDuringInvoiceSubmission: true,
         };
 
-        // If a new refresh token is provided, update it with actual expiration time
         if (newTokenData.refresh_token) {
           updateData.refreshToken = newTokenData.refresh_token;
           updateData.refreshTokenExpiresAt = newTokenData.refresh_token_expires_in
             ? now + (newTokenData.refresh_token_expires_in * 1000)
-            : now + (90 * 24 * 60 * 60 * 1000); // Fallback to 90 days
+            : now + (90 * 24 * 60 * 60 * 1000);
         }
 
-        await tokenRef.update(updateData);
+        tx.update(tokenRef, updateData);
+        return { accessToken: newTokenData.access_token, accessTokenExpiresAt: newExpiresAt, skipped: false };
+      });
 
-        logger.info('Tokens updated in Firestore after auto-refresh', { 
+      accessToken = refreshResult.accessToken;
+      accessTokenExpiresAt = refreshResult.accessTokenExpiresAt;
+      if (!refreshResult.skipped) {
+        logger.info('Tokens updated in Firestore after auto-refresh', {
           companyId,
           newExpiresAt: new Date(accessTokenExpiresAt).toISOString()
         });
 
         // Save audit log for auto-refresh
         await saveAuditLog(companyId, 'taxAuthorityTokenAutoRefreshed', request.auth.uid);
-
-      } catch (refreshError) {
-        logger.error('Failed to auto-refresh access token', {
-          error: refreshError.message,
-          status: refreshError.response?.status,
-          responseData: refreshError.response?.data
-        });
-
-        // Handle refresh token errors
-        if (refreshError.response) {
-          const status = refreshError.response.status;
-          const errorData = refreshError.response.data;
-          
-          // If refresh token is invalid, clear the stored tokens
-          if (status === 400 || status === 401) {
-            logger.warn('Refresh token invalid, clearing stored tokens', { companyId });
-            await tokenRef.update({
-              accessToken: admin.firestore.FieldValue.delete(),
-              refreshToken: admin.firestore.FieldValue.delete(),
-              accessTokenExpiresAt: admin.firestore.FieldValue.delete(),
-              refreshTokenExpiresAt: admin.firestore.FieldValue.delete(),
-              tokenInvalidatedAt: admin.firestore.FieldValue.serverTimestamp(),
-              tokenInvalidatedReason: 'refresh_failed_during_auto_refresh',
-            });
-            
-            throw new HttpsError(
-              'failed-precondition',
-              'Refresh token is invalid or expired. Please re-authorize with Tax Authority.',
-              { originalError: errorData?.error_description || errorData?.error }
-            );
-          }
-          
-          throw new HttpsError(
-            'internal',
-            `Failed to auto-refresh token: ${errorData?.error_description || errorData?.error || 'Unknown error'}`,
-            { status, errorData }
-          );
-        }
-        
-        throw new HttpsError(
-          'internal',
-          `Failed to auto-refresh access token: ${refreshError.message}`
-        );
       }
-    } else {
-      logger.info('Access token is valid, proceeding with invoice submission', {
-        companyId,
-        expiresAt: new Date(accessTokenExpiresAt).toISOString(),
-        timeUntilExpiry: Math.round((accessTokenExpiresAt - Date.now()) / 1000 / 60) + ' minutes'
-      });
-    }
+    }  // end isTokenExpired
 
     // Generate timestamp for accounting software fields
     const timestamp = Date.now();
@@ -742,7 +707,7 @@ exports.getInvoiceApproval = onCall({
       documentId,
       accountingSoftwareNumber,
       clientSoftwareKey,
-      todayDate
+      invoiceDate
     });
     
     // Build request in EXACT order as API example to avoid validation issues
@@ -757,26 +722,27 @@ exports.getInvoiceApproval = onCall({
 
     // CRITICAL: Only add customer_vat_number and customer_name if customer is a business
     // For normal customers, these fields should NOT be included at all (not even as null)
-    if (client.clientVatNumber) {
+    const clientVatNumber = getClientVatNumber(client);
+    if (clientVatNumber) {
       // Customer is a business - include both customer_vat_number and customer_name
-      const customerVatNumber = parseInt(client.clientVatNumber);
+      const customerVatNumber = parseInt(clientVatNumber, 10);
       if (!isNaN(customerVatNumber)) {
         taxAuthorityData.customer_vat_number = customerVatNumber;
-        taxAuthorityData.customer_name = client.customerName || client.name;
+        taxAuthorityData.customer_name = client.customerName || normalizedClient.name;
       }
       else{
         // Israel Tax Authority generic/walk-in customer VAT number — used when the
         // provided customer VAT number is not a valid integer.  This is the standard
         // "unregistered consumer" placeholder recognised by the Tax Authority.
         taxAuthorityData.customer_vat_number = 777777715;
-        taxAuthorityData.customer_name = client.customerName || client.name;
+        taxAuthorityData.customer_name = client.customerName || normalizedClient.name;
       }
     }
     // For normal customers, customer_name and customer_vat_number are NOT included
 
     // Continue building in exact order
-    taxAuthorityData.invoice_date = todayDate;
-    taxAuthorityData.invoice_issuance_date = todayDate;
+    taxAuthorityData.invoice_date = invoiceDate;
+    taxAuthorityData.invoice_issuance_date = invoiceDate;
     taxAuthorityData.accounting_software_number = accountingSoftwareNumber; // REQUIRED: Integer from timestamp
     taxAuthorityData.client_software_key = clientSoftwareKey; // REQUIRED: Numeric string from timestamp
     taxAuthorityData.amount_before_discount = Math.round(totalBeforeVat * 100) / 100;
@@ -904,6 +870,17 @@ exports.getInvoiceApproval = onCall({
         errorMessage,
         invoiceId: documentId
       });
+
+      // Rollback the reserved document number counter to avoid numbering gaps
+      try {
+        await businessRegRef.update({
+          'document_numbers.305': admin.firestore.FieldValue.increment(-1),
+          last_updated: new Date().toISOString(),
+        });
+        logger.info('Rolled back document number counter after validation error', { documentNumber });
+      } catch (rollbackErr) {
+        logger.error('Failed to rollback document number counter', { documentNumber, error: rollbackErr.message });
+      }
       
       throw new HttpsError(
         'failed-precondition',
@@ -947,6 +924,17 @@ exports.getInvoiceApproval = onCall({
 
     // CRITICAL: Only save to Firestore if Tax Authority APPROVED
     if (!isApproved) {
+      // Rollback the reserved document number counter to avoid numbering gaps
+      try {
+        await businessRegRef.update({
+          'document_numbers.305': admin.firestore.FieldValue.increment(-1),
+          last_updated: new Date().toISOString(),
+        });
+        logger.info('Rolled back document number counter after Tax Authority rejection', { documentNumber });
+      } catch (rollbackErr) {
+        logger.error('Failed to rollback document number counter', { documentNumber, error: rollbackErr.message });
+      }
+
       logger.warn('Tax Authority rejected invoice - NOT saving to Firestore', {
         documentId,
         documentNumber,
@@ -987,31 +975,25 @@ exports.getInvoiceApproval = onCall({
     });
 
     const documentRef = admin.firestore().doc(`companies/${companyId}/documents/${toDocumentDocId(documentId)}`);
-    const documentData = {
-      type: DOC_TYPE.TAX_INVOICE, // Store numeric type (305)
-      documentNumber: documentNumber, // Use the date-number-type format
-      clientName: client.name,
-      clientEmail: client.email || null,
-      clientPhone: client.phone || null,
-      clientAddress: client.address || null,
-      clientId: client.id || null,
-      clientVatNumber: client.clientVatNumber || null, // Store customer VAT if business customer
-      date: date || todayDate,
-      items: items,
-      language: language || 'he',
-      notes: notes || null,
-      createdBy: uid,
-      createdAt: new Date().toISOString(),
-      jobsData: jobsData || null, // Multi-job references
-      priceProposalId: priceProposalId || null, // Price proposal used
-      itemCount: items.length,
-      totalBeforeVat: Math.round(totalBeforeVat * 100) / 100,
-      vatAmount: Math.round(vatAmount * 100) / 100,
-      totalWithVat: Math.round(totalWithVat * 100) / 100,
-      // Tax Authority approval data
-      taxAuthoritySubmittedAt: new Date().toISOString(),
-      taxAuthorityResponseData: response.data,
-    };
+    const submittedAt = new Date().toISOString();
+    const documentData = buildStoredTaxInvoiceDocument({
+      uid,
+      documentId,
+      documentNumber,
+      client,
+      items,
+      language,
+      date: invoiceDate,
+      notes,
+      jobsData,
+      priceProposalId,
+      totalBeforeVat,
+      vatAmount,
+      totalWithVat,
+      confirmationNumber,
+      responseData: response.data,
+      submittedAt,
+    });
     try {
       await documentRef.set(documentData);
       logger.info('Document saved to Firestore with approval', {
@@ -1152,11 +1134,14 @@ exports.getInvoiceApproval = onCall({
 
       // Build client data for PDF
       const clientDataForPDF = {
-        name: client.name,
-        email: client.email || '',
-        phone: client.phone || '',
-        address: client.address || '',
-        id: client.id || ''
+        ...normalizedClient,
+        name: normalizedClient.name,
+        email: normalizedClient.email || '',
+        phone: normalizedClient.phone || '',
+        address: normalizedClient.address || '',
+        city: normalizedClient.city || '',
+        id: normalizedClient.id || '',
+        clientId: normalizedClient.clientId || '',
       };
 
       // Prepare complete document data
@@ -1167,7 +1152,7 @@ exports.getInvoiceApproval = onCall({
         company: companyData,
         language: language || 'he',
         documentNumber: documentNumber,
-        date: date || todayDate,
+        date: invoiceDate,
         notes: notes,
         jobsData: jobsData || null, // Multi-job references
         priceProposalId: priceProposalId || null,

@@ -108,8 +108,9 @@ export interface JobRecord {
   status: "pending" | "waiting" | "denied" | "finished";
   wid: string | null;
   name?: string;
-  mname?: string;
-  mid?: string;
+  wname?: string | null;
+  mname?: string | null;
+  mid?: string | null;
   createdAt: string;
   updatedAt?: string;
   /** Worker-submitted fields */
@@ -176,9 +177,9 @@ export interface ClientRecord {
  */
 export interface DocumentRecord {
   id: string;
-  type: string;
+  type: string | number;
   documentType?: number;
-  documentNumber?: number;
+  documentNumber?: string | number;
   documentId?: string;
   cname?: string;
   clientId?: string;
@@ -201,7 +202,7 @@ export interface DocumentRecord {
   totalWithVat?: number;
   documentData?: Record<string, unknown>;
   paymentMethod?: string;
-  paymentInfo?: Record<string, unknown>;
+  paymentInfo?: Record<string, unknown> | string;
   createdByUid?: string;
   language?: string;
   date?: string;

@@ -29,6 +29,8 @@
 
 const admin = require('firebase-admin');
 const { Storage } = require('@google-cloud/storage');
+const { createHash } = require('crypto');
+const { getTargetMonth } = require('./archive-month');
 
 // ============================================================================
 // CONFIGURATION
@@ -66,27 +68,6 @@ const bucket = storage.bucket(BUCKET_NAME);
  * 
  * @returns {{ year: number, month: number, startDate: Date, endDate: Date }}
  */
-function getTargetMonth() {
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1; // 1-indexed
-
-  let targetMonth = currentMonth - MONTHS_LOOKBACK;
-  let targetYear = currentYear;
-
-  if (targetMonth <= 0) {
-    targetMonth += 12;
-    targetYear -= 1;
-  }
-
-  // First day of target month (00:00:00.000 UTC)
-  const startDate = new Date(Date.UTC(targetYear, targetMonth - 1, 1, 0, 0, 0, 0));
-  // Last millisecond of target month
-  const endDate = new Date(Date.UTC(targetYear, targetMonth, 0, 23, 59, 59, 999));
-
-  return { year: targetYear, month: targetMonth, startDate, endDate };
-}
-
 // ============================================================================
 // MANIFEST MANAGEMENT (Idempotency)
 // ============================================================================
@@ -106,7 +87,15 @@ async function loadManifest(companyId) {
     if (!exists) return {};
 
     const [content] = await file.download();
-    return JSON.parse(content.toString('utf8'));
+    const parsed = JSON.parse(content.toString('utf8'));
+
+    // Validate manifest structure: must be a plain object with string keys
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      console.warn(`⚠️ Corrupt manifest for ${companyId} (not an object), starting fresh`);
+      return {};
+    }
+
+    return parsed;
   } catch (error) {
     console.warn(`⚠️ Could not load manifest for ${companyId}, starting fresh:`, error.message);
     return {};
@@ -216,6 +205,7 @@ async function uploadArchive(companyId, archiveKey, documents) {
   const file = bucket.file(storagePath);
 
   const jsonContent = JSON.stringify(documents, null, 0); // Compact JSON for storage efficiency
+  const checksum = createHash('sha256').update(jsonContent).digest('hex');
 
   await file.save(jsonContent, {
     contentType: 'application/json',
@@ -226,6 +216,7 @@ async function uploadArchive(companyId, archiveKey, documents) {
         archiveKey: archiveKey,
         companyId: companyId,
         archivedAt: new Date().toISOString(),
+        sha256: checksum,
       },
     },
   });
@@ -246,14 +237,25 @@ async function verifyArchive(companyId, archiveKey, expectedCount) {
     throw new Error(`Archive verification failed: ${storagePath} does not exist`);
   }
 
-  // Download and verify doc count
+  // Download and verify doc count + integrity
   const [content] = await file.download();
-  const parsed = JSON.parse(content.toString('utf8'));
+  const contentStr = content.toString('utf8');
+  const parsed = JSON.parse(contentStr);
 
   if (parsed.length !== expectedCount) {
     throw new Error(
       `Archive verification failed: ${storagePath} has ${parsed.length} docs, expected ${expectedCount}`
     );
+  }
+
+  // Verify SHA-256 checksum if stored in metadata
+  const [metadata] = await file.getMetadata();
+  const storedChecksum = metadata?.metadata?.sha256;
+  if (storedChecksum) {
+    const actualChecksum = createHash('sha256').update(contentStr).digest('hex');
+    if (actualChecksum !== storedChecksum) {
+      throw new Error(`Archive integrity check failed: ${storagePath} checksum mismatch`);
+    }
   }
 
   console.log(`✅ Archive verified: ${storagePath} (${parsed.length} docs)`);
@@ -417,7 +419,7 @@ async function main() {
   console.log('🚀 Smart-Job Archiver - Firestore → Cloud Storage Migration');
   console.log('='.repeat(60));
 
-  const target = getTargetMonth();
+  const target = getTargetMonth(new Date(), MONTHS_LOOKBACK);
   console.log(`📅 Target month: ${target.year}-${target.month}`);
   console.log(`📅 Date range: ${target.startDate.toISOString()} → ${target.endDate.toISOString()}`);
   console.log(`📦 Storage bucket: ${BUCKET_NAME}`);
@@ -439,20 +441,28 @@ async function main() {
     process.exit(0);
   }
 
-  // Process each company
+  // Process companies in parallel batches of 3 to balance speed and resource usage
+  const CONCURRENCY = 3;
   let successCount = 0;
   let failCount = 0;
   const errors = [];
 
-  for (const companyId of companies) {
-    try {
-      await processCompany(companyId, target);
-      successCount++;
-    } catch (error) {
-      failCount++;
-      errors.push({ company: companyId, error: error.message });
-      console.error(`❌ Failed to process company ${companyId}:`, error);
-      // Continue with next company - partial failure is acceptable
+  for (let i = 0; i < companies.length; i += CONCURRENCY) {
+    const batch = companies.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map(companyId => processCompany(companyId, target))
+    );
+
+    for (let j = 0; j < results.length; j++) {
+      if (results[j].status === 'fulfilled') {
+        successCount++;
+      } else {
+        failCount++;
+        const companyId = batch[j];
+        const errorMsg = results[j].reason?.message || String(results[j].reason);
+        errors.push({ company: companyId, error: errorMsg });
+        console.error(`❌ Failed to process company ${companyId}:`, results[j].reason);
+      }
     }
   }
 

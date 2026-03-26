@@ -75,6 +75,7 @@ utils/               # Utilities
 8. Import shared constants (`DOC_TYPE`, `DOC_SUFFIX`, `VAT_RATE`, etc.) from `@smart-job/contracts` — do not define local duplicates.
 9. `ThemeContext` uses the shared MMKV store from `mmkv-storage.js` (not a separate MMKV instance).
 10. `AlertContext` values are memoized (`useCallback` / `useMemo`) to prevent unnecessary re-renders.
+11. Use `safeJsonParse()` from `utils/helpers` instead of raw `JSON.parse()` for route params and cached data. Never use unguarded `JSON.parse()` in screen modules.
 
 ## Data and API Rules
 

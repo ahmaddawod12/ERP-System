@@ -26,6 +26,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
+import { safeJsonParse } from '../../utils/helpers';
 
 // Generate a temporary ID for file upload paths (not used as Firestore doc ID)
 function generateTempId() {
@@ -54,8 +55,8 @@ export default function FillJob() {
 
   // Determine if we're in user mode or worker mode
   const mode = params.mode || 'user'; // 'user' or 'worker'
-  const editingJob = params.job ? JSON.parse(params.job) : null;
-  const existingDraft = params.draft ? JSON.parse(params.draft) : null;
+  const editingJob = safeJsonParse(params.job);
+  const existingDraft = safeJsonParse(params.draft);
 
   const [selectedClientObj, setSelectedClientObj] = useState(
     (editingJob?.cid || editingJob?.clientId) ? { id: editingJob.cid || editingJob.clientId, name: editingJob.cname || editingJob.clientName || '', phone: editingJob.cphone || editingJob.clientPhone || '' } : null

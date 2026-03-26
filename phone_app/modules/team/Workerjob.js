@@ -20,6 +20,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
+import { safeJsonParse } from '../../utils/helpers';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 
 export default function Workerjob() {
@@ -206,7 +207,7 @@ export default function Workerjob() {
     try {
       const pending = storage.getString('pendingWorkerJobs');
       if (pending) {
-        setPendingJobCount(JSON.parse(pending).length);
+        setPendingJobCount((safeJsonParse(pending, [])).length);
       }
     } catch (error) {
       console.error('Error checking pending jobs:', error);
@@ -222,7 +223,7 @@ export default function Workerjob() {
     try {
       const pending = storage.getString('pendingWorkerJobs');
       if (!pending) return;
-      const pendingArray = JSON.parse(pending);
+      const pendingArray = safeJsonParse(pending, []);
       if (pendingArray.length === 0) return;
 
       setIsSyncing(true);

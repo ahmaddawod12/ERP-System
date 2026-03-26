@@ -1,13 +1,20 @@
-# Use Node.js 22 LTS
+# Stage 1: Install dependencies
+FROM node:22-slim AS deps
+
+WORKDIR /cloudrun-archiver
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Stage 2: Production image
 FROM node:22-slim
 
 WORKDIR /cloudrun-archiver
 
-# Copy package files
-COPY package*.json ./
+ENV HOME=/tmp
 
-# Install dependencies
-RUN npm ci --only=production
+# Copy dependencies from build stage
+COPY --from=deps /cloudrun-archiver/node_modules ./node_modules
 
 # Copy source code
 COPY . .

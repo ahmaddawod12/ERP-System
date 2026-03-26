@@ -475,7 +475,8 @@ export const docs: DocEntry[] = [
           ["documentTasks/{taskId}", "Documents", "status lifecycle, URLs, errors, processing metadata"],
           ["upgrade_requests/{requestId}", "Misc", "uid, tiers, message, status"],
           ["contact_requests/{requestId}", "Misc", "name, email, company, message, status"],
-          ["conversations/{conversationId}", "Support", "userId, status, category, unread counters, inline messageN fields"],
+          ["conversations/{conversationId}", "Support", "userId, status, category, unread counters, lastMessage metadata"],
+          ["conversations/{conversationId}/messages/{messageId}", "Support", "senderUid, text, createdAt"],
         ],
       },
       {

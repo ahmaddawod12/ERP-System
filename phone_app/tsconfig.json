@@ -2,9 +2,27 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "skipLibCheck": true,
-    "strict": false,
-    "noImplicitAny": false
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@smart-job/contracts": ["../packages/contracts"]
+    }
   },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js",
+    "**/*.jsx"
+  ],
   "exclude": [
     "node_modules",
     "**/node_modules/**",

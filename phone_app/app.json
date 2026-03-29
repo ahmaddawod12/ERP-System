@@ -86,7 +86,8 @@
           "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location for job documentation."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-sharing"
     ],
     "scheme": "erpsystem",
     "extra": {

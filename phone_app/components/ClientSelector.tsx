@@ -6,7 +6,7 @@ import AppIcon from './AppIcon';
 import AppText from './AppText';
 import type { Client, Language } from '../types';
 
-const getClientLabel = (client: Client | null | undefined): string => client?.name || client?.email || client?.phone || '';
+const getClientLabel = (client: Client | null | undefined): string => client?.cname || client?.name || client?.email || client?.cphone || client?.phone || '';
 
 export interface ClientSelectorProps {
   clients?: Client[];
@@ -116,7 +116,7 @@ export default function ClientSelector({
           ) : (
             filtered.map((client) => (
               <TouchableOpacity
-                key={client.id || `${client.name}-${client.phone || client.email}`}
+                key={client.id || `${client.cname || client.name}-${client.cphone || client.phone || client.email}`}
                 style={[styles.resultItem, { borderBottomColor: palette.borderLight }]}
                 onPress={() => {
                   onSelect?.(client);
@@ -124,10 +124,10 @@ export default function ClientSelector({
                   setShowResults(false);
                 }}
               >
-                <AppText variant="bodyStrong">{client.name || '-'}</AppText>
-                {client.phone ? (
+                <AppText variant="bodyStrong">{client.cname || client.name || '-'}</AppText>
+                {(client.cphone || client.phone) ? (
                   <AppText variant="caption" color={palette.textSecondary}>
-                    {client.phone}
+                    {client.cphone || client.phone}
                   </AppText>
                 ) : null}
               </TouchableOpacity>

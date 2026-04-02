@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Eye, FileText, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -360,6 +361,18 @@ export default function DocumentsClient() {
     );
   };
 
+  const latestDocument = records[0] ?? null;
+  const taxDocumentCount = records.filter((record) => record.documentType === DOC_TYPE.TAX_INVOICE).length;
+  const hasClientContext = Boolean(selectedClient || clientData.name.trim());
+  const controlFieldClass = "dashboard-field h-11";
+  const longTextClass = "dashboard-field min-h-28 resize-none";
+  const taskLabel =
+    taskStatus === "pending"
+      ? "Submitting task..."
+      : taskStatus === "queued"
+        ? "Task queued, generating..."
+        : "Processing...";
+
   const addItem = () => setItems((prev) => [...prev, emptyItem()]);
 
   const removeItem = (index: number) => {
@@ -371,59 +384,95 @@ export default function DocumentsClient() {
 
   return (
     <ProtectedRoute section="documents">
-      <section className="grid gap-4">
-        {/* Header */}
-        <Card>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+      <section className="dashboard-page">
+        <div className="dashboard-hero">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <p className="dashboard-kicker">
+                <Sparkles className="h-3.5 w-3.5" />
                 Documents
+              </p>
+              <h1 className="dashboard-title mt-5">
+                {viewMode === "history" ? "Document history and output" : "Create a document with preview"}
               </h1>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              <p className="dashboard-copy mt-4">
                 {viewMode === "history"
-                  ? "View document history and create new documents."
-                  : "Create a new document with preview."}
+                  ? "Review generated documents, confirmations, and PDF output in one place."
+                  : "Assemble client data, line items, and tax details before generating the final document."}
               </p>
             </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">History</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{records.length}</p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Tax invoices</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{taxDocumentCount}</p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Mode</p>
+                <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                  {viewMode === "history" ? "History" : "Create"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-3">
             <Button
               variant={viewMode === "history" ? "primary" : "secondary"}
               onClick={() => {
-                if (viewMode === "create") {
-                  resetForm();
-                }
-                setViewMode(viewMode === "history" ? "create" : "history");
+                resetForm();
+                setViewMode("history");
               }}
             >
-              {viewMode === "history" ? "New Document" : "Back to History"}
+              History
+            </Button>
+            <Button
+              variant={viewMode === "create" ? "primary" : "secondary"}
+              onClick={() => setViewMode("create")}
+            >
+              New document
             </Button>
           </div>
-        </Card>
+        </div>
 
         {/* ── CREATE MODE ── */}
         {viewMode === "create" && (
           <>
-            {/* Document Type Selection */}
-            <Card>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Document Type
-              </h2>
-              <div className="flex flex-wrap gap-2">
+            <div className="grid gap-4 xl:grid-cols-[1.06fr_0.94fr]">
+              <Card>
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Document setup</h2>
+                    <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                      Choose the document type, language, and document date before adding details.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-2">
                 {DOCUMENT_TYPES.map((dt) => (
                   <button
                     key={dt.code}
                     onClick={() => setDocType(dt.code)}
-                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    className={`rounded-full px-4 py-2 text-sm font-medium transition ${
                       docType === dt.code
-                        ? "bg-sky-500 text-white shadow-sm"
+                        ? "bg-slate-950 text-white shadow-[0_14px_36px_-22px_rgba(15,23,42,0.9)] dark:bg-white dark:text-slate-950"
                         : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                     }`}
                   >
                     {dt.label}
                   </button>
                 ))}
-              </div>
+                </div>
 
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
                     Language
@@ -431,7 +480,7 @@ export default function DocumentsClient() {
                   <select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value as "he" | "en" | "ar")}
-                    className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    className={controlFieldClass}
                   >
                     <option value="he">Hebrew</option>
                     <option value="en">English</option>
@@ -445,13 +494,45 @@ export default function DocumentsClient() {
                   onChange={(e) => setDate(e.target.value)}
                 />
               </div>
-            </Card>
+              </Card>
+
+              <Card>
+                <div className="flex items-center gap-3">
+                  <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                    <Eye className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Generation summary</h2>
+                    <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                      A quick view of the current document configuration before preview or generation.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                    <span className="text-slate-500 dark:text-slate-400">Type</span>
+                    <p className="mt-1 font-medium text-slate-950 dark:text-white">{getDocumentTypeLabel(docType)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                    <span className="text-slate-500 dark:text-slate-400">Client context</span>
+                    <p className="mt-1 font-medium text-slate-950 dark:text-white">{hasClientContext ? "Ready" : "Missing"}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                    <span className="text-slate-500 dark:text-slate-400">Items</span>
+                    <p className="mt-1 font-medium text-slate-950 dark:text-white">{items.length} line item{items.length === 1 ? "" : "s"}</p>
+                  </div>
+                </div>
+              </Card>
+            </div>
 
             {/* Client Selection */}
             <Card>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Client Details
-              </h2>
+              <div className="mb-3">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Client details</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Link an existing client or enter client details directly for this document.
+                </p>
+              </div>
 
               {/* Client search / selector */}
               <div className="relative mb-4">
@@ -467,7 +548,7 @@ export default function DocumentsClient() {
                   placeholder="Type to search clients..."
                 />
                 {showClientDropdown && filteredClients.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-[1.2rem] border border-white/70 bg-white/95 shadow-[0_24px_80px_-44px_rgba(15,23,42,0.7)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/95">
                     {filteredClients.map((c) => (
                       <button
                         key={c.id}
@@ -489,7 +570,7 @@ export default function DocumentsClient() {
               </div>
 
               {selectedClient ? (
-                <div className="rounded-lg bg-sky-50 p-3 dark:bg-sky-950/30">
+                <div className="rounded-[1.2rem] border border-sky-200/80 bg-sky-50 p-4 dark:border-sky-800/60 dark:bg-sky-950/30">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-sky-800 dark:text-sky-300">
                       Selected: {selectedClient.name}
@@ -561,14 +642,17 @@ export default function DocumentsClient() {
 
             {/* Items */}
             <Card>
-              <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Items
-              </h2>
+              <div className="mb-3">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Items</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Add priced line items to build the document total.
+                </p>
+              </div>
               <div className="space-y-3">
                 {items.map((item, idx) => (
                   <div
                     key={idx}
-                    className="grid gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700 sm:grid-cols-[1fr_100px_80px_auto]"
+                    className="grid gap-2 rounded-[1.2rem] border border-slate-200 p-3 dark:border-slate-700 sm:grid-cols-[1fr_100px_80px_auto]"
                   >
                     <Input
                       label="Description"
@@ -617,7 +701,7 @@ export default function DocumentsClient() {
               </Button>
 
               {/* Totals */}
-              <div className="mt-4 rounded-lg bg-slate-50 p-4 dark:bg-slate-800/50">
+              <div className="mt-4 rounded-[1.2rem] bg-slate-50 p-4 dark:bg-slate-800/50">
                 <div className="flex justify-between text-sm">
                   <span>Subtotal (before VAT)</span>
                   <span className="font-medium">
@@ -638,9 +722,7 @@ export default function DocumentsClient() {
             {/* Payment (receipt only) */}
             {docType === DOC_TYPE.RECEIPT && (
               <Card>
-                <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  Payment Details
-                </h2>
+                <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-slate-100">Payment Details</h2>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -649,7 +731,7 @@ export default function DocumentsClient() {
                     <select
                       value={paymentMethod}
                       onChange={(e) => setPaymentMethod(e.target.value)}
-                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      className={controlFieldClass}
                     >
                       <option value="cash">Cash</option>
                       <option value="check">Check</option>
@@ -678,7 +760,7 @@ export default function DocumentsClient() {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={3}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  className={longTextClass}
                   placeholder="Optional notes for the document..."
                 />
               </label>
@@ -690,11 +772,7 @@ export default function DocumentsClient() {
                 <div className="flex items-center gap-3">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
                   <span className="text-sm text-slate-600 dark:text-slate-300">
-                    {taskStatus === "pending"
-                      ? "Submitting task..."
-                      : taskStatus === "queued"
-                        ? "Task queued, generating..."
-                        : "Processing..."}
+                    {taskLabel}
                   </span>
                 </div>
               </Card>
@@ -706,21 +784,31 @@ export default function DocumentsClient() {
             )}
 
             {/* Action buttons */}
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => void handlePreview()}
-                disabled={taskLoading}
-              >
-                Preview PDF
-              </Button>
-              <Button
-                onClick={() => void handleGenerate()}
-                disabled={taskLoading}
-              >
-                {docType === DOC_TYPE.TAX_INVOICE ? "Submit to Tax Authority" : "Generate Document"}
-              </Button>
-            </div>
+            <Card>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Preview and generate</h2>
+                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    Preview the PDF first, then generate the final document or send it to tax authority approval.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handlePreview()}
+                    disabled={taskLoading}
+                  >
+                    Preview PDF
+                  </Button>
+                  <Button
+                    onClick={() => void handleGenerate()}
+                    disabled={taskLoading}
+                  >
+                    {docType === DOC_TYPE.TAX_INVOICE ? "Submit to Tax Authority" : "Generate Document"}
+                  </Button>
+                </div>
+              </div>
+            </Card>
           </>
         )}
 
@@ -731,11 +819,20 @@ export default function DocumentsClient() {
               <LoadingState />
             ) : records.length === 0 ? (
               <EmptyState
-                title="No documents yet"
-                description="Create your first document using the button above."
+                title="No documents generated yet"
+                description="Create the first proposal, invoice, receipt, or tax invoice to start building document history."
               />
             ) : (
               <Card>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Generated documents</h2>
+                    <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                      Review recent output, confirmation numbers, and downloadable PDFs.
+                    </p>
+                  </div>
+                  {latestDocument ? <Badge variant="info">Latest: {latestDocument.cname || getDocumentTypeLabel(latestDocument.documentType ?? DOC_TYPE.PRICE_PROPOSAL)}</Badge> : null}
+                </div>
                 <DataTable
                   data={records}
                   columns={[
@@ -802,7 +899,7 @@ export default function DocumentsClient() {
                               href={row.downloadURL}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex h-9 items-center rounded-lg bg-slate-200 px-3 text-sm font-medium text-slate-900 transition hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                              className="inline-flex h-9 items-center rounded-[1rem] bg-slate-200 px-3 text-sm font-medium text-slate-900 transition hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                             >
                               PDF
                             </a>
@@ -826,7 +923,7 @@ export default function DocumentsClient() {
           <div className="space-y-4">
             {previewURL ? (
               <>
-                <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-6 dark:border-slate-700 dark:bg-slate-800/50">
+                <div className="flex items-center justify-center rounded-[1.2rem] border border-slate-200 bg-slate-50 p-6 dark:border-slate-700 dark:bg-slate-800/50">
                   <a
                     href={previewURL}
                     target="_blank"
@@ -873,7 +970,7 @@ export default function DocumentsClient() {
           }}
         >
           <div className="space-y-4">
-            <p className="text-sm text-slate-600 dark:text-slate-300">
+            <p className="text-sm leading-7 text-slate-600 dark:text-slate-300">
               Document has been successfully created.
             </p>
             {confirmationNumber && (
@@ -938,7 +1035,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
   return (
     <div className="space-y-4 text-sm">
       {/* Document Info */}
-      <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+      <div className="grid grid-cols-2 gap-2 rounded-[1.2rem] bg-slate-50 p-4 dark:bg-slate-800/50">
         {documentRecord.documentType != null && (
           <div>
             <span className="text-xs text-slate-500">Type</span>
@@ -991,7 +1088,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
 
       {/* Client Info */}
       {documentRecord.cname && (
-        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+        <div className="rounded-[1.2rem] border border-slate-200 p-4 dark:border-slate-700">
           <h4 className="mb-2 font-semibold text-slate-900 dark:text-slate-100">
             Client
           </h4>
@@ -1024,7 +1121,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
 
       {/* Items */}
       {documentRecord.items && documentRecord.items.length > 0 && (
-        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+        <div className="rounded-[1.2rem] border border-slate-200 p-4 dark:border-slate-700">
           <h4 className="mb-2 font-semibold text-slate-900 dark:text-slate-100">
             Items
           </h4>
@@ -1055,7 +1152,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
 
       {/* Totals */}
       {documentRecord.totalWithVat != null && (
-        <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+        <div className="rounded-[1.2rem] bg-slate-50 p-4 dark:bg-slate-800/50">
           <div className="flex justify-between">
             <span>Subtotal</span>
             <span>₪{Number(documentRecord.totalBeforeVat ?? 0).toFixed(2)}</span>
@@ -1073,7 +1170,7 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
 
       {/* Payment (receipt) */}
       {documentRecord.paymentMethod && (
-        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+        <div className="rounded-[1.2rem] border border-slate-200 p-4 dark:border-slate-700">
           <h4 className="mb-1 font-semibold">Payment</h4>
           <p>
             <span className="text-slate-500">Method: </span>
@@ -1113,8 +1210,9 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
           href={documentRecord.downloadURL}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-400"
+          className="inline-flex items-center gap-2 rounded-[1rem] bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
         >
+          <CheckCircle2 className="h-4 w-4" />
           Open PDF
         </a>
       )}

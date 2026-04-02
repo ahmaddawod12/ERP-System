@@ -60,10 +60,10 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
   const focusStyle = isFocused
     ? {
         shadowColor: palette.secondary,
-        shadowOpacity: 0.2,
+        shadowOpacity: 0.22,
         shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 10,
-        elevation: 3,
+        shadowRadius: 14,
+        elevation: 4,
       }
     : shadows.none;
 
@@ -81,7 +81,7 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
         style={[
           styles.inputWrap,
           {
-            backgroundColor: palette.surfaceAlt,
+            backgroundColor: palette.backgroundElevated,
             borderColor,
             minHeight,
           },
@@ -131,13 +131,13 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
 
 const styles = StyleSheet.create({
   label: {
-    marginBottom: spacing.xs + 2,
-    letterSpacing: 0.2,
+    marginBottom: spacing.xs + 3,
+    letterSpacing: 0.24,
   },
   inputWrap: {
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.xl,
     borderWidth: 1.25,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.md + 2,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -145,7 +145,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: typography.base,
     fontWeight: typography.regular,
-    paddingVertical: spacing.sm + 2,
+    paddingVertical: spacing.md,
   },
   icon: {
     marginHorizontal: spacing.xs,

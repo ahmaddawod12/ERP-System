@@ -4,7 +4,7 @@
  * Uses MMKV for fast synchronous persistence (migrated from AsyncStorage).
  */
 
-import React, { createContext, useContext, useState, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { storage } from './mmkv-storage';
 import type { Language, LanguageContextValue } from '../types';
 
@@ -30,26 +30,33 @@ export const LanguageProvider = ({ children }: { children: ReactNode }) => {
     }
   });
 
-  const setLanguage = (newLanguage: Language) => {
+  const setLanguage = useCallback((newLanguage: Language) => {
     try {
       storage.set(LANGUAGE_KEY, newLanguage);
     } catch (error) {
       console.error('Error saving language preference:', error);
     }
     setLanguageState(newLanguage);
-  };
+  }, []);
 
-  const toggleLanguage = () => {
-    const newLang = language === 'en' ? 'he' : language === 'he' ? 'ar' : 'en';
-    setLanguage(newLang);
-  };
+  const toggleLanguage = useCallback(() => {
+    setLanguageState((prev) => {
+      const newLang = prev === 'en' ? 'he' : prev === 'he' ? 'ar' : 'en';
+      try {
+        storage.set(LANGUAGE_KEY, newLang);
+      } catch (error) {
+        console.error('Error saving language preference:', error);
+      }
+      return newLang;
+    });
+  }, []);
 
-  const value: LanguageContextValue = {
+  const value = useMemo<LanguageContextValue>(() => ({
     language,
     setLanguage,
     toggleLanguage,
     isLoading: false,
-  };
+  }), [language, setLanguage, toggleLanguage]);
 
   return (
     <LanguageContext.Provider value={value}>

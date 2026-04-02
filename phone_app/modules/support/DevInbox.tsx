@@ -11,7 +11,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
-  TextInput,
   TouchableOpacity,
   FlatList,
   StyleSheet,
@@ -33,7 +32,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
-import { AppText, GlobalHeader } from '../../components';
+import { AppText, GlobalHeader, AppInput } from '../../components';
 import { appendConversationMessage, loadConversationThread } from './support-message-store';
 
 export default function DevInbox() {
@@ -513,10 +512,9 @@ export default function DevInbox() {
             
             {/* Reply Input */}
             <View style={[styles.inputContainer, { backgroundColor: colors.surface, paddingBottom: insets.bottom + spacing.sm }]}>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary }]}
                 placeholder={t.replyPlaceholder}
-                placeholderTextColor={colors.textSecondary}
                 value={reply}
                 onChangeText={setReply}
                 multiline

@@ -162,7 +162,7 @@ export default function AppButton({
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.xl,
     borderWidth: 1,
     paddingHorizontal: spacing.lg,
     justifyContent: 'center',
@@ -170,14 +170,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   sizeSm: {
-    minHeight: 42,
+    minHeight: 44,
     paddingHorizontal: spacing.md,
   },
   sizeMd: {
-    minHeight: 50,
+    minHeight: 52,
   },
   sizeLg: {
-    minHeight: 56,
+    minHeight: 58,
     paddingHorizontal: spacing.xl,
   },
   content: {
@@ -185,11 +185,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.sm + 1,
     paddingHorizontal: spacing.md,
   },
   text: {
     textAlign: 'center',
-    letterSpacing: 0.2,
+    letterSpacing: 0.24,
   },
 });

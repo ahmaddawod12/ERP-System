@@ -1,7 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { View,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -19,9 +18,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, storage as fbStorage, FieldValue, doc, getDoc, setDoc, updateDoc, functions, httpsCallable } from '../../firebase';
+import { auth, db, storage as fbStorage, FieldValue, doc, getDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
-import { AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
+import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -60,7 +59,7 @@ export default function FillJob() {
   const existingDraft = safeJsonParse(params.draft);
 
   const [selectedClientObj, setSelectedClientObj] = useState(
-    (editingJob?.cid || editingJob?.clientId) ? { id: editingJob.cid || editingJob.clientId, name: editingJob.cname || editingJob.clientName || '', phone: editingJob.cphone || editingJob.clientPhone || '' } : null
+    editingJob?.cid ? { id: editingJob.cid, name: editingJob.cname || '', phone: editingJob.cphone || '' } : null
   );
 
   const [jobData, setJobData] = useState({
@@ -69,8 +68,8 @@ export default function FillJob() {
     timeTo: editingJob?.timeTo || existingDraft?.timeTo || '',
     location: editingJob?.location || existingDraft?.location || '',
     description: editingJob?.description || existingDraft?.description || '',
-    cname: editingJob?.cname || editingJob?.clientName || existingDraft?.cname || existingDraft?.clientName || '',
-    cphone: editingJob?.cphone || editingJob?.clientPhone || existingDraft?.cphone || existingDraft?.clientPhone || '',
+    cname: editingJob?.cname || existingDraft?.cname || '',
+    cphone: editingJob?.cphone || existingDraft?.cphone || '',
     photos: editingJob?.photos || existingDraft?.photos || [],
     signingPerson: editingJob?.signingPerson || existingDraft?.signingPerson || '',
     signature: editingJob?.signature || existingDraft?.signature || null,
@@ -135,6 +134,9 @@ export default function FillJob() {
     invalidTime: 'End time must be after start time',
     addAtLeastOnePhoto: 'Please add at least one photo',
     addSignatureRequired: 'Please add client signature',
+    photosMetric: 'Photos',
+    partsMetric: 'Parts',
+    modeMetric: 'Mode',
   } : language === 'he' ? {
     fillJob: 'מילוי פרטי עבודה',
     editJob: 'עריכת עבודה',
@@ -177,6 +179,9 @@ export default function FillJob() {
     invalidTime: 'זמן סיום חייב להיות אחרי זמן התחלה',
     addAtLeastOnePhoto: 'אנא הוסף לפחות תמונה אחת',
     addSignatureRequired: 'אנא הוסף חתימת לקוח',
+    photosMetric: 'תמונות',
+    partsMetric: 'חלקים',
+    modeMetric: 'מצב',
   } : {
     fillJob: 'ملء تفاصيل العمل',
     editJob: 'تعديل العمل',
@@ -219,6 +224,9 @@ export default function FillJob() {
     invalidTime: 'يجب أن يكون وقت الانتهاء بعد وقت البدء',
     addAtLeastOnePhoto: 'الرجاء إضافة صورة واحدة على الأقل',
     addSignatureRequired: 'الرجاء إضافة توقيع العميل',
+    photosMetric: 'الصور',
+    partsMetric: 'القطع',
+    modeMetric: 'الوضع',
   };
 
   // Function to extract storage path and get fresh download URL
@@ -503,10 +511,12 @@ export default function FillJob() {
         }
       });
 
-      // Update cache (this also updates Firebase and increments cache version)
-      await updateInventory(partsArray);
+      // Route through Cloud Function so audit log, cache-version bump, and rules are applied consistently
+      const companyId = getCompanyId();
+      const updateInvFn = httpsCallable(functions, 'updateInventoryV1');
+      await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: uid, parts: partsArray });
       
-      console.log('✅ Inventory deducted, cache and Firebase updated, cache version incremented');
+      console.log('✅ Inventory deducted via CF, cache version incremented by server');
     } catch (error) {
       console.error('❌ Error decreasing inventory:', error);
       throw error;
@@ -586,7 +596,9 @@ export default function FillJob() {
         photos: photoURLs,
         signature: signatureURL,
         status: mode === 'user' ? 'finished' : 'waiting',
-        ...(mode !== 'user' && { wname: profile?.name || '' }),
+        ...(mode === 'user'
+          ? { wid: profile?.wid ? String(profile.wid) : null, wname: profile?.name || '' }
+          : { wname: profile?.name || '' }),
         finishedAt: currentDate.toISOString(),
         updatedAt: currentDate.toISOString(),
         isCert: false, // New field for tax invoice tracking
@@ -692,39 +704,42 @@ export default function FillJob() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Header */}
-          <LinearGradient
-            colors={gradients.primary}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.header}
-          >
-            <AppText style={styles.headerTitle}>
-              {editingJob ? t.editJob : t.fillJob}
-            </AppText>
-          </LinearGradient>
+          <ScreenHeroCard
+            title={editingJob ? t.editJob : t.fillJob}
+            subtitle={mode === 'user' ? t.jobDescription : t.clientInfo}
+            eyebrow="Jobs"
+            icon="clipboard-text-outline"
+            iconLibrary="material"
+            accentColor={colors.boxIndigo}
+            metrics={[
+              { label: t.photosMetric, value: String(jobData.photos.length) },
+              { label: t.partsMetric, value: String(selectedParts.length) },
+              { label: t.modeMetric, value: String(mode) },
+            ]}
+            badges={[t.clientInfo, t.timeWorked, t.clientSignature]}
+            style={styles.heroCard}
+          />
 
           {/* Job Title Card (User mode only) */}
           {mode === 'user' && (
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
               <View style={styles.cardHeader}>
                 <MaterialCommunityIcons name="briefcase" size={20} color={colors.secondary} />
                 <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                   {t.jobTitle} *
                 </AppText>
               </View>
-              <TextInput
-                style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
                 placeholder={t.jobTitle}
-                placeholderTextColor={colors.textSecondary}
                 value={jobData.title}
                 onChangeText={(text) => setJobData({ ...jobData, title: text })}
               />
-            </View>
+            </AppCard>
           )}
 
           {/* Client Information Card - with embedded client search */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <Ionicons name="person" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
@@ -753,26 +768,24 @@ export default function FillJob() {
             />
 
             {/* Client fields - always visible, pre-filled when client selected */}
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.clientName + ' *'}
-              placeholderTextColor={colors.textSecondary}
               value={jobData.cname}
               onChangeText={(text) => setJobData({ ...jobData, cname: text })}
             />
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.clientPhone}
-              placeholderTextColor={colors.textSecondary}
               value={jobData.cphone}
               onChangeText={(text) => setJobData({ ...jobData, cphone: text })}
               keyboardType="phone-pad"
             />
 
-          </View>
+          </AppCard>
 
           {/* Time Worked Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <Ionicons name="time" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
@@ -804,34 +817,32 @@ export default function FillJob() {
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
+          </AppCard>
 
           {/* Location Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <Ionicons name="location" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.location} *
               </AppText>
             </View>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.locationPlaceholder}
-              placeholderTextColor={colors.textSecondary}
               value={jobData.location}
               onChangeText={(text) => setJobData({ ...jobData, location: text })}
             />
-            <TouchableOpacity
-              style={[styles.locationButton, { backgroundColor: colors.secondary }]}
+            <AppButton
+              title={t.getLocation}
+              iconLeft={{ name: 'navigate-outline' }}
               onPress={handleGetLocation}
-            >
-              <Ionicons name="navigate" size={18} color="white" />
-              <AppText style={styles.locationButtonText}>{t.getLocation}</AppText>
-            </TouchableOpacity>
-          </View>
+              style={styles.locationButton}
+            />
+          </AppCard>
 
           {/* Travel Distance Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="map-marker-distance" size={20} color={colors.primary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
@@ -840,8 +851,8 @@ export default function FillJob() {
             </View>
             
             <View style={styles.travelDistanceContainer}>
-              <TextInput
-                style={[
+              <AppInput
+                inputStyle={[
                   styles.input, 
                   styles.travelDistanceInput,
                   { 
@@ -851,7 +862,6 @@ export default function FillJob() {
                   }
                 ]}
                 placeholder={t.travelDistancePlaceholder}
-                placeholderTextColor={colors.textSecondary}
                 value={travelDistance}
                 onChangeText={handleTravelDistanceChange}
                 keyboardType="decimal-pad"
@@ -864,43 +874,41 @@ export default function FillJob() {
             {travelDistanceError ? (
               <AppText style={[styles.errorText, { color: colors.error }]}>{travelDistanceError}</AppText>
             ) : null}
-          </View>
+          </AppCard>
 
           {/* Description Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="text" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.jobDescription} *
               </AppText>
             </View>
-            <TextInput
-              style={[styles.input, styles.textArea, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              inputStyle={[styles.input, styles.textArea, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.descriptionPlaceholder}
-              placeholderTextColor={colors.textSecondary}
               value={jobData.description}
               onChangeText={(text) => setJobData({ ...jobData, description: text })}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
             />
-          </View>
+          </AppCard>
 
           {/* Photos Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <Ionicons name="images" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
                 {t.photos} * ({jobData.photos.length}/5)
               </AppText>
             </View>
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: colors.secondary }]}
+            <AppButton
+              title={t.addPhoto}
+              iconLeft={{ name: 'camera-outline' }}
               onPress={() => setShowPhotoPicker(true)}
-            >
-              <Ionicons name="camera" size={18} color="white" />
-              <AppText style={styles.actionButtonText}>{t.addPhoto}</AppText>
-            </TouchableOpacity>
+              style={styles.actionButton}
+            />
 
             {jobData.photos.length > 0 && (
               <ScrollView horizontal style={styles.photosList}>
@@ -909,10 +917,10 @@ export default function FillJob() {
                 ))}
               </ScrollView>
             )}
-          </View>
+          </AppCard>
 
           {/* Parts Used Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="cog" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
@@ -1004,10 +1012,10 @@ export default function FillJob() {
                 ))}
               </View>
             )}
-          </View>
+          </AppCard>
 
           {/* Signature Card */}
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="draw" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
@@ -1055,49 +1063,46 @@ export default function FillJob() {
               </View>
             )}
 
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
               placeholder={t.signingPerson + ' *'}
-              placeholderTextColor={colors.textSecondary}
               value={jobData.signingPerson}
               onChangeText={(text) => setJobData({ ...jobData, signingPerson: text })}
             />
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: jobData.signature ? colors.warning : colors.secondary }]}
+            <AppButton
+              title={jobData.signature ? t.changeSignature || 'Change Signature' : t.addSignature}
+              iconLeft={{ name: 'create-outline' }}
               onPress={() => setShowSignature(true)}
-            >
-              <MaterialCommunityIcons name="gesture-tap" size={18} color="white" />
-              <AppText style={styles.actionButtonText}>
-                {jobData.signature ? t.changeSignature || 'Change Signature' : t.addSignature}
-              </AppText>
-            </TouchableOpacity>
-          </View>
+              variant={jobData.signature ? 'secondary' : 'primary'}
+              style={styles.actionButton}
+            />
+          </AppCard>
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton, { backgroundColor: colors.textSecondary }]}
+            <AppButton
+              title={t.cancel}
+              variant="secondary"
+              style={[styles.button, styles.cancelButton]}
               onPress={() => router.back()}
-            >
-              <AppText style={styles.buttonText}>{t.cancel}</AppText>
-            </TouchableOpacity>
+            />
 
             {!editingJob && (
-              <TouchableOpacity
-                style={[styles.button, styles.draftButton, { backgroundColor: colors.warning }]}
+              <AppButton
+                title={t.saveDraft}
+                variant="success"
+                style={[styles.button, styles.draftButton]}
                 onPress={handleSaveDraft}
-              >
-                <AppText style={styles.buttonText}>{t.saveDraft}</AppText>
-              </TouchableOpacity>
+              />
             )}
 
-            <TouchableOpacity
-              style={[styles.button, styles.submitButton, { backgroundColor: colors.success }, submitting && { opacity: 0.6 }]}
+            <AppButton
+              title={t.submit}
+              style={[styles.button, styles.submitButton]}
               onPress={handleSubmit}
               disabled={submitting}
-            >
-              <AppText style={styles.buttonText}>{t.submit}</AppText>
-            </TouchableOpacity>
+              loading={submitting}
+            />
           </View>
         </ScrollableContainer>
       </KeyboardAvoidingView>
@@ -1162,16 +1167,10 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
-  header: {
-    paddingVertical: 40,
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '600',
-    color: 'white',
-    textAlign: 'center',
+  heroCard: {
+    marginHorizontal: spacing.md,
+    marginTop: Platform.OS === 'ios' ? 96 : 88,
+    marginBottom: spacing.lg,
   },
   card: {
     marginHorizontal: spacing.md,
@@ -1249,19 +1248,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   locationButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
     marginHorizontal: spacing.lg,
     marginBottom: spacing.md,
-    borderRadius: 8,
-    gap: spacing.sm,
-  },
-  locationButtonText: {
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '600',
   },
   travelDistanceContainer: {
     flexDirection: 'row',
@@ -1295,20 +1283,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
     marginHorizontal: spacing.lg,
     marginTop: spacing.sm,
     marginBottom: spacing.lg,
-    borderRadius: 8,
-    gap: spacing.sm,
-  },
-  actionButtonText: {
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '600',
   },
   photosList: {
     marginTop: spacing.md,
@@ -1394,11 +1371,6 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     flex: 1.2,
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '600',
   },
 });
 

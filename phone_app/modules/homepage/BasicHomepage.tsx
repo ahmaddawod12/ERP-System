@@ -1,120 +1,91 @@
 // @ts-nocheck
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { doc, getDoc, db } from '../../firebase';
+import { borderRadius, getColors, spacing } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useCache } from '../../contexts/CacheContext';
 import { isSubscriptionActive, isModuleEnabled } from '../shared';
-import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { doc, getDoc } from '@react-native-firebase/firestore';
-import { db } from '../../firebase';
+import {
+  AppCard,
+  AppEmptyState,
+  AppText,
+  DashboardActionCard,
+  DashboardShell,
+  GlobalHeader,
+} from '../../components';
 
-export default function BasicHomepage() {
-  const router = useRouter();
-  const { language } = useLanguageContext();
-  const { isDarkMode } = useThemeContext();
-  const { subscription, getCompanyId } = useCache();
-  const [businessInfo, setBusinessInfo] = useState(null);
-  const [activeTab, setActiveTab] = useState('business');
-  const colors = getColors(isDarkMode);
-  const insets = useSafeAreaInsets();
-
-  // Fetch business info from Firestore (not cached in CacheContext by design)
-  useEffect(() => {
-    const companyId = getCompanyId();
-    if (!companyId) return;
-    (async () => {
-      try {
-        const bizRef = doc(db, 'companies', companyId, 'data', 'business_info');
-        const bizSnap = await getDoc(bizRef);
-        if (bizSnap.exists) {
-          const d = bizSnap.data();
-          setBusinessInfo({
-            heName: d.he_name || '',
-            enName: d.en_name || '',
-            vatNumber: d.vat_number || '',
-            businessType: d.business_type || '',
-            address: d.address || '',
-            city: d.city || '',
-            businessEmail: d.business_email || '',
-            businessPhone: d.business_phone || '',
-            businessFax: d.business_fax || '',
-            accountantName: d.accountant_name || '',
-            accountantEmail: d.accountant_email || '',
-            accountantPhone: d.accountant_phone || '',
-          });
-        }
-      } catch (e) {
-        console.warn('BasicHomepage: failed to load business info', e.message);
-      }
-    })();
-  }, [getCompanyId]);
-
-  // Module checks
-  const hasDocs = isModuleEnabled(subscription, 'documents');
-  const subActive = isSubscriptionActive(subscription);
-
-  const availableTabs = [
-    'business',  // Always visible
-    ...(hasDocs ? ['documents'] : []),
-  ];
-
-  // Auto-select first available tab if current is no longer available
-  useEffect(() => {
-    if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
-      setActiveTab(availableTabs[0]);
-    }
-  }, [hasDocs]);
-
-  const t = language === 'en' ? {
+const translations = {
+  en: {
     title: 'Basic Dashboard',
-    subtitle: 'Welcome back',
-    businessTab: 'Business Info',
+    subtitle: 'Business overview',
+    description: 'Keep business details and essential document tools available in a simpler layout focused on reference and document access.',
+    heroLabel: 'Basic access',
+    open: 'Open workspace',
+    emptyTitle: 'No modules available',
+    emptySubtitle: 'This account does not have any active dashboard areas yet.',
+    expiredTitle: 'Subscription Expired',
+    expiredSubtitle: 'Renew the subscription on the website to restore access to the business dashboard.',
+    roleMetric: 'Role',
+    roleValue: 'Basic',
+    scopeMetric: 'Scope',
+    scopeValue: 'Reference',
+    moduleMetric: 'Areas',
+    businessTab: 'Business',
     documentsTab: 'Documents',
-    // Business Info section
     businessInfoTitle: 'Business Information',
-    businessInfoDesc: 'Your registered business details',
-    businessName: 'Business Name',
-    businessNameHe: 'Business Name (Hebrew)',
-    businessNameEn: 'Business Name (English)',
-    vatNumber: 'VAT Number',
-    businessType: 'Business Type',
+    businessInfoDesc: 'Registered business details for quick mobile reference.',
+    noBusinessInfo: 'No business information is registered yet.',
+    companySection: 'Company profile',
+    contactSection: 'Contact details',
+    accountantSection: 'Accountant details',
+    businessNameHe: 'Business name (Hebrew)',
+    businessNameEn: 'Business name (English)',
+    vatNumber: 'VAT number',
+    businessType: 'Business type',
     address: 'Address',
     city: 'City',
     email: 'Email',
     phone: 'Phone',
     fax: 'Fax',
-    noBusinessInfo: 'No business information registered yet',
-    // Documents section
+    accountantName: 'Accountant name',
+    accountantEmail: 'Accountant email',
+    accountantPhone: 'Accountant phone',
     generalDocs: 'General Documents',
-    generalDocsDesc: 'Create business documents',
+    generalDocsDesc: 'Create standard business documents from the app.',
     documentHistory: 'Document History',
-    documentHistoryDesc: 'View all created documents',
-    // Accountant section
-    accountantSection: 'Accountant Information',
-    accountantName: 'Accountant Name',
-    accountantEmail: 'Accountant Email',
-    accountantPhone: 'Accountant Phone',
+    documentHistoryDesc: 'Review previously generated documents.',
     clientBook: 'Client Book',
-    clientBookDesc: 'Manage your clients',
-  } : language === 'he' ? {
+    clientBookDesc: 'Open the client directory and customer details.',
+    businessBadge: 'Profile',
+    docsBadge: 'Docs',
+  },
+  he: {
     title: 'לוח בקרה בסיסי',
-    subtitle: 'ברוך הבא',
-    businessTab: 'מידע עסקי',
+    subtitle: 'סקירת עסק',
+    description: 'שמירה על פרטי העסק וכלי המסמכים החיוניים בפריסה פשוטה יותר שממוקדת במידע ובגישה למסמכים.',
+    heroLabel: 'גישת בסיס',
+    open: 'פתח סביבת עבודה',
+    emptyTitle: 'אין מודולים זמינים',
+    emptySubtitle: 'לחשבון הזה אין כרגע אזורי עבודה פעילים.',
+    expiredTitle: 'המנוי פג תוקף',
+    expiredSubtitle: 'חדש את המנוי דרך האתר כדי להחזיר את הגישה ללוח הבקרה העסקי.',
+    roleMetric: 'תפקיד',
+    roleValue: 'בסיסי',
+    scopeMetric: 'היקף',
+    scopeValue: 'מידע',
+    moduleMetric: 'אזורים',
+    businessTab: 'עסק',
     documentsTab: 'מסמכים',
-    // Business Info section
     businessInfoTitle: 'מידע עסקי',
-    businessInfoDesc: 'פרטי העסק הרשום שלך',
-    businessName: 'שם העסק',
+    businessInfoDesc: 'פרטי העסק הרשומים לצפייה מהירה במובייל.',
+    noBusinessInfo: 'עדיין לא נרשם מידע עסקי.',
+    companySection: 'פרופיל חברה',
+    contactSection: 'פרטי קשר',
+    accountantSection: 'פרטי רואה חשבון',
     businessNameHe: 'שם העסק (עברית)',
     businessNameEn: 'שם העסק (אנגלית)',
     vatNumber: 'מספר עוסק מורשה',
@@ -124,28 +95,41 @@ export default function BasicHomepage() {
     email: 'דוא"ל',
     phone: 'טלפון',
     fax: 'פקס',
-    noBusinessInfo: 'אין מידע עסקי רשום עדיין',
-    // Documents section
-    generalDocs: 'מסמכים כלליים',
-    generalDocsDesc: 'יצירת מסמכים עסקיים',
-    documentHistory: 'היסטוריית מסמכים',
-    documentHistoryDesc: 'צפייה בכל המסמכים שנוצרו',
-    // Accountant section
-    accountantSection: 'פרטי רואה חשבון',
     accountantName: 'שם רואה חשבון',
     accountantEmail: 'דוא"ל רואה חשבון',
     accountantPhone: 'טלפון רואה חשבון',
+    generalDocs: 'מסמכים כלליים',
+    generalDocsDesc: 'יצירת מסמכים עסקיים סטנדרטיים מתוך האפליקציה.',
+    documentHistory: 'היסטוריית מסמכים',
+    documentHistoryDesc: 'סקירת מסמכים שנוצרו בעבר.',
     clientBook: 'ספר לקוחות',
-    clientBookDesc: 'ניהול הלקוחות שלך',
-  } : {
+    clientBookDesc: 'כניסה לספר הלקוחות ולפרטי לקוחות.',
+    businessBadge: 'פרופיל',
+    docsBadge: 'מסמכים',
+  },
+  ar: {
     title: 'لوحة تحكم أساسية',
-    subtitle: 'مرحبا بعودتك',
-    businessTab: 'معلومات العمل',
+    subtitle: 'نظرة عامة على العمل',
+    description: 'أبقِ تفاصيل العمل وأدوات المستندات الأساسية متاحة ضمن تخطيط أبسط يركز على المرجع والوصول إلى المستندات.',
+    heroLabel: 'وصول أساسي',
+    open: 'افتح مساحة العمل',
+    emptyTitle: 'لا توجد وحدات متاحة',
+    emptySubtitle: 'هذا الحساب لا يملك مناطق عمل فعالة حالياً.',
+    expiredTitle: 'انتهى الاشتراك',
+    expiredSubtitle: 'جدّد الاشتراك عبر الموقع لاستعادة الوصول إلى لوحة العمل.',
+    roleMetric: 'الدور',
+    roleValue: 'أساسي',
+    scopeMetric: 'النطاق',
+    scopeValue: 'مرجعي',
+    moduleMetric: 'المساحات',
+    businessTab: 'العمل',
     documentsTab: 'المستندات',
-    // Business Info section
     businessInfoTitle: 'معلومات العمل',
-    businessInfoDesc: 'تفاصيل عملك المسجل',
-    businessName: 'اسم العمل',
+    businessInfoDesc: 'تفاصيل العمل المسجلة للرجوع السريع من الجوال.',
+    noBusinessInfo: 'لا توجد معلومات عمل مسجلة بعد.',
+    companySection: 'ملف الشركة',
+    contactSection: 'بيانات التواصل',
+    accountantSection: 'بيانات المحاسب',
     businessNameHe: 'اسم العمل (عبري)',
     businessNameEn: 'اسم العمل (إنجليزي)',
     vatNumber: 'رقم ضريبة القيمة المضافة',
@@ -155,192 +139,255 @@ export default function BasicHomepage() {
     email: 'البريد الإلكتروني',
     phone: 'الهاتف',
     fax: 'الفاكس',
-    noBusinessInfo: 'لا توجد معلومات عمل مسجلة بعد',
-    // Documents section
-    generalDocs: 'المستندات العامة',
-    generalDocsDesc: 'إنشاء مستندات الأعمال',
-    documentHistory: 'سجل المستندات',
-    documentHistoryDesc: 'عرض جميع المستندات المنشأة',
-    // Accountant section
-    accountantSection: 'معلومات المحاسب',
     accountantName: 'اسم المحاسب',
     accountantEmail: 'بريد المحاسب',
     accountantPhone: 'هاتف المحاسب',
+    generalDocs: 'المستندات العامة',
+    generalDocsDesc: 'أنشئ مستندات أعمال قياسية من التطبيق.',
+    documentHistory: 'سجل المستندات',
+    documentHistoryDesc: 'راجع المستندات التي تم إنشاؤها سابقاً.',
     clientBook: 'دفتر العملاء',
-    clientBookDesc: 'إدارة عملائك',
-  };
+    clientBookDesc: 'افتح دليل العملاء وتفاصيلهم.',
+    businessBadge: 'الملف',
+    docsBadge: 'مستندات',
+  },
+};
 
-  // Render a single info row in business info card
-  const renderInfoRow = (label, value) => {
-    if (!value) return null;
+const compactSections = (t, businessInfo) => [
+  {
+    title: t.companySection,
+    items: [
+      { label: t.businessNameHe, value: businessInfo?.heName },
+      { label: t.businessNameEn, value: businessInfo?.enName },
+      { label: t.vatNumber, value: businessInfo?.vatNumber },
+      { label: t.businessType, value: businessInfo?.businessType },
+    ].filter((item) => item.value),
+  },
+  {
+    title: t.contactSection,
+    items: [
+      { label: t.address, value: businessInfo?.address },
+      { label: t.city, value: businessInfo?.city },
+      { label: t.email, value: businessInfo?.businessEmail },
+      { label: t.phone, value: businessInfo?.businessPhone },
+      { label: t.fax, value: businessInfo?.businessFax },
+    ].filter((item) => item.value),
+  },
+  {
+    title: t.accountantSection,
+    items: [
+      { label: t.accountantName, value: businessInfo?.accountantName },
+      { label: t.accountantEmail, value: businessInfo?.accountantEmail },
+      { label: t.accountantPhone, value: businessInfo?.accountantPhone },
+    ].filter((item) => item.value),
+  },
+].filter((section) => section.items.length > 0);
+
+export default function BasicHomepage() {
+  const router = useRouter();
+  const { language } = useLanguageContext();
+  const { isDarkMode } = useThemeContext();
+  const { subscription, getCompanyId } = useCache();
+  const [businessInfo, setBusinessInfo] = useState(null);
+  const [activeTab, setActiveTab] = useState('business');
+  const colors = getColors(isDarkMode);
+  const t = translations[language] || translations.en;
+
+  const hasDocs = isModuleEnabled(subscription, 'documents');
+  const subActive = isSubscriptionActive(subscription);
+
+  const availableTabs = [
+    'business',
+    ...(hasDocs ? ['documents'] : []),
+  ];
+
+  useEffect(() => {
+    if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
+      setActiveTab(availableTabs[0]);
+    }
+  }, [activeTab, availableTabs.join('|')]);
+
+  useEffect(() => {
+    const companyId = getCompanyId();
+    if (!companyId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const businessRef = doc(db, 'companies', companyId, 'data', 'business_info');
+        const businessSnap = await getDoc(businessRef);
+        if (!businessSnap.exists() || cancelled) return;
+        const data = businessSnap.data();
+        setBusinessInfo({
+          heName: data?.he_name || '',
+          enName: data?.en_name || '',
+          vatNumber: data?.vat_number || '',
+          businessType: data?.business_type || '',
+          address: data?.address || '',
+          city: data?.city || '',
+          businessEmail: data?.business_email || '',
+          businessPhone: data?.business_phone || '',
+          businessFax: data?.business_fax || '',
+          accountantName: data?.accountant_name || '',
+          accountantEmail: data?.accountant_email || '',
+          accountantPhone: data?.accountant_phone || '',
+        });
+      } catch (error) {
+        console.warn('BasicHomepage: failed to load business info', error?.message || error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getCompanyId]);
+
+  const tabItems = [
+    { key: 'business', label: t.businessTab, icon: 'domain', iconLibrary: 'material' },
+    ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' }] : []),
+  ];
+
+  const infoSections = useMemo(() => compactSections(t, businessInfo), [t, businessInfo]);
+
+  const documentCards = [
+    {
+      key: 'general-documents',
+      title: t.generalDocs,
+      description: t.generalDocsDesc,
+      icon: 'file-document-multiple',
+      iconLibrary: 'material',
+      accentColor: colors.boxBlue,
+      badge: t.docsBadge,
+      onPress: () => router.push('/GeneralDocuments'),
+    },
+    {
+      key: 'document-history',
+      title: t.documentHistory,
+      description: t.documentHistoryDesc,
+      icon: 'history',
+      iconLibrary: 'material',
+      accentColor: colors.boxLime,
+      badge: t.docsBadge,
+      onPress: () => router.push('/DocumentHistory'),
+    },
+    {
+      key: 'client-book',
+      title: t.clientBook,
+      description: t.clientBookDesc,
+      icon: 'book-account',
+      iconLibrary: 'material',
+      accentColor: colors.boxPink,
+      badge: t.docsBadge,
+      onPress: () => router.push('/ClientBook'),
+    },
+  ];
+
+  if (!subActive) {
     return (
-      <View style={styles.infoRow}>
-        <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{label}</AppText>
-        <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>{value}</AppText>
+      <View style={[styles.lockedContainer, { backgroundColor: colors.background }]}> 
+        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+        <AppEmptyState
+          icon="clock-alert-outline"
+          title={t.expiredTitle}
+          subtitle={t.expiredSubtitle}
+          style={styles.lockedState}
+        />
+        <GlobalHeader />
       </View>
     );
-  };
+  }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <StatusBar style={isDarkMode ? "light" : "dark"} />
-      
-      {/* Tab Content */}
-      <ScrollableContainer 
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+    <View style={[styles.container, { backgroundColor: colors.background }]}> 
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+      <DashboardShell
+        title={t.title}
+        subtitle={t.subtitle}
+        description={t.description}
+        heroLabel={t.heroLabel}
+        heroIcon="domain"
+        heroIconLibrary="material"
+        metrics={[
+          { label: t.roleMetric, value: t.roleValue },
+          { label: t.scopeMetric, value: t.scopeValue },
+          { label: t.moduleMetric, value: String(availableTabs.length) },
+        ]}
+        tabs={tabItems}
+        activeTab={activeTab}
+        onTabPress={setActiveTab}
       >
-        <View style={styles.cardsContainer}>
-          {/* Business Info Tab Content */}
-          {activeTab === 'business' && (
-            <>
-              {/* Business Info Card */}
-              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <View style={styles.cardHeader}>
-                  <View style={[styles.cardIconCircle, { backgroundColor: colors.primary + '15' }]}>
-                    <MaterialCommunityIcons name="domain" size={32} color={colors.primary} />
-                  </View>
-                </View>
-                <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.businessInfoTitle}</AppText>
-                <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.businessInfoDesc}</AppText>
-                
-                {businessInfo ? (
-                  <View style={styles.businessInfoContent}>
-                    {/* Primary Info */}
-                    {renderInfoRow(t.businessNameHe, businessInfo.heName)}
-                    {renderInfoRow(t.businessNameEn, businessInfo.enName)}
-                    {renderInfoRow(t.vatNumber, businessInfo.vatNumber)}
-                    {renderInfoRow(t.businessType, businessInfo.businessType)}
-                    
-                    {/* Address */}
-                    {(businessInfo.address || businessInfo.city) && (
-                      <View style={[styles.separator, { borderTopColor: colors.border }]} />
-                    )}
-                    {renderInfoRow(t.address, businessInfo.address)}
-                    {renderInfoRow(t.city, businessInfo.city)}
-                    
-                    {/* Contact */}
-                    {(businessInfo.businessEmail || businessInfo.businessPhone || businessInfo.businessFax) && (
-                      <View style={[styles.separator, { borderTopColor: colors.border }]} />
-                    )}
-                    {renderInfoRow(t.email, businessInfo.businessEmail)}
-                    {renderInfoRow(t.phone, businessInfo.businessPhone)}
-                    {renderInfoRow(t.fax, businessInfo.businessFax)}
-                    
-                    {/* Accountant Info */}
-                    {(businessInfo.accountantName || businessInfo.accountantEmail || businessInfo.accountantPhone) && (
-                      <>
-                        <View style={[styles.separator, { borderTopColor: colors.border }]} />
-                        <AppText style={[styles.sectionTitle, { color: colors.textPrimary }]}>{t.accountantSection}</AppText>
-                        {renderInfoRow(t.accountantName, businessInfo.accountantName)}
-                        {renderInfoRow(t.accountantEmail, businessInfo.accountantEmail)}
-                        {renderInfoRow(t.accountantPhone, businessInfo.accountantPhone)}
-                      </>
-                    )}
-                  </View>
-                ) : (
-                  <View style={styles.noBusinessInfo}>
-                    <MaterialCommunityIcons name="alert-circle-outline" size={48} color={colors.textSecondary} />
-                    <AppText style={[styles.noBusinessInfoText, { color: colors.textSecondary }]}>
-                      {t.noBusinessInfo}
-                    </AppText>
-                  </View>
-                )}
+        {activeTab === 'business' ? (
+          <AppCard style={styles.infoCard} tone="muted">
+            <View style={styles.infoHeader}>
+              <View style={[styles.infoIconWrap, { backgroundColor: `${colors.primary}14`, borderColor: `${colors.primary}24` }]}>
+                <AppText variant="title" color={colors.primary}>
+                  SJ
+                </AppText>
               </View>
-            </>
-          )}
+              <View style={styles.infoHeaderText}>
+                <AppText variant="heading">{t.businessInfoTitle}</AppText>
+                <AppText variant="body" color={colors.textSecondary} style={styles.infoHeaderDescription}>
+                  {t.businessInfoDesc}
+                </AppText>
+              </View>
+            </View>
 
-          {/* Documents Tab Content */}
-          {activeTab === 'documents' && hasDocs && (
-            <>
-              {/* General Documents Card - Navigate to GeneralDocuments (without tax invoice for basic role) */}
-              <TouchableOpacity onPress={() => router.push('/GeneralDocuments')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="file-document-multiple" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
+            {infoSections.length > 0 ? (
+              infoSections.map((section) => (
+                <View key={section.title} style={styles.sectionBlock}>
+                  <AppText variant="label" color={colors.textLight} style={styles.sectionLabel}>
+                    {section.title}
+                  </AppText>
+                  <View style={styles.infoGrid}>
+                    {section.items.map((item) => (
+                      <View
+                        key={`${section.title}-${item.label}`}
+                        style={[
+                          styles.infoItem,
+                          {
+                            backgroundColor: colors.backgroundElevated,
+                            borderColor: colors.borderLight,
+                          },
+                        ]}
+                      >
+                        <AppText variant="caption" color={colors.textLight}>
+                          {item.label}
+                        </AppText>
+                        <AppText variant="bodyStrong" color={colors.textPrimary} style={styles.infoValue}>
+                          {item.value}
+                        </AppText>
+                      </View>
+                    ))}
                   </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.generalDocs}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.generalDocsDesc}</AppText>
                 </View>
-              </TouchableOpacity>
-
-              {/* Document History Card */}
-              <TouchableOpacity onPress={() => router.push('/DocumentHistory')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="history" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-
-              {/* Client Book Card */}
-              <TouchableOpacity onPress={() => router.push('/ClientBook')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="book-account" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.clientBook}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      </ScrollableContainer>
-
-      {/* Tab Navigation */}
-      <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border, paddingBottom: insets.bottom }]}>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'business' && styles.activeTab]} 
-          onPress={() => setActiveTab('business')}
-        >
-          <MaterialCommunityIcons 
-            name="domain" 
-            size={24} 
-            color={activeTab === 'business' ? colors.primary : colors.textSecondary} 
-          />
-          <AppText style={[
-            styles.tabText, 
-            { color: activeTab === 'business' ? colors.primary : colors.textSecondary }
-          ]}>
-            {t.businessTab}
-          </AppText>
-          {activeTab === 'business' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.primary }]} />}
-        </TouchableOpacity>
-
-        {hasDocs && (
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'documents' && styles.activeTab]} 
-          onPress={() => setActiveTab('documents')}
-        >
-          <MaterialCommunityIcons 
-            name="file-document-multiple" 
-            size={24} 
-            color={activeTab === 'documents' ? colors.secondary : colors.textSecondary} 
-          />
-          <AppText style={[
-            styles.tabText, 
-            { color: activeTab === 'documents' ? colors.secondary : colors.textSecondary }
-          ]}>
-            {t.documentsTab}
-          </AppText>
-          {activeTab === 'documents' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
-        </TouchableOpacity>
+              ))
+            ) : (
+              <AppEmptyState
+                icon="domain-off"
+                title={t.businessInfoTitle}
+                subtitle={t.noBusinessInfo}
+              />
+            )}
+          </AppCard>
+        ) : documentCards.length > 0 ? (
+          documentCards.map((card) => (
+            <DashboardActionCard
+              key={card.key}
+              title={card.title}
+              description={card.description}
+              icon={card.icon}
+              iconLibrary={card.iconLibrary}
+              accentColor={card.accentColor}
+              badge={card.badge}
+              ctaLabel={t.open}
+              onPress={card.onPress}
+            />
+          ))
+        ) : (
+          <AppEmptyState title={t.emptyTitle} subtitle={t.emptySubtitle} />
         )}
-      </View>
-
-      {/* Fixed GlobalHeader */}
+      </DashboardShell>
       <GlobalHeader />
     </View>
   );
@@ -350,129 +397,54 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  tabContainer: {
-    flexDirection: 'row',
-    paddingTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderTopWidth: 1,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    ...shadows.floating,
-  },
-  tab: {
+  lockedContainer: {
     flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    position: 'relative',
-  },
-  activeTab: {
-    // Active tab styling handled by indicator
-  },
-  tabText: {
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-    marginTop: spacing.xs,
-    letterSpacing: 0.2,
-  },
-  activeTabIndicator: {
-    position: 'absolute',
-    bottom: -spacing.sm,
-    left: spacing.md,
-    right: spacing.md,
-    height: 3,
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  cardsContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: 100,
-    paddingBottom: spacing.xxl,
-  },
-  card: {
-    borderRadius: borderRadius.xl,
-    padding: spacing.xl,
-    marginBottom: spacing.md + 6,
-    borderWidth: 1,
-    ...shadows.floating,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  cardIconCircle: {
-    width: 62,
-    height: 62,
-    borderRadius: borderRadius.full,
-    alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(13, 138, 232, 0.25)',
+    paddingHorizontal: spacing.xl,
   },
-  cardChevron: {
-    opacity: 0.75,
+  lockedState: {
+    marginBottom: spacing.xxl,
   },
-  cardTitle: {
-    fontSize: typography.xxl,
-    fontWeight: typography.bold,
-    marginBottom: spacing.xs,
-    letterSpacing: -0.2,
+  infoCard: {
+    borderRadius: borderRadius.xxl,
   },
-  cardDescription: {
-    fontSize: typography.base,
-    lineHeight: 22,
-    letterSpacing: 0.15,
-  },
-  // Business Info specific styles
-  businessInfoContent: {
-    marginTop: spacing.lg,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(87, 111, 138, 0.22)',
-  },
-  infoRow: {
+  infoHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-  },
-  infoLabel: {
-    fontSize: typography.sm,
-    fontWeight: typography.medium,
-    flex: 1,
-  },
-  infoValue: {
-    fontSize: typography.base,
-    fontWeight: typography.semibold,
-    flex: 1.5,
-    textAlign: 'right',
-  },
-  separator: {
-    borderTopWidth: 1,
-    marginVertical: spacing.md,
-  },
-  sectionTitle: {
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-    marginBottom: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  noBusinessInfo: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxl,
+    alignItems: 'flex-start',
     gap: spacing.md,
   },
-  noBusinessInfoText: {
-    fontSize: typography.base,
-    textAlign: 'center',
+  infoIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoHeaderText: {
+    flex: 1,
+  },
+  infoHeaderDescription: {
+    marginTop: spacing.xs,
+    lineHeight: 22,
+  },
+  sectionBlock: {
+    marginTop: spacing.xl,
+  },
+  sectionLabel: {
+    marginBottom: spacing.sm,
+  },
+  infoGrid: {
+    gap: spacing.sm,
+  },
+  infoItem: {
+    borderWidth: 1,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  infoValue: {
+    marginTop: spacing.xs,
+    lineHeight: 22,
   },
 });
-

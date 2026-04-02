@@ -74,9 +74,9 @@ export interface Client {
   id: string;
   cname: string;
   cphone?: string;
-  /** Backward-compat alias written by updateClientV1 */
+  /** @deprecated Legacy alias — read cname instead */
   name?: string;
-  /** Backward-compat alias written by updateClientV1 */
+  /** @deprecated Legacy alias — read cphone instead */
   phone?: string;
   email?: string;
   address?: string;

@@ -1,20 +1,118 @@
 // @ts-nocheck
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { getColors, spacing } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useCache } from '../../contexts/CacheContext';
 import { isSubscriptionActive, isModuleEnabled } from '../shared';
-import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  AppEmptyState,
+  DashboardActionCard,
+  DashboardShell,
+  GlobalHeader,
+} from '../../components';
+
+const translations = {
+  en: {
+    title: 'User Dashboard',
+    subtitle: 'Owner-operator workspace',
+    description: 'Move between your field work, inventory, clients, and document tools from a cleaner single-screen mobile layout.',
+    heroLabel: 'User access',
+    open: 'Open workspace',
+    emptyTitle: 'No modules available',
+    emptySubtitle: 'This account does not have any active dashboard areas yet.',
+    expiredTitle: 'Subscription Expired',
+    expiredSubtitle: 'Renew the subscription on the website to restore access to this workspace.',
+    roleMetric: 'Role',
+    roleValue: 'User',
+    scopeMetric: 'Scope',
+    scopeValue: 'Personal',
+    moduleMetric: 'Areas',
+    workTab: 'Work',
+    documentsTab: 'Documents',
+    createJob: 'Create & Fill Job',
+    createJobDesc: 'Build your own jobs, update progress, and complete them from one flow.',
+    inventory: 'My Inventory',
+    inventoryDesc: 'Review your current parts and stock levels without leaving the dashboard.',
+    clientBook: 'Client Book',
+    clientBookDesc: 'Open your client records and customer contact details.',
+    generalDocs: 'General Documents',
+    generalDocsDesc: 'Create business documents directly inside the mobile workspace.',
+    taxInvoice: 'Generate Tax Invoice',
+    taxInvoiceDesc: 'Generate invoices from completed jobs when documents are enabled.',
+    documentHistory: 'Document History',
+    documentHistoryDesc: 'See the complete list of documents you already created.',
+    workBadge: 'Work',
+    docsBadge: 'Docs',
+  },
+  he: {
+    title: 'לוח בקרה משתמש',
+    subtitle: 'סביבת עבודה אישית',
+    description: 'מעבר מהיר בין עבודה בשטח, מלאי, לקוחות וכלי מסמכים מתוך מסך אחד נקי יותר במובייל.',
+    heroLabel: 'גישת משתמש',
+    open: 'פתח סביבת עבודה',
+    emptyTitle: 'אין מודולים זמינים',
+    emptySubtitle: 'לחשבון הזה אין כרגע אזורי עבודה פעילים.',
+    expiredTitle: 'המנוי פג תוקף',
+    expiredSubtitle: 'חדש את המנוי דרך האתר כדי להחזיר את הגישה לסביבת העבודה.',
+    roleMetric: 'תפקיד',
+    roleValue: 'משתמש',
+    scopeMetric: 'היקף',
+    scopeValue: 'אישי',
+    moduleMetric: 'אזורים',
+    workTab: 'עבודה',
+    documentsTab: 'מסמכים',
+    createJob: 'יצירה ומילוי משימה',
+    createJobDesc: 'יצירת משימות אישיות, עדכון התקדמות והשלמה מתוך זרימה אחת.',
+    inventory: 'המלאי שלי',
+    inventoryDesc: 'בדיקת חלקים ומלאי אישי בלי לצאת מלוח הבקרה.',
+    clientBook: 'ספר לקוחות',
+    clientBookDesc: 'גישה לרישומי לקוחות ופרטי קשר.',
+    generalDocs: 'מסמכים כלליים',
+    generalDocsDesc: 'יצירת מסמכים עסקיים ישירות מתוך סביבת העבודה במובייל.',
+    taxInvoice: 'יצירת חשבונית מס',
+    taxInvoiceDesc: 'הפקת חשבוניות ממשימות שהושלמו כשהמסמכים פעילים.',
+    documentHistory: 'היסטוריית מסמכים',
+    documentHistoryDesc: 'צפייה ברשימת כל המסמכים שכבר יצרת.',
+    workBadge: 'עבודה',
+    docsBadge: 'מסמכים',
+  },
+  ar: {
+    title: 'لوحة تحكم المستخدم',
+    subtitle: 'مساحة عمل فردية',
+    description: 'تنقّل بسرعة بين العمل الميداني والمخزون والعملاء وأدوات المستندات من شاشة جوال أوضح وأكثر ترتيباً.',
+    heroLabel: 'وصول المستخدم',
+    open: 'افتح مساحة العمل',
+    emptyTitle: 'لا توجد وحدات متاحة',
+    emptySubtitle: 'هذا الحساب لا يملك مناطق عمل فعالة حالياً.',
+    expiredTitle: 'انتهى الاشتراك',
+    expiredSubtitle: 'جدّد الاشتراك عبر الموقع لاستعادة الوصول إلى مساحة العمل هذه.',
+    roleMetric: 'الدور',
+    roleValue: 'مستخدم',
+    scopeMetric: 'النطاق',
+    scopeValue: 'شخصي',
+    moduleMetric: 'المساحات',
+    workTab: 'العمل',
+    documentsTab: 'المستندات',
+    createJob: 'إنشاء وتعبئة مهمة',
+    createJobDesc: 'أنشئ مهامك الخاصة وحدّث تقدمها وأكملها من مسار واحد.',
+    inventory: 'مخزوني',
+    inventoryDesc: 'راجع القطع والمخزون الشخصي دون مغادرة اللوحة.',
+    clientBook: 'دفتر العملاء',
+    clientBookDesc: 'الوصول إلى سجلات العملاء وبيانات الاتصال.',
+    generalDocs: 'المستندات العامة',
+    generalDocsDesc: 'أنشئ مستندات أعمال مباشرة من مساحة العمل المحمولة.',
+    taxInvoice: 'إنشاء فاتورة ضريبية',
+    taxInvoiceDesc: 'أنشئ فواتير من المهام المكتملة عندما تكون المستندات مفعلة.',
+    documentHistory: 'سجل المستندات',
+    documentHistoryDesc: 'اعرض القائمة الكاملة للمستندات التي أنشأتها.',
+    workBadge: 'عمل',
+    docsBadge: 'مستندات',
+  },
+};
 
 export default function UserHomepage() {
   const router = useRouter();
@@ -23,9 +121,8 @@ export default function UserHomepage() {
   const { subscription } = useCache();
   const [activeTab, setActiveTab] = useState('work');
   const colors = getColors(isDarkMode);
-  const insets = useSafeAreaInsets();
+  const t = translations[language] || translations.en;
 
-  // Module checks
   const hasSoloJob = isModuleEnabled(subscription, 'solojob');
   const hasDocs = isModuleEnabled(subscription, 'documents');
   const subActive = isSubscriptionActive(subscription);
@@ -35,235 +132,138 @@ export default function UserHomepage() {
     ...(hasDocs ? ['documents'] : []),
   ];
 
-  // Auto-select first available tab if current is no longer available
   useEffect(() => {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
       setActiveTab(availableTabs[0]);
     }
-  }, [hasSoloJob, hasDocs]);
+  }, [activeTab, availableTabs.join('|')]);
 
-  const t = language === 'en' ? {
-    title: 'User Dashboard',
-    subtitle: 'Welcome back',
-    workTab: 'Work',
-    documentsTab: 'Documents',
-    createJob: 'Create & Fill Job',
-    createJobDesc: 'Create and manage your own jobs',
-    inventory: 'My Inventory',
-    inventoryDesc: 'Manage your parts',
-    clientBook: 'Client Book',
-    clientBookDesc: 'Manage your clients',
-    generalDocs: 'General Documents',
-    generalDocsDesc: 'Create business documents',
-    taxInvoice: 'Generate Tax Invoice',
-    taxInvoiceDesc: 'Create invoices from completed jobs',
-    documentHistory: 'Document History',
-    documentHistoryDesc: 'View all created documents',
-  } : language === 'he' ? {
-    title: 'לוח בקרה משתמש',
-    subtitle: 'ברוך הבא',
-    workTab: 'עבודה',
-    documentsTab: 'מסמכים',
-    createJob: 'יצירה ומילוי משימה',
-    createJobDesc: 'יצירה וניהול משימות שלך',
-    inventory: 'המלאי שלי',
-    inventoryDesc: 'ניהול חלקים',
-    clientBook: 'ספר לקוחות',
-    clientBookDesc: 'ניהול הלקוחות שלך',
-    generalDocs: 'מסמכים כלליים',
-    generalDocsDesc: 'יצירת מסמכים עסקיים',
-    taxInvoice: 'יצירת חשבונית מס',
-    taxInvoiceDesc: 'יצירת חשבוניות ממשימות שהושלמו',
-    documentHistory: 'היסטוריית מסמכים',
-    documentHistoryDesc: 'צפייה בכל המסמכים שנוצרו',
-  } : {
-    title: 'لوحة تحكم المستخدم',
-    subtitle: 'مرحبا بعودتك',
-    workTab: 'العمل',
-    documentsTab: 'المستندات',
-    createJob: 'إنشاء وملء مهمة',
-    createJobDesc: 'إنشاء وإدارة مهامك الخاصة',
-    inventory: 'مخزوني',
-    inventoryDesc: 'إدارة القطع',
-    clientBook: 'دفتر العملاء',
-    clientBookDesc: 'إدارة عملائك',
-    generalDocs: 'المستندات العامة',
-    generalDocsDesc: 'إنشاء مستندات الأعمال',
-    taxInvoice: 'إنشاء فاتورة ضريبية',
-    taxInvoiceDesc: 'إنشاء فواتير من المهام المكتملة',
-    documentHistory: 'سجل المستندات',
-    documentHistoryDesc: 'عرض جميع المستندات المنشأة',
+  const tabItems = [
+    ...(hasSoloJob ? [{ key: 'work', label: t.workTab, icon: 'briefcase', iconLibrary: 'material' }] : []),
+    ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' }] : []),
+  ];
+
+  const cardsByTab = {
+    work: [
+      {
+        key: 'create-job',
+        title: t.createJob,
+        description: t.createJobDesc,
+        icon: 'briefcase-check',
+        iconLibrary: 'material',
+        accentColor: colors.boxPurple,
+        badge: t.workBadge,
+        onPress: () => router.push('/Userjob'),
+      },
+      {
+        key: 'inventory',
+        title: t.inventory,
+        description: t.inventoryDesc,
+        icon: 'package-variant',
+        iconLibrary: 'material',
+        accentColor: colors.boxOrange,
+        badge: t.workBadge,
+        onPress: () => router.push('/inventory'),
+      },
+      {
+        key: 'client-book',
+        title: t.clientBook,
+        description: t.clientBookDesc,
+        icon: 'book-account',
+        iconLibrary: 'material',
+        accentColor: colors.boxPink,
+        badge: t.workBadge,
+        onPress: () => router.push('/ClientBook'),
+      },
+    ],
+    documents: [
+      {
+        key: 'general-documents',
+        title: t.generalDocs,
+        description: t.generalDocsDesc,
+        icon: 'file-document-multiple',
+        iconLibrary: 'material',
+        accentColor: colors.boxBlue,
+        badge: t.docsBadge,
+        onPress: () => router.push('/GeneralDocuments'),
+      },
+      {
+        key: 'tax-invoice',
+        title: t.taxInvoice,
+        description: t.taxInvoiceDesc,
+        icon: 'file-document-edit',
+        iconLibrary: 'material',
+        accentColor: colors.boxYellow,
+        badge: t.docsBadge,
+        onPress: () => router.push('/GenerateTaxInvoice'),
+      },
+      {
+        key: 'document-history',
+        title: t.documentHistory,
+        description: t.documentHistoryDesc,
+        icon: 'history',
+        iconLibrary: 'material',
+        accentColor: colors.boxLime,
+        badge: t.docsBadge,
+        onPress: () => router.push('/DocumentHistory'),
+      },
+    ],
   };
 
+  const activeCards = cardsByTab[activeTab] || [];
 
-
-  // Subscription expired — block the entire homepage
   if (!subActive) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}> 
+      <View style={[styles.lockedContainer, { backgroundColor: colors.background }]}> 
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-        <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
-          <Ionicons name="time-outline" size={72} color={colors.error} />
-          <AppText style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
-            {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
-          </AppText>
-          <AppText style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
-            {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
-          </AppText>
-        </View>
+        <AppEmptyState
+          icon="clock-alert-outline"
+          title={t.expiredTitle}
+          subtitle={t.expiredSubtitle}
+          style={styles.lockedState}
+        />
         <GlobalHeader />
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <StatusBar style={isDarkMode ? "light" : "dark"} />
-      {/* Tab Content */}
-      <ScrollableContainer 
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+    <View style={[styles.container, { backgroundColor: colors.background }]}> 
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+      <DashboardShell
+        title={t.title}
+        subtitle={t.subtitle}
+        description={t.description}
+        heroLabel={t.heroLabel}
+        heroIcon="briefcase-check-outline"
+        heroIconLibrary="material"
+        metrics={[
+          { label: t.roleMetric, value: t.roleValue },
+          { label: t.scopeMetric, value: t.scopeValue },
+          { label: t.moduleMetric, value: String(availableTabs.length) },
+        ]}
+        tabs={tabItems}
+        activeTab={activeTab}
+        onTabPress={setActiveTab}
       >
-        <View style={styles.cardsContainer}>
-          {/* Work Tab Content */}
-          {activeTab === 'work' && hasSoloJob && (
-            <>
-              {/* Create Job Card */}
-              <TouchableOpacity onPress={() => router.push('/Userjob')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="briefcase-check" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.createJob}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.createJobDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-
-              {/* Inventory Card */}
-              <TouchableOpacity onPress={() => router.push('/inventory')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="package-variant" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.inventory}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-
-              {/* Client Book Card */}
-              <TouchableOpacity onPress={() => router.push('/ClientBook')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="book-account" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.clientBook}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.clientBookDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* Documents Tab Content */}
-          {activeTab === 'documents' && hasDocs && (
-            <>
-              {/* General Documents Card */}
-              <TouchableOpacity onPress={() => router.push('/GeneralDocuments')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="file-document-multiple" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.generalDocs}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.generalDocsDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-
-              {/* Generate Tax Invoice Card */}
-              <TouchableOpacity onPress={() => router.push('/GenerateTaxInvoice')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="file-document-edit" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.taxInvoice}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.taxInvoiceDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-
-              {/* Document History Card */}
-              <TouchableOpacity onPress={() => router.push('/DocumentHistory')}>
-                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={styles.cardHeader}>
-                    <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                      <MaterialCommunityIcons name="history" size={32} color={colors.secondary} />
-                    </View>
-                    <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-                  </View>
-                  <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.documentHistory}</AppText>
-                  <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.documentHistoryDesc}</AppText>
-                </View>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      </ScrollableContainer>
-      {/* Tab Navigation */}
-      <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border, paddingBottom: insets.bottom }]}>
-        {hasSoloJob && (
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'work' && styles.activeTab]} 
-          onPress={() => setActiveTab('work')}
-        >
-          <MaterialCommunityIcons 
-            name="briefcase" 
-            size={24} 
-            color={activeTab === 'work' ? colors.secondary : colors.textSecondary} 
-          />
-          <AppText style={[
-            styles.tabText, 
-            { color: activeTab === 'work' ? colors.secondary : colors.textSecondary }
-          ]}>
-            {t.workTab}
-          </AppText>
-          {activeTab === 'work' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
-        </TouchableOpacity>
+        {activeCards.length > 0 ? (
+          activeCards.map((card) => (
+            <DashboardActionCard
+              key={card.key}
+              title={card.title}
+              description={card.description}
+              icon={card.icon}
+              iconLibrary={card.iconLibrary}
+              accentColor={card.accentColor}
+              badge={card.badge}
+              ctaLabel={t.open}
+              onPress={card.onPress}
+            />
+          ))
+        ) : (
+          <AppEmptyState title={t.emptyTitle} subtitle={t.emptySubtitle} />
         )}
-
-        {hasDocs && (
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'documents' && styles.activeTab]} 
-          onPress={() => setActiveTab('documents')}
-        >
-          <MaterialCommunityIcons 
-            name="file-document-multiple" 
-            size={24} 
-            color={activeTab === 'documents' ? colors.secondary : colors.textSecondary} 
-          />
-          <AppText style={[
-            styles.tabText, 
-            { color: activeTab === 'documents' ? colors.secondary : colors.textSecondary }
-          ]}>
-            {t.documentsTab}
-          </AppText>
-          {activeTab === 'documents' && <View style={[styles.activeTabIndicator, { backgroundColor: colors.secondary }]} />}
-        </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Fixed GlobalHeader */}
+      </DashboardShell>
       <GlobalHeader />
     </View>
   );
@@ -273,115 +273,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  tabContainer: {
-    flexDirection: 'row',
-    paddingTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderTopWidth: 1,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    ...shadows.floating,
-  },
-  tab: {
+  lockedContainer: {
     flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    position: 'relative',
-  },
-  activeTab: {
-    // Active tab styling handled by indicator
-  },
-  tabText: {
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-    marginTop: spacing.xs,
-    letterSpacing: 0.2,
-  },
-  activeTabIndicator: {
-    position: 'absolute',
-    bottom: -spacing.sm,
-    left: spacing.md,
-    right: spacing.md,
-    height: 3,
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  themeButton: {
-    position: 'absolute',
-    top: 48,
-    right: 80,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
-    ...shadows.md,
+    paddingHorizontal: spacing.xl,
   },
-  languageButton: {
-    position: 'absolute',
-    top: 48,
-    right: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    zIndex: 10,
-    ...shadows.md,
-  },
-  languageButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  cardsContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: 100,
-    paddingBottom: spacing.xxl,
-  },
-  card: {
-    borderRadius: borderRadius.xl,
-    padding: spacing.xl,
-    marginBottom: spacing.md + 6,
-    borderWidth: 1,
-    ...shadows.floating,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  cardIconCircle: {
-    width: 62,
-    height: 62,
-    borderRadius: borderRadius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(13, 138, 232, 0.25)',
-  },
-  cardChevron: {
-    opacity: 0.75,
-  },
-  cardTitle: {
-    fontSize: typography.xxl,
-    fontWeight: typography.bold,
-    marginBottom: spacing.xs,
-    letterSpacing: -0.2,
-  },
-  cardDescription: {
-    fontSize: typography.base,
-    lineHeight: 22,
-    letterSpacing: 0.15,
+  lockedState: {
+    marginBottom: spacing.xxl,
   },
 });
-

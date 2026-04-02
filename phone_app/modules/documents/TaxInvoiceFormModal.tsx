@@ -3,7 +3,6 @@ import React from 'react';
 import {
   View,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   ActivityIndicator,
   Modal,
@@ -15,7 +14,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WebView } from 'react-native-webview';
-import { AppText, GlobalHeader, InventoryItemSearch } from '../../components';
+import { AppText, AppInput, GlobalHeader, InventoryItemSearch } from '../../components';
 import { spacing, borderRadius, typography, shadows } from '../../theme';
 
 /**
@@ -125,12 +124,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.customerName} <AppText style={styles.requiredStar}>*</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.customerName}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, customerName: text })}
                         placeholder={t.customerName}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                       />
                     </View>
 
@@ -138,12 +136,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.customerVatNumber} <AppText style={styles.requiredStar}>*</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.customerVatNumber}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, customerVatNumber: text })}
                         placeholder={t.customerVatNumber}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                         keyboardType="number-pad"
                       />
                     </View>
@@ -152,12 +149,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.customerEmail} <AppText style={styles.optionalText}>({t.optional})</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.customerEmail}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, customerEmail: text })}
                         placeholder={t.customerEmail}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                         keyboardType="email-address"
                       />
                     </View>
@@ -166,12 +162,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.customerAddress} <AppText style={styles.optionalText}>({t.optional})</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.customerAddress}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, customerAddress: text })}
                         placeholder={t.customerAddress}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                       />
                     </View>
 
@@ -179,12 +174,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.customerCity} <AppText style={styles.optionalText}>({t.optional})</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.customerCity}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, customerCity: text })}
                         placeholder={t.customerCity}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                       />
                     </View>
 
@@ -192,12 +186,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.customerPhone} <AppText style={styles.optionalText}>({t.optional})</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.customerPhone}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, customerPhone: text })}
                         placeholder={t.customerPhone}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                         keyboardType="phone-pad"
                       />
                     </View>
@@ -310,12 +303,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.serviceDescription} <AppText style={styles.requiredStar}>*</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.inputMultiline, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.serviceDescription}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, serviceDescription: text })}
                         placeholder={t.serviceDescription}
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                         multiline
                         numberOfLines={3}
                       />
@@ -325,12 +317,11 @@ export default function TaxInvoiceFormModal({
                       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                         {t.invoiceDate} <AppText style={styles.requiredStar}>*</AppText>
                       </AppText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                      <AppInput
                         value={invoiceData.invoiceDate}
                         onChangeText={(text) => setInvoiceData({ ...invoiceData, invoiceDate: text })}
                         placeholder="YYYY-MM-DD"
-                        placeholderTextColor={colors.textSecondary}
+                        colors={colors}
                       />
                     </View>
                   </View>
@@ -377,12 +368,11 @@ export default function TaxInvoiceFormModal({
                               <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
                                 {t.price} <AppText style={styles.requiredStar}>*</AppText>
                               </AppText>
-                              <TextInput
-                                style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border, flex: 1 }]}
+                              <AppInput
                                 value={part.price}
                                 onChangeText={(text) => updateJobPartPrice(index, text)}
                                 placeholder={t.price}
-                                placeholderTextColor={colors.textSecondary}
+                                colors={colors}
                                 keyboardType="decimal-pad"
                               />
                             </View>
@@ -429,12 +419,11 @@ export default function TaxInvoiceFormModal({
                               <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
                                 {t.quantity} <AppText style={styles.requiredStar}>*</AppText>
                               </AppText>
-                              <TextInput
-                                style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border }]}
+                              <AppInput
                                 value={part.quantity}
                                 onChangeText={(text) => updateCustomPart(index, 'quantity', text)}
                                 placeholder={t.quantity}
-                                placeholderTextColor={colors.textSecondary}
+                                colors={colors}
                                 keyboardType="decimal-pad"
                               />
                             </View>
@@ -442,12 +431,11 @@ export default function TaxInvoiceFormModal({
                               <AppText style={[styles.inputLabel, { color: colors.textPrimary, marginBottom: 4 }]}>
                                 {t.price} <AppText style={styles.requiredStar}>*</AppText>
                               </AppText>
-                              <TextInput
-                                style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border }]}
+                              <AppInput
                                 value={part.price}
                                 onChangeText={(text) => updateCustomPart(index, 'price', text)}
                                 placeholder={t.price}
-                                placeholderTextColor={colors.textSecondary}
+                                colors={colors}
                                 keyboardType="decimal-pad"
                               />
                             </View>

@@ -121,13 +121,14 @@ function isRateLimited(key) {
   if (entry.count > RATE_LIMIT_MAX) return true;
   return false;
 }
-// Periodic cleanup so the map doesn't grow indefinitely
+// Periodic cleanup so the map doesn't grow indefinitely.
+// .unref() prevents this timer from keeping the CF instance alive when idle.
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of _rateLimitMap) {
     if (now > v.resetAt) _rateLimitMap.delete(k);
   }
-}, 5 * 60_000);
+}, 5 * 60_000).unref();
 
 // ── P1-9: PII redaction helper ────────────────────────────────────────────
 /**
@@ -153,10 +154,16 @@ function isValidEmail(email) {
 
 function generateInviteCode(length = 8) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.randomBytes(length);
+  // Rejection sampling to eliminate modulo bias
+  const max = 256 - (256 % alphabet.length);
   let code = '';
-  for (let i = 0; i < length; i += 1) {
-    code += alphabet[bytes[i] % alphabet.length];
+  while (code.length < length) {
+    const bytes = crypto.randomBytes(length - code.length);
+    for (let i = 0; i < bytes.length && code.length < length; i += 1) {
+      if (bytes[i] < max) {
+        code += alphabet[bytes[i] % alphabet.length];
+      }
+    }
   }
   return code;
 }

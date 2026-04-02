@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { httpsCallable } from "firebase/functions";
+import { Building2, ShieldCheck, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { DataTable } from "@/components/ui/DataTable";
 import { Modal } from "@/components/ui/Modal";
+import { Badge } from "@/components/ui/Badge";
 import { LoadingState } from "@/components/states/loading-state";
 import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
@@ -46,6 +48,8 @@ export default function ClientsClient() {
 
   const scopeId = resolveCompanyScope(companyId);
   const canMutate = role !== "worker";
+  const clientsWithEmail = clients.filter((client) => Boolean(client.email)).length;
+  const clientsWithPhone = clients.filter((client) => Boolean(client.phone)).length;
 
   const load = useCallback(async () => {
     if (!scopeId) {
@@ -114,65 +118,144 @@ export default function ClientsClient() {
 
   return (
     <ProtectedRoute section="clients">
-      <section className="grid gap-4">
-        <Card>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Clients</h1>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            Client records with auto-increment numeric IDs.
-          </p>
-          {canMutate ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <Input label="Name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
-              <Input
-                label="Email"
-                value={form.email}
-                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-              />
-              <Input
-                label="Phone"
-                value={form.phone}
-                onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
-              />
-              <Input
-                label="Address"
-                value={form.address}
-                onChange={(event) => setForm((prev) => ({ ...prev, address: event.target.value }))}
-              />
-              <Input
-                label="City"
-                value={form.city}
-                onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
-              />
-              <Input
-                label="VAT Number"
-                value={form.vatNumber}
-                onChange={(event) => setForm((prev) => ({ ...prev, vatNumber: event.target.value }))}
-              />
-              <label className="md:col-span-2">
-                <span className="mb-1.5 inline-flex text-sm font-medium text-slate-700 dark:text-slate-200">Notes</span>
-                <textarea
-                  value={form.notes}
-                  onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-                  rows={2}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
-                />
-              </label>
-              <div>
-                <Button onClick={() => void createClient()}>Add client</Button>
+      <section className="dashboard-page">
+        <div className="dashboard-hero">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <p className="dashboard-kicker">
+                <Sparkles className="h-3.5 w-3.5" />
+                Clients
+              </p>
+              <h1 className="dashboard-title mt-5">Client records</h1>
+              <p className="dashboard-copy mt-4">
+                Client records with auto-increment numeric IDs and company-scoped data.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Total clients</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{clients.length}</p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">With email</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{clientsWithEmail}</p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">With phone</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{clientsWithPhone}</p>
               </div>
             </div>
-          ) : (
-            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-              worker role has read-only access to clients.
-            </p>
-          )}
-        </Card>
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <Card>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                <Building2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Add or capture a client</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Store contact details once so jobs and documents can reuse the same client context.
+                </p>
+              </div>
+            </div>
+
+            {canMutate ? (
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <Input label="Name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
+                <Input
+                  label="Email"
+                  value={form.email}
+                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                />
+                <Input
+                  label="Phone"
+                  value={form.phone}
+                  onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
+                />
+                <Input
+                  label="Address"
+                  value={form.address}
+                  onChange={(event) => setForm((prev) => ({ ...prev, address: event.target.value }))}
+                />
+                <Input
+                  label="City"
+                  value={form.city}
+                  onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
+                />
+                <Input
+                  label="VAT Number"
+                  value={form.vatNumber}
+                  onChange={(event) => setForm((prev) => ({ ...prev, vatNumber: event.target.value }))}
+                />
+                <label className="md:col-span-2">
+                  <span className="mb-1.5 inline-flex text-sm font-medium text-slate-700 dark:text-slate-200">Notes</span>
+                  <textarea
+                    value={form.notes}
+                    onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+                    rows={3}
+                    className="dashboard-field min-h-24 resize-none"
+                  />
+                </label>
+                <div>
+                  <Button onClick={() => void createClient()}>Add client</Button>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 text-slate-500 dark:text-slate-400">
+                worker role has read-only access to clients.
+              </p>
+            )}
+          </Card>
+
+          <Card>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Mutation model</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Client records are company-scoped and protected by backend mutation flows.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
+              <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                Create and delete operations go through callable functions rather than direct client writes.
+              </div>
+              <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                <div className="flex flex-wrap gap-2">
+                  <Badge>{canMutate ? "Editable" : "Read only"}</Badge>
+                  <Badge variant="info">Scoped by companyId</Badge>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
 
         {loading ? <LoadingState /> : null}
-        {!loading && clients.length === 0 ? <EmptyState title="No clients yet" description="Create your first client record above." /> : null}
+        {!loading && clients.length === 0 ? (
+          <EmptyState
+            title="No client records yet"
+            description="Add the first client so jobs, documents, and follow-up work can reuse structured customer details."
+          />
+        ) : null}
 
         {!loading && clients.length > 0 ? (
           <Card>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Client directory</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Reusable customer records for jobs, documents, and follow-up.
+                </p>
+              </div>
+              <Badge variant="info">{clients.length} records</Badge>
+            </div>
             <DataTable
               data={clients}
               columns={[
@@ -264,7 +347,7 @@ export default function ClientsClient() {
                   value={editing.notes ?? ""}
                   onChange={(event) => setEditing((prev) => (prev ? { ...prev, notes: event.target.value } : prev))}
                   rows={3}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
+                  className="dashboard-field min-h-28 resize-none"
                 />
               </label>
               <div className="flex gap-2">

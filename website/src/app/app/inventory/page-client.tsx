@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Boxes, ShieldCheck, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -42,6 +43,10 @@ export default function InventoryClient() {
   const [loading, setLoading] = useState(true);
 
   const isCompanyInventory = Boolean(companyId && (role === "manager" || role === "dev"));
+  const lowStockCount = parts.filter(
+    (part) => !isCompanyInventory && (part.quantity ?? 0) <= (part.lowThreshold ?? 0),
+  ).length;
+  const inactiveCount = parts.filter((part) => isCompanyInventory && part.active === false).length;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,48 +110,137 @@ export default function InventoryClient() {
 
   return (
     <ProtectedRoute section="inventory">
-      <section className="grid gap-4">
-        <Card>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
-            {isCompanyInventory ? "Company Inventory" : "Personal Inventory"}
-          </h1>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            {isCompanyInventory
-              ? "Manage company parts catalog for worker assignments."
-              : "Track your personal stock and consumables."}
-          </p>
+      <section className="dashboard-page">
+        <div className="dashboard-hero">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <p className="dashboard-kicker">
+                <Sparkles className="h-3.5 w-3.5" />
+                Inventory
+              </p>
+              <h1 className="dashboard-title mt-5">
+                {isCompanyInventory ? "Company Inventory" : "Personal Inventory"}
+              </h1>
+              <p className="dashboard-copy mt-4">
+                {isCompanyInventory
+                  ? "Manage company parts catalog for worker assignments."
+                  : "Track your personal stock and consumables."}
+              </p>
+            </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <Input label="Part name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
-            {!isCompanyInventory && (
-              <>
-                <Input
-                  label="Quantity"
-                  type="number"
-                  value={form.quantity}
-                  onChange={(event) => setForm((prev) => ({ ...prev, quantity: event.target.value }))}
-                />
-                <Input
-                  label="Low threshold"
-                  type="number"
-                  value={form.lowThreshold}
-                  onChange={(event) => setForm((prev) => ({ ...prev, lowThreshold: event.target.value }))}
-                />
-              </>
-            )}
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Total parts</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{parts.length}</p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {isCompanyInventory ? "Inactive" : "Low stock"}
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                  {isCompanyInventory ? inactiveCount : lowStockCount}
+                </p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Mode</p>
+                <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                  {isCompanyInventory ? "Company" : "Personal"}
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="mt-3">
-            <Button onClick={() => void createItem()}>Add part</Button>
-          </div>
-        </Card>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <Card>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                <Boxes className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Add a part</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Capture stock once, then manage quantities or catalog status from the same workspace.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              <Input label="Part name" value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} />
+              {!isCompanyInventory && (
+                <>
+                  <Input
+                    label="Quantity"
+                    type="number"
+                    value={form.quantity}
+                    onChange={(event) => setForm((prev) => ({ ...prev, quantity: event.target.value }))}
+                  />
+                  <Input
+                    label="Low threshold"
+                    type="number"
+                    value={form.lowThreshold}
+                    onChange={(event) => setForm((prev) => ({ ...prev, lowThreshold: event.target.value }))}
+                  />
+                </>
+              )}
+            </div>
+            <div className="mt-4">
+              <Button onClick={() => void createItem()}>Add part</Button>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Inventory mode</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Company inventory behaves like a managed catalog. Personal inventory tracks live stock levels.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
+              <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                {isCompanyInventory
+                  ? "Toggle catalog availability for workers without deleting historical meaning."
+                  : "Quantities can be updated inline and low-stock warnings surface immediately."}
+              </div>
+              <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                <Badge variant={isCompanyInventory ? "info" : lowStockCount > 0 ? "warning" : "success"}>
+                  {isCompanyInventory
+                    ? `${inactiveCount} inactive parts`
+                    : lowStockCount > 0
+                      ? `${lowStockCount} low-stock parts`
+                      : "Stock looks healthy"}
+                </Badge>
+              </div>
+            </div>
+          </Card>
+        </div>
 
         {loading ? (
           <LoadingState />
         ) : (
           <Card>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Inventory list</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Inline controls are tuned to the current inventory mode.
+                </p>
+              </div>
+              <Badge variant="info">{parts.length} parts</Badge>
+            </div>
             <DataTable
               data={parts}
-              emptyMessage="No inventory parts found."
+              emptyMessage={
+                isCompanyInventory
+                  ? "No company parts yet. Add the first catalog part above to start assigning stock."
+                  : "No personal stock yet. Add the first part above to begin tracking quantities."
+              }
               columns={[
                 {
                   key: "name",
@@ -186,7 +280,7 @@ export default function InventoryClient() {
                               type="number"
                               defaultValue={row.quantity ?? 0}
                               onBlur={(event) => void updateQty(row.id, Number(event.target.value))}
-                              className="h-8 w-20 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                              className="dashboard-table-select h-9 w-24"
                             />
                             {(row.quantity ?? 0) <= (row.lowThreshold ?? 0) ? (
                               <Badge variant="warning">Low</Badge>

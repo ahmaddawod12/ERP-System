@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 
 const schema = z
   .object({
-    accountType: z.enum(["solo", "business"]),
+    accountType: z.enum(["solo", "business", "basic"]),
     role: z.enum(["manager", "worker", "user", "basic"]),
     name: z.string().min(2, "Name is required"),
     phoneNumber: z.string().min(6, "Phone number is required"),
@@ -54,6 +54,14 @@ const schema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Solo accounts use user role.",
+        path: ["role"],
+      });
+    }
+
+    if (value.accountType === "basic" && value.role !== "basic") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Basic accounts use basic role.",
         path: ["role"],
       });
     }
@@ -199,6 +207,10 @@ export default function OnboardingClient() {
       setValue("role", "user");
       return;
     }
+    if (accountType === "basic") {
+      setValue("role", "basic");
+      return;
+    }
     if (role !== "manager" && role !== "worker") {
       setValue("role", "manager");
     }
@@ -282,16 +294,25 @@ export default function OnboardingClient() {
 
         await registerFn({
           role: values.accountType === "solo" ? "user" : values.role,
-          accountType: values.accountType,
+          // CF normalizeAccountType only accepts "solo" | "business"; map "basic" to "solo"
+          accountType: values.accountType === "basic" ? "solo" : values.accountType,
           name: values.name,
           phoneNumber: values.phoneNumber,
           he_name:
-            values.accountType === "solo" ? values.name : (values.companyName ?? ""),
+            values.accountType === "solo" || values.accountType === "basic"
+              ? values.name
+              : (values.companyName ?? ""),
           en_name:
-            values.accountType === "solo" ? values.name : (values.companyName ?? ""),
+            values.accountType === "solo" || values.accountType === "basic"
+              ? values.name
+              : (values.companyName ?? ""),
           vat_number: values.businessNumber ?? "",
           business_type:
-            values.accountType === "solo" ? "solo" : (values.businessType ?? ""),
+            values.accountType === "solo"
+              ? "solo"
+              : values.accountType === "basic"
+                ? "basic"
+                : (values.businessType ?? ""),
           city: values.businessCity ?? "",
           address: values.businessAddress ?? "",
           business_phone: values.businessPhone ?? "",
@@ -436,7 +457,7 @@ export default function OnboardingClient() {
 
               <form className="mt-6 grid gap-4" onSubmit={handleSubmit(onSubmit)}>
                 {step === 0 ? (
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-3 md:grid-cols-3">
                     <label
                       className={cn(
                         "cursor-pointer rounded-2xl border p-4 transition",
@@ -489,6 +510,32 @@ export default function OnboardingClient() {
                         </div>
                       </div>
                     </label>
+                    <label
+                      className={cn(
+                        "cursor-pointer rounded-2xl border p-4 transition",
+                        accountType === "basic"
+                          ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
+                          : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        value="basic"
+                        {...register("accountType")}
+                        className="sr-only"
+                      />
+                      <div className="flex items-center gap-3">
+                        <Building2 className="h-5 w-5 text-cyan-700 dark:text-cyan-300" />
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Basic
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Lightweight account with document access only.
+                          </p>
+                        </div>
+                      </div>
+                    </label>
                     {errors.accountType?.message ? (
                       <p className="text-xs text-red-600">{errors.accountType.message}</p>
                     ) : null}
@@ -510,13 +557,15 @@ export default function OnboardingClient() {
                       />
                     </div>
 
-                    {accountType === "solo" ? (
+                    {accountType === "solo" || accountType === "basic" ? (
                       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/50">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                          Role: user
+                          Role: {accountType === "basic" ? "basic" : "user"}
                         </p>
                         <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                          Solo accounts automatically use the user role.
+                          {accountType === "basic"
+                            ? "Basic accounts automatically use the basic role."
+                            : "Solo accounts automatically use the user role."}
                         </p>
                       </div>
                     ) : (

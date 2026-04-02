@@ -29,6 +29,13 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable, increment } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
+import { safeJsonParse } from '../utils/helpers';
+import {
+  fetchDataFromFirebase as _fetchDataFromFirebase,
+  fetchDocumentById as _fetchDocumentById,
+  fetchAllRecentJobs as _fetchAllRecentJobs,
+} from './cache-fetchers';
+import { useArchiveQuery } from '../hooks/useArchiveQuery';
 
 // Extracted MMKV utilities (zero React dependencies)
 import {
@@ -335,219 +342,24 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  /**
-   * Fetch individual data from Firebase
-   * For collections (jobs/documents), only fetch specific document IDs
-   */
-  const fetchDataFromFirebase = useCallback(async (field: string, uid: string, companyId: string, role: string) => {
-    console.log(`?? [FIREBASE READ] Fetching ${field} from Firebase...`);
-    
-    try {
-      switch (field) {
-        case 'profile': {
-          const profileRef = doc(db, 'users', uid, 'data', 'profile');
-          const profileDoc = await getDoc(profileRef);
-          return profileDoc.exists() ? profileDoc.data() : null;
-        }
-        
-        case 'inventory': {
-          const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
-          const inventoryDoc = await getDoc(inventoryRef);
-          if (inventoryDoc.exists()) {
-            const inventoryData = inventoryDoc.data()!;
-            return inventoryData.parts || [];
-          }
-          return [];
-        }
-        
-        case 'workers': {
-          if (role === 'manager') {
-            const workersRef = collection(db, 'companies', companyId, 'workers');
-            const snapshot = await getDocs(workersRef);
-            const workersData: Record<string, any> = {};
-            snapshot.forEach((docSnap: any) => {
-              const workerDoc = docSnap.data() || {};
-              // Workers are keyed by wid (sequential ID) in Firestore
-              const wid = docSnap.id;
-              workersData[wid] = {
-                ...workerDoc,
-                wid,
-              };
-            });
-            return workersData;
-          }
-          return {};
-        }
-        
-        case 'business_info': {
-          // business_info is no longer cached - only check existence
-          // Cloud Functions fetch it directly from Firestore for security
-          return null;
-        }
-        
-        case 'clients': {
-          if (!companyId) return [];
-          const clientsRef = collection(db, 'companies', companyId, 'clients');
-          const snapshot = await getDocs(clientsRef);
-          const clientsList: any[] = [];
-          snapshot.forEach((d: any) => {
-            clientsList.push({ id: d.id, ...d.data() });
-          });
-          clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
-          return clientsList;
-        }
-        
-        case 'subscription': {
-          if (!companyId) return null;
-          const subRef = doc(db, 'companies', companyId, 'data', 'subscription');
-          const subSnap = await getDoc(subRef);
-          return subSnap.exists() ? subSnap.data() : null;
-        }
-        
-        default:
-          return null;
-      }
-    } catch (error) {
-      console.error(`Error fetching ${field} from Firebase:`, error);
-      return null;
-    }
-  }, []);
+  // Stable references to the module-level fetchers, compatible with useCallback dep arrays.
+  const fetchDataFromFirebase = useCallback(
+    (field: string, uid: string, companyId: string, role: string) =>
+      _fetchDataFromFirebase(field, uid, companyId, role),
+    [],
+  );
 
-  /**
-   * Fetch a single document by ID from the unified jobs or documents collection.
-   * Tries jobs first, then documents.
-   */
-  const fetchDocumentById = useCallback(async (docId: string, uid: string, companyId: string, role: string) => {
-    console.log(`[FIREBASE READ] Fetching document ${docId} from Firebase...`);
-    
-    try {
-      // Try jobs collection first
-      let docRef = doc(db, 'companies', companyId, 'jobs', docId);
-      let docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        return { id: docId, ...docSnap.data() };
-      }
-      
-      // Try documents collection
-      docRef = doc(db, 'companies', companyId, 'documents', docId);
-      docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        return { id: docId, ...docSnap.data() };
-      }
-      
-      console.warn(`Document ${docId} not found in jobs or documents collection`);
-      return null;
-    } catch (error) {
-      console.error(`Error fetching document ${docId}:`, error);
-      return null;
-    }
-  }, []);
+  const fetchDocumentById = useCallback(
+    (docId: string, uid: string, companyId: string, role: string) =>
+      _fetchDocumentById(docId, uid, companyId, role),
+    [],
+  );
 
-  /**
-   * Fetch all recent jobs (within 90 days for finished, all pending) from Firebase
-   * Used on first initialization when no local cache exists
-   * Returns unified jobs array and documents array
-   */
-  const fetchAllRecentJobs = useCallback(async (uid: string, companyId: string, role: string) => {
-    // Dev role has no jobs or documents - return early
-    if (role === 'dev') {
-      console.log('Dev role: skipping all jobs/documents fetch (early return)');
-      return { jobsData: [], documentsData: [] };
-    }
-    
-    console.log('[FIREBASE READ] Fetching all recent jobs from Firebase (first-time init)...');
-    const ninetyDaysAgo = getCacheStartDate().toISOString();
-    
-    try {
-      let jobsData = [];
-      let documentsData = [];
-      
-      if (role === 'manager') {
-        // Manager: fetch pending/waiting jobs + recent jobs (avoid full collection scan).
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        try {
-          const [pendingSnapshot, recentSnapshot] = await Promise.all([
-            getDocs(query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
-            getDocs(query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
-          ]);
-          const merged = new Map();
-          pendingSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-          recentSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-          jobsData = Array.from(merged.values());
-        } catch (queryError) {
-          // Fallback for environments missing required composite indexes.
-          const jobsSnapshot = await getDocs(jobsRef);
-          const allJobs = jobsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-          jobsData = allJobs.filter((j: any) => {
-            if (j.status === 'pending' || j.status === 'waiting') return true;
-            const dateField = j.updatedAt || j.createdAt;
-            if (!dateField) return true;
-            return dateField >= ninetyDaysAgo;
-          });
-        }
-        console.log(`Fetched ${jobsData.length} jobs for manager`);
-        
-        // Manager: fetch all company documents (within 90 days)
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
-        const documentsSnapshot = await getDocs(documentsQuery);
-        documentsData = documentsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-        console.log(`Fetched ${documentsData.length} documents for manager`);
-        
-      } else if (role === 'worker' || role === 'user') {
-        // Worker/user: fetch assigned jobs by wid (worker sequential ID)
-        const wid = getWid();
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        const scopedConstraints = buildJobMembershipConstraints(wid);
-        if (scopedConstraints.length > 0) {
-          try {
-            const [pendingSnapshot, recentSnapshot] = await Promise.all([
-              getDocs((query as any)(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))),
-              getDocs((query as any)(jobsRef, ...scopedConstraints, where('createdAt', '>=', ninetyDaysAgo))),
-            ]);
-            const merged = new Map();
-            pendingSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-            recentSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-            jobsData = Array.from(merged.values());
-          } catch (queryError) {
-            const workerQuery = query(jobsRef, ...scopedConstraints);
-            const jobsSnapshot = await getDocs(workerQuery);
-            const allJobs = jobsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-            jobsData = allJobs.filter((j: any) => {
-              if (j.status === 'pending' || j.status === 'waiting') return true;
-              const dateField = j.updatedAt || j.createdAt;
-              if (!dateField) return true;
-              return dateField >= ninetyDaysAgo;
-            });
-          }
-        }
-        console.log(`Fetched ${jobsData.length} jobs for ${role}`);
-        
-        // User: fetch documents (within 90 days)
-        if (role === 'user') {
-          const documentsRef = collection(db, 'companies', companyId, 'documents');
-          const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
-          const documentsSnapshot = await getDocs(documentsQuery);
-          documentsData = documentsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-          console.log(`Fetched ${documentsData.length} documents for user`);
-        }
-      } else if (role === 'basic') {
-        // Basic: documents only (NO jobs)
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
-        const documentsSnapshot = await getDocs(documentsQuery);
-        documentsData = documentsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-        console.log(`Fetched ${documentsData.length} documents for basic user`);
-      }
-      
-      return { jobsData, documentsData };
-    } catch (error) {
-      console.error('Error fetching all recent jobs:', error);
-      return { jobsData: [], documentsData: [] };
-    }
-  }, []);
+  const fetchAllRecentJobs = useCallback(
+    (uid: string, companyId: string, role: string) =>
+      _fetchAllRecentJobs(uid, companyId, role),
+    [],
+  );
 
   /**
    * Get MMKV cache key for a field
@@ -681,6 +493,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
                 const jobsRef = collection(db, 'companies', companyId, 'jobs');
                 
                 // C1: Incremental sync — only fetch jobs updated since lastSync
+                const cacheKey = role === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
                 if (lastSync) {
                   let deltaQuery;
                   if (roleUsesScopedJobAccess(role)) {
@@ -698,10 +511,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
                   }
                   const deltaSnap = await getDocs(deltaQuery);
                   const updates = deltaSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-                  const now = new Date().toISOString();
                   
                   // Merge updates into existing cache
-                  const cacheKey = role === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
                   const existingJobs: any[] = mmkvHelpers.getObject(cacheKey) || [];
                   const merged = [...existingJobs];
                   for (const updated of updates) {
@@ -718,7 +529,31 @@ export function CacheProvider({ children }: { children: ReactNode }) {
                   });
                   saveToLocalCache(cacheKey, filtered);
                   mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
-                  console.log(`Full sync: ${filtered.length} jobs from Firebase`);
+                  console.log(`Incremental sync: ${updates.length} jobs updated, ${filtered.length} total`);
+                } else {
+                  // No JOBS_LAST_SYNC set yet — bootstrap with a full role-aware re-fetch
+                  const scopedConstraints = roleUsesScopedJobAccess(role)
+                    ? buildJobMembershipConstraints(wid)
+                    : [];
+                  if (roleUsesScopedJobAccess(role) && scopedConstraints.length === 0) {
+                    versionUpdates.jobsVersion = remoteJobsVersion;
+                    return;
+                  }
+                  const [pendingSnap, recentSnap] = await Promise.all([
+                    getDocs(scopedConstraints.length > 0
+                      ? (query as any)(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))
+                      : query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
+                    getDocs(scopedConstraints.length > 0
+                      ? (query as any)(jobsRef, ...scopedConstraints, where('createdAt', '>=', ninetyDaysAgo))
+                      : query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
+                  ]);
+                  const fullMap = new Map();
+                  pendingSnap.docs.forEach((d: any) => fullMap.set(d.id, { id: d.id, ...d.data() }));
+                  recentSnap.docs.forEach((d: any) => fullMap.set(d.id, { id: d.id, ...d.data() }));
+                  const jobsData = Array.from(fullMap.values());
+                  saveToLocalCache(cacheKey, jobsData);
+                  mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
+                  console.log(`Full sync: ${jobsData.length} jobs from Firebase`);
                 }
               } catch (error) {
                 console.error('Error syncing jobs:', error);
@@ -1535,15 +1370,16 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       );
       saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
       setClients(updatedClients); // Update state immediately
-      
-      // Cache version is already bumped by the Cloud Function
-      
+
+      // Pre-increment local version to match the CF bump and prevent a redundant re-fetch
+      preIncrementVersion('clientsVersion', true);
+
       console.log(`? Client ${clientId} updated`);
     } catch (error) {
       console.error('Error updating client:', error);
       throw error;
     }
-  }, [getCompanyId, clients, saveToLocalCache]);
+  }, [getCompanyId, clients, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Delete a client via the deleteClientV1 Cloud Function.
@@ -1608,436 +1444,16 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     console.log('? Cache cleared');
   }, [resetCacheState]);
 
-  /**
-   * Download archived month data from Cloud Storage.
-   * Archives are stored as: companies/{companyId}/archives/{YYYY}-{M}-{suffix}.json
-   * where suffix is 'j' for finishedJobs and 'd' for documents.
-   * 
-   * Uses a local MMKV cache so repeated requests for the same archived month
-   * don't re-download from Storage.
-   * 
-   * @param {string} companyId
-   * @param {number} year 
-   * @param {number} month - 1-indexed
-   * @param {string} dataType - 'finishedJobs' or 'documents'
-   * @returns {Array|null} - Parsed documents or null if archive doesn't exist
-   */
-  const fetchFromArchive = useCallback(async (companyId: string, year: number, month: number, dataType: string) => {
-    const suffix = dataType === 'finishedJobs' ? 'j' : 'd';
-    const archiveKey = `${year}-${month}-${suffix}`;
-    const mmkvCacheKey = `archive_${companyId}_${archiveKey}`;
-    
-    // Check local MMKV cache first (avoid re-downloading)
-    const cached = mmkvHelpers.getObject<any[]>(mmkvCacheKey);
-    if (cached !== null) {
-      console.log(`?? Archive ${archiveKey} loaded from local cache (${(cached as any[]).length} docs)`);
-      return cached;
-    }
-    
-    // Download from Cloud Storage
-    const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
-    console.log(`?? Downloading archive from Storage: ${storagePath}`);
-    
-    try {
-      const ref = firebaseStorage().ref(storagePath);
-      const url = await ref.getDownloadURL();
-      
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      const jsonText = await response.text();
-      const documents = JSON.parse(jsonText);
-      
-      console.log(`?? Downloaded archive ${archiveKey}: ${documents.length} docs (${(jsonText.length / 1024).toFixed(1)} KB)`);
-      
-      // Cache locally in MMKV (so we don't re-download)
-      mmkvHelpers.setObject(mmkvCacheKey, documents);
-      
-      return documents;
-    } catch (error) {
-      // storage/object-not-found means this month was never archived
-      if ((error as any).code === 'storage/object-not-found' || (error as Error).message?.includes('404')) {
-        console.log(`?? No archive found for ${archiveKey} (not yet archived or no data)`);
-        return null;
-      }
-      console.error(`? Error downloading archive ${archiveKey}:`, error);
-      return null;
-    }
-  }, []);
-
-  /**
-   * Get data for a specific month with 3-tier smart caching:
-   * 
-   * Tier 1 (0-90 days): MMKV local cache
-   * Tier 2 (90-180 days): Firestore live query
-   * Tier 3 (180+ days): Cloud Storage JSON archives
-   * 
-   * Flow for months outside cache:
-   *   1. Query Firestore first
-   *   2. If Firestore returns 0 docs AND month is > ~6 months old ? try Storage archive
-   *   3. If Storage archive exists ? return archived data
-   *   4. If nothing found anywhere ? return empty array (no data for this month)
-   * 
-   * @param {Date} monthDate - Any date within the target month
-   * @param {string} dataType - 'finishedJobs' or 'documents'
-   * @returns {Array} - Data for the requested month
-   */
-  const getDataForMonth = useCallback(async (monthDate: Date, dataType: string) => {
-    const role = getUserRole();
-    const uid = getUid();
-    const wid = getWid();
-    const companyId = getCompanyId();
-    if (!companyId || !uid) return [];
-    const safeRole: string = role || '';
-    const safeWid: string = wid || '';
-    
-    // Calculate month boundaries
-    const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
-    
-    // Calculate cache boundary (90 days ago from now)
-    const now = new Date();
-    const cacheStartDate = new Date(now.getTime() - CACHE_EXPIRY_MS);
-    
-    // Determine data source based on date range
-    const monthStartMs = monthStart.getTime();
-    const monthEndMs = monthEnd.getTime();
-    const cacheStartMs = cacheStartDate.getTime();
-    const nowMs = now.getTime();
-    
-    // Get cached data based on type and role (unified jobs collection)
-    let cachedData: any[] = [];
-    if (dataType === 'finishedJobs') {
-      const allJobs = safeRole === 'manager' ? companyJobs : jobs;
-      cachedData = allJobs.filter(j => j.status === 'finished');
-    } else if (dataType === 'documents') {
-      cachedData = documents;
-    }
-    
-    // Case 1: Month is completely within cache range (0-90 days)
-    if (monthStartMs >= cacheStartMs && monthEndMs <= nowMs) {
-      console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is fully within cache range`);
-      
-      const dateField = dataType === 'documents' ? 'createdAt' : 'finishedAt';
-      return cachedData.filter((item: any) => {
-        const itemDate = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-        return itemDate >= monthStartMs && itemDate <= monthEndMs;
-      });
-    }
-    
-    // Case 2: Month is partially within cache range
-    if (monthEndMs >= cacheStartMs && monthStartMs < cacheStartMs) {
-      console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is partially in cache, fetching missing data...`);
-      
-      const dateField = dataType === 'documents' ? 'createdAt' : 'finishedAt';
-      
-      // Get data from cache
-      const cachedMonthData = cachedData.filter((item: any) => {
-        const itemDate = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-        return itemDate >= cacheStartMs && itemDate <= monthEndMs;
-      });
-      
-      // Query Firebase for missing data (the portion before cache boundary)
-      try {
-        let q;
-        
-        if (dataType === 'finishedJobs') {
-          const jobsRef = collection(db, 'companies', companyId, 'jobs');
-          if (roleUsesScopedJobAccess(safeRole)) {
-            const scopedConstraints = buildJobMembershipConstraints(safeWid);
-            if (scopedConstraints.length === 0) {
-              return cachedMonthData;
-            }
-            q = query(jobsRef,
-              where('status', '==', 'finished'),
-              where('finishedAt', '>=', monthStart.toISOString()),
-              where('finishedAt', '<', cacheStartDate.toISOString()),
-              ...scopedConstraints
-            );
-          } else {
-            q = query(jobsRef,
-              where('status', '==', 'finished'),
-              where('finishedAt', '>=', monthStart.toISOString()),
-              where('finishedAt', '<', cacheStartDate.toISOString())
-            );
-          }
-        } else if (dataType === 'documents') {
-          const documentsRef = collection(db, 'companies', companyId, 'documents');
-          q = query(documentsRef,
-            where('createdAt', '>=', monthStart.toISOString()),
-            where('createdAt', '<', cacheStartDate.toISOString())
-          );
-        }
-        
-        const snapshot = await getDocs(q);
-        const firebaseData = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-        
-        console.log(`Fetched ${firebaseData.length} missing records from Firebase for month ${monthDate.getMonth() + 1}`);
-        
-        return [...cachedMonthData, ...firebaseData];
-      } catch (error) {
-        console.error('Error fetching partial month data:', error);
-        return cachedMonthData;
-      }
-    }
-    
-    // Case 3: Month is completely outside cache range - try MMKV tier2 cache, then Firestore, then Storage
-    console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} is outside cache range`);
-    
-    // N4: Check Tier 2 MMKV cache first (5-min TTL)
-    const tier2Key = `${CACHE_KEYS.TIER2_CACHE_PREFIX}${dataType}_${monthDate.getFullYear()}_${monthDate.getMonth() + 1}`;
-    const tier2Cached = mmkvHelpers.getObject<{ _ts: number; data: any[] }>(tier2Key);
-    if (tier2Cached && tier2Cached._ts && (Date.now() - tier2Cached._ts) < TIER2_CACHE_TTL_MS) {
-      console.log(`?? Tier 2 cache hit for ${tier2Key} (${tier2Cached.data.length} docs)`);
-      return tier2Cached.data;
-    }
-    
-    try {
-      let q;
-      
-      if (dataType === 'finishedJobs') {
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-          if (roleUsesScopedJobAccess(safeRole)) {
-            const scopedConstraints = buildJobMembershipConstraints(safeWid);
-            if (scopedConstraints.length === 0) {
-              return [];
-            }
-            q = query(jobsRef,
-              where('status', '==', 'finished'),
-              where('finishedAt', '>=', monthStart.toISOString()),
-              where('finishedAt', '<=', monthEnd.toISOString()),
-              ...scopedConstraints
-            );
-          } else {
-            q = query(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', monthStart.toISOString()),
-            where('finishedAt', '<=', monthEnd.toISOString())
-          );
-        }
-      } else if (dataType === 'documents') {
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        q = query(documentsRef,
-          where('createdAt', '>=', monthStart.toISOString()),
-          where('createdAt', '<=', monthEnd.toISOString())
-        );
-      }
-      
-      const snapshot = await getDocs(q);
-      const firebaseData = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      
-      // If Firestore returned data, use it (data is still in Firestore, not yet archived)
-      if (firebaseData.length > 0) {
-        console.log(`?? Fetched ${firebaseData.length} records from Firestore for month ${monthDate.getMonth() + 1}`);
-        // N4: Cache in Tier 2 MMKV with TTL
-        mmkvHelpers.setObject(tier2Key, { data: firebaseData, _ts: Date.now() });
-        return firebaseData;
-      }
-      
-      // Firestore returned 0 docs - check if data might be archived in Storage
-      // Only try Storage if the month is old enough to have been archived (~6+ months)
-      const archiveBoundary = new Date(now.getTime() - ARCHIVE_BOUNDARY_MS);
-      if (monthEndMs < archiveBoundary.getTime()) {
-        console.log(`?? Month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()} may be archived, checking Cloud Storage...`);
-        
-        const archivedData = await fetchFromArchive(
-          companyId,
-          monthDate.getFullYear(),
-          monthDate.getMonth() + 1,
-          dataType
-        );
-        
-        if (archivedData && archivedData.length > 0) {
-          // For non-manager roles, filter by user
-          if (dataType === 'finishedJobs' && role !== 'manager') {
-            const filtered = archivedData.filter((item: any) => String(item.wid) === wid);
-            console.log(`?? Filtered archived data: ${filtered.length}/${archivedData.length} docs for wid ${wid}`);
-            return filtered;
-          }
-          if (dataType === 'documents' && role !== 'manager') {
-            const filtered = archivedData.filter((item: any) => item.createdByUid === uid);
-            console.log(`?? Filtered archived data: ${filtered.length}/${archivedData.length} docs for user ${uid}`);
-            return filtered;
-          }
-          
-          console.log(`?? Returning ${archivedData.length} archived records for month ${monthDate.getMonth() + 1}`);
-          return archivedData;
-        }
-      }
-      
-      // No data found anywhere
-      console.log(`?? No data found for month ${monthDate.getMonth() + 1}/${monthDate.getFullYear()}`);
-      return [];
-      
-    } catch (error) {
-      console.error('Error fetching month data:', error);
-      return [];
-    }
-  }, [getUserRole, getUid, getWid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
-
-  /**
-   * Get data for a date range with smart caching
-   * Used for "Last 7 days", "Last month" filters
-   */
-  const getDataForDateRange = useCallback(async (startDate: Date, endDate: Date, dataType: string) => {
-    const role = getUserRole();
-    const uid = getUid();
-    const wid = getWid();
-    const companyId = getCompanyId();
-    if (!companyId || !uid || !role) return [];
-    const safeRole = role;
-    const safeUid = uid;
-    const startMs = startDate.getTime();
-    const endMs = endDate.getTime();
-    const cacheStartMs = getCacheStartDate().getTime();
-    
-    // Get cached data based on type and role (unified jobs collection)
-    let cachedData: any[] = [];
-    if (dataType === 'finishedJobs') {
-      const allJobs = safeRole === 'manager' ? companyJobs : jobs;
-      cachedData = allJobs.filter(j => j.status === 'finished');
-    } else if (dataType === 'documents') {
-      cachedData = documents;
-    } else if (dataType === 'pendingJobs') {
-      const allJobs = safeRole === 'manager' ? companyJobs : jobs;
-      cachedData = allJobs.filter(j => j.status === 'pending' || j.status === 'waiting');
-    }
-    
-    const dateField = dataType === 'documents' ? 'createdAt' : 
-                      dataType === 'pendingJobs' ? 'createdAt' : 'finishedAt';
-    
-    // If range is within cache, use cache only
-    if (startMs >= cacheStartMs) {
-      console.log(`?? Date range is within cache, using cached data`);
-      return cachedData.filter((item: any) => {
-        const itemDate = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-        return itemDate >= startMs && itemDate <= endMs;
-      });
-    }
-    
-    // If range extends beyond cache, need to fetch from Firebase
-    console.log(`?? Date range extends beyond cache, querying Firebase...`);
-    
-    // Get cached portion
-    const cachedPortion = cachedData.filter((item: any) => {
-      const itemDate = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-      return itemDate >= cacheStartMs && itemDate <= endMs;
-    });
-    
-    // Query Firebase for the portion outside cache
-    try {
-      let q;
-      
-      if (dataType === 'finishedJobs') {
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (roleUsesScopedJobAccess(safeRole)) {
-          const scopedConstraints = buildJobMembershipConstraints(wid);
-          if (scopedConstraints.length === 0) {
-            return cachedPortion;
-          }
-          q = query(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', startDate.toISOString()),
-            where('finishedAt', '<', getCacheStartDate().toISOString()),
-            ...scopedConstraints
-          );
-        } else {
-          q = query(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', startDate.toISOString()),
-            where('finishedAt', '<', getCacheStartDate().toISOString())
-          );
-        }
-      } else if (dataType === 'documents') {
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        q = query(documentsRef,
-          where('createdAt', '>=', startDate.toISOString()),
-          where('createdAt', '<', getCacheStartDate().toISOString())
-        );
-      } else if (dataType === 'pendingJobs') {
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (roleUsesScopedJobAccess(safeRole)) {
-          const scopedConstraints = buildJobMembershipConstraints(wid);
-          if (scopedConstraints.length === 0) {
-            return cachedPortion;
-          }
-          q = query(jobsRef,
-            where('status', 'in', ['pending', 'waiting']),
-            where('createdAt', '>=', startDate.toISOString()),
-            where('createdAt', '<', getCacheStartDate().toISOString()),
-            ...scopedConstraints
-          );
-        } else {
-          q = query(jobsRef,
-            where('status', 'in', ['pending', 'waiting']),
-            where('createdAt', '>=', startDate.toISOString()),
-            where('createdAt', '<', getCacheStartDate().toISOString())
-          );
-        }
-      }
-      
-      const snapshot = await getDocs(q);
-      const firebaseData = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      
-      // If Firestore returned 0 docs for the pre-cache portion AND range extends past archive boundary,
-      // we may need to check Storage for archived months
-      if (firebaseData.length === 0 && dataType !== 'pendingJobs') {
-        const archiveBoundary = new Date(Date.now() - ARCHIVE_BOUNDARY_MS);
-        if (startMs < archiveBoundary.getTime()) {
-          console.log(`?? Date range extends past archive boundary, checking Storage for archived months...`);
-          
-          const archivedDocs = [];
-          // Iterate over each full month in the range that's past the archive boundary
-          const archiveCheckStart = new Date(startDate);
-          const archiveCheckEnd = new Date(Math.min(archiveBoundary.getTime(), cacheStartMs));
-          
-          let cursor = new Date(archiveCheckStart.getFullYear(), archiveCheckStart.getMonth(), 1);
-          while (cursor < archiveCheckEnd) {
-            const archived = await fetchFromArchive(
-              companyId,
-              cursor.getFullYear(),
-              cursor.getMonth() + 1,
-              dataType
-            );
-            
-            if (archived && archived.length > 0) {
-              // Filter by date range and user
-              const dField = dataType === 'documents' ? 'createdAt' : 'finishedAt';
-              const filtered = archived.filter((item: any) => {
-                const d = item[dField] ? new Date(item[dField]).getTime() : 0;
-                return d >= startMs && d <= endMs;
-              });
-              
-              // Apply user filter for non-managers
-              if (safeRole !== 'manager') {
-                const userField = dataType === 'finishedJobs' ? 'wid' : 'createdByUid';
-                const userValue = dataType === 'finishedJobs' ? wid : safeUid;
-                const userFiltered = filtered.filter((item: any) => String(item[userField]) === userValue);
-                archivedDocs.push(...userFiltered);
-              } else {
-                archivedDocs.push(...filtered);
-              }
-            }
-            
-            // Move to next month
-            cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-          }
-          
-          if (archivedDocs.length > 0) {
-            console.log(`?? Found ${archivedDocs.length} archived records for date range`);
-            return [...cachedPortion, ...archivedDocs];
-          }
-        }
-      }
-      
-      return [...cachedPortion, ...firebaseData];
-    } catch (error) {
-      console.error('Error fetching data for date range:', error);
-      return cachedPortion;
-    }
-  }, [getUserRole, getUid, getWid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
+  // Archive-aware month and date-range queries — extracted to hooks/useArchiveQuery.ts
+  const { fetchFromArchive, getDataForMonth, getDataForDateRange } = useArchiveQuery({
+    getUserRole,
+    getUid,
+    getWid,
+    getCompanyId,
+    jobs,
+    companyJobs,
+    documents,
+  });
 
   /**
    * Refresh specific cache data

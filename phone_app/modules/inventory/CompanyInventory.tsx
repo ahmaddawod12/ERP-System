@@ -26,10 +26,11 @@ import {
   AppChip,
   AppDivider,
   AppEmptyState,
-  AppInput,
+  SearchInput,
   AppText,
   GlobalHeader,
   LoadingSpinner,
+  ScreenHeroCard,
 } from '../../components';
 
 const translations = {
@@ -351,10 +352,20 @@ export default function CompanyInventory() {
           }}
           ListHeaderComponent={
             <View style={styles.headerArea}>
-              <AppText variant="title">{t.title}</AppText>
-              <AppText variant="caption" color={palette.textSecondary}>
-                {t.subtitle}
-              </AppText>
+              <ScreenHeroCard
+                title={t.title}
+                subtitle={t.subtitle}
+                eyebrow="Inventory"
+                icon="package-variant-closed"
+                iconLibrary="material"
+                accentColor={palette.boxOrange}
+                metrics={[
+                  { label: t.all, value: String(companyParts.length) },
+                  { label: t.active, value: String(activeCount) },
+                  { label: t.disabled, value: String(disabledCount) },
+                ]}
+                badges={[t.lowStock, t.active, t.disabled]}
+              />
 
               <View style={styles.filterRow}>
                 {filters.map((item) => {
@@ -383,11 +394,11 @@ export default function CompanyInventory() {
                 })}
               </View>
 
-              <AppInput
+              <SearchInput
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 placeholder={t.search}
-                leftIcon={<MaterialCommunityIcons name="magnify" size={18} color={palette.textLight} />}
+                colors={palette}
                 style={styles.searchInput}
               />
 
@@ -475,7 +486,7 @@ const styles = StyleSheet.create({
   },
   headerArea: {
     gap: spacing.sm,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
   filterRow: {
     flexDirection: 'row',

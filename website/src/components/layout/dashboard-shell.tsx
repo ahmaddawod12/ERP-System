@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  ArrowUpRight,
   BriefcaseBusiness,
   ClipboardList,
   FileText,
@@ -14,6 +15,7 @@ import {
   TrendingUp,
   Boxes,
   Shield,
+  Sparkles,
 } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { canAccessSection, type AppSection } from "@/lib/access";
@@ -99,6 +101,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return navItemsByRole(profile.role).filter((item) => canAccessSection(profile.role, tier, item.section));
   }, [profile, tier]);
 
+  const activeSection = useMemo(
+    () =>
+      visibleNavItems.find((item) =>
+        item.href === "/app" ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`),
+      ) ?? null,
+    [pathname, visibleNavItems],
+  );
+
+  const upgradeRoute = visibleNavItems.find((item) => item.section === "upgrade")?.href ?? null;
+
   useEffect(() => {
     if (loading) return;
     if (!user) {
@@ -120,61 +132,130 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[260px_1fr]">
-      <aside className="border-b border-slate-200 bg-white/80 p-4 backdrop-blur lg:border-b-0 lg:border-r dark:border-slate-800 dark:bg-slate-950/60">
-        <div className="mb-6 flex items-center gap-2">
-          <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 text-white">
-            SJ
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Smart-Job ERP</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{profile.email}</p>
-          </div>
-        </div>
+    <div className="relative min-h-screen px-3 pb-4 pt-3 sm:px-4">
+      <div className="absolute left-[-5rem] top-20 -z-10 h-56 w-56 rounded-full bg-cyan-300/25 blur-3xl dark:bg-cyan-500/18" />
+      <div className="absolute bottom-10 right-[-4rem] -z-10 h-52 w-52 rounded-full bg-amber-300/20 blur-3xl dark:bg-amber-500/14" />
 
-        <div className="mb-4 flex items-center gap-2">
-          <Badge>{profile.role}</Badge>
-          <Badge variant="success">{tier}</Badge>
-        </div>
+      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+        <aside className="dashboard-panel h-fit overflow-hidden p-3 sm:p-4 lg:sticky lg:top-3">
+          <div className="rounded-[1.5rem] border border-slate-200/70 bg-white/75 p-4 dark:border-slate-800 dark:bg-slate-900/45">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(145deg,#0891b2,#0f172a)] text-sm font-bold tracking-[0.18em] text-white dark:bg-[linear-gradient(145deg,#22d3ee,#164e63)] dark:text-slate-950">
+                SJ
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Smart-Job ERP</p>
+                <p className="text-xs uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+                  Control surface
+                </p>
+              </div>
+            </div>
 
-        <nav className="grid gap-1">
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-            const active = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
-                  active
-                    ? "bg-slate-900 text-white dark:bg-sky-500 dark:text-slate-950"
-                    : "text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
+            <div className="rounded-[1.3rem] border border-slate-200/70 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-950/55">
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                {profile.name || profile.email}
+              </p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{profile.email}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Badge>{profile.role}</Badge>
+                <Badge variant="success">{tier}</Badge>
+              </div>
+              <div className="mt-4 grid gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <div className="flex items-center justify-between rounded-xl bg-white/80 px-3 py-2 dark:bg-slate-900/65">
+                  <span>Company</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-200">{profile.companyId || "Pending"}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-xl bg-white/80 px-3 py-2 dark:bg-slate-900/65">
+                  <span>Section</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-200">{activeSection?.label || "Overview"}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="mb-3 px-2 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">
+              Navigation
+            </p>
+            <nav className="flex gap-1.5 overflow-x-auto pb-1 lg:grid lg:overflow-visible lg:pb-0">
+              {visibleNavItems.map((item) => {
+                const Icon = item.icon;
+                const active =
+                  item.href === "/app"
+                    ? pathname === item.href
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "inline-flex shrink-0 items-center justify-between gap-3 rounded-[1rem] px-3.5 py-3 text-sm font-medium transition-all lg:w-auto",
+                      active
+                        ? "bg-slate-950 text-white shadow-[0_16px_42px_-28px_rgba(15,23,42,0.95)] dark:bg-white dark:text-slate-950"
+                        : "border border-transparent text-slate-700 hover:border-slate-200 hover:bg-white/75 dark:text-slate-200 dark:hover:border-slate-800 dark:hover:bg-slate-900/55",
+                    )}
+                  >
+                    <span className="inline-flex items-center gap-3">
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </span>
+                    <ArrowUpRight className={cn("hidden h-3.5 w-3.5 opacity-0 transition lg:block", active && "opacity-100")} />
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div className="mt-5 rounded-[1.5rem] border border-slate-200/70 bg-[linear-gradient(145deg,rgba(8,145,178,0.1),rgba(15,23,42,0.02))] p-4 dark:border-slate-800 dark:bg-[linear-gradient(145deg,rgba(34,211,238,0.08),rgba(15,23,42,0.45))]">
+            <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.28em] text-slate-600 dark:text-slate-300">
+              <Sparkles className="h-3.5 w-3.5" />
+              Workspace state
+            </p>
+            <p className="mt-3 text-sm leading-7 text-slate-600 dark:text-slate-300">
+              Access stays role-aware and tier-aware across jobs, clients, inventory, and document flows.
+            </p>
+            {upgradeRoute ? (
+              <Link href={upgradeRoute} className="mt-4 inline-flex">
+                <Button size="sm" className="rounded-full px-4">
+                  Review plan
+                </Button>
               </Link>
-            );
-          })}
-        </nav>
+            ) : null}
+          </div>
 
-        <div className="mt-8 grid gap-2">
-          <Button
-            variant="secondary"
-            onClick={async () => {
-              await logout();
-              router.replace("/login");
-            }}
-          >
-            Sign out
-          </Button>
-        </div>
-      </aside>
+          <div className="mt-5 grid gap-2">
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                await logout();
+                router.replace("/login");
+              }}
+            >
+              Sign out
+            </Button>
+          </div>
+        </aside>
 
-      <main className="bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.12),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(59,130,246,0.14),transparent_40%)] p-4 sm:p-6 lg:p-8 dark:bg-[radial-gradient(circle_at_top,rgba(14,165,233,0.2),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(2,132,199,0.2),transparent_40%)]">
-        {children}
-      </main>
+        <main className="min-w-0">
+          <div className="dashboard-panel mb-4 flex flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">
+                Current workspace
+              </p>
+              <h1 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-slate-950 dark:text-white">
+                {activeSection?.label || "Overview"}
+              </h1>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge>{profile.role}</Badge>
+              <Badge variant="success">{tier}</Badge>
+              <Badge variant="info">{profile.companyId || "No company yet"}</Badge>
+            </div>
+          </div>
+
+          <div className="grid gap-4">{children}</div>
+        </main>
+      </div>
     </div>
   );
 }

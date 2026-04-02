@@ -42,7 +42,7 @@ export default function SearchInput({
       style={[
         styles.container,
         {
-          backgroundColor: palette.surfaceAlt,
+          backgroundColor: palette.backgroundElevated,
           borderColor: isFocused ? palette.secondary : palette.border,
         },
         focusStyle,
@@ -82,9 +82,9 @@ export default function SearchInput({
 const styles = StyleSheet.create({
   container: {
     borderWidth: 1.2,
-    borderRadius: borderRadius.lg,
-    minHeight: 50,
-    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.xl,
+    minHeight: 52,
+    paddingHorizontal: spacing.md + 2,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: typography.base,
-    paddingVertical: spacing.sm + 2,
+    paddingVertical: spacing.md,
   },
   clearButton: {
     padding: spacing.xs,

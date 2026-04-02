@@ -18,7 +18,6 @@ import { View,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
   Modal,
@@ -37,13 +36,13 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { AppText, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch } from '../../components';
+import { AppText, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput } from '../../components';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
 import { useAuth, useDocumentTask } from '../../hooks';
 import { middleEastFunctions, httpsCallable, db, doc, getDoc } from '../../firebase';
-import { DOC_TYPE } from '@smart-job/contracts';
+import { DOC_TYPE } from '/contracts';
 
 // Document type configurations (keyed by numeric type)
 const DOCUMENT_CONFIGS = {
@@ -1245,12 +1244,11 @@ export default function CreateDocument() {
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                 {t.customerName} <AppText style={styles.requiredStar}>*</AppText>
               </AppText>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerName}
                 onChangeText={(text) => setFormData({ ...formData, customerName: text })}
                 placeholder={t.customerName}
-                placeholderTextColor={colors.textSecondary}
               />
             </View>
 
@@ -1262,12 +1260,11 @@ export default function CreateDocument() {
                   : <AppText style={styles.optionalText}>({t.optional})</AppText>
                 }
               </AppText>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.clientVatNumber}
                 onChangeText={(text) => setFormData({ ...formData, clientVatNumber: text })}
                 placeholder={t.clientVatNumber}
-                placeholderTextColor={colors.textSecondary}
                 keyboardType="numeric"
               />
             </View>
@@ -1277,12 +1274,11 @@ export default function CreateDocument() {
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                 {t.customerEmail} <AppText style={styles.optionalText}>({t.optional})</AppText>
               </AppText>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerEmail}
                 onChangeText={(text) => setFormData({ ...formData, customerEmail: text })}
                 placeholder={t.customerEmail}
-                placeholderTextColor={colors.textSecondary}
                 keyboardType="email-address"
               />
             </View>
@@ -1292,12 +1288,11 @@ export default function CreateDocument() {
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                 {t.customerAddress} <AppText style={styles.optionalText}>({t.optional})</AppText>
               </AppText>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerAddress}
                 onChangeText={(text) => setFormData({ ...formData, customerAddress: text })}
                 placeholder={t.customerAddress}
-                placeholderTextColor={colors.textSecondary}
               />
             </View>
 
@@ -1306,12 +1301,11 @@ export default function CreateDocument() {
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                 {t.customerCity} <AppText style={styles.optionalText}>({t.optional})</AppText>
               </AppText>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerCity}
                 onChangeText={(text) => setFormData({ ...formData, customerCity: text })}
                 placeholder={t.customerCity}
-                placeholderTextColor={colors.textSecondary}
               />
             </View>
 
@@ -1320,12 +1314,11 @@ export default function CreateDocument() {
               <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                 {t.customerPhone} <AppText style={styles.optionalText}>({t.optional})</AppText>
               </AppText>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+              <AppInput
+                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                 value={formData.customerPhone}
                 onChangeText={(text) => setFormData({ ...formData, customerPhone: text })}
                 placeholder={t.customerPhone}
-                placeholderTextColor={colors.textSecondary}
                 keyboardType="phone-pad"
               />
             </View>
@@ -1455,8 +1448,8 @@ export default function CreateDocument() {
                 <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                   {t.paymentInfo} <AppText style={styles.optionalText}>({t.optional})</AppText>
                 </AppText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+                <AppInput
+                  inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
                   value={formData.paymentInfo}
                   onChangeText={(text) => setFormData({ ...formData, paymentInfo: text })}
                   placeholder={
@@ -1465,7 +1458,6 @@ export default function CreateDocument() {
                     formData.paymentMethod === 'credit' ? t.paymentInfoCreditPlaceholder :
                     t.paymentInfoPlaceholder
                   }
-                  placeholderTextColor={colors.textSecondary}
                 />
               </View>
             </View>
@@ -1532,8 +1524,8 @@ export default function CreateDocument() {
                         numberOfLines={2}
                       />
                     ) : (
-                    <TextInput
-                      style={[
+                    <AppInput
+                      inputStyle={[
                         styles.inputMultiline, 
                         { backgroundColor: isReadOnly ? colors.backgroundLight : colors.background, color: colors.textPrimary, borderColor: colors.border },
                         isReadOnly && styles.inputReadOnly
@@ -1541,7 +1533,6 @@ export default function CreateDocument() {
                       value={item.description}
                       onChangeText={(text) => !isReadOnly && updateItem(item.id, 'description', text)}
                       placeholder={t.itemDescription}
-                      placeholderTextColor={colors.textSecondary}
                       multiline
                       numberOfLines={2}
                       editable={!isReadOnly}
@@ -1553,8 +1544,8 @@ export default function CreateDocument() {
                     <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                       {t.itemPrice} {!isReadOnly && <AppText style={styles.requiredStar}>*</AppText>}
                     </AppText>
-                    <TextInput
-                      style={[
+                    <AppInput
+                      inputStyle={[
                         styles.input, 
                         { backgroundColor: isReadOnly ? colors.backgroundLight : colors.background, color: colors.textPrimary, borderColor: colors.border },
                         isReadOnly && styles.inputReadOnly
@@ -1562,7 +1553,6 @@ export default function CreateDocument() {
                       value={item.price}
                       onChangeText={(text) => !isReadOnly && updateItem(item.id, 'price', text)}
                       placeholder={t.itemPrice}
-                      placeholderTextColor={colors.textSecondary}
                       keyboardType="decimal-pad"
                       editable={!isReadOnly}
                     />
@@ -1572,8 +1562,8 @@ export default function CreateDocument() {
                     <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
                       {t.itemQuantity} {!isReadOnly && <AppText style={styles.optionalText}>({t.optional})</AppText>}
                     </AppText>
-                    <TextInput
-                      style={[
+                    <AppInput
+                      inputStyle={[
                         styles.input, 
                         { backgroundColor: isReadOnly ? colors.backgroundLight : colors.background, color: colors.textPrimary, borderColor: colors.border },
                         isReadOnly && styles.inputReadOnly
@@ -1581,7 +1571,6 @@ export default function CreateDocument() {
                       value={item.quantity}
                       onChangeText={(text) => !isReadOnly && updateItem(item.id, 'quantity', text)}
                       placeholder={t.itemQuantity}
-                      placeholderTextColor={colors.textSecondary}
                       keyboardType="numeric"
                       editable={!isReadOnly}
                     />
@@ -1672,10 +1661,9 @@ export default function CreateDocument() {
                 
                 <View style={[styles.searchContainer, { backgroundColor: colors.surface }]}>
                   <Ionicons name="search" size={20} color={colors.textSecondary} />
-                  <TextInput
-                    style={[styles.searchInput, { color: colors.textPrimary }]}
+                  <AppInput
+                    inputStyle={[styles.searchInput, { color: colors.textPrimary }]}
                     placeholder={t.searchInvoices}
-                    placeholderTextColor={colors.textSecondary}
                     value={invoiceSearchText}
                     onChangeText={setInvoiceSearchText}
                   />

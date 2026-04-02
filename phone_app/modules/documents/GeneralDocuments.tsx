@@ -17,11 +17,13 @@ import {
   AppButton,
   AppCard,
   AppEmptyState,
-  AppInput,
+  AppChip,
   AppText,
   GlobalHeader,
+  ScreenHeroCard,
+  SearchInput,
 } from '../../components';
-import { DOC_TYPE } from '@smart-job/contracts';
+import { DOC_TYPE } from '/contracts';
 
 const translations = {
   en: {
@@ -163,34 +165,41 @@ export default function GeneralDocuments() {
         }}
         ListHeaderComponent={
           <View style={styles.headerSection}>
-            <View style={[styles.heroIconWrap, { backgroundColor: `${palette.secondary}18` }]}>
-              <MaterialCommunityIcons
-                name="file-document-multiple-outline"
-                size={34}
-                color={palette.secondary}
-              />
-            </View>
-            <AppText variant="title">{t.title}</AppText>
-            <AppText variant="caption" color={palette.textSecondary}>
-              {t.subtitle}
-            </AppText>
-            <AppInput
+            <ScreenHeroCard
+              title={t.title}
+              subtitle={t.subtitle}
+              eyebrow="Documents"
+              icon="file-document-multiple-outline"
+              iconLibrary="material"
+              accentColor={palette.boxBlue}
+              metrics={[
+                { label: 'Types', value: String(docDefinitions.length) },
+                { label: 'Visible', value: String(filteredDocs.length) },
+              ]}
+              badges={['Mobile PDFs', 'History', 'Templates']}
+            />
+            <SearchInput
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder={t.searchPlaceholder}
-              leftIcon={<MaterialCommunityIcons name="magnify" size={18} color={palette.textLight} />}
+              colors={palette}
               style={styles.searchInput}
             />
             <TouchableOpacity onPress={() => router.push('/DocumentHistory')} activeOpacity={0.9}>
-              <AppCard style={styles.historyCard}>
+              <AppCard style={[styles.historyCard, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}> 
                 <View style={styles.historyRow}>
-                  <View>
+                  <View style={styles.historyTextWrap}>
+                    <View style={[styles.historyIconWrap, { backgroundColor: `${palette.secondary}12` }]}> 
+                      <MaterialCommunityIcons name="history" size={20} color={palette.secondary} />
+                    </View>
+                  </View>
+                  <View style={styles.historyCopyWrap}>
                     <AppText variant="bodyStrong">{t.history}</AppText>
                     <AppText variant="caption" color={palette.textSecondary}>
                       {t.historyDesc}
                     </AppText>
                   </View>
-                  <MaterialCommunityIcons name="history" size={22} color={palette.secondary} />
+                  <AppChip label="Open" color={palette.secondary} size="sm" />
                 </View>
               </AppCard>
             </TouchableOpacity>
@@ -210,28 +219,33 @@ const styles = StyleSheet.create({
   },
   headerSection: {
     gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  heroIconWrap: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.xs,
+    marginBottom: spacing.lg,
   },
   searchInput: {
     marginTop: spacing.xs,
   },
   historyCard: {
     marginTop: spacing.xs,
-    ...shadows.sm,
+    ...shadows.card,
   },
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
+  },
+  historyTextWrap: {
+    justifyContent: 'center',
+  },
+  historyIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyCopyWrap: {
+    flex: 1,
   },
   documentCard: {
     marginBottom: spacing.md,

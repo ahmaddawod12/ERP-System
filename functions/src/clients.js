@@ -174,7 +174,6 @@ exports.updateClientV1 = onCall(async (request) => {
       throw new HttpsError('invalid-argument', 'name cannot be empty');
     }
     updates.cname = trimmedName;
-    updates.name = trimmedName; // Backward compatibility for website/legacy readers.
   }
   if (data.email !== undefined) {
     const email = String(data.email || '').trim();
@@ -187,7 +186,6 @@ exports.updateClientV1 = onCall(async (request) => {
   if (incomingPhone !== undefined) {
     const trimmedPhone = String(incomingPhone || '').trim();
     updates.cphone = trimmedPhone;
-    updates.phone = trimmedPhone; // Backward compatibility for website/legacy readers.
   }
   if (data.address !== undefined) updates.address = String(data.address || '').trim();
   if (data.city !== undefined) updates.city = String(data.city || '').trim();

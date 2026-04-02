@@ -1,7 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { View,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -14,9 +13,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, doc, getDoc, updateDoc, functions, httpsCallable } from '../../firebase';
+import { db, doc, getDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
-import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
+import { AppText, AppInput, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -222,6 +221,7 @@ export default function EditJob() {
       await updateJobFn({ companyId, jobId: editingJob.id, ...jobUpdates });
       
       // Update cache with document-level versioning
+      const statusLower = String(editingJob.status || '').toLowerCase();
       const isPending = statusLower !== 'finished';
       await updateJob(editingJob.id, jobUpdates, isPending);
 
@@ -265,79 +265,63 @@ export default function EditJob() {
 
           {/* Form Fields */}
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.title}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.title}
               value={editingJob.title}
               onChangeText={(text) => setEditingJob({ ...editingJob, title: text })}
               placeholder={t.title}
-              placeholderTextColor={colors.textSecondary}
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.description}</AppText>
-            <TextInput
-              style={[styles.input, styles.textArea, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.description}
               value={editingJob.description}
               onChangeText={(text) => setEditingJob({ ...editingJob, description: text })}
               placeholder={t.description}
-              placeholderTextColor={colors.textSecondary}
               multiline
               numberOfLines={4}
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.location}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.location}
               value={editingJob.location}
               onChangeText={(text) => setEditingJob({ ...editingJob, location: text })}
               placeholder={t.location}
-              placeholderTextColor={colors.textSecondary}
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.timeFrom}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.timeFrom}
               value={editingJob.timeFrom}
               onChangeText={(text) => setEditingJob({ ...editingJob, timeFrom: text })}
               placeholder="HH:MM"
-              placeholderTextColor={colors.textSecondary}
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.timeTo}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.timeTo}
               value={editingJob.timeTo}
               onChangeText={(text) => setEditingJob({ ...editingJob, timeTo: text })}
               placeholder="HH:MM"
-              placeholderTextColor={colors.textSecondary}
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.clientName}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.clientName}
               value={editingJob.cname}
               onChangeText={(text) => setEditingJob({ ...editingJob, cname: text })}
               placeholder={t.clientName}
-              placeholderTextColor={colors.textSecondary}
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.clientPhone}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.clientPhone}
               value={editingJob.cphone}
               onChangeText={(text) => setEditingJob({ ...editingJob, cphone: text })}
               placeholder={t.clientPhone}
-              placeholderTextColor={colors.textSecondary}
               keyboardType="phone-pad"
             />
 
-            <AppText style={[styles.label, { color: colors.textSecondary }]}>{t.signingPerson}</AppText>
-            <TextInput
-              style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
+            <AppInput
+              label={t.signingPerson}
               value={editingJob.signingPerson}
               onChangeText={(text) => setEditingJob({ ...editingJob, signingPerson: text })}
               placeholder={t.signingPerson}
-              placeholderTextColor={colors.textSecondary}
             />
           </View>
 

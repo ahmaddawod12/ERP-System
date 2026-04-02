@@ -240,19 +240,24 @@ exports.manageWorker = onCall(async (request) => {
           .where('status', 'in', ['pending', 'waiting'])
           .get();
         if (!assignedJobsSnap.empty) {
-          const cleanupBatch = admin.firestore().batch();
+          // Paginate batches to respect 500-op Firestore limit
+          const BATCH_LIMIT = 499; // leave room for cache bump
           let cleanupCount = 0;
-          assignedJobsSnap.docs.forEach((doc) => {
-            // Unassign the worker from the job rather than deleting it
-            cleanupBatch.update(doc.ref, {
-              wid: admin.firestore.FieldValue.delete(),
-              wname: admin.firestore.FieldValue.delete(),
-              status: 'pending',
-              updatedAt: new Date().toISOString(),
+          for (let i = 0; i < assignedJobsSnap.docs.length; i += BATCH_LIMIT) {
+            const chunk = assignedJobsSnap.docs.slice(i, i + BATCH_LIMIT);
+            const cleanupBatch = admin.firestore().batch();
+            chunk.forEach((doc) => {
+              // Unassign the worker from the job rather than deleting it
+              cleanupBatch.update(doc.ref, {
+                wid: admin.firestore.FieldValue.delete(),
+                wname: admin.firestore.FieldValue.delete(),
+                status: 'pending',
+                updatedAt: new Date().toISOString(),
+              });
+              cleanupCount++;
             });
-            cleanupCount++;
-          });
-          await cleanupBatch.commit();
+            await cleanupBatch.commit();
+          }
           logger.info(`Unassigned ${cleanupCount} pending jobs from deleted worker: ${workerUid}`);
 
           // Bump jobs cache version
@@ -331,11 +336,11 @@ exports.manageWorker = onCall(async (request) => {
       firestoreUpdates.email = normalizedEmail;
       firestoreUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
+      // Atomic batch: update profile + worker list + cache in one commit
+      const editBatch = admin.firestore().batch();
+
       // Update worker profile in Firestore
-      if (Object.keys(firestoreUpdates).length > 0) {
-        await workerProfileRef.set(firestoreUpdates, { merge: true });
-        logger.info(`Updated Firestore profile for worker: ${redactEmail(normalizedEmail)} (uid: ${workerUid})`);
-      }
+      editBatch.set(workerProfileRef, firestoreUpdates, { merge: true });
 
       // Update company's worker list (keyed by wid)
       const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
@@ -353,10 +358,17 @@ exports.manageWorker = onCall(async (request) => {
       }
       updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
-      if (Object.keys(updateData).length > 0) {
-        await workerListRef.set(updateData, { merge: true });
-        logger.info(`Updated worker in company list: ${companyId}`);
-      }
+      editBatch.set(workerListRef, updateData, { merge: true });
+
+      // Bump workersVersion so phone app managers see the updated name/role/phone
+      const companyCacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
+      editBatch.set(companyCacheRef, {
+        workersVersion: admin.firestore.FieldValue.increment(1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      await editBatch.commit();
+      logger.info(`Updated Firestore profile + worker list + cache atomically for worker: ${redactEmail(normalizedEmail)} (uid: ${workerUid})`);
 
       await saveAuditLog(companyId, 'editWorker', request.auth.uid);
 

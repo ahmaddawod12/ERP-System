@@ -3,7 +3,9 @@ import type { Role, UserProfile, WorkerProfile } from "./types";
 type JobFormValues = {
   title: string;
   cname: string;
+  cphone: string;
   description: string;
+  location: string;
 };
 
 type MembershipProfile = Pick<UserProfile, "name" | "email" | "mid" | "wid"> | null | undefined;
@@ -68,7 +70,9 @@ export function buildManagedJobCreatePayload(
   return {
     title: form.title,
     cname: form.cname,
+    ...(form.cphone ? { cphone: form.cphone } : {}),
     description: form.description,
+    ...(form.location ? { location: form.location } : {}),
     status: "pending" as const,
     ...getManagerMetadata(managerProfile),
     wid: normalizeMembershipId(assignee?.wid) ?? null,
@@ -83,7 +87,9 @@ export function buildSoloFinishedJobPayload(form: JobFormValues, profile: Member
   return {
     title: form.title,
     cname: form.cname,
+    ...(form.cphone ? { cphone: form.cphone } : {}),
     description: form.description,
+    ...(form.location ? { location: form.location } : {}),
     wid,
     ...(wname ? { wname } : {}),
   };

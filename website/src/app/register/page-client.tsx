@@ -7,7 +7,7 @@ import { createUserWithEmailAndPassword } from "firebase/auth";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CheckCircle2, ChevronRight } from "lucide-react";
+import { ArrowRight, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
 import { auth } from "@/lib/firebase/client";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
@@ -85,30 +85,41 @@ export default function RegisterClient() {
 
   return (
     <PublicLayout>
-      <section className="relative overflow-hidden py-12">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_10%_15%,rgba(14,165,233,0.2),transparent_38%),radial-gradient(circle_at_85%_0%,rgba(16,185,129,0.12),transparent_32%),linear-gradient(180deg,rgba(248,250,252,0.95)_0%,rgba(241,245,249,0.82)_100%)] dark:bg-[radial-gradient(circle_at_10%_15%,rgba(14,165,233,0.28),transparent_44%),radial-gradient(circle_at_85%_0%,rgba(16,185,129,0.2),transparent_36%),linear-gradient(180deg,rgba(2,6,23,0.88)_0%,rgba(2,6,23,0.96)_100%)]" />
-
+      <section className="relative overflow-hidden pb-16 pt-8 sm:pt-10">
         <div className="page-shell">
           <div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[1fr_1.15fr]">
-            <Card className="h-fit">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
+            <Card className="mesh-card h-fit p-7 sm:p-8">
+              <p className="section-kicker">
+                <Sparkles className="h-3.5 w-3.5" />
                 Step 1 of 2
               </p>
-              <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-slate-100">
+              <h1 className="mt-5 text-4xl font-semibold tracking-[-0.04em] text-slate-900 dark:text-slate-100">
                 Create your Smart-Job ERP account
               </h1>
-              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              <p className="mt-4 text-base leading-8 text-slate-600 dark:text-slate-300">
                 Registration is now a guided flow: create account first, then complete onboarding in modern step-by-step screens.
               </p>
+
+              <div className="mt-6 rounded-[1.5rem] border border-slate-200/70 bg-white/75 px-4 py-4 dark:border-white/10 dark:bg-slate-900/55">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 h-5 w-5 text-slate-950 dark:text-white" />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950 dark:text-white">Backend provisioning stays protected</p>
+                    <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                      Account creation happens here, while company-scoped setup continues through server-backed onboarding.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
               <div className="mt-6 space-y-3">
                 {setupFlow.map((item, index) => (
                   <div
                     key={item.title}
-                    className="rounded-xl border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-900/50"
+                    className="rounded-[1.3rem] border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-900/50"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-cyan-600 text-xs font-semibold text-white">
+                      <div className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white dark:bg-white dark:text-slate-950">
                         {index + 1}
                       </div>
                       <div>
@@ -125,9 +136,11 @@ export default function RegisterClient() {
               </div>
             </Card>
 
-            <Card>
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Start with account credentials</h2>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            <Card className="glass-panel rounded-[2rem] p-6 sm:p-8">
+              <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-900 dark:text-slate-100">
+                Start with account credentials
+              </h2>
+              <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
                 You will enter your name and business details in the next onboarding step.
               </p>
 
@@ -154,13 +167,13 @@ export default function RegisterClient() {
                   error={errors.confirmPassword?.message}
                 />
 
-                <Button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-1">
+                <Button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-2 rounded-2xl">
                   {isSubmitting ? "Creating account..." : "Continue to onboarding"}
-                  {!isSubmitting ? <ChevronRight className="h-4 w-4" /> : null}
+                  {!isSubmitting ? <ArrowRight className="h-4 w-4" /> : null}
                 </Button>
               </form>
 
-              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200">
+              <div className="mt-4 rounded-[1.3rem] border border-slate-200 bg-slate-50/70 p-4 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200">
                 <p className="inline-flex items-center gap-1 font-medium">
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                   Backend setup is atomic and server-side.

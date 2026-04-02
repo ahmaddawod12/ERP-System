@@ -9,7 +9,6 @@ import { useCache } from '../../contexts/CacheContext';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
-  TextInput,
   TouchableOpacity,
   FlatList,
   StyleSheet,
@@ -32,7 +31,7 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
-import { AppText, GlobalHeader } from '../../components';
+import { AppText, GlobalHeader, AppInput } from '../../components';
 import { appendConversationMessage, loadConversationThread } from './support-message-store';
 
 export default function SupportChat() {
@@ -919,14 +918,13 @@ export default function SupportChat() {
                   <AppText style={[styles.templateQuestion, { color: colors.textPrimary }]}>
                     {question}
                   </AppText>
-                  <TextInput
-                    style={[styles.templateInput, { 
+                  <AppInput
+                    inputStyle={[styles.templateInput, { 
                       backgroundColor: colors.surface, 
                       color: colors.textPrimary,
                       borderColor: colors.border || 'rgba(0,0,0,0.1)',
                     }]}
                     placeholder={t.answer}
-                    placeholderTextColor={colors.textSecondary}
                     value={templateAnswers[index] || ''}
                     onChangeText={(text) => setTemplateAnswers(prev => ({ ...prev, [index]: text }))}
                     multiline
@@ -982,10 +980,9 @@ export default function SupportChat() {
         {/* Input (only if not viewing closed or conversation is open, and not showing template form) */}
         {!viewingClosedConversation && conversationStatus === 'open' && !showTemplateForm && (
           <View style={[styles.inputContainer, { backgroundColor: colors.surface, paddingBottom: insets.bottom + spacing.sm }]}>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary }]}
+            <AppInput
+              inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary }]}
               placeholder={t.placeholder}
-              placeholderTextColor={colors.textSecondary}
               value={message}
               onChangeText={setMessage}
               multiline

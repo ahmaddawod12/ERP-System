@@ -84,8 +84,6 @@ export interface WorkerProfile {
   role: Role;
   name: string;
   phoneNumber: string;
-  /** @deprecated Use wid instead */
-  workerId?: string;
   createdAt: string;
   updatedAt?: string;
 }
@@ -101,13 +99,12 @@ export interface JobRecord {
   location?: string;
   cname: string;
   cphone?: string;
-  clientId?: string;
+  cid?: string;
   /**
    * Canonical statuses: pending → waiting → finished | denied
    */
   status: "pending" | "waiting" | "denied" | "finished";
   wid: string | null;
-  name?: string;
   wname?: string | null;
   mname?: string | null;
   mid?: string | null;

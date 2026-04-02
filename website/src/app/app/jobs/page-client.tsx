@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, ClipboardList, Sparkles, UsersRound } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -33,14 +34,18 @@ import type { JobRecord, WorkerProfile } from "@/lib/types";
 interface JobFormState {
   title: string;
   cname: string;
+  cphone: string;
   description: string;
+  location: string;
   wid: string;
 }
 
 const initialState: JobFormState = {
   title: "",
   cname: "",
+  cphone: "",
   description: "",
+  location: "",
   wid: "",
 };
 
@@ -70,6 +75,16 @@ export default function JobsClient() {
 
     return Object.fromEntries(entries);
   }, [ownWorkerWid, profile?.email, profile?.name, workers]);
+
+  const pendingAssignedCount = pendingJobs.filter((job) => Boolean(job.wid)).length;
+  const waitingCount = pendingJobs.filter((job) => job.status === "waiting").length;
+
+  const statusBadgeVariant = (status: JobRecord["status"]) => {
+    if (status === "finished") return "success" as const;
+    if (status === "waiting") return "warning" as const;
+    if (status === "denied") return "danger" as const;
+    return "default" as const;
+  };
 
   const loadJobs = useCallback(async () => {
     if (!scopeId) {
@@ -148,188 +163,299 @@ export default function JobsClient() {
 
   return (
     <ProtectedRoute section="jobs">
-      <section className="grid gap-4">
-        <Card>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
-            {isSoloUser ? "My Jobs" : "Company Jobs"}
-          </h1>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            {isSoloUser
-              ? "Create and manage your job workflow."
-              : "Manage pending and completed jobs, worker assignments, and status updates."}
-          </p>
+      <section className="dashboard-page">
+        <div className="dashboard-hero">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <p className="dashboard-kicker">
+                <Sparkles className="h-3.5 w-3.5" />
+                Jobs
+              </p>
+              <h1 className="dashboard-title mt-5">
+                {isSoloUser ? "My Jobs" : "Company Jobs"}
+              </h1>
+              <p className="dashboard-copy mt-4">
+                {isSoloUser
+                  ? "Create and manage your job workflow."
+                  : "Manage pending and completed jobs, worker assignments, and status updates."}
+              </p>
+            </div>
 
-          {(isSoloUser || canManageCompanyJobs) ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <Input
-                label="Job title"
-                value={form.title}
-                onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-              />
-              <Input
-                label="Client name"
-                value={form.cname}
-                onChange={(event) => setForm((prev) => ({ ...prev, cname: event.target.value }))}
-              />
-              <label className="md:col-span-2">
-                <span className="mb-1.5 inline-flex text-sm font-medium text-slate-700 dark:text-slate-200">
-                  Description
-                </span>
-                <textarea
-                  value={form.description}
-                  onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                  rows={3}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
-                />
-              </label>
-              {canManageCompanyJobs ? (
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Assign worker</span>
-                  <select
-                    value={form.wid}
-                    onChange={(event) => setForm((prev) => ({ ...prev, wid: event.target.value }))}
-                    className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
-                  >
-                    <option value="">Unassigned</option>
-                    {workers.map((worker) => (
-                      <option key={worker.wid} value={worker.wid}>
-                        {worker.name || worker.email}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <div className="flex items-end">
-                <Button onClick={createNewJob}>Create job</Button>
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Pending</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                  {pendingJobs.length}
+                </p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Assigned</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                  {pendingAssignedCount}
+                </p>
+              </div>
+              <div className="dashboard-stat">
+                <p className="text-sm text-slate-500 dark:text-slate-400">Finished</p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                  {finishedJobs.length}
+                </p>
               </div>
             </div>
-          ) : null}
-        </Card>
+          </div>
+        </div>
+
+        {(isSoloUser || canManageCompanyJobs) ? (
+          <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+            <Card>
+              <div className="flex items-center gap-3">
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                  <ClipboardList className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Create a new job</h2>
+                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    Add core job details, then route the work to the right owner.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <Input
+                  label="Job title"
+                  value={form.title}
+                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                />
+                <Input
+                  label="Client name"
+                  value={form.cname}
+                  onChange={(event) => setForm((prev) => ({ ...prev, cname: event.target.value }))}
+                />
+                <Input
+                  label="Client phone"
+                  value={form.cphone}
+                  onChange={(event) => setForm((prev) => ({ ...prev, cphone: event.target.value }))}
+                />
+                <Input
+                  label="Location"
+                  value={form.location}
+                  onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
+                />
+                <label className="md:col-span-2">
+                  <span className="mb-1.5 inline-flex text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Description
+                  </span>
+                  <textarea
+                    value={form.description}
+                    onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                    rows={4}
+                    className="dashboard-field min-h-28 resize-none"
+                  />
+                </label>
+                {canManageCompanyJobs ? (
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Assign worker</span>
+                    <select
+                      value={form.wid}
+                      onChange={(event) => setForm((prev) => ({ ...prev, wid: event.target.value }))}
+                      className="dashboard-field h-11"
+                    >
+                      <option value="">Unassigned</option>
+                      {workers.map((worker) => (
+                        <option key={worker.wid} value={worker.wid}>
+                          {worker.name || worker.email}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <div className="flex items-end">
+                  <Button onClick={createNewJob} className="w-full md:w-auto">
+                    Create job
+                  </Button>
+                </div>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="flex items-center gap-3">
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:bg-white dark:text-slate-950">
+                  <UsersRound className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Queue snapshot</h2>
+                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    Keep dispatch readable before jobs spill into manual follow-up.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3">
+                <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                  <p className="text-sm font-semibold text-slate-950 dark:text-white">Waiting jobs</p>
+                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    {waitingCount} job{waitingCount === 1 ? " is" : "s are"} currently waiting.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                  <p className="text-sm font-semibold text-slate-950 dark:text-white">Assignment coverage</p>
+                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    {pendingAssignedCount} of {pendingJobs.length} pending jobs are assigned.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+                  <p className="inline-flex items-center gap-2 text-sm font-semibold text-slate-950 dark:text-white">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    Workflow note
+                  </p>
+                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                    Status updates and assignment changes stay in the same queue instead of splitting across separate collections.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </div>
+        ) : null}
 
         {loading ? <LoadingState /> : null}
 
         {!loading && pendingJobs.length === 0 && finishedJobs.length === 0 ? (
           <EmptyState
             title="No jobs yet"
-            description={isSoloUser ? "Add your first job to get started." : "Create your first company job above."}
+            description={
+              isSoloUser
+                ? "Add your first job to start building a personal work history and document trail."
+                : "Create the first company job to start tracking dispatch, ownership, and status in one queue."
+            }
           />
         ) : null}
 
         {!loading && pendingJobs.length > 0 ? (
           <Card>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Pending</h2>
-            <div className="mt-4">
-              <DataTable
-                data={pendingJobs}
-                columns={[
-                  {
-                    key: "title",
-                    header: "Job",
-                    render: (row) => (
-                      <div>
-                        <p className="font-medium">{row.title}</p>
-                        <p className="text-xs text-slate-500">{row.cname}</p>
-                      </div>
-                    ),
-                  },
-                  {
-                    key: "status",
-                    header: "Status",
-                    render: (row) => <Badge>{row.status}</Badge>,
-                  },
-                  {
-                    key: "worker",
-                    header: "Worker",
-                    render: (row) => (
-                      <span className="text-sm text-slate-600 dark:text-slate-300">
-                        {row.wid ? workerNameMap[row.wid] || row.wid : "Unassigned"}
-                      </span>
-                    ),
-                  },
-                  {
-                    key: "actions",
-                    header: "Actions",
-                    render: (row) => (
-                      <div className="flex flex-wrap gap-2">
-                        {canManageCompanyJobs ? (
-                          <select
-                            defaultValue={row.wid ?? ""}
-                            onChange={(event) => {
-                              const selectedWid = event.target.value;
-                              const assignee =
-                                workers.find((worker) => normalizeMembershipId(worker.wid) === selectedWid) ?? null;
-                              void handleJobUpdate(row.id, buildJobAssignmentPatch(assignee, profile));
-                            }}
-                            className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
-                          >
-                            <option value="">Unassigned</option>
-                            {workers.map((worker) => (
-                              <option key={worker.wid} value={worker.wid}>
-                                {worker.name || worker.email}
-                              </option>
-                            ))}
-                          </select>
-                        ) : null}
-                        <select
-                          defaultValue={row.status}
-                          onChange={(event) =>
-                            void handleJobUpdate(row.id, {
-                              status: event.target.value as JobRecord["status"],
-                            })
-                          }
-                          className="h-8 rounded border border-slate-300 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
-                        >
-                          <option value="pending">pending</option>
-                          <option value="waiting">waiting</option>
-                          <option value="finished">finished</option>
-                          <option value="denied">denied</option>
-                        </select>
-                        {isSoloUser ? (
-                          <Button size="sm" variant="danger" onClick={() => void removeJob(row.id)}>
-                            Delete
-                          </Button>
-                        ) : null}
-                      </div>
-                    ),
-                  },
-                ]}
-              />
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Active queue</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Pending and in-progress work that still needs operational attention.
+                </p>
+              </div>
+              <Badge variant="info">{pendingJobs.length} active</Badge>
             </div>
+            <DataTable
+              data={pendingJobs}
+              columns={[
+                {
+                  key: "title",
+                  header: "Job",
+                  render: (row) => (
+                    <div>
+                      <p className="font-medium text-slate-950 dark:text-white">{row.title}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{row.cname}</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "status",
+                  header: "Status",
+                  render: (row) => <Badge variant={statusBadgeVariant(row.status)}>{row.status}</Badge>,
+                },
+                {
+                  key: "worker",
+                  header: "Worker",
+                  render: (row) => (
+                    <span className="text-sm text-slate-600 dark:text-slate-300">
+                      {row.wid ? workerNameMap[row.wid] || row.wid : "Unassigned"}
+                    </span>
+                  ),
+                },
+                {
+                  key: "actions",
+                  header: "Actions",
+                  render: (row) => (
+                    <div className="flex flex-wrap gap-2">
+                      {canManageCompanyJobs ? (
+                        <select
+                          defaultValue={row.wid ?? ""}
+                          onChange={(event) => {
+                            const selectedWid = event.target.value;
+                            const assignee =
+                              workers.find((worker) => normalizeMembershipId(worker.wid) === selectedWid) ?? null;
+                            void handleJobUpdate(row.id, buildJobAssignmentPatch(assignee, profile));
+                          }}
+                          className="dashboard-table-select"
+                        >
+                          <option value="">Unassigned</option>
+                          {workers.map((worker) => (
+                            <option key={worker.wid} value={worker.wid}>
+                              {worker.name || worker.email}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
+                      <select
+                        defaultValue={row.status}
+                        onChange={(event) =>
+                          void handleJobUpdate(row.id, {
+                            status: event.target.value as JobRecord["status"],
+                          })
+                        }
+                        className="dashboard-table-select"
+                      >
+                        <option value="pending">pending</option>
+                        <option value="waiting">waiting</option>
+                        <option value="finished">finished</option>
+                        <option value="denied">denied</option>
+                      </select>
+                      {isSoloUser ? (
+                        <Button size="sm" variant="danger" onClick={() => void removeJob(row.id)}>
+                          Delete
+                        </Button>
+                      ) : null}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </Card>
         ) : null}
 
         {!loading && finishedJobs.length > 0 ? (
           <Card>
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Finished</h2>
-            <div className="mt-4">
-              <DataTable
-                data={finishedJobs}
-                columns={[
-                  {
-                    key: "title",
-                    header: "Job",
-                    render: (row) => (
-                      <div>
-                        <p className="font-medium">{row.title}</p>
-                        <p className="text-xs text-slate-500">{row.cname}</p>
-                      </div>
-                    ),
-                  },
-                  {
-                    key: "worker",
-                    header: "Worker",
-                    render: (row) => workerNameMap[row.wid ?? ""] || row.wid || "N/A",
-                  },
-                  {
-                    key: "status",
-                    header: "Status",
-                    render: (row) => (
-                      <Badge variant={row.status === "denied" ? "danger" : "success"}>{row.status}</Badge>
-                    ),
-                  },
-                ]}
-              />
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">Completed history</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
+                  Closed or denied work kept for visibility and follow-up.
+                </p>
+              </div>
+              <Badge variant="success">{finishedJobs.length} archived</Badge>
             </div>
+            <DataTable
+              data={finishedJobs}
+              columns={[
+                {
+                  key: "title",
+                  header: "Job",
+                  render: (row) => (
+                    <div>
+                      <p className="font-medium text-slate-950 dark:text-white">{row.title}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{row.cname}</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "worker",
+                  header: "Worker",
+                  render: (row) => workerNameMap[row.wid ?? ""] || row.wid || "N/A",
+                },
+                {
+                  key: "status",
+                  header: "Status",
+                  render: (row) => (
+                    <Badge variant={row.status === "denied" ? "danger" : "success"}>{row.status}</Badge>
+                  ),
+                },
+              ]}
+            />
           </Card>
         ) : null}
       </section>

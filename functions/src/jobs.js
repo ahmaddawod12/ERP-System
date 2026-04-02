@@ -71,19 +71,10 @@ exports.onJobAssignTrigger = onDocumentCreated({
       companyId
     });
 
-    // DEDUPLICATION CHECK: Check if notification already sent for this job assignment
+    // DEDUPLICATION: use create() which fails if doc already exists, preventing
+    // race conditions where two trigger executions both read "not exists"
     const notificationLogId = `${jobId}_assigned`;
     const notificationLogRef = admin.firestore().doc(`notificationLog/${notificationLogId}`);
-    const existingLog = await notificationLogRef.get();
-
-    if (existingLog.exists) {
-      logger.info('Notification already sent for this job assignment', {
-        jobId,
-        notificationLogId,
-        originalSentAt: existingLog.data().sentAt
-      });
-      return;
-    }
 
     // Get worker profile for email and push token (using UID-based path)
     const workerProfileRef = admin.firestore().doc(userProfileDocPath(workerUserId));
@@ -140,9 +131,9 @@ exports.onJobAssignTrigger = onDocumentCreated({
       }
     }
 
-    // Log notification to prevent duplicates
-    if (notificationResult.success) {
-      await notificationLogRef.set({
+    // Atomically claim the dedup slot — create() fails if doc already exists
+    try {
+      await notificationLogRef.create({
         jobId,
         notificationType: 'assigned',
         workerUserId,
@@ -152,11 +143,18 @@ exports.onJobAssignTrigger = onDocumentCreated({
         jobTitle,
         companyId,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        notificationSent: notificationResult.success,
         // TTL: auto-expire after 30 days (configure Firestore TTL policy on this field)
         expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         messageId: notificationResult.messageId || null,
         duration: Date.now() - startTime
       });
+    } catch (dedupErr) {
+      if (dedupErr.code === 6 /* ALREADY_EXISTS */) {
+        logger.info('Notification already sent (dedup race caught)', { jobId, notificationLogId });
+        return;
+      }
+      throw dedupErr;
     }
 
     logger.info('Job assignment notification sent', {
@@ -229,19 +227,10 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       companyId
     });
 
-    // DEDUPLICATION CHECK: Check if notification already sent for this job submission
+    // DEDUPLICATION: use create() which fails if doc already exists, preventing
+    // race conditions where two trigger executions both read "not exists"
     const notificationLogId = `${jobId}_submitted`;
     const notificationLogRef = admin.firestore().doc(`notificationLog/${notificationLogId}`);
-    const existingLog = await notificationLogRef.get();
-
-    if (existingLog.exists) {
-      logger.info('Notification already sent for this job submission', {
-        jobId,
-        notificationLogId,
-        originalSentAt: existingLog.data().sentAt
-      });
-      return;
-    }
 
     // Determine manager userId
     if (!managerUserId) {
@@ -295,9 +284,9 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       notificationData
     );
 
-    // Log notification to prevent duplicates
-    if (notificationResult.success) {
-      await notificationLogRef.set({
+    // Atomically claim the dedup slot — create() fails if doc already exists
+    try {
+      await notificationLogRef.create({
         jobId,
         notificationType: 'submitted',
         workerUserId,
@@ -307,11 +296,18 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
         jobTitle,
         companyId,
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        notificationSent: notificationResult.success,
         // TTL: auto-expire after 30 days (configure Firestore TTL policy on this field)
         expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         messageId: notificationResult.messageId || null,
         duration: Date.now() - startTime
       });
+    } catch (dedupErr) {
+      if (dedupErr.code === 6 /* ALREADY_EXISTS */) {
+        logger.info('Notification already sent (dedup race caught)', { jobId, notificationLogId });
+        return;
+      }
+      throw dedupErr;
     }
 
     logger.info('Job submission notification sent', {
@@ -356,54 +352,70 @@ exports.deleteJobV1 = onCall(async (request) => {
     allowSoloScope: true,
   });
 
-  const dbRef = admin.firestore();
-  const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
-  const jobSnap = await jobRef.get();
-
-  if (!jobSnap.exists) {
-    throw new HttpsError('not-found', 'Job not found');
-  }
-
-  const jobData = jobSnap.data();
-
-  // Only manager/dev can delete pending/waiting jobs
-  if (['pending', 'waiting'].includes(jobData.status)) {
-    if (!['manager', 'dev'].includes(resolvedRole)) {
-      throw new HttpsError('permission-denied', 'Only managers can delete pending jobs');
-    }
-  }
-
-  // Cannot delete a job with a generated document
-  if (jobData.isCert === true) {
-    throw new HttpsError('failed-precondition', 'Cannot delete a job that has a generated document (isCert=true)');
-  }
-
-  // Worker can only delete their own assigned jobs
-  if (resolvedRole === 'worker') {
-    // Look up worker's wid from profile to compare with job wid
-    const workerProfile = await admin.firestore().doc(userProfileDocPath(uid)).get();
-    const workerWid = workerProfile.exists ? String(workerProfile.data()?.wid || '') : '';
-    if (String(jobData.wid || '') !== workerWid) {
-      throw new HttpsError('permission-denied', 'Workers can only delete their own jobs');
-    }
-  }
-
   // Basic role cannot delete jobs
   if (resolvedRole === 'basic') {
     throw new HttpsError('permission-denied', 'basic role cannot delete jobs');
   }
 
-  // Batch: delete job + bump cache
-  const batch = dbRef.batch();
-  batch.delete(jobRef);
-  const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
-  batch.set(cacheRef, {
-    jobsVersion: admin.firestore.FieldValue.increment(1),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-  await batch.commit();
+  // Look up worker wid once before transaction (profile is immutable within request)
+  let callerWid = '';
+  if (resolvedRole === 'worker' || resolvedRole === 'user') {
+    const callerProfile = await admin.firestore().doc(userProfileDocPath(uid)).get();
+    callerWid = callerProfile.exists ? String(callerProfile.data()?.wid || '') : '';
+  }
 
-  logger.info('deleteJobV1: job deleted', { companyId, jobId, uid, status: jobData.status });
+  const dbRef = admin.firestore();
+  const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
+
+  // Use a transaction for atomic read-check-delete to prevent race conditions
+  const deletedStatus = await dbRef.runTransaction(async (tx) => {
+    const jobSnap = await tx.get(jobRef);
+
+    if (!jobSnap.exists) {
+      throw new HttpsError('not-found', 'Job not found');
+    }
+
+    const jobData = jobSnap.data();
+
+    // Cannot delete a job with a generated document
+    if (jobData.isCert === true) {
+      throw new HttpsError('failed-precondition', 'Cannot delete a job that has a generated document (isCert=true)');
+    }
+
+    // Only manager/dev can delete pending/waiting jobs
+    if (['pending', 'waiting'].includes(jobData.status)) {
+      if (!['manager', 'dev'].includes(resolvedRole)) {
+        throw new HttpsError('permission-denied', 'Only managers can delete pending jobs');
+      }
+    }
+
+    // Worker can only delete their own assigned jobs
+    if (resolvedRole === 'worker') {
+      if (String(jobData.wid || '') !== callerWid) {
+        throw new HttpsError('permission-denied', 'Workers can only delete their own jobs');
+      }
+    }
+
+    // User (solo) can only delete their own assigned jobs
+    if (resolvedRole === 'user') {
+      if (String(jobData.wid || '') !== callerWid) {
+        throw new HttpsError('permission-denied', 'Users can only delete their own jobs');
+      }
+    }
+
+    tx.delete(jobRef);
+
+    // Bump cache inside transaction
+    const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+    tx.set(cacheRef, {
+      jobsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return jobData.status;
+  });
+
+  logger.info('deleteJobV1: job deleted', { companyId, jobId, uid, status: deletedStatus });
   return { success: true, jobId };
 });
 
@@ -689,24 +701,11 @@ exports.updateJobV1 = onCall(async (request) => {
     allowSoloScope: true,
   });
 
-  const dbRef = admin.firestore();
-  const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
-  const jobSnap = await jobRef.get();
-
-  if (!jobSnap.exists) {
-    throw new HttpsError('not-found', 'Job not found');
-  }
-
-  const existingJob = jobSnap.data();
-
-  // Worker can only update their own assigned jobs
+  // Pre-compute caller wid before transaction (profile is immutable for this request)
+  let callerWid = '';
   if (resolvedRole === 'worker') {
-    // Look up worker's wid from profile
     const workerProfile = await admin.firestore().doc(userProfileDocPath(uid)).get();
-    const workerWid = workerProfile.exists ? String(workerProfile.data()?.wid || '') : '';
-    if (String(existingJob.wid || '') !== workerWid) {
-      throw new HttpsError('permission-denied', 'Workers can only update their own assigned jobs');
-    }
+    callerWid = workerProfile.exists ? String(workerProfile.data()?.wid || '') : '';
   }
 
   const raw = { ...data };
@@ -748,17 +747,6 @@ exports.updateJobV1 = onCall(async (request) => {
   if (updates.status && !VALID_STATUSES.includes(updates.status)) {
     throw new HttpsError('invalid-argument', `Invalid status: ${updates.status}. Valid: ${VALID_STATUSES.join(', ')}`);
   }
-  // Prevent direct status transitions that should go through acceptJobV1
-  if (existingJob.status !== 'finished' && updates.status === 'finished') {
-    throw new HttpsError('failed-precondition', 'Cannot transition directly to finished. Use acceptJobV1.');
-  }
-  if (existingJob.status === 'finished' && (updates.status === 'pending' || updates.status === 'waiting')) {
-    throw new HttpsError('failed-precondition', 'Finished job cannot transition back to pending/waiting.');
-  }
-  // Denied jobs cannot be reopened — they are terminal
-  if (existingJob.status === 'denied' && updates.status && updates.status !== 'denied') {
-    throw new HttpsError('failed-precondition', 'Denied job cannot be reopened. Create a new job instead.');
-  }
 
   // Validate array field lengths to prevent oversized documents on updates
   for (const arrField of ['parts', 'partsUsed', 'images', 'photos', 'tags']) {
@@ -769,15 +757,47 @@ exports.updateJobV1 = onCall(async (request) => {
 
   updates.updatedAt = new Date().toISOString();
 
-  // Batch: update job + bump cache
-  const batch = dbRef.batch();
-  batch.update(jobRef, updates);
-  const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
-  batch.set(cacheRef, {
-    jobsVersion: admin.firestore.FieldValue.increment(1),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-  await batch.commit();
+  const dbRef = admin.firestore();
+  const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
+
+  // Use a transaction for atomic read-check-update to prevent race conditions
+  await dbRef.runTransaction(async (tx) => {
+    const jobSnap = await tx.get(jobRef);
+
+    if (!jobSnap.exists) {
+      throw new HttpsError('not-found', 'Job not found');
+    }
+
+    const existingJob = jobSnap.data();
+
+    // Worker can only update their own assigned jobs
+    if (resolvedRole === 'worker') {
+      if (String(existingJob.wid || '') !== callerWid) {
+        throw new HttpsError('permission-denied', 'Workers can only update their own assigned jobs');
+      }
+    }
+
+    // Prevent direct status transitions that should go through acceptJobV1
+    if (existingJob.status !== 'finished' && updates.status === 'finished') {
+      throw new HttpsError('failed-precondition', 'Cannot transition directly to finished. Use acceptJobV1.');
+    }
+    if (existingJob.status === 'finished' && (updates.status === 'pending' || updates.status === 'waiting')) {
+      throw new HttpsError('failed-precondition', 'Finished job cannot transition back to pending/waiting.');
+    }
+    // Denied jobs cannot be reopened — they are terminal
+    if (existingJob.status === 'denied' && updates.status && updates.status !== 'denied') {
+      throw new HttpsError('failed-precondition', 'Denied job cannot be reopened. Create a new job instead.');
+    }
+
+    tx.update(jobRef, updates);
+
+    // Bump cache inside transaction
+    const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
+    tx.set(cacheRef, {
+      jobsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
 
   logger.info('updateJobV1: job updated', { companyId, jobId, uid, role: resolvedRole });
   return { success: true, jobId };

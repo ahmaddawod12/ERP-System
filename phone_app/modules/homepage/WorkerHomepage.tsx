@@ -1,19 +1,85 @@
 // @ts-nocheck
 import React from 'react';
-import {
-  View,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
+import { getColors, spacing } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useCache } from '../../contexts/CacheContext';
 import { isSubscriptionActive, isModuleEnabled } from '../shared';
-import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
+import {
+  AppEmptyState,
+  DashboardActionCard,
+  DashboardShell,
+  GlobalHeader,
+} from '../../components';
+
+const translations = {
+  en: {
+    title: 'Worker Dashboard',
+    subtitle: 'Field execution workspace',
+    description: 'See assigned jobs and inventory in a simpler mobile layout designed for movement, speed, and clear next actions.',
+    heroLabel: 'Worker access',
+    open: 'Open workspace',
+    emptyTitle: 'No modules available',
+    emptySubtitle: 'This worker account does not have any active dashboard areas.',
+    expiredTitle: 'Subscription Expired',
+    expiredSubtitle: 'Renew the subscription on the website to restore worker access.',
+    roleMetric: 'Role',
+    roleValue: 'Worker',
+    scopeMetric: 'Scope',
+    scopeValue: 'Assigned',
+    moduleMetric: 'Areas',
+    myJobs: 'My Jobs',
+    myJobsDesc: 'View your assigned jobs and move them forward from the field.',
+    inventory: 'My Inventory',
+    inventoryDesc: 'Check the parts you carry and open your inventory quickly.',
+    workBadge: 'Field',
+  },
+  he: {
+    title: 'לוח בקרה עובד',
+    subtitle: 'סביבת ביצוע בשטח',
+    description: 'צפייה במשימות שהוקצו ובמלאי מתוך פריסה פשוטה יותר שמותאמת לעבודה מהירה בשטח.',
+    heroLabel: 'גישת עובד',
+    open: 'פתח סביבת עבודה',
+    emptyTitle: 'אין מודולים זמינים',
+    emptySubtitle: 'לחשבון העובד הזה אין כרגע אזורי עבודה פעילים.',
+    expiredTitle: 'המנוי פג תוקף',
+    expiredSubtitle: 'חדש את המנוי דרך האתר כדי להחזיר את הגישה לעובד.',
+    roleMetric: 'תפקיד',
+    roleValue: 'עובד',
+    scopeMetric: 'היקף',
+    scopeValue: 'מוקצה',
+    moduleMetric: 'אזורים',
+    myJobs: 'המשימות שלי',
+    myJobsDesc: 'צפייה במשימות שהוקצו והתקדמות מהירה מתוך השטח.',
+    inventory: 'המלאי שלי',
+    inventoryDesc: 'בדיקת החלקים שברשותך ופתיחה מהירה של המלאי.',
+    workBadge: 'שטח',
+  },
+  ar: {
+    title: 'لوحة تحكم العامل',
+    subtitle: 'مساحة تنفيذ ميدانية',
+    description: 'اعرض المهام المعيّنة والمخزون من تخطيط أبسط مصمم للحركة والسرعة ووضوح الخطوة التالية.',
+    heroLabel: 'وصول العامل',
+    open: 'افتح مساحة العمل',
+    emptyTitle: 'لا توجد وحدات متاحة',
+    emptySubtitle: 'هذا الحساب الخاص بالعامل لا يملك مناطق عمل فعالة حالياً.',
+    expiredTitle: 'انتهى الاشتراك',
+    expiredSubtitle: 'جدّد الاشتراك عبر الموقع لاستعادة وصول العامل.',
+    roleMetric: 'الدور',
+    roleValue: 'عامل',
+    scopeMetric: 'النطاق',
+    scopeValue: 'مكلّف',
+    moduleMetric: 'المساحات',
+    myJobs: 'مهامي',
+    myJobsDesc: 'اعرض مهامك المعيّنة وادفعها للأمام من الميدان.',
+    inventory: 'مخزوني',
+    inventoryDesc: 'تحقق من القطع التي تحملها وافتح المخزون بسرعة.',
+    workBadge: 'ميداني',
+  },
+};
 
 export default function WorkerHomepage() {
   const router = useRouter();
@@ -21,101 +87,88 @@ export default function WorkerHomepage() {
   const { isDarkMode } = useThemeContext();
   const { subscription } = useCache();
   const colors = getColors(isDarkMode);
+  const t = translations[language] || translations.en;
 
-  // Module checks
   const hasTeam = isModuleEnabled(subscription, 'team');
   const hasInventory = isModuleEnabled(subscription, 'teaminventory');
   const subActive = isSubscriptionActive(subscription);
 
-  const t = language === 'en' ? {
-    title: 'Worker Dashboard',
-    subtitle: 'Welcome back',
-    myJobs: 'My Jobs',
-    myJobsDesc: 'View and complete assigned jobs',
-    inventory: 'My Inventory',
-    inventoryDesc: 'Manage your parts',
-  } : language === 'he' ? {
-    title: 'לוח בקרה עובד',
-    subtitle: 'ברוך הבא',
-    myJobs: 'המשימות שלי',
-    myJobsDesc: 'צפייה והשלמת משימות שהוקצו',
-    inventory: 'המלאי שלי',
-    inventoryDesc: 'ניהול חלקים',
-  } : {
-    title: 'لوحة تحكم العامل',
-    subtitle: 'مرحبا بعودتك',
-    myJobs: 'مهامي',
-    myJobsDesc: 'عرض وإكمال المهام المعينة',
-    inventory: 'مخزوني',
-    inventoryDesc: 'إدارة القطع',
-  };
+  const cards = [
+    ...(hasTeam
+      ? [{
+          key: 'my-jobs',
+          title: t.myJobs,
+          description: t.myJobsDesc,
+          icon: 'clipboard-text-multiple',
+          iconLibrary: 'material',
+          accentColor: colors.boxBlue,
+          badge: t.workBadge,
+          onPress: () => router.push('/Workerjob'),
+        }]
+      : []),
+    ...(hasInventory
+      ? [{
+          key: 'inventory',
+          title: t.inventory,
+          description: t.inventoryDesc,
+          icon: 'package-variant',
+          iconLibrary: 'material',
+          accentColor: colors.boxOrange,
+          badge: t.workBadge,
+          onPress: () => router.push('/inventory'),
+        }]
+      : []),
+  ];
 
-
-
-  // Subscription expired — block the entire homepage
   if (!subActive) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}> 
+      <View style={[styles.lockedContainer, { backgroundColor: colors.background }]}> 
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-        <View style={{ alignItems: 'center', paddingHorizontal: spacing.xl }}>
-          <Ionicons name="time-outline" size={72} color={colors.error} />
-          <AppText style={{ fontSize: 22, fontWeight: '800', color: colors.text, marginTop: spacing.lg, textAlign: 'center' }}>
-            {language === 'he' ? 'המנוי פג תוקף' : language === 'ar' ? 'انتهى الاشتراك' : 'Subscription Expired'}
-          </AppText>
-          <AppText style={{ fontSize: 15, color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center', lineHeight: 22 }}>
-            {language === 'he' ? 'אנא חדש את המנוי דרך האתר כדי להמשיך להשתמש באפליקציה.' : language === 'ar' ? 'يرجى تجديد اشتراكك عبر الموقع الإلكتروني لمواصلة استخدام التطبيق.' : 'Please renew your subscription on the website to continue using the app.'}
-          </AppText>
-        </View>
+        <AppEmptyState
+          icon="clock-alert-outline"
+          title={t.expiredTitle}
+          subtitle={t.expiredSubtitle}
+          style={styles.lockedState}
+        />
         <GlobalHeader />
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <StatusBar style={isDarkMode ? "light" : "dark"} />
-      
-      {/* White Background Content */}
-      <ScrollableContainer 
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+    <View style={[styles.container, { backgroundColor: colors.background }]}> 
+      <StatusBar style={isDarkMode ? 'light' : 'dark'} />
+      <DashboardShell
+        title={t.title}
+        subtitle={t.subtitle}
+        description={t.description}
+        heroLabel={t.heroLabel}
+        heroIcon="hammer-wrench"
+        heroIconLibrary="material"
+        metrics={[
+          { label: t.roleMetric, value: t.roleValue },
+          { label: t.scopeMetric, value: t.scopeValue },
+          { label: t.moduleMetric, value: String(cards.length) },
+        ]}
       >
-        <View style={styles.cardsContainer}>
-          {/* My Jobs Card */}
-          {hasTeam && (
-          <TouchableOpacity onPress={() => router.push('/Workerjob')}>
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.cardHeader}>
-                <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                  <MaterialCommunityIcons name="clipboard-text-multiple" size={32} color={colors.secondary} />
-                </View>
-                <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-              </View>
-              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.myJobs}</AppText>
-              <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.myJobsDesc}</AppText>
-            </View>
-          </TouchableOpacity>
-          )}
-
-          {/* Inventory Card */}
-          {hasInventory && (
-          <TouchableOpacity onPress={() => router.push('/inventory')}>
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.cardHeader}>
-                <View style={[styles.cardIconCircle, { backgroundColor: colors.secondary + '15' }]}>
-                  <MaterialCommunityIcons name="package-variant" size={32} color={colors.secondary} />
-                </View>
-                <Feather name="chevron-right" size={24} color={colors.secondary} style={styles.cardChevron} />
-              </View>
-              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>{t.inventory}</AppText>
-              <AppText style={[styles.cardDescription, { color: colors.textSecondary }]}>{t.inventoryDesc}</AppText>
-            </View>
-          </TouchableOpacity>
-          )}
-        </View>
-      </ScrollableContainer>
-
-      {/* Fixed GlobalHeader */}
+        {cards.length > 0 ? (
+          cards.map((card) => (
+            <DashboardActionCard
+              key={card.key}
+              title={card.title}
+              description={card.description}
+              icon={card.icon}
+              iconLibrary={card.iconLibrary}
+              accentColor={card.accentColor}
+              badge={card.badge}
+              ctaLabel={t.open}
+              onPress={card.onPress}
+            />
+          ))
+        ) : (
+          <AppEmptyState title={t.emptyTitle} subtitle={t.emptySubtitle} />
+        )}
+      </DashboardShell>
       <GlobalHeader />
     </View>
   );
@@ -125,82 +178,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  scrollView: {
+  lockedContainer: {
     flex: 1,
-  },
-  scrollContent: {
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  themeButton: {
-    position: 'absolute',
-    top: 48,
-    right: 80,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
-    ...shadows.md,
+    paddingHorizontal: spacing.xl,
   },
-  languageButton: {
-    position: 'absolute',
-    top: 48,
-    right: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    zIndex: 10,
-    ...shadows.md,
-  },
-  languageButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  cardsContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: 100,
-    paddingBottom: spacing.xxl,
-  },
-  card: {
-    borderRadius: borderRadius.xl,
-    padding: spacing.xl,
-    marginBottom: spacing.md + 6,
-    borderWidth: 1,
-    ...shadows.floating,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  cardIconCircle: {
-    width: 62,
-    height: 62,
-    borderRadius: borderRadius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(13, 138, 232, 0.25)',
-  },
-  cardChevron: {
-    opacity: 0.75,
-  },
-  cardTitle: {
-    fontSize: typography.xxl,
-    fontWeight: typography.bold,
-    marginBottom: spacing.xs,
-    letterSpacing: -0.2,
-  },
-  cardDescription: {
-    fontSize: typography.base,
-    lineHeight: 22,
-    letterSpacing: 0.15,
+  lockedState: {
+    marginBottom: spacing.xxl,
   },
 });
-

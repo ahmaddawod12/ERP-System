@@ -26,6 +26,7 @@ import {
   AppText,
   GlobalHeader,
   LoadingSpinner,
+  ScreenHeroCard,
   ViewJobDetails,
 } from '../../components';
 
@@ -144,6 +145,84 @@ const translateMap = {
     loading: 'Loading jobs...',
     untitled: 'Untitled Job',
   },
+  he: {
+    title: 'ניהול משימות',
+    subtitle: 'אישור הגשות עובדים',
+    assignJob: 'הקצה משימה חדשה',
+    noJobs: 'אין משימות ממתינות',
+    pending: 'ממתין',
+    waiting: 'בהמתנה',
+    finished: 'הושלם',
+    denied: 'נדחה',
+    jobDetails: 'פרטי משימה',
+    close: 'סגור',
+    accept: 'אשר',
+    deny: 'דחה',
+    worker: 'עובד',
+    unknownWorker: 'עובד לא ידוע',
+    createdAt: 'נוצר',
+    status: 'סטטוס',
+    titleLabel: 'כותרת',
+    description: 'תיאור',
+    location: 'מיקום',
+    photos: 'תמונות',
+    noPhotos: 'אין תמונות',
+    signature: 'חתימה',
+    noSignature: 'אין חתימה',
+    timeWorked: 'זמן עבודה',
+    clientName: 'לקוח',
+    clientPhone: 'טלפון לקוח',
+    partsUsed: 'חלקים שנעשה בהם שימוש',
+    noParts: 'אין חלקים',
+    acceptSuccess: 'המשימה אושרה בהצלחה',
+    denySuccess: 'המשימה נדחתה',
+    confirmAccept: 'אשר משימה',
+    confirmAcceptMessage: 'האם אתה בטוח שברצונך לאשר משימה זו?',
+    confirmDeny: 'דחה משימה',
+    confirmDenyMessage: 'האם אתה בטוח שברצונך לדחות משימה זו?',
+    cancel: 'ביטול',
+    loading: 'טוען משימות...',
+    untitled: 'משימה ללא שם',
+  },
+  ar: {
+    title: 'إدارة المهام',
+    subtitle: 'الموافقة على تقديمات العمال',
+    assignJob: 'تعيين مهمة جديدة',
+    noJobs: 'لا توجد مهام معلقة',
+    pending: 'معلق',
+    waiting: 'في الانتظار',
+    finished: 'مكتمل',
+    denied: 'مرفوض',
+    jobDetails: 'تفاصيل المهمة',
+    close: 'إغلاق',
+    accept: 'قبول',
+    deny: 'رفض',
+    worker: 'عامل',
+    unknownWorker: 'عامل غير معروف',
+    createdAt: 'تم الإنشاء',
+    status: 'الحالة',
+    titleLabel: 'العنوان',
+    description: 'الوصف',
+    location: 'الموقع',
+    photos: 'الصور',
+    noPhotos: 'لا توجد صور',
+    signature: 'التوقيع',
+    noSignature: 'لا يوجد توقيع',
+    timeWorked: 'وقت العمل',
+    clientName: 'العميل',
+    clientPhone: 'هاتف العميل',
+    partsUsed: 'القطع المستخدمة',
+    noParts: 'لا توجد قطع',
+    acceptSuccess: 'تم قبول المهمة بنجاح',
+    denySuccess: 'تم رفض المهمة',
+    confirmAccept: 'قبول المهمة',
+    confirmAcceptMessage: 'هل أنت متأكد من قبول هذه المهمة؟',
+    confirmDeny: 'رفض المهمة',
+    confirmDenyMessage: 'هل أنت متأكد من رفض هذه المهمة؟',
+    cancel: 'إلغاء',
+    loading: 'جاري تحميل المهام...',
+    untitled: 'مهمة بدون عنوان',
+  },
 };
 
 export default function ManageJobs() {
@@ -173,6 +252,16 @@ export default function ManageJobs() {
   const [jobs, setJobs] = useState([]);
   const [selectedJobDetails, setSelectedJobDetails] = useState(null);
   const [highlightedJobId, setHighlightedJobId] = useState(null);
+
+  const waitingCount = useMemo(
+    () => jobs.filter((job) => String(job.status || '').toLowerCase() === 'waiting').length,
+    [jobs]
+  );
+
+  const pendingCount = useMemo(
+    () => jobs.filter((job) => String(job.status || '').toLowerCase() === 'pending').length,
+    [jobs]
+  );
 
   const workerNameByWid = useMemo(() => {
     const source = workers || {};
@@ -334,27 +423,50 @@ export default function ManageJobs() {
     <View style={[styles.container, { backgroundColor: palette.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
-      <View style={[styles.topCtaWrap, { paddingTop: Platform.OS === 'ios' ? 108 : 96 }]}>
-        <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/CreateJob')}>
-          <LinearGradient colors={gradients.indigoBox} style={styles.ctaGradient}>
-            <MaterialCommunityIcons name="clipboard-plus-outline" size={22} color="#FFFFFF" />
-            <AppText variant="bodyStrong" color="#FFFFFF">
-              {t.assignJob}
-            </AppText>
-            <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
-
       <FlatList
         data={jobs}
         keyExtractor={keyExtractor}
         contentContainerStyle={{
           paddingHorizontal: spacing.lg,
           paddingBottom: insets.bottom + 110,
-          paddingTop: spacing.sm,
+          paddingTop: Platform.OS === 'ios' ? 108 : 96,
           flexGrow: jobs.length === 0 ? 1 : 0,
         }}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
+            <ScreenHeroCard
+              title={t.title}
+              subtitle={t.subtitle}
+              eyebrow="Approvals"
+              icon="clipboard-check-multiple"
+              iconLibrary="material"
+              accentColor={palette.boxIndigo}
+              metrics={[
+                { label: t.pending, value: String(pendingCount) },
+                { label: t.waiting, value: String(waitingCount) },
+                { label: language === 'he' ? 'בתור' : language === 'ar' ? 'في القائمة' : 'Queue', value: String(jobs.length) },
+              ]}
+              badges={[t.assignJob, t.accept, t.deny]}
+            />
+
+            <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/CreateJob')}>
+              <AppCard style={[styles.ctaCard, { backgroundColor: palette.backgroundElevated, borderColor: palette.border }]}> 
+                <View style={styles.ctaCardRow}>
+                  <View style={[styles.ctaIconWrap, { backgroundColor: `${palette.secondary}12` }]}> 
+                    <MaterialCommunityIcons name="clipboard-plus-outline" size={22} color={palette.secondary} />
+                  </View>
+                  <View style={styles.ctaCopyWrap}>
+                    <AppText variant="bodyStrong">{t.assignJob}</AppText>
+                    <AppText variant="caption" color={palette.textSecondary}>
+                      {t.subtitle}
+                    </AppText>
+                  </View>
+                  <Ionicons name="arrow-forward" size={18} color={palette.secondary} />
+                </View>
+              </AppCard>
+            </TouchableOpacity>
+          </View>
+        }
         renderItem={renderJobCard}
         initialNumToRender={15}
         maxToRenderPerBatch={10}
@@ -420,19 +532,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  topCtaWrap: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.sm,
+  listHeader: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
   },
-  ctaGradient: {
-    borderRadius: borderRadius.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+  ctaCard: {
+    ...shadows.card,
+  },
+  ctaCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     gap: spacing.sm,
-    ...shadows.primary,
+  },
+  ctaIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ctaCopyWrap: {
+    flex: 1,
   },
   cardTouchable: {
     marginBottom: spacing.md,

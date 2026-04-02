@@ -20,7 +20,7 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { AppText, GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
+import { AppText, GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal, ScreenHeroCard } from '../../components';
 import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -681,6 +681,21 @@ export default function DocumentHistory() {
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingTop: 120, paddingBottom: insets.bottom + 20 }]}
       >
+        <ScreenHeroCard
+          title={t.title}
+          subtitle={language === 'he' ? 'סקירה, סינון והורדה של מסמכים קיימים' : language === 'ar' ? 'مراجعة المستندات الحالية وتصفيتها وتنزيلها' : 'Review, filter, and download existing documents'}
+          eyebrow="History"
+          icon="history"
+          iconLibrary="material"
+          accentColor={colors.boxBlue}
+          metrics={[
+            { label: t.all, value: String(documents.length) },
+            { label: language === 'he' ? 'מוצג' : language === 'ar' ? 'المعروض' : 'Shown', value: String(filteredDocuments.length) },
+          ]}
+          badges={[t.filterByType, t.filterByDate]}
+          style={styles.heroCard}
+        />
+
         {/* Filters Section */}
         <View style={[styles.filtersContainer, { backgroundColor: colors.surface }]}>
           {/* Document Type Filter */}
@@ -1063,6 +1078,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.lg,
+  },
+  heroCard: {
+    marginBottom: spacing.lg,
   },
   loadingText: {
     marginTop: spacing.md,

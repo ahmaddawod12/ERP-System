@@ -11,7 +11,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, auth, doc, getDoc, signInWithEmailAndPassword } from '../../firebase';
+import { auth, signInWithEmailAndPassword } from '../../firebase';
 import { borderRadius, getColors, gradients, shadows, spacing, typography } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
@@ -19,6 +19,7 @@ import { useAlert } from '../../contexts/AlertContext';
 import {
   AppButton,
   AppCard,
+  AppChip,
   AppInput,
   AppText,
   GlobalHeader,
@@ -46,6 +47,9 @@ export default function Login() {
           loading: 'Signing In...',
           noAccount: "Don't have an account? Contact the administrator.",
           hero: 'Welcome Back',
+          jobs: 'Jobs',
+          inventory: 'Inventory',
+          docs: 'Documents',
         }
       : language === 'he'
       ? {
@@ -57,6 +61,9 @@ export default function Login() {
           loading: 'מתחבר...',
           noAccount: 'אין לך חשבון? צור קשר עם המנהל.',
           hero: 'ברוך שובך',
+          jobs: 'משימות',
+          inventory: 'מלאי',
+          docs: 'מסמכים',
         }
       : {
           title: 'Smart-Job ERP',
@@ -67,6 +74,9 @@ export default function Login() {
           loading: 'جاري تسجيل الدخول...',
           noAccount: 'ليس لديك حساب؟ اتصل بالمسؤول.',
           hero: 'مرحبًا بعودتك',
+          jobs: 'مهام',
+          inventory: 'مخزون',
+          docs: 'مستندات',
         };
 
   const handleEmailLogin = async () => {
@@ -77,12 +87,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
-      const user = userCredential.user;
-      const uid = user.uid;
-
-      const userDocRef = doc(db, 'users', uid, 'data', 'profile');
-      await getDoc(userDocRef);
+      await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (error) {
       let errorMessage = 'Please check your credentials';
 
@@ -112,6 +117,9 @@ export default function Login() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
+      <View style={[styles.backdropOrb, styles.backdropOrbPrimary, { backgroundColor: `${colors.secondary}16` }]} />
+      <View style={[styles.backdropOrb, styles.backdropOrbAccent, { backgroundColor: `${colors.accent}14` }]} />
+
       <LinearGradient
         colors={isDarkMode ? gradients.headerDark : gradients.headerLight}
         start={{ x: 0, y: 0 }}
@@ -127,11 +135,17 @@ export default function Login() {
         <AppText variant="caption" color="rgba(255,255,255,0.9)" align="center" style={styles.subtitle}>
           {t.subtitle}
         </AppText>
+
+        <View style={styles.heroChips}>
+          <AppChip label={t.jobs} color="#FFFFFF" textColor="#FFFFFF" />
+          <AppChip label={t.inventory} color="#FFFFFF" textColor="#FFFFFF" />
+          <AppChip label={t.docs} color="#FFFFFF" textColor="#FFFFFF" />
+        </View>
       </LinearGradient>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
         <ScrollableContainer contentContainerStyle={styles.scrollContent}>
-          <AppCard style={[styles.loginCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <AppCard style={[styles.loginCard, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
             <AppText variant="heading" align="center" style={styles.welcomeText}>
               {t.hero}
             </AppText>
@@ -181,9 +195,11 @@ export default function Login() {
               size="lg"
             />
 
-            <AppText variant="caption" align="center" color={colors.textSecondary} style={styles.footerText}>
-              {t.noAccount}
-            </AppText>
+            <View style={[styles.footerNote, { backgroundColor: colors.surfaceAlt, borderColor: colors.borderLight }]}>
+              <AppText variant="caption" align="center" color={colors.textSecondary} style={styles.footerText}>
+                {t.noAccount}
+              </AppText>
+            </View>
           </AppCard>
         </ScrollableContainer>
       </KeyboardAvoidingView>
@@ -208,17 +224,33 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  backdropOrb: {
+    position: 'absolute',
+    borderRadius: borderRadius.full,
+  },
+  backdropOrbPrimary: {
+    width: 220,
+    height: 220,
+    top: -72,
+    right: -68,
+  },
+  backdropOrbAccent: {
+    width: 180,
+    height: 180,
+    top: 210,
+    left: -92,
+  },
   flex: {
     flex: 1,
   },
   heroSection: {
     paddingTop: Platform.OS === 'ios' ? 84 : 66,
-    paddingBottom: spacing.xl,
+    paddingBottom: spacing.xl + 4,
     paddingHorizontal: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
-    borderBottomLeftRadius: borderRadius.xl,
-    borderBottomRightRadius: borderRadius.xl,
+    borderBottomLeftRadius: borderRadius.xxl,
+    borderBottomRightRadius: borderRadius.xxl,
     ...shadows.large,
   },
   heroBadge: {
@@ -234,6 +266,13 @@ const styles = StyleSheet.create({
   subtitle: {
     marginTop: spacing.xs,
     letterSpacing: 0.35,
+  },
+  heroChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
   },
   scrollContent: {
     paddingHorizontal: spacing.lg,
@@ -256,7 +295,14 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   footerText: {
+    lineHeight: 20,
+  },
+  footerNote: {
     marginTop: spacing.md,
+    borderWidth: 1,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,

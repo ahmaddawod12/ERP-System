@@ -20,9 +20,12 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              // 'unsafe-inline' required for Next.js hydration scripts; 'unsafe-eval' for dev mode hot reload.
+              // 'unsafe-inline' required for Next.js hydration scripts.
+              // 'unsafe-eval' is only added in development for hot reload.
               // TODO: Migrate to nonce-based CSP via middleware for stricter script-src.
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com",
+              process.env.NODE_ENV === 'development'
+                ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com"
+                : "script-src 'self' 'unsafe-inline' https://apis.google.com",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https://*.googleapis.com https://*.googleusercontent.com",
               "font-src 'self'",
@@ -31,6 +34,10 @@ const nextConfig: NextConfig = {
               "base-uri 'self'",
               "form-action 'self'",
             ].join("; "),
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
           },
           {
             key: "Permissions-Policy",

@@ -8,15 +8,14 @@ import { View,
   Modal,
   Image,
   Platform,
-  TextInput,
  } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { auth, db, doc, getDoc } from '../../firebase';
+import { auth } from '../../firebase';
 import { colors, gradients, spacing, borderRadius, typography, shadows, getColors } from '../../theme';
-import { AppText, SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer } from '../../components';
+import { AppCard, AppEmptyState, AppText, SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -123,6 +122,7 @@ export default function JobMonitor() {
     add: 'Add',
     filterByDate: 'Filter by Date',
     showingJobsFrom: 'Showing jobs from',
+    visible: 'Visible',
   } : language === 'he' ? {
     title: 'ניטור משימות',
     subtitle: 'מעקב אחר כל משימות החברה',
@@ -175,6 +175,7 @@ export default function JobMonitor() {
     searchParts: 'חיפוש חלקים...',
     noInventoryParts: 'אין חלקים במלאי העובד',
     add: 'הוסף',
+    visible: 'מוצג',
   } : {
     title: 'مراقبة المهام',
     subtitle: 'تتبع جميع مهام الشركة',
@@ -230,6 +231,7 @@ export default function JobMonitor() {
     searchParts: 'بحث عن قطع...',
     noInventoryParts: 'لا توجد قطع في مخزون العامل',
     add: 'إضافة',
+    visible: 'المعروض',
   };
 
   // Use cached data with smart date filtering from CacheContext
@@ -264,7 +266,7 @@ export default function JobMonitor() {
             if (jobDate >= dateFilter.startDate && jobDate <= dateFilter.endDate) {
               const jobData = {
                 ...job,
-                workerName: job.wname || job.workerName || 'Unknown',
+                workerName: job.wname || 'Unknown',
               };
               
               const status = jobData.status?.toLowerCase();
@@ -309,7 +311,7 @@ export default function JobMonitor() {
         const finishedJobsList = finishedJobsData
           .map((job) => ({
             ...job,
-            workerName: job.wname || job.workerName || 'Unknown',
+            workerName: job.wname || 'Unknown',
           }))
           .sort((a, b) => new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0));
         
@@ -448,82 +450,23 @@ export default function JobMonitor() {
     router.push({
       pathname: '/EditJob',
       params: {
-        jobData: JSON.stringify(job),
+        job: JSON.stringify(job),
         from: 'jobMonitor'
       }
     });
   };
 
-  const loadWorkerInventory = async (workerId) => {
-    try {
-      console.log('Loading inventory for worker:', workerId);
-      const inventoryDocRef = doc(db, 'users', workerId, 'data', 'inventory');
-      const inventoryDoc = await getDoc(inventoryDocRef);
-      
-      if (inventoryDoc.exists()) {
-        const inventoryData = inventoryDoc.data();
-        console.log('Inventory data:', inventoryData);
-        
-        let inventoryList = [];
-        
-        // Handle both array and object formats
-        if (Array.isArray(inventoryData.parts)) {
-          inventoryList = inventoryData.parts;
-        } else if (inventoryData.parts && typeof inventoryData.parts === 'object') {
-          // Convert object to array
-          inventoryList = Object.entries(inventoryData.parts).map(([key, value]) => ({
-            id: key,
-            name: typeof value === 'object' ? value.name : key,
-            quantity: typeof value === 'object' ? value.quantity : value,
-            lowThreshold: typeof value === 'object' ? value.lowThreshold : 0
-          }));
-        }
-        
-        // Filter out parts with invalid quantities (NaN, null, undefined, or zero)
-        const validInventory = inventoryList.filter(part => {
-          const qty = parseInt(part.quantity);
-          return !isNaN(qty) && qty > 0;
-        });
-        
-        console.log('Processed inventory list:', validInventory);
-        setWorkerInventory(validInventory);
-      } else {
-        console.log('No inventory document found for worker');
-        setWorkerInventory([]);
-      }
-    } catch (error) {
-      console.error('Error loading worker inventory:', error);
-      alert.error('Error', 'Failed to load worker inventory: ' + error.message);
-      setWorkerInventory([]);
-    }
-  };
-
-  const handleEditJob = async (job) => {
-    // Navigate to EditJob screen instead of showing modal
+  const handleEditJob = (job) => {
     router.push({
       pathname: '/EditJob',
       params: {
         job: JSON.stringify(job)
       }
     });
-    return;
-    
-    // Load worker's inventory if we have the worker UID
-    // Try multiple possible fields for worker UID
-    const workerUid = job.wid;
-    console.log('Worker UID identified:', workerUid);
-    
-    if (workerUid) {
-      await loadWorkerInventory(workerUid);
-    } else {
-      console.warn('No worker UID found in job data:', job);
-      alert.warning('Warning', 'Cannot load worker inventory: Worker information not found in job');
-    }
   };
 
   const JobCard = ({ job }) => {
-    // Use the name field from job data (never display raw UIDs)
-    const displayName = job.workerName || job.wname || 'Unknown Worker';
+    const displayName = job.wname || 'Unknown Worker';
     
     // Check if this job is currently highlighted
     const isHighlighted = highlightedJobId === job.id;
@@ -533,10 +476,10 @@ export default function JobMonitor() {
     
     return (
       <TouchableOpacity onPress={() => setSelectedJobDetails(job)}>
-        <View 
+        <AppCard 
           style={[
             styles.jobCard,
-            { backgroundColor: themeColors.surface },
+            { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border },
             isHighlighted && styles.highlightedJobCard
           ]}
         >
@@ -585,7 +528,7 @@ export default function JobMonitor() {
             <Ionicons name="create-outline" size={18} color={themeColors.secondary} />
             <AppText style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</AppText>
           </TouchableOpacity>
-        </View>
+        </AppCard>
       </TouchableOpacity>
     );
   };
@@ -602,127 +545,121 @@ export default function JobMonitor() {
   return (
     <View style={[styles.container, { backgroundColor: themeColors.background }]}>
       <StatusBar style={isDarkMode ? "light" : "dark"} />
-      
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border }]}>
-        <View style={styles.headerCenter}>
-          <AppText style={[styles.title, { color: themeColors.textPrimary }]}>{t.title}</AppText>
-          <AppText style={[styles.subtitle, { color: themeColors.textSecondary }]}>{t.subtitle}</AppText>
-        </View>
-      </View>
-
-      {/* Filter Controls */}
-      <View style={styles.filtersRow}>
-        {/* Date Filter Button */}
-        <TouchableOpacity
-          onPress={() => setShowDateFilter(true)}
-          style={styles.dateFilterButtonWrapper}
-        >
-          <LinearGradient
-            colors={isDarkMode ? ['#0f172a', '#1e3a8a'] : ['#3b82f6', '#1e40af']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.dateFilterButton}
-          >
-            <Ionicons name="calendar-outline" size={20} color="#fff" />
-            <AppText style={styles.dateFilterButtonTextSmall}>
-              {dateFilter.label}
-            </AppText>
-          </LinearGradient>
-        </TouchableOpacity>
-
-        {/* Client Filter Input */}
-        <View style={[styles.clientFilterInput, { backgroundColor: themeColors.surface, borderColor: themeColors.border }]}>
-          <Ionicons name="person-outline" size={18} color={themeColors.textSecondary} />
-          <TextInput
-            style={[styles.clientInput, { color: themeColors.textPrimary }]}
-            placeholder={t.filterByClient}
-            placeholderTextColor={themeColors.textSecondary}
-            value={clientFilter}
-            onChangeText={setClientFilter}
-            returnKeyType="search"
-          />
-          {clientFilter.length > 0 && (
-            <TouchableOpacity onPress={() => setClientFilter('')}>
-              <Ionicons name="close-circle" size={18} color={themeColors.textSecondary} />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Filter Tabs - Colorful */}
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterContainer}
-        contentContainerStyle={styles.filterContent}
-      >
-        <TouchableOpacity
-          style={[styles.filterButton, activeFilter === 'all' && styles.filterButtonActive]}
-          onPress={() => setActiveFilter('all')}
-        >
-          <LinearGradient 
-            colors={activeFilter === 'all' ? gradients.indigoBox : ['#F3F4F6', '#F3F4F6']} 
-            style={styles.filterButtonInner}
-          >
-            <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
-              {t.all} ({jobs.pending.length + jobs.waiting.length + jobs.finished.length})
-            </AppText>
-          </LinearGradient>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.filterButton, activeFilter === 'pending' && styles.filterButtonActive]}
-          onPress={() => setActiveFilter('pending')}
-        >
-          <LinearGradient 
-            colors={activeFilter === 'pending' ? gradients.yellowBox : ['#F3F4F6', '#F3F4F6']} 
-            style={styles.filterButtonInner}
-          >
-            <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
-              {t.pending} ({jobs.pending.length})
-            </AppText>
-          </LinearGradient>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.filterButton, activeFilter === 'waiting' && styles.filterButtonActive]}
-          onPress={() => setActiveFilter('waiting')}
-        >
-          <LinearGradient 
-            colors={activeFilter === 'waiting' ? gradients.purpleBox : ['#F3F4F6', '#F3F4F6']} 
-            style={styles.filterButtonInner}
-          >
-            <AppText style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
-              {t.waiting} ({jobs.waiting.length})
-            </AppText>
-          </LinearGradient>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.filterButton, activeFilter === 'finished' && styles.filterButtonActive]}
-          onPress={() => setActiveFilter('finished')}
-        >
-          <LinearGradient 
-            colors={activeFilter === 'finished' ? gradients.greenBox : ['#F3F4F6', '#F3F4F6']} 
-            style={styles.filterButtonInner}
-          >
-            <AppText style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
-              {t.finished} ({jobs.finished.length})
-            </AppText>
-          </LinearGradient>
-        </TouchableOpacity>
-      </ScrollView>
-
-      {/* Jobs List - White Background */}
       <ScrollableContainer 
         style={styles.content}
-        contentContainerStyle={{ paddingTop: 0 }}
+        contentContainerStyle={styles.contentContainer}
       >
-        {filteredJobs.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <AppText style={styles.emptyText}>{t.noJobs}</AppText>
+        <ScreenHeroCard
+          title={t.title}
+          subtitle={t.subtitle}
+          eyebrow="Monitoring"
+          icon="clipboard-text-clock"
+          iconLibrary="material"
+          accentColor={themeColors.boxIndigo}
+          metrics={[
+            { label: t.pending, value: String(jobs.pending.length) },
+            { label: t.waiting, value: String(jobs.waiting.length) },
+            { label: t.visible, value: String(filteredJobs.length) },
+          ]}
+          badges={[t.filterByDate, t.filterByClient, dateFilter.label]}
+          style={styles.heroCard}
+        />
+
+        <AppCard style={[styles.filtersCard, { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border }]}> 
+          <View style={styles.filtersRow}>
+            <TouchableOpacity
+              onPress={() => setShowDateFilter(true)}
+              style={styles.dateFilterButtonWrapper}
+            >
+              <LinearGradient
+                colors={isDarkMode ? ['#0f172a', '#1e3a8a'] : ['#3b82f6', '#1e40af']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.dateFilterButton}
+              >
+                <Ionicons name="calendar-outline" size={20} color="#fff" />
+                <AppText style={styles.dateFilterButtonTextSmall}>
+                  {dateFilter.label}
+                </AppText>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <SearchInput
+              value={clientFilter}
+              onChangeText={setClientFilter}
+              placeholder={t.filterByClient}
+              onClear={() => setClientFilter('')}
+              colors={themeColors}
+              style={styles.clientFilterInput}
+            />
           </View>
+
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterContainer}
+            contentContainerStyle={styles.filterContent}
+          >
+            <TouchableOpacity
+              style={[styles.filterButton, activeFilter === 'all' && styles.filterButtonActive]}
+              onPress={() => setActiveFilter('all')}
+            >
+              <LinearGradient 
+                colors={activeFilter === 'all' ? gradients.indigoBox : ['#F3F4F6', '#F3F4F6']} 
+                style={styles.filterButtonInner}
+              >
+                <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
+                  {t.all} ({jobs.pending.length + jobs.waiting.length + jobs.finished.length})
+                </AppText>
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.filterButton, activeFilter === 'pending' && styles.filterButtonActive]}
+              onPress={() => setActiveFilter('pending')}
+            >
+              <LinearGradient 
+                colors={activeFilter === 'pending' ? gradients.yellowBox : ['#F3F4F6', '#F3F4F6']} 
+                style={styles.filterButtonInner}
+              >
+                <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
+                  {t.pending} ({jobs.pending.length})
+                </AppText>
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.filterButton, activeFilter === 'waiting' && styles.filterButtonActive]}
+              onPress={() => setActiveFilter('waiting')}
+            >
+              <LinearGradient 
+                colors={activeFilter === 'waiting' ? gradients.purpleBox : ['#F3F4F6', '#F3F4F6']} 
+                style={styles.filterButtonInner}
+              >
+                <AppText style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
+                  {t.waiting} ({jobs.waiting.length})
+                </AppText>
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.filterButton, activeFilter === 'finished' && styles.filterButtonActive]}
+              onPress={() => setActiveFilter('finished')}
+            >
+              <LinearGradient 
+                colors={activeFilter === 'finished' ? gradients.greenBox : ['#F3F4F6', '#F3F4F6']} 
+                style={styles.filterButtonInner}
+              >
+                <AppText style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
+                  {t.finished} ({jobs.finished.length})
+                </AppText>
+              </LinearGradient>
+            </TouchableOpacity>
+          </ScrollView>
+        </AppCard>
+
+        {filteredJobs.length === 0 ? (
+          <AppEmptyState title={t.noJobs} subtitle={t.subtitle} style={styles.emptyContainer} />
         ) : (
           filteredJobs.map((job) => <JobCard key={`${job.wid}-${job.id}`} job={job} />)
         )}
@@ -793,31 +730,16 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     fontSize: typography.base,
   },
-  header: {
-    paddingTop: Platform.OS === 'ios' ? 110 : 98,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+  contentContainer: {
+    paddingTop: Platform.OS === 'ios' ? 100 : 92,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 8,
+  heroCard: {
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: colors.primary,
-    marginBottom: 6,
-    textAlign: 'center',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    letterSpacing: 0.2,
+  filtersCard: {
+    marginBottom: spacing.lg,
   },
   languageButton: {
     width: 80,
@@ -860,10 +782,9 @@ const styles = StyleSheet.create({
   },
   filtersRow: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
     gap: 10,
     alignItems: 'center',
+    marginBottom: spacing.md,
   },
   clientFilterInput: {
     flex: 1,
@@ -885,7 +806,6 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   filterContent: {
-    paddingHorizontal: 20,
     gap: 8,
   },
   filterButton: {
@@ -948,7 +868,6 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingHorizontal: 20,
   },
   jobCard: {
     borderRadius: 12,

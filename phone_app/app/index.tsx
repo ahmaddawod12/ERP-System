@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useLanguageContext } from '../contexts/LanguageContext';
 import { useCache } from '../contexts/CacheContext';
+import { useAlert } from '../contexts/AlertContext';
 import { AppText } from '../components';
 import { 
   registerPushTokenForUser, 
@@ -23,6 +24,7 @@ export default function App() {
   const [showSuccess, setShowSuccess] = useState(false);
   const { language } = useLanguageContext();
   const { initializeCache } = useCache();
+  const alert = useAlert();
   
   // Animation states for loading dots
   const [dot1Anim] = useState(new Animated.Value(0.4));
@@ -180,8 +182,16 @@ export default function App() {
                 // All checks passed - show success animation then navigate
                 showSuccessAndNavigate(role);
               } else {
-                // No profile found - redirect to login
+                // No profile found - show error and return to login
                 console.log('❌ Could not initialize cache/profile');
+                alert.error(
+                  language === 'he' ? 'הגדרה לא הושלמה' : language === 'ar' ? 'الإعداد غير مكتمل' : 'Setup Incomplete',
+                  language === 'he'
+                    ? 'הפרופיל שלך לא נמצא. אנא השלם את ההרשמה דרך האתר.'
+                    : language === 'ar'
+                    ? 'لم يتم العثور على ملفك الشخصي. يرجى إكمال التسجيل عبر الموقع أولاً.'
+                    : 'Your profile was not found. Please complete registration on the website first.',
+                );
                 setIsLoading(false);
               }
             } catch (error) {
@@ -215,7 +225,7 @@ export default function App() {
         cleanupNotifications();
       }
     };
-  }, [router, initializeCache]);
+  }, [router, initializeCache, alert, language]);
 
   // Show loading screen while Firebase initializes with branded design
   if (isLoading || !firebaseInitialized) {

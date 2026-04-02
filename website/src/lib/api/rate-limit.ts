@@ -10,6 +10,7 @@ interface RateLimitEntry {
 }
 
 const store = new Map<string, RateLimitEntry>();
+const MAX_STORE_SIZE = 10_000;
 
 // Periodic cleanup to prevent unbounded growth
 setInterval(() => {
@@ -41,6 +42,12 @@ export function checkRateLimit(
   if (!entry || now > entry.resetAt) {
     entry = { count: 1, resetAt: now + windowMs };
     store.set(key, entry);
+    if (store.size > MAX_STORE_SIZE) {
+      // Evict expired entries when store gets too large
+      for (const [k, v] of store) {
+        if (now > v.resetAt) store.delete(k);
+      }
+    }
     return null;
   }
 

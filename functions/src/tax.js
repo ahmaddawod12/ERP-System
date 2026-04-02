@@ -412,6 +412,7 @@ exports.taxAuthorityCallback = onRequest({
         expiresIn: tokenData.expires_in,
         accessTokenExpiresAt: accessTokenExpiresAt,
         refreshTokenExpiresAt: refreshTokenExpiresAt,
+        code: admin.firestore.FieldValue.delete(),
       });
 
       tokenExchangeSuccess = true;
@@ -620,10 +621,11 @@ exports.getInvoiceApproval = onCall({
         throw new HttpsError('failed-precondition', 'Refresh token expired. Please re-authorize with Tax Authority.');
       }
 
-      // Use a transaction to prevent two concurrent calls from both refreshing
-      // and overwriting each other's token. The transaction re-reads the token doc
-      // and skips the refresh if another call already updated it.
-      const refreshResult = await admin.firestore().runTransaction(async (tx) => {
+      // Two-phase token refresh: read in transaction, HTTP outside, write in second transaction.
+      // This avoids holding Firestore transaction locks during slow HTTP calls.
+
+      // Phase 1: Read current token state in a transaction and check if refresh is needed
+      const tokenState = await admin.firestore().runTransaction(async (tx) => {
         const freshTokenDoc = await tx.get(tokenRef);
         const freshData = freshTokenDoc.data();
         const freshExpiresAt = freshData?.accessTokenExpiresAt || 0;
@@ -631,18 +633,28 @@ exports.getInvoiceApproval = onCall({
         // If another concurrent call already refreshed, use the fresh token
         if (Date.now() + (5 * 60 * 1000) < freshExpiresAt) {
           logger.info('Token already refreshed by concurrent call, using existing token');
-          return { accessToken: freshData.accessToken, accessTokenExpiresAt: freshExpiresAt, skipped: true };
+          return { accessToken: freshData.accessToken, accessTokenExpiresAt: freshExpiresAt, needsRefresh: false };
         }
 
-        // Perform the actual refresh outside-transaction data is OK here because
-        // the transaction will retry if the doc changed underneath us
+        return {
+          needsRefresh: true,
+          currentRefreshToken: freshData.refreshToken || refreshToken,
+          currentExpiresAt: freshExpiresAt,
+        };
+      });
+
+      if (!tokenState.needsRefresh) {
+        accessToken = tokenState.accessToken;
+        accessTokenExpiresAt = tokenState.accessTokenExpiresAt;
+      } else {
+        // Phase 2: Perform HTTP refresh OUTSIDE any transaction
         const tokenRefreshStartTime = Date.now();
         const tokenResponse = await axios.post(
           TAX_AUTHORITY_CONFIG.tokenUrl,
           new URLSearchParams({
             client_id: TAX_AUTHORITY_CONFIG.clientId,
             scope: TAX_AUTHORITY_CONFIG.scope,
-            refresh_token: freshData.refreshToken || refreshToken,
+            refresh_token: tokenState.currentRefreshToken,
             grant_type: 'refresh_token',
             client_secret: TAX_AUTHORITY_CONFIG.clientSecret,
           }).toString(),
@@ -664,35 +676,49 @@ exports.getInvoiceApproval = onCall({
         const now = Date.now();
         const newExpiresAt = now + (newTokenData.expires_in * 1000);
 
-        const updateData = {
-          accessToken: newTokenData.access_token,
-          accessTokenExpiresAt: newExpiresAt,
-          lastRefreshedBy: request.auth.uid,
-          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-          autoRefreshedDuringInvoiceSubmission: true,
-        };
+        // Phase 3: Write new token in a second transaction with optimistic concurrency
+        const refreshResult = await admin.firestore().runTransaction(async (tx) => {
+          // Re-read to check if someone else refreshed while we were doing HTTP
+          const recheckDoc = await tx.get(tokenRef);
+          const recheckData = recheckDoc.data();
+          const recheckExpiresAt = recheckData?.accessTokenExpiresAt || 0;
 
-        if (newTokenData.refresh_token) {
-          updateData.refreshToken = newTokenData.refresh_token;
-          updateData.refreshTokenExpiresAt = newTokenData.refresh_token_expires_in
-            ? now + (newTokenData.refresh_token_expires_in * 1000)
-            : now + (90 * 24 * 60 * 60 * 1000);
-        }
+          // If the token was refreshed by someone else while we did our HTTP call, use theirs
+          if (recheckExpiresAt > tokenState.currentExpiresAt && Date.now() + (5 * 60 * 1000) < recheckExpiresAt) {
+            logger.info('Token refreshed by concurrent call during our HTTP request, using theirs');
+            return { accessToken: recheckData.accessToken, accessTokenExpiresAt: recheckExpiresAt, skipped: true };
+          }
 
-        tx.update(tokenRef, updateData);
-        return { accessToken: newTokenData.access_token, accessTokenExpiresAt: newExpiresAt, skipped: false };
-      });
+          const updateData = {
+            accessToken: newTokenData.access_token,
+            accessTokenExpiresAt: newExpiresAt,
+            lastRefreshedBy: request.auth.uid,
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+            autoRefreshedDuringInvoiceSubmission: true,
+          };
 
-      accessToken = refreshResult.accessToken;
-      accessTokenExpiresAt = refreshResult.accessTokenExpiresAt;
-      if (!refreshResult.skipped) {
-        logger.info('Tokens updated in Firestore after auto-refresh', {
-          companyId,
-          newExpiresAt: new Date(accessTokenExpiresAt).toISOString()
+          if (newTokenData.refresh_token) {
+            updateData.refreshToken = newTokenData.refresh_token;
+            updateData.refreshTokenExpiresAt = newTokenData.refresh_token_expires_in
+              ? now + (newTokenData.refresh_token_expires_in * 1000)
+              : now + (90 * 24 * 60 * 60 * 1000);
+          }
+
+          tx.update(tokenRef, updateData);
+          return { accessToken: newTokenData.access_token, accessTokenExpiresAt: newExpiresAt, skipped: false };
         });
 
-        // Save audit log for auto-refresh
-        await saveAuditLog(companyId, 'taxAuthorityTokenAutoRefreshed', request.auth.uid);
+        accessToken = refreshResult.accessToken;
+        accessTokenExpiresAt = refreshResult.accessTokenExpiresAt;
+        if (!refreshResult.skipped) {
+          logger.info('Tokens updated in Firestore after auto-refresh', {
+            companyId,
+            newExpiresAt: new Date(accessTokenExpiresAt).toISOString()
+          });
+
+          // Save audit log for auto-refresh
+          await saveAuditLog(companyId, 'taxAuthorityTokenAutoRefreshed', request.auth.uid);
+        }
       }
     }  // end isTokenExpired
 

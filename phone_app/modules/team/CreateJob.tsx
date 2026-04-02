@@ -4,7 +4,6 @@ import { View,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  TextInput,
   Platform,
  } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -13,7 +12,7 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { auth, db, collection, doc, getDocs, setDoc, functions, httpsCallable } from '../../firebase';
 import { spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
-import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector } from '../../components';
+import { AppButton, AppCard, AppText, AppInput, SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -67,6 +66,9 @@ export default function CreateJob() {
     submit: 'Create Job',
     cancel: 'Cancel',
     assignedTo: 'Assigned to',
+    workersMetric: 'Workers',
+    selectedMetric: 'Selected',
+    none: 'None',
     fillAllFields: 'Please fill all fields',
     selectWorkerFirst: 'Please select a worker first',
     jobCreated: 'Job created successfully',
@@ -85,6 +87,9 @@ export default function CreateJob() {
     submit: 'צור משימה',
     cancel: 'ביטול',
     assignedTo: 'מוקצה ל',
+    workersMetric: 'עובדים',
+    selectedMetric: 'נבחר',
+    none: 'אין',
     fillAllFields: 'אנא מלא את כל השדות',
     selectWorkerFirst: 'אנא בחר עובד תחילה',
     jobCreated: 'המשימה נוצרה בהצלחה',
@@ -103,6 +108,9 @@ export default function CreateJob() {
     submit: 'إنشاء مهمة',
     cancel: 'إلغاء',
     assignedTo: 'مخصص لـ',
+    workersMetric: 'العمال',
+    selectedMetric: 'المحدد',
+    none: 'لا يوجد',
     fillAllFields: 'يرجى ملء جميع الحقول',
     selectWorkerFirst: 'يرجى اختيار عامل أولاً',
     jobCreated: 'تم إنشاء المهمة بنجاح',
@@ -312,20 +320,37 @@ export default function CreateJob() {
         style={[styles.content, { backgroundColor: themeColors.background }]}
         contentContainerStyle={[styles.scrollContent, { paddingTop: 100 }]}
       >
+        <ScreenHeroCard
+          title={t.title}
+          subtitle={t.subtitle}
+          eyebrow="Dispatch"
+          icon="clipboard-plus-outline"
+          iconLibrary="material"
+          accentColor={themeColors.boxIndigo}
+          metrics={[
+            { label: t.workersMetric, value: String(workers.length) },
+            { label: t.selectedMetric, value: selectedWorkerName || t.none },
+          ]}
+          badges={[t.selectWorker, t.jobDetails]}
+          style={styles.heroCard}
+        />
+
         {/* Workers List */}
         <View style={styles.section}>
-          <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary }]}>{t.selectWorker}</AppText>
-          
-          {!selectedWorker && (
-            <SearchInput
-              placeholder={t.searchWorker}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              colors={themeColors}
-            />
-          )}
-          
-          <View style={[styles.workersListContainer, { backgroundColor: themeColors.surface }]}>
+          <AppCard style={[styles.sectionCard, { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border }]}> 
+            <AppText style={[styles.sectionTitle, { color: themeColors.textPrimary }]}>{t.selectWorker}</AppText>
+
+            {!selectedWorker && (
+              <SearchInput
+                placeholder={t.searchWorker}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                colors={themeColors}
+                style={styles.searchInput}
+              />
+            )}
+
+            <View style={styles.workersListContainer}>
             {workers
               .filter((worker) => {
                 // If a worker is selected, only show that worker
@@ -405,7 +430,8 @@ export default function CreateJob() {
                   </TouchableOpacity>
                 );
               })}
-          </View>
+            </View>
+          </AppCard>
         </View>
 
         {/* Job Form */}
@@ -418,7 +444,7 @@ export default function CreateJob() {
               </AppText>
             </View>
             
-            <View style={[styles.formContainer, { backgroundColor: themeColors.surface }]}>
+            <AppCard style={[styles.formContainer, { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border }]}> 
               {/* Assigned to badge */}
               <View style={styles.assignedToBadge}>
                 <LinearGradient colors={gradients.secondary} style={styles.assignedToBadgeGradient}>
@@ -459,27 +485,17 @@ export default function CreateJob() {
                 />
 
                 {/* Client fields - always visible, pre-filled when client selected */}
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: themeColors.surface, 
-                    borderColor: newJob.cname ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.clientName + ' *'}
-                  placeholderTextColor={themeColors.textLight}
+                <AppInput
                   value={newJob.cname}
                   onChangeText={(text) => setNewJob({ ...newJob, cname: text })}
+                  placeholder={t.clientName + ' *'}
+                  colors={themeColors}
                 />
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: themeColors.surface, 
-                    borderColor: newJob.cphone ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.clientPhone}
-                  placeholderTextColor={themeColors.textLight}
+                <AppInput
                   value={newJob.cphone}
                   onChangeText={(text) => setNewJob({ ...newJob, cphone: text })}
+                  placeholder={t.clientPhone}
+                  colors={themeColors}
                   keyboardType="phone-pad"
                 />
               </View>
@@ -491,16 +507,11 @@ export default function CreateJob() {
                     {t.jobTitle} *
                   </AppText>
                 </View>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: themeColors.backgroundLight, 
-                    borderColor: newJob.title ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.jobTitle}
-                  placeholderTextColor={themeColors.textLight}
+                <AppInput
                   value={newJob.title}
                   onChangeText={(text) => setNewJob({ ...newJob, title: text })}
+                  placeholder={t.jobTitle}
+                  colors={themeColors}
                 />
               </View>
               
@@ -511,16 +522,11 @@ export default function CreateJob() {
                     {t.description} *
                   </AppText>
                 </View>
-                <TextInput
-                  style={[styles.input, styles.textArea, { 
-                    backgroundColor: themeColors.backgroundLight, 
-                    borderColor: newJob.description ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.description}
-                  placeholderTextColor={themeColors.textLight}
+                <AppInput
                   value={newJob.description}
                   onChangeText={(text) => setNewJob({ ...newJob, description: text })}
+                  placeholder={t.description}
+                  colors={themeColors}
                   multiline
                   numberOfLines={4}
                 />
@@ -533,21 +539,19 @@ export default function CreateJob() {
                     {t.location} *
                   </AppText>
                 </View>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: themeColors.backgroundLight, 
-                    borderColor: newJob.location ? themeColors.secondary : themeColors.border,
-                    color: themeColors.textPrimary 
-                  }]}
-                  placeholder={t.location}
-                  placeholderTextColor={themeColors.textLight}
+                <AppInput
                   value={newJob.location}
                   onChangeText={(text) => setNewJob({ ...newJob, location: text })}
+                  placeholder={t.location}
+                  colors={themeColors}
                 />
               </View>
               
               <View style={styles.formActions}>
-                <TouchableOpacity
+                <AppButton
+                  title={t.cancel}
+                  variant="secondary"
+                  iconLeft={{ name: 'close-circle-outline' }}
                   style={styles.cancelButtonWrapper}
                   onPress={() => {
                     setSelectedWorker(null);
@@ -557,24 +561,16 @@ export default function CreateJob() {
                     setSelectedClientObj(null);
                     setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
                   }}
-                >
-                  <View style={[styles.cancelButton, { borderColor: themeColors.border, backgroundColor: themeColors.background }]}>
-                    <Ionicons name="close-circle-outline" size={20} color={themeColors.textSecondary} />
-                    <AppText style={[styles.cancelButtonText, { color: themeColors.textPrimary }]}>{t.cancel}</AppText>
-                  </View>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
+                />
+
+                <AppButton
+                  title={t.submit}
+                  iconLeft={{ name: 'checkmark-circle-outline' }}
                   style={styles.submitButtonWrapper}
                   onPress={handleCreateJob}
-                >
-                  <LinearGradient colors={gradients.indigoBox} style={styles.submitButton}>
-                    <Ionicons name="checkmark-circle" size={20} color="white" />
-                    <AppText style={styles.submitButtonText}>{t.submit}</AppText>
-                  </LinearGradient>
-                </TouchableOpacity>
+                />
               </View>
-            </View>
+            </AppCard>
           </View>
         )}
       </ScrollableContainer>
@@ -600,8 +596,14 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 110 : 98,
     paddingBottom: 40,
   },
+  heroCard: {
+    marginBottom: spacing.lg,
+  },
   section: {
     marginBottom: 24,
+  },
+  sectionCard: {
+    ...shadows.card,
   },
   sectionTitle: {
     fontSize: 20,
@@ -609,9 +611,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   workersListContainer: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 12,
     gap: 12,
+  },
+  searchInput: {
+    marginBottom: spacing.md,
   },
   workerCard: {
     borderRadius: borderRadius.lg,
@@ -653,9 +656,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   formContainer: {
-    backgroundColor: 'white',
-    borderRadius: borderRadius.xl,
-    padding: spacing.lg,
     ...shadows.lg,
   },
   assignedToBadge: {
@@ -713,34 +713,8 @@ const styles = StyleSheet.create({
   cancelButtonWrapper: {
     flex: 1,
   },
-  cancelButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    borderWidth: 2,
-  },
-  cancelButtonText: {
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-  },
   submitButtonWrapper: {
     flex: 1,
-  },
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-  },
-  submitButtonText: {
-    color: 'white',
-    fontSize: typography.base,
-    fontWeight: typography.bold,
   },
   selectedWorkerActions: {
     alignItems: 'center',

@@ -12,7 +12,7 @@ import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { auth, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
-import { AppInput, AppText, GlobalHeader, ScrollableContainer } from '../../components';
+import { AppButton, AppCard, AppEmptyState, AppInput, AppText, GlobalHeader, ScreenHeroCard, ScrollableContainer, SearchInput } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -462,12 +462,27 @@ export default function UserInventory() {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
       >
+        <ScreenHeroCard
+          title={t.title}
+          subtitle={t.subtitle}
+          eyebrow="Inventory"
+          icon="package-variant"
+          iconLibrary="material"
+          accentColor={colors.boxOrange}
+          metrics={[
+            { label: t.quantity, value: String(safeInventory.length) },
+            { label: t.lowStock, value: String(lowStockParts.length) },
+          ]}
+          badges={[t.addNewPart, t.searchParts]}
+          style={styles.heroCard}
+        />
+
         {/* Low Stock Warning */}
         {lowStockParts.length > 0 && (
-          <View style={[styles.warningBox, {
+          <AppCard style={[styles.warningBox, {
             backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.1)' : 'rgba(239, 68, 68, 0.05)',
             borderColor: '#ef4444',
-          }]}>
+          }]}> 
             <View style={styles.warningBoxContent}>
               <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#ef4444" style={styles.warningBoxIcon} />
               <View style={styles.warningBoxText}>
@@ -477,15 +492,16 @@ export default function UserInventory() {
                 </AppText>
               </View>
             </View>
-          </View>
+          </AppCard>
         )}
 
         {/* Add New Part Button */}
-        <TouchableOpacity onPress={() => setShowAddPart(!showAddPart)}>
-          <LinearGradient colors={gradients.secondary} style={styles.addButton}>
-            <AppText style={styles.addButtonText}>+ {t.addNewPart}</AppText>
-          </LinearGradient>
-        </TouchableOpacity>
+        <AppButton
+          title={showAddPart ? t.cancel : `+ ${t.addNewPart}`}
+          variant={showAddPart ? 'secondary' : 'primary'}
+          onPress={() => setShowAddPart(!showAddPart)}
+          style={styles.addButton}
+        />
 
         {showAddPart && (
           <View style={[styles.formCard, { backgroundColor: colors.surface }]}>
@@ -544,20 +560,21 @@ export default function UserInventory() {
             <AppText style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>Loading inventory...</AppText>
           </View>
         ) : inventory.length === 0 ? (
-          <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
-            <MaterialCommunityIcons name="package-variant" size={48} color={colors.textLight} style={{ marginBottom: 12 }} />
-            <AppText style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t.noPartsYet}</AppText>
-            <AppText style={[styles.emptySubtitle, { color: colors.textLight }]}>{t.addFirstPart}</AppText>
-          </View>
+          <AppEmptyState
+            icon="package-variant"
+            title={t.noPartsYet}
+            subtitle={t.addFirstPart}
+            style={[styles.emptyCard, { backgroundColor: colors.surface }]}
+          />
         ) : (
           <>
             {/* Search */}
-            <AppInput
+            <SearchInput
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder={t.searchParts}
               colors={colors}
-              containerStyle={styles.searchInput}
+              style={styles.searchInput}
             />
 
             {/* Low Stock Parts */}
@@ -567,9 +584,7 @@ export default function UserInventory() {
             {filteredNormalStockParts.map((part) => renderPartCard(part, false))}
 
             {filteredLowStockParts.length === 0 && filteredNormalStockParts.length === 0 && (
-              <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
-                <AppText style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t.noResults}</AppText>
-              </View>
+              <AppEmptyState title={t.noResults} style={[styles.emptyCard, { backgroundColor: colors.surface }]} />
             )}
           </>
         )}
@@ -618,18 +633,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: spacing.lg,
   },
-  addButton: {
-    paddingVertical: spacing.md + 6,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    marginBottom: spacing.md,
-    ...shadows.primary,
+  heroCard: {
+    marginBottom: spacing.lg,
   },
-  addButtonText: {
-    color: 'white',
-    fontSize: typography.base,
-    fontWeight: typography.bold,
-    letterSpacing: 0.3,
+  addButton: {
+    marginBottom: spacing.md,
   },
   formCard: {
     borderRadius: borderRadius.lg,

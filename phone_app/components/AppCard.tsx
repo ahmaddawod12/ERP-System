@@ -34,8 +34,8 @@ export default function AppCard({
     tone === 'muted'
       ? { backgroundColor: palette.surfaceAlt, borderColor: palette.borderLight }
       : tone === 'highlight'
-      ? { backgroundColor: palette.surface, borderColor: palette.secondary }
-      : { backgroundColor: palette.surface, borderColor: palette.border };
+      ? { backgroundColor: palette.backgroundElevated, borderColor: palette.secondary }
+      : { backgroundColor: palette.backgroundElevated, borderColor: palette.border };
 
   const baseStyle = [
     styles.base,
@@ -45,7 +45,7 @@ export default function AppCard({
       borderWidth: bordered ? 1 : 0,
       padding,
     },
-    elevated ? shadows.card : null,
+    elevated ? shadows.floating : null,
     style,
   ];
 
@@ -71,6 +71,7 @@ export default function AppCard({
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: borderRadius.xl,
+    borderRadius: borderRadius.xxl,
+    overflow: 'hidden',
   },
 });

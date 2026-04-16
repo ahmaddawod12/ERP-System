@@ -29,7 +29,7 @@ const APP_ROLES = new Set(["manager", "worker", "user", "basic", "dev"]);
 
 function normalizeRoleValue(role: unknown): UserProfile["role"] {
   const raw = String(role ?? "").trim().toLowerCase();
-  return APP_ROLES.has(raw) ? (raw as UserProfile["role"]) : "user";
+  return APP_ROLES.has(raw) ? (raw as UserProfile["role"]) : "basic";
 }
 
 function normalizeProfile(profile: UserProfile | null): UserProfile | null {
@@ -66,11 +66,17 @@ async function loadUserProfile(uid: string) {
   };
 }
 
-function syncAuthCookie(token: string | null) {
-  const secureSuffix = globalThis.location?.protocol === "https:" ? "; Secure" : "";
-  const maxAge = token ? 60 * 60 : 0;
-  const cookieValue = token ?? "";
-  document.cookie = `firebase-auth-token=${cookieValue}; path=/; max-age=${maxAge}; SameSite=Lax${secureSuffix}`;
+async function syncAuthSession(token: string | null) {
+  if (!token) {
+    await fetch("/api/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
+    return;
+  }
+  await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ token }),
+  }).catch(() => {});
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -102,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(nextUser);
         if (nextUser) {
           const token = await nextUser.getIdToken();
-          syncAuthCookie(token);
+          await syncAuthSession(token);
           try {
             const result = await loadUserProfile(nextUser.uid);
             setProfile(result.profile);
@@ -112,13 +118,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSubscription(null);
           }
         } else {
-          syncAuthCookie(null);
+          await syncAuthSession(null);
           setProfile(null);
           setSubscription(null);
         }
       } catch {
         if (!nextUser) {
-          syncAuthCookie(null);
+          await syncAuthSession(null);
         }
         setProfile(null);
         setSubscription(null);

@@ -344,6 +344,7 @@ export function useTaxInvoiceSubmission({
         })) : undefined,
         // Price proposal reference (to mark as used)
         priceProposalId: selectedPriceProposal?.id || null,
+        idempotencyKey: `tax_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
       };
 
       // STEP 1: Call getInvoiceApproval to save document and submit to Tax Authority

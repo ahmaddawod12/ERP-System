@@ -20,6 +20,7 @@ const {
   normalizeRole,
   userProfileDocPath,
   getAuthenticatedUserProfile,
+  assertHttpCompanyAccess,
   toDocumentDocId,
   toBaseDocumentId,
   saveAuditLog,
@@ -28,105 +29,96 @@ const {
   publishGenerateTaskHelper,
 } = require('./shared');
 const {
+  TAX_AUTHORITY_CONFIG,
+  encodeBase64Url,
+  decodeBase64Url,
+  buildAuthCallbackDeepLink,
+  generateSuccessHTML,
+  ensureTaxAuthorityConfigForCallable,
+} = require('./tax-oauth');
+const {
   buildStoredTaxInvoiceDocument,
   getClientVatNumber,
   normalizeInvoiceDate,
   normalizeTaxInvoiceClient,
 } = require('./tax-invoice');
 
-// =============================================================================
-// ISRAELI TAX AUTHORITY OAuth2 TOKEN MANAGEMENT
-// =============================================================================
+const TAX_INVOICE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const TAX_INVOICE_LOCK_STALE_MS = 5 * 60 * 1000;
 
-// OAuth2 Configuration for Israeli Tax Authority
-const TAX_AUTHORITY_CONFIG = {
-  authUrl: process.env.TAX_AUTH_URL || 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/authorize',
-  tokenUrl: process.env.TAX_TOKEN_URL || 'https://openapi.taxes.gov.il/shaam/tsandbox/longtimetoken/oauth2/token',
-  approvalUrl: process.env.TAX_APPROVAL_URL || 'https://openapi.taxes.gov.il/shaam/tsandbox/Invoices/v2/Approval',
-  clientId: process.env.TAX_CLIENT_ID || '',
-  clientSecret: process.env.TAX_CLIENT_SECRET || '',
-  scope: process.env.TAX_SCOPE || 'scope',
-  callbackUrl: process.env.TAX_CALLBACK_URL || '',
-  appScheme: process.env.APP_SCHEME || 'erpsystem',
-};
-
-function encodeBase64Url(input) {
-  return Buffer.from(String(input), 'utf8')
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
+async function setTaxInvoiceReservationState(reservationRef, status, fields = {}) {
+  await reservationRef.set({
+    status,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...fields,
+  }, { merge: true });
 }
 
-function decodeBase64Url(input) {
-  const normalized = String(input || '').replace(/-/g, '+').replace(/_/g, '/');
-  const padLength = (4 - (normalized.length % 4)) % 4;
-  const padded = normalized + '='.repeat(padLength);
-  return Buffer.from(padded, 'base64').toString('utf8');
-}
-
-function escapeHtml(input) {
-  return String(input || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function buildAuthCallbackDeepLink(params = {}) {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null) {
-      query.set(key, String(value));
-    }
-  });
-  return `${TAX_AUTHORITY_CONFIG.appScheme}://auth-callback?${query.toString()}`;
-}
-
-function generateSuccessHTML(deepLink, tokenExchangeSuccess, tokenExchangeError) {
-  const safeDeepLink = escapeHtml(deepLink);
-  const safeError = escapeHtml(tokenExchangeError || '');
-  const statusText = tokenExchangeSuccess ? 'Authorization completed' : 'Authorization completed with warnings';
-
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Authorization Complete</title>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
-      .wrap { max-width: 640px; margin: 0 auto; }
-      .ok { color: #166534; font-weight: 700; }
-      .warn { color: #b45309; font-weight: 700; }
-      a { color: #1d4ed8; }
-      code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <h2>${tokenExchangeSuccess ? '<span class="ok">Success</span>' : '<span class="warn">Completed</span>'}</h2>
-      <p>${escapeHtml(statusText)}</p>
-      ${safeError ? `<p><strong>Details:</strong> ${safeError}</p>` : ''}
-      <p><a href="${safeDeepLink}">Return to app</a></p>
-      <p>If the app does not open automatically, use this link:</p>
-      <p><code>${safeDeepLink}</code></p>
-      <script>
-        setTimeout(function () { window.location.href = ${JSON.stringify(deepLink)}; }, 300);
-      </script>
-    </div>
-  </body>
-</html>`;
-}
-
-function ensureTaxAuthorityConfigForCallable() {
-  if (!TAX_AUTHORITY_CONFIG.clientId || !TAX_AUTHORITY_CONFIG.clientSecret || !TAX_AUTHORITY_CONFIG.callbackUrl) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Tax Authority OAuth is not configured on the server.'
-    );
+function sanitizeExternalErrorData(data) {
+  if (!data || typeof data !== 'object') return null;
+  const result = {};
+  for (const key of Object.keys(data).slice(0, 20)) {
+    if (/token|secret|code|authorization/i.test(key)) continue;
+    const value = data[key];
+    result[key] = typeof value === 'string' ? value.slice(0, 500) : value;
   }
+  return result;
+}
+
+function validateTaxInvoiceItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new HttpsError('invalid-argument', 'At least one item is required');
+  }
+  if (items.length > MAX_ITEMS_PER_DOCUMENT) {
+    throw new HttpsError('invalid-argument', `Too many items (max ${MAX_ITEMS_PER_DOCUMENT})`);
+  }
+  return items.map((item, index) => {
+    const description = String(item?.description || '').trim();
+    const quantity = Number(item?.quantity ?? 1);
+    const price = Number(item?.price);
+    if (!description || description.length > 240) {
+      throw new HttpsError('invalid-argument', `items[${index}].description is required and must be 240 characters or less`);
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new HttpsError('invalid-argument', `items[${index}].quantity must be a positive finite number`);
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      throw new HttpsError('invalid-argument', `items[${index}].price must be a non-negative finite number`);
+    }
+    return {
+      ...item,
+      description,
+      quantity,
+      price,
+    };
+  });
+}
+
+function normalizeTaxInvoiceIdempotencyKey(value) {
+  const normalized = String(value || '').trim();
+  if (!/^[A-Za-z0-9_-]{12,128}$/.test(normalized)) {
+    throw new HttpsError('invalid-argument', 'idempotencyKey is required and must be 12-128 URL-safe characters');
+  }
+  return normalized;
+}
+
+function hashIdempotencyKey(key) {
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function normalizeLinkedJobIds(jobsData) {
+  if (!Array.isArray(jobsData)) return [];
+  const ids = [];
+  for (const entry of jobsData) {
+    const jobId = toBaseDocumentId(entry?.jobId);
+    if (jobId && !ids.includes(jobId)) {
+      ids.push(jobId);
+    }
+  }
+  if (ids.length > 100) {
+    throw new HttpsError('invalid-argument', 'Too many linked jobs');
+  }
+  return ids;
 }
 
 // =============================================================================
@@ -153,7 +145,6 @@ exports.startTaxAuthorityAuth = onCall({
     const uid = request.auth.uid;
     logger.info('startTaxAuthorityAuth called', { uid });
 
-    // Verify user is a manager
     const userProfileRef = admin.firestore().doc(userProfileDocPath(uid));
     const userProfile = await userProfileRef.get();
 
@@ -170,6 +161,12 @@ exports.startTaxAuthorityAuth = onCall({
     if (!companyId) {
       throw new HttpsError('failed-precondition', 'User has no company assigned');
     }
+    await assertHttpCompanyAccess({
+      uid,
+      companyId,
+      allowedRoles: ['manager', 'dev'],
+      allowSoloScope: false,
+    });
 
     // Store pending authorization in Firestore to track which company initiated the flow
     const pendingAuthRef = admin.firestore().collection('taxAuthPending').doc();
@@ -226,7 +223,7 @@ exports.startTaxAuthorityAuth = onCall({
       throw error;
     }
     
-    throw new HttpsError('internal', `Failed to start authorization: ${error.message}`);
+    throw new HttpsError('internal', 'Failed to start authorization');
   }
 });
 
@@ -247,7 +244,9 @@ exports.taxAuthorityCallback = onRequest({
   res.set('Cache-Control', 'private, max-age=0');
   
   try {
-    if (!TAX_AUTHORITY_CONFIG.clientId || !TAX_AUTHORITY_CONFIG.clientSecret || !TAX_AUTHORITY_CONFIG.callbackUrl) {
+    try {
+      ensureTaxAuthorityConfigForCallable();
+    } catch {
       const notConfiguredLink = buildAuthCallbackDeepLink({
         success: false,
         error: 'Tax Authority OAuth is not configured on server.'
@@ -290,8 +289,42 @@ exports.taxAuthorityCallback = onRequest({
     }
 
     const pendingAuthRef = admin.firestore().doc(`taxAuthPending/${authId}`);
-    const pendingAuthSnap = await pendingAuthRef.get();
-    if (!pendingAuthSnap.exists) {
+    const callbackRecordRef = admin.firestore().doc(`taxAuthCallbacks/${authId}`);
+    const receivedAtMillis = Date.now();
+    const pendingAuthData = await admin.firestore().runTransaction(async (tx) => {
+      const pendingAuthSnap = await tx.get(pendingAuthRef);
+      if (!pendingAuthSnap.exists) {
+        return null;
+      }
+      const data = pendingAuthSnap.data() || {};
+      if (data.state !== state) {
+        throw new HttpsError('permission-denied', 'Authorization state mismatch');
+      }
+      if (data.status !== 'pending') {
+        throw new HttpsError('already-exists', 'Authorization session already used');
+      }
+      if (data.expiresAt && Date.now() > data.expiresAt) {
+        throw new HttpsError('deadline-exceeded', 'Authorization session expired');
+      }
+      tx.update(pendingAuthRef, {
+        status: 'used',
+        usedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      tx.set(callbackRecordRef, {
+        authId,
+        companyId: data.companyId || null,
+        uid: data.uid || null,
+        state,
+        codeHash: crypto.createHash('sha256').update(String(code)).digest('hex'),
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        receivedAtMillis,
+        used: false,
+        codeLength: String(code).length,
+      }, { merge: true });
+      return data;
+    });
+
+    if (!pendingAuthData) {
       const deepLink = buildAuthCallbackDeepLink({
         success: false,
         error: 'Authorization session not found or expired'
@@ -299,7 +332,6 @@ exports.taxAuthorityCallback = onRequest({
       return res.send(generateSuccessHTML(deepLink, false, 'Authorization session not found or expired'));
     }
 
-    const pendingAuthData = pendingAuthSnap.data() || {};
     if (pendingAuthData.state !== state) {
       const deepLink = buildAuthCallbackDeepLink({
         success: false,
@@ -322,7 +354,6 @@ exports.taxAuthorityCallback = onRequest({
       return res.send(generateSuccessHTML(deepLink, false, 'Authorization session expired'));
     }
 
-    const callbackRecordRef = admin.firestore().doc(`taxAuthCallbacks/${authId}`);
     const existingCallback = await callbackRecordRef.get();
     if (existingCallback.exists && existingCallback.data()?.used) {
       const existingData = existingCallback.data();
@@ -334,30 +365,12 @@ exports.taxAuthorityCallback = onRequest({
       return res.send(generateSuccessHTML(deepLink, existingData.tokenExchangeSuccess || false, existingData.tokenExchangeError || null));
     }
 
-    const receivedAtMillis = Date.now();
-    await callbackRecordRef.set({
-      authId,
-      companyId: pendingAuthData.companyId || null,
-      uid: pendingAuthData.uid || null,
-      state,
-      code: code,
-      receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-      receivedAtMillis,
-      used: false,
-      codeLength: code.length,
-    }, { merge: true });
-
     // IMMEDIATELY exchange the code for tokens while it's fresh
     let tokenExchangeSuccess = false;
     let tokenExchangeError = null;
     const companyId = pendingAuthData.companyId || null;
 
     try {
-      await pendingAuthRef.update({
-        status: 'used',
-        usedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
       // Exchange authorization code for tokens (axios-retry handles retries automatically)
       const tokenResponse = await axios.post(
         TAX_AUTHORITY_CONFIG.tokenUrl,
@@ -412,7 +425,6 @@ exports.taxAuthorityCallback = onRequest({
         expiresIn: tokenData.expires_in,
         accessTokenExpiresAt: accessTokenExpiresAt,
         refreshTokenExpiresAt: refreshTokenExpiresAt,
-        code: admin.firestore.FieldValue.delete(),
       });
 
       tokenExchangeSuccess = true;
@@ -427,6 +439,7 @@ exports.taxAuthorityCallback = onRequest({
         tokenExchangeSuccess: false,
         tokenExchangeError: tokenExchangeError,
         tokenExchangeAttemptedAt: admin.firestore.FieldValue.serverTimestamp(),
+        used: true,
       });
     }
 
@@ -486,6 +499,8 @@ exports.getInvoiceApproval = onCall({
   timeoutSeconds: 60,
 }, async (request) => {
   const startTime = Date.now();
+  let reservationRef = null;
+  let idempotencyRef = null;
   
   try {
     // Log authentication status immediately
@@ -509,7 +524,8 @@ exports.getInvoiceApproval = onCall({
 
     const {
       type, client, items, companyId,
-      language, date, notes, jobsData, priceProposalId
+      language, date, notes, jobsData, priceProposalId,
+      idempotencyKey: rawIdempotencyKey,
     } = request.data || {};
 
     if (!companyId) {
@@ -532,20 +548,73 @@ exports.getInvoiceApproval = onCall({
     if (!client || !client.name) {
       throw new HttpsError('invalid-argument', 'Client name is required');
     }
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      throw new HttpsError('invalid-argument', 'At least one item is required');
+    const normalizedItems = validateTaxInvoiceItems(items);
+    const idempotencyKey = normalizeTaxInvoiceIdempotencyKey(rawIdempotencyKey);
+    idempotencyRef = admin.firestore().doc(
+      `companies/${companyId}/tax_invoice_idempotency/${hashIdempotencyKey(idempotencyKey)}`,
+    );
+    const linkedJobIds = normalizeLinkedJobIds(jobsData);
+    const normalizedPriceProposalId = priceProposalId ? toDocumentDocId(priceProposalId) : '';
+
+    if (linkedJobIds.length > 0) {
+      const jobSnaps = await admin.firestore().getAll(
+        ...linkedJobIds.map((jobId) => admin.firestore().doc(`companies/${companyId}/jobs/${jobId}`)),
+      );
+      jobSnaps.forEach((snap, index) => {
+        const linkedJobId = linkedJobIds[index];
+        if (!snap.exists) {
+          throw new HttpsError('not-found', `Linked job ${linkedJobId} was not found`);
+        }
+        const job = snap.data() || {};
+        if (job.status !== 'finished') {
+          throw new HttpsError('failed-precondition', `Linked job ${linkedJobId} must be finished before invoicing`);
+        }
+        if (job.isCert === true) {
+          throw new HttpsError('failed-precondition', `Linked job ${linkedJobId} already has a tax invoice`);
+        }
+        if (role !== 'manager' && String(job.wid || '') !== String(userData.wid || '')) {
+          throw new HttpsError('permission-denied', `You cannot invoice linked job ${linkedJobId}`);
+        }
+      });
     }
-    if (items.length > MAX_ITEMS_PER_DOCUMENT) {
-      throw new HttpsError('invalid-argument', `Too many items (max ${MAX_ITEMS_PER_DOCUMENT})`);
+
+    if (normalizedPriceProposalId) {
+      const proposalRef = admin.firestore().doc(`companies/${companyId}/documents/${normalizedPriceProposalId}`);
+      const proposalSnap = await proposalRef.get();
+      if (!proposalSnap.exists) {
+        throw new HttpsError('not-found', 'Price proposal not found');
+      }
+      const proposal = proposalSnap.data() || {};
+      const proposalType = Number(proposal.documentType ?? proposal.type);
+      if (proposalType !== DOC_TYPE.PRICE_PROPOSAL) {
+        throw new HttpsError('failed-precondition', 'Only price proposal documents can be marked as used');
+      }
+      if (proposal.isUsed === true) {
+        throw new HttpsError('failed-precondition', 'Price proposal is already used');
+      }
+      if (role !== 'manager' && proposal.createdByUid && proposal.createdByUid !== uid) {
+        throw new HttpsError('permission-denied', 'You cannot use this price proposal');
+      }
     }
     // Always fetch business info from Firestore (never trust frontend cache for security)
     let businessInfo;
     const businessRegRef = admin.firestore().doc(`companies/${companyId}/data/business_info`);
 
-    // CRITICAL FIX: Use transaction to atomically read + increment document number
-    // This prevents two concurrent requests from getting the same invoice number.
-    // If Tax Authority later rejects, the counter is decremented to avoid gaps.
-    const { documentNumber, documentId, businessInfoData } = await admin.firestore().runTransaction(async (tx) => {
+    // Reserve an invoice number and persist a reservation record up front.
+    const reservationResult = await admin.firestore().runTransaction(async (tx) => {
+      const idempotencySnap = await tx.get(idempotencyRef);
+      if (idempotencySnap.exists) {
+        const idempotencyData = idempotencySnap.data() || {};
+        if (idempotencyData.status === 'approved' && idempotencyData.result) {
+          return { duplicate: true, result: idempotencyData.result };
+        }
+        if (
+          idempotencyData.status === 'in_progress' &&
+          Number(idempotencyData.createdAtMillis || 0) > Date.now() - TAX_INVOICE_LOCK_STALE_MS
+        ) {
+          throw new HttpsError('already-exists', 'Invoice submission with this idempotency key is already in progress');
+        }
+      }
       const businessRegDoc = await tx.get(businessRegRef);
       if (!businessRegDoc.exists) {
         throw new HttpsError('not-found', 'Business registration not found. Please register your business first.');
@@ -564,11 +633,45 @@ exports.getInvoiceApproval = onCall({
         'document_numbers.305': admin.firestore.FieldValue.increment(1),
         last_updated: new Date().toISOString(),
       });
+
+      tx.set(
+        admin.firestore().doc(`companies/${companyId}/tax_invoice_reservations/${toDocumentDocId(docId)}`),
+        {
+          documentId: docId,
+          documentNumber: docNum,
+          uid,
+          companyId,
+          clientName: String(client.name || '').trim(),
+          status: 'reserved',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      tx.set(idempotencyRef, {
+        status: 'in_progress',
+        uid,
+        companyId,
+        documentId: docId,
+        documentNumber: docNum,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAtMillis: Date.now(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expireAt: admin.firestore.Timestamp.fromMillis(Date.now() + TAX_INVOICE_IDEMPOTENCY_TTL_MS),
+      }, { merge: true });
       
       return { documentNumber: docNum, documentId: docId, businessInfoData: bizData };
     });
+    if (reservationResult.duplicate) {
+      logger.info('getInvoiceApproval: idempotent duplicate detected', { companyId, uid });
+      return reservationResult.result;
+    }
+    const { documentNumber, documentId, businessInfoData } = reservationResult;
     
     businessInfo = businessInfoData;
+    reservationRef = admin.firestore().doc(
+      `companies/${companyId}/tax_invoice_reservations/${toDocumentDocId(documentId)}`,
+    );
     const todayDate = new Date().toISOString().split('T')[0];
     const invoiceDate = normalizeInvoiceDate(date, todayDate);
     const normalizedClient = normalizeTaxInvoiceClient(client);
@@ -576,14 +679,14 @@ exports.getInvoiceApproval = onCall({
     logger.info('Preparing Tax Authority submission', {
       documentId,
       companyId,
-      itemCount: items.length,
-      clientName: client.name,
+      itemCount: normalizedItems.length,
+      hasClientName: Boolean(client.name),
       documentNumber,
     });
 
     // Calculate totals for Tax Authority
     let totalBeforeVat = 0;
-    items.forEach(item => {
+    normalizedItems.forEach(item => {
       const itemTotal = (item.quantity || 1) * (item.price || 0);
       totalBeforeVat += itemTotal;
     });
@@ -785,7 +888,7 @@ exports.getInvoiceApproval = onCall({
     taxAuthorityData.action = 0;
     
     // Build items array in exact field order
-    taxAuthorityData.items = items.map((item, idx) => {
+    taxAuthorityData.items = normalizedItems.map((item, idx) => {
       const quantity = item.quantity || 1;
       const pricePerUnit = item.price;
       const totalAmount = Math.round(quantity * pricePerUnit * 100) / 100;
@@ -896,17 +999,11 @@ exports.getInvoiceApproval = onCall({
         errorMessage,
         invoiceId: documentId
       });
-
-      // Rollback the reserved document number counter to avoid numbering gaps
-      try {
-        await businessRegRef.update({
-          'document_numbers.305': admin.firestore.FieldValue.increment(-1),
-          last_updated: new Date().toISOString(),
-        });
-        logger.info('Rolled back document number counter after validation error', { documentNumber });
-      } catch (rollbackErr) {
-        logger.error('Failed to rollback document number counter', { documentNumber, error: rollbackErr.message });
-      }
+      await setTaxInvoiceReservationState(reservationRef, 'rejected_validation', {
+        finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        taxAuthorityStatus: response.status,
+        taxAuthorityMessage: errorMessage,
+      });
       
       throw new HttpsError(
         'failed-precondition',
@@ -929,6 +1026,10 @@ exports.getInvoiceApproval = onCall({
         errorMessage,
         responseKeys: response.data ? Object.keys(response.data) : []
       });
+      await setTaxInvoiceReservationState(reservationRef, 'submission_failed', {
+        taxAuthorityStatus: response.status,
+        taxAuthorityMessage: errorMessage,
+      });
       
       throw new HttpsError(
         'internal',
@@ -950,23 +1051,11 @@ exports.getInvoiceApproval = onCall({
 
     // CRITICAL: Only save to Firestore if Tax Authority APPROVED
     if (!isApproved) {
-      // Rollback the reserved document number counter to avoid numbering gaps
-      try {
-        await businessRegRef.update({
-          'document_numbers.305': admin.firestore.FieldValue.increment(-1),
-          last_updated: new Date().toISOString(),
-        });
-        logger.info('Rolled back document number counter after Tax Authority rejection', { documentNumber });
-      } catch (rollbackErr) {
-        logger.error('Failed to rollback document number counter', { documentNumber, error: rollbackErr.message });
-      }
-
       logger.warn('Tax Authority rejected invoice - NOT saving to Firestore', {
         documentId,
         documentNumber,
-        clientName: client.name,
+        hasClientName: Boolean(client.name),
         status: response.status,
-        responseData: response.data,
         responseDataKeys: response.data ? Object.keys(response.data) : [],
         checkedFields: {
           approved: response.data?.approved,
@@ -979,6 +1068,11 @@ exports.getInvoiceApproval = onCall({
                               response.data?.error || 
                               response.data?.error_description ||
                               'Tax Authority did not approve the invoice. Please check invoice details and try again.';
+      await setTaxInvoiceReservationState(reservationRef, 'rejected', {
+        finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        taxAuthorityStatus: response.status,
+        taxAuthorityMessage: rejectionMessage,
+      });
 
       throw new HttpsError(
         'failed-precondition',
@@ -986,7 +1080,7 @@ exports.getInvoiceApproval = onCall({
         {
           approved: false,
           status: response.status,
-          responseData: response.data,
+        responseData: sanitizeExternalErrorData(response.data),
           documentNumber: documentNumber,
           clientName: client.name
         }
@@ -1007,12 +1101,12 @@ exports.getInvoiceApproval = onCall({
       documentId,
       documentNumber,
       client,
-      items,
+      items: normalizedItems,
       language,
       date: invoiceDate,
       notes,
-      jobsData,
-      priceProposalId,
+      jobsData: linkedJobIds.map((jobId) => ({ jobId })),
+      priceProposalId: normalizedPriceProposalId || null,
       totalBeforeVat,
       vatAmount,
       totalWithVat,
@@ -1021,101 +1115,72 @@ exports.getInvoiceApproval = onCall({
       submittedAt,
     });
     try {
-      await documentRef.set(documentData);
-      logger.info('Document saved to Firestore with approval', {
-        documentId,
-        path: `companies/${companyId}/documents/${toDocumentDocId(documentId)}`,
-        confirmationNumber
-      });
+      const batch = admin.firestore().batch();
+      batch.create(documentRef, documentData);
 
       // CRITICAL: Update job documents to mark them as having a tax invoice (isCert = true)
-      const allJobRefs = Array.isArray(jobsData)
-        ? jobsData
-            .map((jobRef) => jobRef?.jobId)
-            .filter(Boolean)
-        : [];
-      
-      if (allJobRefs.length > 0) {
-        // Use batched write to update all jobs + price proposal + cache in one go
-        const batch = admin.firestore().batch();
-        const cacheUpdates = {};
-        for (const jobId of allJobRefs) {
-          const cleanJobId = toBaseDocumentId(jobId);
-          const jobPath = `companies/${companyId}/jobs/${cleanJobId}`;
-          try {
-            const jobRef = admin.firestore().doc(jobPath);
-            batch.update(jobRef, {
-              isCert: true,
-              documentId: documentId,
-              documentCreatedAt: new Date().toISOString()
-            });
-            logger.info('Queued job update isCert=true', { jobId: cleanJobId, documentId });
-            cacheUpdates.jobsVersion = admin.firestore.FieldValue.increment(1);
-          } catch (jobUpdateError) {
-            logger.error('Failed to queue job update', {
-              error: jobUpdateError.message,
-              jobId: cleanJobId
-            });
-          }
-        }
-        
-        // Mark price proposal as used if provided
-        if (priceProposalId) {
-          try {
-            const proposalRef = admin.firestore().doc(`companies/${companyId}/documents/${toDocumentDocId(priceProposalId)}`);
-            batch.update(proposalRef, {
-              isUsed: true,
-              usedByDocumentId: documentId,
-              usedAt: new Date().toISOString()
-            });
-            logger.info('Queued price proposal update isUsed=true', { priceProposalId, documentId });
-          } catch (proposalError) {
-            logger.error('Failed to queue price proposal update', {
-              error: proposalError.message,
-              priceProposalId
-            });
-          }
-        }
-        
-        // Always update company cache with version bumps
-        const cachePath = `companies/${companyId}/data/cache`;
-        const cacheRef = admin.firestore().doc(cachePath);
-        cacheUpdates.documentsVersion = admin.firestore.FieldValue.increment(1);
-        cacheUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-        batch.set(cacheRef, cacheUpdates, { merge: true });
-        logger.info('Queued cache update', { cachePath, cacheUpdates });
-        
-        // Commit all updates in one batch
-        try {
-          await batch.commit();
-          logger.info('Batch committed: jobs isCert, proposal isUsed, cache increments', {
-            jobCount: allJobRefs.length,
-            priceProposalMarked: !!priceProposalId,
-            documentId
-          });
-        } catch (batchError) {
-          logger.error('Batch commit failed', {
-            error: batchError.message,
-            jobIds: allJobRefs,
-            priceProposalId
-          });
-        }
-      } else {
-        const cacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
-        await cacheRef.set({
-          documentsVersion: admin.firestore.FieldValue.increment(1),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        logger.info('Cache updated for tax invoice without linked jobs', { companyId, documentId });
+      const allJobRefs = linkedJobIds;
+
+      const cacheUpdates = {
+        documentsVersion: admin.firestore.FieldValue.increment(1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      for (const jobId of allJobRefs) {
+        const cleanJobId = toBaseDocumentId(jobId);
+        const jobRef = admin.firestore().doc(`companies/${companyId}/jobs/${cleanJobId}`);
+        batch.update(jobRef, {
+          isCert: true,
+          documentId,
+          documentCreatedAt: submittedAt,
+        });
+        cacheUpdates.jobsVersion = admin.firestore.FieldValue.increment(1);
       }
 
+      if (normalizedPriceProposalId) {
+        const proposalRef = admin.firestore().doc(`companies/${companyId}/documents/${normalizedPriceProposalId}`);
+        batch.update(proposalRef, {
+          isUsed: true,
+          usedByDocumentId: documentId,
+          usedAt: submittedAt,
+        });
+      }
+
+      const cacheRef = admin.firestore().doc(`companies/${companyId}/data/cache`);
+      batch.set(cacheRef, cacheUpdates, { merge: true });
+      batch.set(reservationRef, {
+        status: 'approved',
+        finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        confirmationNumber: confirmationNumber || null,
+        taxAuthorityStatus: response.status,
+      }, { merge: true });
+      batch.set(idempotencyRef, {
+        status: 'approved',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      await batch.commit();
+      logger.info('Approved tax invoice finalized atomically', {
+        documentId,
+        path: `companies/${companyId}/documents/${toDocumentDocId(documentId)}`,
+        confirmationNumber,
+        jobCount: allJobRefs.length,
+        priceProposalMarked: !!normalizedPriceProposalId,
+      });
+
     } catch (firestoreError) {
+      await setTaxInvoiceReservationState(reservationRef, 'approval_received_needs_reconcile', {
+        finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        confirmationNumber: confirmationNumber || null,
+        taxAuthorityStatus: response.status,
+        finalizationError: firestoreError.message,
+      });
       logger.error('Failed to save approved document to Firestore', {
         error: firestoreError.message,
         documentId,
         confirmationNumber
       });
-      throw new HttpsError('internal', `Invoice approved but failed to save: ${firestoreError.message}`);
+      throw new HttpsError('internal', 'Invoice approved but failed to save');
     }
 
     // Document counter was already atomically incremented in the transaction above.
@@ -1174,14 +1239,14 @@ exports.getInvoiceApproval = onCall({
       const completeDocumentData = {
         type: DOC_TYPE.TAX_INVOICE, // Store numeric type (305)
         client: clientDataForPDF,
-        items: items,
+        items: normalizedItems,
         company: companyData,
         language: language || 'he',
         documentNumber: documentNumber,
         date: invoiceDate,
         notes: notes,
-        jobsData: jobsData || null, // Multi-job references
-        priceProposalId: priceProposalId || null,
+        jobsData: linkedJobIds.map((jobId) => ({ jobId })),
+        priceProposalId: normalizedPriceProposalId || null,
         taxAuthorityConfirmationNumber: confirmationNumber,
         totals: {
           totalBeforeVat: Math.round(totalBeforeVat * 100) / 100,
@@ -1226,7 +1291,7 @@ exports.getInvoiceApproval = onCall({
 
     const finalTotalTime = Date.now() - startTime;
 
-    return {
+    const finalResult = {
       success: true,
       documentId: documentId,
       documentNumber,
@@ -1250,26 +1315,63 @@ exports.getInvoiceApproval = onCall({
         totalWithVat: Math.round(totalWithVat * 100) / 100
       }
     };
+    await idempotencyRef.set({
+      status: 'approved',
+      result: finalResult,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      finalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    return finalResult;
 
   } catch (error) {
     const totalTime = Date.now() - startTime;
     
+    async function markIdempotencyFailed(message, status = 'failed') {
+      if (!idempotencyRef) return;
+      try {
+        await idempotencyRef.set({
+          status,
+          errorMessage: String(message || '').slice(0, 500),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+      } catch (idempotencyError) {
+        logger.error('Failed to update tax invoice idempotency state', {
+          idempotencyError: idempotencyError.message,
+          duration: totalTime,
+        });
+      }
+    }
+
     // Handle axios errors
     if (error.response) {
       // API returned an error response
       logger.error('Tax Authority API error response', {
         status: error.response.status,
         statusText: error.response.statusText,
-        data: error.response.data,
+        data: sanitizeExternalErrorData(error.response.data),
         duration: totalTime
       });
+      await markIdempotencyFailed(error.response.data?.message || error.response.statusText, 'submission_failed');
+      if (reservationRef) {
+        try {
+          await setTaxInvoiceReservationState(reservationRef, 'submission_failed', {
+            taxAuthorityStatus: error.response.status,
+            taxAuthorityMessage: error.response.data?.message || error.response.statusText,
+          });
+        } catch (reservationError) {
+          logger.error('Failed to update reservation after API error response', {
+            reservationError: reservationError.message,
+            duration: totalTime,
+          });
+        }
+      }
       
       throw new HttpsError(
         'failed-precondition',
         `Tax Authority API error: ${error.response.data?.message || error.response.statusText}`,
         {
           status: error.response.status,
-          apiError: error.response.data
+          apiError: sanitizeExternalErrorData(error.response.data)
         }
       );
     } else if (error.request) {
@@ -1278,13 +1380,26 @@ exports.getInvoiceApproval = onCall({
         error: error.message,
         duration: totalTime
       });
+      await markIdempotencyFailed(error.message, 'submission_failed');
+      if (reservationRef) {
+        try {
+          await setTaxInvoiceReservationState(reservationRef, 'submission_failed', {
+            taxAuthorityMessage: error.message,
+          });
+        } catch (reservationError) {
+          logger.error('Failed to update reservation after no-response error', {
+            reservationError: reservationError.message,
+            duration: totalTime,
+          });
+        }
+      }
       
       throw new HttpsError(
         'unavailable',
         'Tax Authority API did not respond. Please try again later.'
       );
     } else if (error instanceof HttpsError) {
-      // Re-throw HttpsError
+      await markIdempotencyFailed(error.message, 'failed');
       throw error;
     } else {
       // Other errors
@@ -1293,8 +1408,21 @@ exports.getInvoiceApproval = onCall({
         stack: error.stack,
         duration: totalTime
       });
+      await markIdempotencyFailed(error.message, 'failed');
+      if (reservationRef) {
+        try {
+          await setTaxInvoiceReservationState(reservationRef, 'submission_failed', {
+            taxAuthorityMessage: error.message,
+          });
+        } catch (reservationError) {
+          logger.error('Failed to update reservation after internal error', {
+            reservationError: reservationError.message,
+            duration: totalTime,
+          });
+        }
+      }
       
-      throw new HttpsError('internal', `Failed to submit invoice: ${error.message}`);
+      throw new HttpsError('internal', 'Failed to submit invoice');
     }
   }
 });

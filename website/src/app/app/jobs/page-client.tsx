@@ -78,6 +78,9 @@ export default function JobsClient() {
 
   const pendingAssignedCount = pendingJobs.filter((job) => Boolean(job.wid)).length;
   const waitingCount = pendingJobs.filter((job) => job.status === "waiting").length;
+  const statusOptions: JobRecord["status"][] = canManageCompanyJobs
+    ? ["pending", "waiting", "finished", "denied"]
+    : ["pending", "waiting"];
 
   const statusBadgeVariant = (status: JobRecord["status"]) => {
     if (status === "finished") return "success" as const;
@@ -400,10 +403,11 @@ export default function JobsClient() {
                         }
                         className="dashboard-table-select"
                       >
-                        <option value="pending">pending</option>
-                        <option value="waiting">waiting</option>
-                        <option value="finished">finished</option>
-                        <option value="denied">denied</option>
+                        {statusOptions.map((statusOption) => (
+                          <option key={statusOption} value={statusOption}>
+                            {statusOption}
+                          </option>
+                        ))}
                       </select>
                       {isSoloUser ? (
                         <Button size="sm" variant="danger" onClick={() => void removeJob(row.id)}>

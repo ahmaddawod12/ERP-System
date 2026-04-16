@@ -32,6 +32,71 @@ const { Storage } = require('@google-cloud/storage');
 const { createHash } = require('crypto');
 const { getTargetMonth } = require('./archive-month');
 
+const rawConsole = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+};
+
+function normalizeLogValue(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack || null,
+    };
+  }
+
+  if (value && typeof value === 'object') {
+    return value;
+  }
+
+  return value ?? null;
+}
+
+function writeStructuredLog(severity, fallbackMessage, firstArg, restArgs) {
+  const payload = {
+    severity,
+    message: typeof firstArg === 'string' ? firstArg : fallbackMessage,
+  };
+
+  const fields = {};
+  if (typeof firstArg !== 'string') {
+    fields.arg0 = normalizeLogValue(firstArg);
+  }
+
+  restArgs.forEach((arg, index) => {
+    const normalized = normalizeLogValue(arg);
+    if (
+      normalized &&
+      typeof normalized === 'object' &&
+      !Array.isArray(normalized)
+    ) {
+      Object.assign(fields, normalized);
+      return;
+    }
+
+    fields[`arg${typeof firstArg === 'string' ? index + 1 : index + 1}`] = normalized;
+  });
+
+  if (Object.keys(fields).length > 0) {
+    payload.fields = fields;
+  }
+
+  const line = JSON.stringify(payload);
+  if (severity === 'ERROR') {
+    rawConsole.error(line);
+  } else if (severity === 'WARNING') {
+    rawConsole.warn(line);
+  } else {
+    rawConsole.log(line);
+  }
+}
+
+console.log = (firstArg, ...restArgs) => writeStructuredLog('INFO', 'cloudrun-archiver log', firstArg, restArgs);
+console.warn = (firstArg, ...restArgs) => writeStructuredLog('WARNING', 'cloudrun-archiver warning', firstArg, restArgs);
+console.error = (firstArg, ...restArgs) => writeStructuredLog('ERROR', 'cloudrun-archiver error', firstArg, restArgs);
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
@@ -271,44 +336,18 @@ async function verifyArchive(companyId, archiveKey, expectedCount) {
  * @param {Date} endDate - End of range (inclusive)
  * @returns {number} - Number of documents deleted
  */
-async function deleteDocumentsByDateRange(collectionPath, dateField, startDate, endDate, filters = {}) {
-  const startISO = startDate.toISOString();
-  const endISO = endDate.toISOString();
+async function deleteDocumentsByIds(collectionPath, documentIds) {
   let totalDeleted = 0;
-  let hasMore = true;
-
-  while (hasMore) {
-    let q = db.collection(collectionPath)
-      .where(dateField, '>=', startISO)
-      .where(dateField, '<=', endISO);
-
-    // Apply additional equality filters (e.g. { status: 'finished' })
-    for (const [field, value] of Object.entries(filters)) {
-      q = q.where(field, '==', value);
-    }
-
-    const snapshot = await q.limit(BATCH_SIZE).get();
-
-    if (snapshot.empty) {
-      hasMore = false;
-      break;
-    }
-
+  for (let index = 0; index < documentIds.length; index += BATCH_SIZE) {
+    const batchIds = documentIds.slice(index, index + BATCH_SIZE);
     const batch = db.batch();
-    snapshot.docs.forEach(doc => {
-      batch.delete(doc.ref);
+    batchIds.forEach((documentId) => {
+      batch.delete(db.doc(`${collectionPath}/${documentId}`));
     });
-
     await batch.commit();
-    totalDeleted += snapshot.docs.length;
-
-    console.log(`🗑️ Deleted batch of ${snapshot.docs.length} docs from ${collectionPath} (total: ${totalDeleted})`);
-
-    if (snapshot.docs.length < BATCH_SIZE) {
-      hasMore = false;
-    }
+    totalDeleted += batchIds.length;
+    console.log(`Deleted archived id batch of ${batchIds.length} docs from ${collectionPath} (total: ${totalDeleted})`);
   }
-
   return totalDeleted;
 }
 
@@ -332,10 +371,21 @@ async function processCompany(companyId, target) {
 
   // ---- FINISHED JOBS ----
   const finishedKey = `${year}-${month}-j`;
-  if (manifest[finishedKey]) {
+  if (manifest[finishedKey] && manifest[finishedKey].status !== 'uploaded_not_deleted') {
     console.log(`⏭️ ${finishedKey} already archived (${manifest[finishedKey].docCount} docs on ${manifest[finishedKey].archivedAt})`);
   } else {
     const collectionPath = `companies/${companyId}/jobs`;
+    if (manifest[finishedKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[finishedKey].docIds)) {
+      const deleted = await deleteDocumentsByIds(collectionPath, manifest[finishedKey].docIds);
+      manifest[finishedKey] = {
+        ...manifest[finishedKey],
+        deletedCount: deleted,
+        status: 'deleted',
+        deletedAt: new Date().toISOString(),
+        docIds: undefined,
+      };
+      manifestUpdated = true;
+    } else {
     const docs = await queryDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate, { status: 'finished' });
 
     if (docs.length === 0) {
@@ -351,9 +401,16 @@ async function processCompany(companyId, target) {
 
       // Step 2: Verify upload
       await verifyArchive(companyId, finishedKey, docs.length);
+      manifest[finishedKey] = {
+        archivedAt: new Date().toISOString(),
+        docCount: docs.length,
+        status: 'uploaded_not_deleted',
+        docIds: docs.map((doc) => doc.id),
+      };
+      await saveManifest(companyId, manifest);
 
       // Step 3: Delete from Firestore (only after verified upload)
-      const deleted = await deleteDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate, { status: 'finished' });
+      const deleted = await deleteDocumentsByIds(collectionPath, docs.map((doc) => doc.id));
       console.log(`✅ Archived and deleted ${deleted} finished jobs for ${year}-${month}`);
 
 
@@ -362,17 +419,30 @@ async function processCompany(companyId, target) {
         archivedAt: new Date().toISOString(),
         docCount: docs.length,
         deletedCount: deleted,
+        status: 'deleted',
       };
       manifestUpdated = true;
+    }
     }
   }
 
   // ---- DOCUMENTS ----
   const documentsKey = `${year}-${month}-d`;
-  if (manifest[documentsKey]) {
+  if (manifest[documentsKey] && manifest[documentsKey].status !== 'uploaded_not_deleted') {
     console.log(`⏭️ ${documentsKey} already archived (${manifest[documentsKey].docCount} docs on ${manifest[documentsKey].archivedAt})`);
   } else {
     const collectionPath = `companies/${companyId}/documents`;
+    if (manifest[documentsKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[documentsKey].docIds)) {
+      const deleted = await deleteDocumentsByIds(collectionPath, manifest[documentsKey].docIds);
+      manifest[documentsKey] = {
+        ...manifest[documentsKey],
+        deletedCount: deleted,
+        status: 'deleted',
+        deletedAt: new Date().toISOString(),
+        docIds: undefined,
+      };
+      manifestUpdated = true;
+    } else {
     const docs = await queryDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
 
     if (docs.length === 0) {
@@ -387,9 +457,16 @@ async function processCompany(companyId, target) {
 
       // Step 2: Verify upload
       await verifyArchive(companyId, documentsKey, docs.length);
+      manifest[documentsKey] = {
+        archivedAt: new Date().toISOString(),
+        docCount: docs.length,
+        status: 'uploaded_not_deleted',
+        docIds: docs.map((doc) => doc.id),
+      };
+      await saveManifest(companyId, manifest);
 
       // Step 3: Delete from Firestore
-      const deleted = await deleteDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
+      const deleted = await deleteDocumentsByIds(collectionPath, docs.map((doc) => doc.id));
       console.log(`✅ Archived and deleted ${deleted} documents for ${year}-${month}`);
 
       // Step 4: Update manifest
@@ -397,8 +474,10 @@ async function processCompany(companyId, target) {
         archivedAt: new Date().toISOString(),
         docCount: docs.length,
         deletedCount: deleted,
+        status: 'deleted',
       };
       manifestUpdated = true;
+    }
     }
   }
 

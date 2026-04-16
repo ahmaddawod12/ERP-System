@@ -303,7 +303,7 @@ export const docs: DocEntry[] = [
           [
             "companies/{companyId}/documents/{docId}",
             "Generated document record",
-            "type, client fields, items, totals, createdBy, createdAt, downloadURL, storagePath, tax fields (for 305)",
+            "type, client fields, items, totals, createdBy, createdAt, storagePath, tax fields (for 305)",
           ],
           [
             "documentTasks/{taskId}",
@@ -385,7 +385,7 @@ export const docs: DocEntry[] = [
           [
             "Task completion",
             "documentTasks/{taskId}",
-            "status completed/failed, previewURL/downloadURL, storagePath, pdfSize, processingTimeMs, emailSent fields",
+            "status completed/failed, previewURL/downloadURL, storagePath, pdfSize, processingTimeMs, emailSent fields; saved documents use storagePath + on-demand signed URLs",
           ],
         ],
       },
@@ -467,7 +467,7 @@ export const docs: DocEntry[] = [
           ["companies/{companyId}/workers/{wid}", "Auth", "workerId, uid, role, email, wid"],
           ["companies/{companyId}/clients/{clientId}", "Clients", "name, contact fields, vatNumber, notes"],
           ["companies/{companyId}/jobs/{jobId}", "Jobs", "id, jid, status, assignment, client fields, work result fields"],
-          ["companies/{companyId}/documents/{docId}", "Documents", "type, client fields, totals, downloadURL, storagePath, tax fields"],
+          ["companies/{companyId}/documents/{docId}", "Documents", "type, client fields, totals, storagePath, tax fields"],
           ["companies/{companyId}/data/business_info", "Auth/Documents", "vat_number, business_type, document_numbers, contact fields"],
           ["companies/{companyId}/data/subscription", "Auth/Billing", "tier, status, enabledModules, expiresAt"],
           ["companies/{companyId}/data/cache", "Cache", "jobsVersion, documentsVersion, clientsVersion, workersVersion, updatedAt"],

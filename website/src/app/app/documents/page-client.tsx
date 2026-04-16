@@ -22,7 +22,12 @@ import {
   VAT_RATE,
   VAT_RATE_PERCENT,
 } from "@/lib/document-types";
-import { listDocuments, listClients, resolveCompanyScope } from "@/lib/services/firestore-service";
+import {
+  getDocumentDownloadUrl,
+  listDocuments,
+  listClients,
+  resolveCompanyScope,
+} from "@/lib/services/firestore-service";
 import type { DocumentRecord, ClientRecord } from "@/lib/types";
 
 /* ─── Document type codes (matches phone app) ─── */
@@ -90,6 +95,7 @@ export default function DocumentsClient() {
   const [generatedDocId, setGeneratedDocId] = useState<string | null>(null);
   const [confirmationNumber, setConfirmationNumber] = useState<string | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
 
   /* ── Document task hook (Pub/Sub) ── */
   const {
@@ -297,6 +303,7 @@ export default function DocumentsClient() {
           language: docData.language as string,
           date: docData.date as string,
           notes: docData.notes as string,
+          idempotencyKey: `tax_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
         });
         if (result.confirmationNumber) {
           setConfirmationNumber(result.confirmationNumber);
@@ -327,6 +334,36 @@ export default function DocumentsClient() {
   const handleGenerateFromPreview = () => {
     void handleGenerate();
   };
+
+  const handleOpenDocumentPdf = useCallback(async (documentRecord: DocumentRecord) => {
+    if (!companyScopeId) {
+      toast({ title: "Document unavailable", description: "Company scope is missing.", variant: "error" });
+      return;
+    }
+
+    const documentId = documentRecord.documentId ?? documentRecord.id;
+    if (!documentId) {
+      toast({ title: "Document unavailable", description: "Document ID is missing.", variant: "error" });
+      return;
+    }
+
+    try {
+      setOpeningDocumentId(documentId);
+      const url = await getDocumentDownloadUrl(companyScopeId, documentId);
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (!popup) {
+        window.location.assign(url);
+      }
+    } catch (error) {
+      toast({
+        title: "Unable to open PDF",
+        description: error instanceof Error ? error.message : "Failed to fetch the document URL.",
+        variant: "error",
+      });
+    } finally {
+      setOpeningDocumentId(null);
+    }
+  }, [companyScopeId, toast]);
 
   /* ── Reset form ── */
   const resetForm = () => {
@@ -894,15 +931,15 @@ export default function DocumentsClient() {
                           >
                             View
                           </Button>
-                          {row.downloadURL && (
-                            <a
-                              href={row.downloadURL}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex h-9 items-center rounded-[1rem] bg-slate-200 px-3 text-sm font-medium text-slate-900 transition hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                          {(row.storagePath || row.documentId || row.id) && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => void handleOpenDocumentPdf(row)}
+                              disabled={openingDocumentId === (row.documentId ?? row.id)}
                             >
                               PDF
-                            </a>
+                            </Button>
                           )}
                         </div>
                       ),
@@ -1022,7 +1059,13 @@ export default function DocumentsClient() {
           onClose={() => setViewingDocument(null)}
           className="max-w-2xl"
         >
-          {viewingDocument && <DocumentDetail documentRecord={viewingDocument} />}
+          {viewingDocument && (
+            <DocumentDetail
+              documentRecord={viewingDocument}
+              onOpenPdf={() => void handleOpenDocumentPdf(viewingDocument)}
+              isOpening={openingDocumentId === (viewingDocument.documentId ?? viewingDocument.id)}
+            />
+          )}
         </Modal>
       </section>
     </ProtectedRoute>
@@ -1031,7 +1074,15 @@ export default function DocumentsClient() {
 
 /* ─── Document Detail Component (matches phone app ViewDocument) ─── */
 
-function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) {
+function DocumentDetail({
+  documentRecord,
+  onOpenPdf,
+  isOpening,
+}: {
+  documentRecord: DocumentRecord;
+  onOpenPdf: () => void;
+  isOpening: boolean;
+}) {
   return (
     <div className="space-y-4 text-sm">
       {/* Document Info */}
@@ -1205,16 +1256,16 @@ function DocumentDetail({ documentRecord }: { documentRecord: DocumentRecord }) 
       )}
 
       {/* PDF link */}
-      {documentRecord.downloadURL && (
-        <a
-          href={documentRecord.downloadURL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-[1rem] bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
+      {(documentRecord.storagePath || documentRecord.documentId || documentRecord.id) && (
+        <button
+          type="button"
+          onClick={onOpenPdf}
+          disabled={isOpening}
+          className="inline-flex items-center gap-2 rounded-[1rem] bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
         >
           <CheckCircle2 className="h-4 w-4" />
-          Open PDF
-        </a>
+          {isOpening ? "Opening..." : "Open PDF"}
+        </button>
       )}
     </div>
   );

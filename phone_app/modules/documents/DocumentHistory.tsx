@@ -25,6 +25,7 @@ import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc, f
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { DOC_TYPE } from '@smart-job/contracts';
+import { getDocumentDownloadUrl } from './document-download';
 
 export default function DocumentHistory() {
   const router = useRouter();
@@ -269,8 +270,6 @@ export default function DocumentHistory() {
             type: data.type,
             total: calculateTotal(data.income || data.items),
             description: getDescriptionFromIncome(data.income || data.items) || data.notes,
-            pdfUrl: data.downloadURL || data.url?.origin || data.url?.he || data.url?.en || null,
-            downloadUrl: data.downloadURL || data.url?.origin || data.url?.he || data.url?.en || null,
             documentNumber: data.documentNumber || data.number || data.id,
           };
         });
@@ -332,8 +331,6 @@ export default function DocumentHistory() {
             type: data.type,
             total: calculateTotal(data.income || data.items),
             description: getDescriptionFromIncome(data.income || data.items) || data.notes,
-            pdfUrl: data.downloadURL || data.url?.origin || data.url?.he || data.url?.en || null,
-            downloadUrl: data.downloadURL || data.url?.origin || data.url?.he || data.url?.en || null,
             documentNumber: data.documentNumber || data.number || data.id,
           }));
           
@@ -405,14 +402,19 @@ export default function DocumentHistory() {
     setFilteredDocuments(filtered);
   };
 
-  const handlePreview = async (doc) => {
-    if (!doc.pdfUrl && !doc.downloadUrl) {
-      alert.error('Error', 'Document URL not available');
-      return;
+  const resolveDocumentUrl = async (doc) => {
+    const companyId = getCompanyId();
+    const documentId = doc.documentId || doc.id;
+    if (!doc.storagePath || !companyId || !documentId) {
+      throw new Error(t.pdfNotAvailable);
     }
 
+    return getDocumentDownloadUrl(companyId, documentId);
+  };
+
+  const handlePreview = async (doc) => {
     try {
-      const url = doc.pdfUrl || doc.downloadUrl;
+      const url = await resolveDocumentUrl(doc);
       
       // Open the PDF URL in the browser for preview
       const canOpen = await Linking.canOpenURL(url);
@@ -443,14 +445,9 @@ export default function DocumentHistory() {
    * Download - Actually download the PDF file to device
    */
   const handleDownload = async (doc) => {
-    if (!doc.pdfUrl && !doc.downloadUrl) {
-      alert.error('Error', t.pdfNotAvailable);
-      return;
-    }
-
     try {
       setDownloadingDoc(doc.id);
-      const url = doc.pdfUrl || doc.downloadUrl;
+      const url = await resolveDocumentUrl(doc);
       
       // Create a filename from the document
       const filename = `${getDocTypeName(doc.type)}_${doc.documentNumber || doc.id}.pdf`;
@@ -497,14 +494,9 @@ export default function DocumentHistory() {
    * Share - Share the PDF via system share sheet (WhatsApp, Email, etc.)
    */
   const handleShare = async (doc) => {
-    if (!doc.pdfUrl && !doc.downloadUrl) {
-      alert.error('Error', t.pdfNotAvailable);
-      return;
-    }
-
     try {
       setSharingDoc(doc.id);
-      const url = doc.pdfUrl || doc.downloadUrl;
+      const url = await resolveDocumentUrl(doc);
       
       // Download file first for sharing
       const filename = `${getDocTypeName(doc.type)}_${doc.documentNumber || doc.id}.pdf`;

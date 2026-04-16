@@ -1,4 +1,4 @@
-import { ArrowRight, Clock3, FileText, Globe2, Layers3, Package, Radio, UsersRound } from "lucide-react";
+import { ArrowRight, Clock3, FileText, Globe2, Package, Radio, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";

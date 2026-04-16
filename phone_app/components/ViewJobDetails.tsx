@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Image,
   Modal,
@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { borderRadius, getColors, spacing } from '../theme';
+import { useCache } from '../contexts/CacheContext';
 import { useThemeContext } from '../contexts/ThemeContext';
 import AppButton from './AppButton';
 import AppCard from './AppCard';
@@ -15,12 +16,8 @@ import AppChip from './AppChip';
 import AppIcon from './AppIcon';
 import AppText from './AppText';
 import AppDivider from './AppDivider';
-import type { DateLike } from '../types';
-
-interface PhotoRef {
-  uri?: string;
-  url?: string;
-}
+import type { DateLike, JobFileRef } from '../types';
+import { resolveJobFileUri } from '../modules/shared/job-file-utils';
 
 interface PartUsed {
   id?: string;
@@ -34,9 +31,10 @@ interface JobData {
   description?: string;
   workDescription?: string;
   status?: string;
-  photos?: (string | PhotoRef)[];
+  id?: string;
+  photos?: (string | JobFileRef)[];
   partsUsed?: PartUsed[];
-  signature?: string | PhotoRef;
+  signature?: string | JobFileRef;
   location?: string;
   cname?: string;
   cphone?: string;
@@ -55,7 +53,7 @@ export interface ViewJobDetailsProps {
   onClose: () => void;
   translations?: Record<string, string>;
   getStatusColor?: (status: string) => string;
-  onImagePress?: (photo: string | PhotoRef) => void;
+  onImagePress?: (photo: string | JobFileRef) => void;
   isDarkMode?: boolean;
 }
 
@@ -71,12 +69,6 @@ const formatDate = (value: DateLike | undefined): string => {
   } catch {
     return String(value);
   }
-};
-
-const getPhotoUri = (photo: string | PhotoRef | undefined): string | null => {
-  if (!photo) return null;
-  if (typeof photo === 'string') return photo;
-  return photo.uri || photo.url || null;
 };
 
 const normalizeStatus = (status: string | undefined): string => String(status || '').toLowerCase();
@@ -107,19 +99,63 @@ export default function ViewJobDetails({
   onImagePress,
   isDarkMode,
 }: ViewJobDetailsProps) {
+  const { getCompanyId } = useCache();
   const themeContext = useThemeContext();
   const darkMode = typeof isDarkMode === 'boolean' ? isDarkMode : themeContext.isDarkMode;
   const palette = getColors(darkMode);
-
-  if (!visible || !job) return null;
-
-  const titleText = job.title || job.jobTitle || translations.untitledJob || 'Job';
-  const descriptionText = job.description || job.workDescription || '-';
-  const status = normalizeStatus(job.status);
+  const [resolvedPhotoUris, setResolvedPhotoUris] = useState<string[]>([]);
+  const [resolvedSignatureUri, setResolvedSignatureUri] = useState<string | null>(null);
+  const safeJob = job ?? null;
+  const titleText = safeJob?.title || safeJob?.jobTitle || translations.untitledJob || 'Job';
+  const descriptionText = safeJob?.description || safeJob?.workDescription || '-';
+  const status = normalizeStatus(safeJob?.status);
   const statusColor = getStatusColor ? getStatusColor(status) : undefined;
-  const photos = Array.isArray(job.photos) ? job.photos : [];
-  const partsUsed = Array.isArray(job.partsUsed) ? job.partsUsed : [];
-  const signatureUri = getPhotoUri(job.signature);
+  const photos = Array.isArray(safeJob?.photos) ? safeJob.photos : [];
+  const partsUsed = Array.isArray(safeJob?.partsUsed) ? safeJob.partsUsed : [];
+  const companyId = getCompanyId();
+  const jobId = String(safeJob?.id || '').trim();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateAttachmentUris() {
+      if (!visible || !safeJob) {
+        setResolvedPhotoUris([]);
+        setResolvedSignatureUri(null);
+        return;
+      }
+
+      try {
+        const nextPhotoUris = await Promise.all(
+          photos.map((photo) => resolveJobFileUri(photo, companyId, jobId)),
+        );
+        const nextSignatureUri = await resolveJobFileUri(
+          safeJob.signature,
+          companyId,
+          jobId,
+        );
+
+        if (!cancelled) {
+          setResolvedPhotoUris(
+            nextPhotoUris.filter((value): value is string => Boolean(value)),
+          );
+          setResolvedSignatureUri(nextSignatureUri);
+        }
+      } catch {
+        if (!cancelled) {
+          setResolvedPhotoUris([]);
+          setResolvedSignatureUri(null);
+        }
+      }
+    }
+
+    void hydrateAttachmentUris();
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, jobId, photos, safeJob, visible]);
+
+  if (!visible || !safeJob) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -155,25 +191,25 @@ export default function ViewJobDetails({
                 value={descriptionText}
                 labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.location || 'Location'} value={job.location} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.clientName || 'Client'} value={job.cname} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.clientPhone || 'Phone'} value={job.cphone} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.location || 'Location'} value={safeJob.location} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.clientName || 'Client'} value={safeJob.cname} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.clientPhone || 'Phone'} value={safeJob.cphone} labelColor={palette.textSecondary} />
               <DetailRow
                 label={translations.assignedBy || 'Assigned By'}
-                value={job.mname}
+                value={safeJob.mname}
                 labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.createdAt || 'Created'} value={formatDate(job.createdAt)} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.finishedAt || 'Finished'} value={formatDate(job.finishedAt)} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.createdAt || 'Created'} value={formatDate(safeJob.createdAt)} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.finishedAt || 'Finished'} value={formatDate(safeJob.finishedAt)} labelColor={palette.textSecondary} />
               <DetailRow
                 label={translations.timeWorked || translations.timeStatus || 'Time'}
                 value={
-                  job.timeWorked ||
-                  (job.timeFrom || job.timeTo ? `${job.timeFrom || '--'} - ${job.timeTo || '--'}` : '-')
+                  safeJob.timeWorked ||
+                  (safeJob.timeFrom || safeJob.timeTo ? `${safeJob.timeFrom || '--'} - ${safeJob.timeTo || '--'}` : '-')
                 }
                 labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.signingPerson || 'Signed By'} value={job.signingPerson} labelColor={palette.textSecondary} />
+              <DetailRow label={translations.signingPerson || 'Signed By'} value={safeJob.signingPerson} labelColor={palette.textSecondary} />
             </AppCard>
 
             <AppCard>
@@ -196,19 +232,17 @@ export default function ViewJobDetails({
 
             <AppCard>
               <AppText variant="heading">{translations.photos || 'Photos'}</AppText>
-              {photos.length === 0 ? (
+              {resolvedPhotoUris.length === 0 ? (
                 <AppText variant="caption" color={palette.textLight} style={styles.emptyText}>
                   {translations.noPhotos || 'No photos'}
                 </AppText>
               ) : (
                 <View style={styles.photoGrid}>
-                  {photos.map((photo, index) => {
-                    const uri = getPhotoUri(photo);
-                    if (!uri) return null;
+                  {resolvedPhotoUris.map((uri, index) => {
                     return (
                       <TouchableOpacity
                         key={`${uri}-${index}`}
-                        onPress={() => onImagePress?.(photo)}
+                        onPress={() => onImagePress?.(uri)}
                         style={styles.photoButton}
                       >
                         <Image source={{ uri }} style={styles.photo} />
@@ -221,8 +255,8 @@ export default function ViewJobDetails({
 
             <AppCard>
               <AppText variant="heading">{translations.signature || 'Signature'}</AppText>
-              {signatureUri ? (
-                <Image source={{ uri: signatureUri }} style={styles.signature} resizeMode="contain" />
+              {resolvedSignatureUri ? (
+                <Image source={{ uri: resolvedSignatureUri }} style={styles.signature} resizeMode="contain" />
               ) : (
                 <AppText variant="caption" color={palette.textLight} style={styles.emptyText}>
                   {translations.noSignature || 'No signature'}

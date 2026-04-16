@@ -1,3 +1,3 @@
 import { withGate } from '../modules/shared/withGate';
 import Screen from '../modules/clients/ClientBook';
-export default withGate(Screen, { module: 'clients', roles: ['manager', 'basic'] });
+export default withGate(Screen, { roles: ['manager', 'basic'] });

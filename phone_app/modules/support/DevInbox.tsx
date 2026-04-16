@@ -26,14 +26,19 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { db, auth, collection, doc, getDocs, updateDoc, query, where, orderBy, signOut } from '../../firebase';
+import { db, auth, collection, getDocs, query, where, orderBy, signOut } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
 import { AppText, GlobalHeader, AppInput } from '../../components';
-import { appendConversationMessage, loadConversationThread } from './support-message-store';
+import { loadConversationThread } from './support-message-store';
+import {
+  appendSupportMessage,
+  closeSupportConversation,
+  markSupportConversationRead,
+} from './support-api';
 
 export default function DevInbox() {
   const router = useRouter();
@@ -97,10 +102,9 @@ export default function DevInbox() {
   const loadConversations = async () => {
     try {
       const conversationsRef = collection(db, 'conversations');
-      // Optimized query: only fetch open conversations with unread messages
+      // Fetch all open conversations so resolved-but-still-open threads remain visible.
       const q = query(conversationsRef,
         where('status', '==', 'open'),
-        where('unreadForDev', '>', 0),
         orderBy('unreadForDev', 'desc'),
         orderBy('lastMessageAt', 'desc')
       );
@@ -159,9 +163,7 @@ export default function DevInbox() {
     
     // Mark as read for dev
     try {
-      await updateDoc(doc(db, 'conversations', conv.id), {
-        unreadForDev: 0,
-      });
+      await markSupportConversationRead(conv.id);
     } catch (error) {
       console.error('Error marking as read:', error);
     }
@@ -193,13 +195,7 @@ export default function DevInbox() {
     setSending(true);
     
     try {
-      await appendConversationMessage({
-        conversationId: selectedConversation.id,
-        senderUid: 'dev',
-        text: trimmedReply,
-        unreadForUserDelta: 1,
-        unreadForDevValue: 0,
-      });
+      await appendSupportMessage(selectedConversation.id, trimmedReply);
       
       // Refresh messages after sending
       await loadConversationMessages(selectedConversation.id);
@@ -231,9 +227,7 @@ export default function DevInbox() {
             style: 'destructive',
             onPress: async () => {
               try {
-                await updateDoc(doc(db, 'conversations', convId), {
-                  status: 'closed',
-                });
+                await closeSupportConversation(convId);
                 alert.success(t.conversationClosed, '');
               } catch (error) {
                 console.error('Error closing conversation:', error);

@@ -38,9 +38,26 @@ service firebase.storage {
       return profileExists(uid) && ('mid' in getProfile(uid)) ? getProfile(uid).mid : null;
     }
 
+    function workerMembershipPath(companyId, wid) {
+      return /databases/(default)/documents/companies/$(companyId)/workers/$(wid);
+    }
+
+    function workerMembershipExists(companyId, wid) {
+      return wid != null && firestore.exists(workerMembershipPath(companyId, wid));
+    }
+
     // Helper: check write size before upload
     function isValidUploadSize() {
       return request.resource == null || request.resource.size <= maxUploadSize();
+    }
+
+    function isAllowedUserUploadContentType() {
+      return request.resource != null &&
+             request.resource.contentType is string &&
+             (
+               request.resource.contentType.matches('image/.*') ||
+               request.resource.contentType == 'application/pdf'
+             );
     }
     
     // Helper function to check if user is a manager with access to worker's data
@@ -51,7 +68,10 @@ service firebase.storage {
              profileExists(workerId) &&
              'companyId' in getProfile(getUid()) &&
              'companyId' in getProfile(workerId) &&
-             getProfile(getUid()).companyId == getProfile(workerId).companyId;
+             getProfile(getUid()).companyId == getProfile(workerId).companyId &&
+             getProfile(workerId).role in ['worker', 'user', 'basic'] &&
+             'wid' in getProfile(workerId) &&
+             workerMembershipExists(getProfile(workerId).companyId, getProfile(workerId).wid);
     }
     
     // Helper function to check if user is a standard user (not manager or worker)
@@ -87,51 +107,41 @@ service firebase.storage {
     // user job photos and signatures
     // Path: {uid}/jobs/{jobId}/{filename}
     match /{uid}/jobs/{jobId}/{filename} {
-      // users can read/write/delete their own job files
+      // Users can read/write/delete only their own job files.
+      // Cross-user access should go through signed URLs issued by Cloud Functions.
       allow read, delete: if isAuthenticated() && getUid() == uid;
-      allow write: if isAuthenticated() && getUid() == uid && isValidUploadSize();
-      
-      // managers can read/write/delete files of workers in their company
-      allow read, delete: if isManagerOfWorker(uid);
-      allow write: if isManagerOfWorker(uid) && isValidUploadSize();
+      allow write: if isAuthenticated() && getUid() == uid && isValidUploadSize() && isAllowedUserUploadContentType();
     }
     
     // Inventory or other user files
     // Path: {uid}/inventory/{filename}
     match /{uid}/inventory/{filename} {
-      // users can read/write/delete their own inventory files
+      // Personal inventory files are private to the owning user.
       allow read, delete: if isAuthenticated() && getUid() == uid;
-      allow write: if isAuthenticated() && getUid() == uid && isValidUploadSize();
-      
-      // managers can read/write/delete inventory files of workers in their company
-      allow read, delete: if isManagerOfWorker(uid);
-      allow write: if isManagerOfWorker(uid) && isValidUploadSize();
+      allow write: if isAuthenticated() && getUid() == uid && isValidUploadSize() && isAllowedUserUploadContentType();
     }
     
     // Company-level storage for documents (PDFs, invoices, etc.)
     // Path: companies/{companyId}/documents/{filename}
     match /companies/{companyId}/documents/{filename} {
-      allow read, delete: if ownsCompany(companyId) && (isManager() || isUser());
-      allow write: if ownsCompany(companyId) && (isManager() || isUser()) && isValidUploadSize();
+      // All document reads must go through backend-issued signed URLs.
+      allow read: if false;
+      allow write, delete: if false;
     }
     
     // Company-level storage for job-related files
     // Path: companies/{companyId}/jobs/{jobId}/{filename}
     match /companies/{companyId}/jobs/{jobId}/{filename} {
-      // managers can manage all company job files
-      allow read, delete: if ownsCompany(companyId) && isManager();
-      allow write: if ownsCompany(companyId) && isManager() && isValidUploadSize();
-      // users can manage files for jobs they created
-      allow read, delete: if ownsCompany(companyId) && isUser();
-      allow write: if ownsCompany(companyId) && isUser() && isValidUploadSize();
+      // All cross-user job file reads must go through backend-issued signed URLs.
+      allow read: if false;
+      allow write, delete: if false;
     }
     
     // Archived data (finishedJobs & documents moved from Firestore to Storage)
     // Path: companies/{companyId}/archives/{archiveFile}
-    // Written by Cloud Run Job (Admin SDK, bypasses rules), read by mobile app
+    // Written by Cloud Run Job (Admin SDK, bypasses rules); reads are backend-controlled.
     match /companies/{companyId}/archives/{archiveFile} {
-      // Any authenticated user who belongs to this company can read archives
-      allow read: if ownsCompany(companyId);
+      allow read: if false;
     }
   }
 }

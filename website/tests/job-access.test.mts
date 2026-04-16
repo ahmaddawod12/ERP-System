@@ -15,9 +15,9 @@ test("worker job access requires a worker membership id", () => {
   assert.equal(canListCompanyJobs("worker", ""), false);
   assert.equal(canListCompanyJobs("user", null), false);
   assert.equal(canListCompanyJobs("manager", null), true);
-  assert.deepEqual(buildListJobsOptions("worker", { wid: 7 }), { role: "worker", wid: "7" });
-  assert.deepEqual(buildListJobsOptions("user", { wid: 7 }), { role: "user", wid: "7" });
-  assert.deepEqual(buildListJobsOptions("worker", { wid: "   " }), { role: "worker" });
+  assert.deepEqual(buildListJobsOptions("worker", { wid: 7, name: "Worker", email: "worker@example.com" }), { role: "worker", wid: "7" });
+  assert.deepEqual(buildListJobsOptions("user", { wid: 7, name: "User", email: "user@example.com" }), { role: "user", wid: "7" });
+  assert.deepEqual(buildListJobsOptions("worker", { wid: "   ", name: "Worker", email: "worker@example.com" }), { role: "worker" });
   assert.equal(roleUsesScopedJobAccess("worker"), true);
   assert.equal(roleUsesScopedJobAccess("user"), true);
   assert.equal(roleUsesScopedJobAccess("manager"), false);
@@ -27,8 +27,8 @@ test("worker job access requires a worker membership id", () => {
 
 test("managed job payloads keep sequential membership ids and names", () => {
   const payload = buildManagedJobCreatePayload(
-    { title: "Install", cname: "Acme", description: "Replace unit" },
-    { name: "Manager", email: "manager@example.com", mid: 12, wid: null },
+    { title: "Install", cname: "Acme", cphone: "", description: "Replace unit", location: "" },
+    { name: "Manager", email: "manager@example.com", mid: 12, wid: undefined },
     { wid: 8, name: "Worker", email: "worker@example.com" },
   );
 
@@ -43,7 +43,7 @@ test("job assignment patches clear assignee fields without dropping manager meta
     name: "Manager",
     email: "manager@example.com",
     mid: 5,
-    wid: null,
+    wid: undefined,
   });
 
   assert.equal(patch.mid, "5");
@@ -54,8 +54,8 @@ test("job assignment patches clear assignee fields without dropping manager meta
 
 test("solo finished jobs never fall back to auth uid strings", () => {
   const payload = buildSoloFinishedJobPayload(
-    { title: "Service", cname: "Solo Client", description: "Finished visit" },
-    { name: "Solo User", email: "solo@example.com", mid: null, wid: 1 },
+    { title: "Service", cname: "Solo Client", cphone: "", description: "Finished visit", location: "" },
+    { name: "Solo User", email: "solo@example.com", mid: undefined, wid: 1 },
   );
 
   assert.equal(payload.wid, "1");

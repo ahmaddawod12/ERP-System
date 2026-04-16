@@ -42,6 +42,7 @@ export interface InvoiceApprovalParams {
   jobData?: Record<string, unknown>;
   jobsData?: Array<Record<string, unknown>>;
   priceProposalId?: string;
+  idempotencyKey: string;
 }
 
 export interface TaskData {

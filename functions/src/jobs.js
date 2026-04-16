@@ -7,6 +7,7 @@ const {
   onDocumentUpdated,
   validateCompanyId,
   assertHttpCompanyAccess,
+  getUserProfileOrThrow,
   userProfileDocPath,
   sendPushNotification,
   companyWorkerDocPath,
@@ -15,6 +16,106 @@ const {
   HTTP_COMPANY_MANAGER_ROLES,
   HTTP_ALL_APP_ROLES,
 } = require('./shared');
+const {
+  JobMutationError,
+  resolveJobMutationPayload,
+} = require('./job-mutation-resolver');
+
+const JOB_FILE_DOWNLOAD_URL_TTL_MS = 15 * 60 * 1000;
+
+function rethrowJobMutationError(error) {
+  if (error instanceof HttpsError) {
+    throw error;
+  }
+  if (error instanceof JobMutationError) {
+    throw new HttpsError(error.code, error.message);
+  }
+  throw error;
+}
+
+async function loadWorkerIdentity(tx, dbRef, companyId, wid) {
+  const normalizedWid = String(wid || '').trim();
+  if (!normalizedWid) return null;
+
+  const workerRef = dbRef.doc(`companies/${companyId}/workers/${normalizedWid}`);
+  const workerSnap = await tx.get(workerRef);
+  if (!workerSnap.exists) return null;
+  const workerData = workerSnap.data() || {};
+
+  return {
+    wid: normalizedWid,
+    name: String(workerData.name || workerData.email || normalizedWid).trim(),
+  };
+}
+
+async function loadClientIdentity(tx, dbRef, companyId, clientId) {
+  const normalizedClientId = String(clientId || '').trim();
+  if (!normalizedClientId) return null;
+
+  const clientRef = dbRef.doc(`companies/${companyId}/clients/${normalizedClientId}`);
+  const clientSnap = await tx.get(clientRef);
+  if (!clientSnap.exists) return null;
+  const clientData = clientSnap.data() || {};
+
+  return {
+    id: normalizedClientId,
+    name: String(clientData.name || clientData.cname || '').trim(),
+    phone: String(clientData.phone || clientData.cphone || '').trim(),
+  };
+}
+
+function requiresAssignedJobScope(role, isSoloScope) {
+  return role === 'worker' || (role === 'user' && !isSoloScope);
+}
+
+function normalizeJobFileStoragePath(value) {
+  const normalized = String(value || '').trim().replace(/^\/+/, '');
+  if (!normalized || normalized.includes('..') || normalized.includes('?')) {
+    return '';
+  }
+  return normalized;
+}
+
+function collectJobFileStoragePaths(jobId, jobData) {
+  const fileEntries = [];
+  const photos = Array.isArray(jobData?.photos) ? jobData.photos : [];
+  const signature = jobData?.signature;
+
+  for (const photo of photos) {
+    fileEntries.push(photo);
+  }
+  if (signature) {
+    fileEntries.push(signature);
+  }
+
+  const storagePaths = new Set();
+  for (const entry of fileEntries) {
+    const candidate = typeof entry === 'string'
+      ? entry
+      : (typeof entry?.storagePath === 'string' ? entry.storagePath : '');
+    const normalized = normalizeJobFileStoragePath(candidate);
+    const parts = normalized.split('/');
+    if (parts.length >= 4 && parts[1] === 'jobs' && parts[2] === jobId) {
+      storagePaths.add(normalized);
+    }
+  }
+
+  return Array.from(storagePaths);
+}
+
+function normalizePartsUsed(partsUsed) {
+  if (!Array.isArray(partsUsed)) return [];
+  return partsUsed.map((part, index) => {
+    const quantity = Number(part?.quantity);
+    if (!part || typeof part !== 'object' || !Number.isFinite(quantity) || quantity < 0) {
+      throw new HttpsError('invalid-argument', `partsUsed[${index}].quantity must be a non-negative finite number`);
+    }
+    if (part.id === undefined || part.id === null || String(part.id).trim() === '') {
+      throw new HttpsError('invalid-argument', `partsUsed[${index}].id is required`);
+    }
+    return { ...part, quantity };
+  });
+}
 
 exports.onJobAssignTrigger = onDocumentCreated({
   document: 'companies/{companyId}/jobs/{jobId}',
@@ -114,24 +215,7 @@ exports.onJobAssignTrigger = onDocumentCreated({
       timestamp: new Date().toISOString()
     };
 
-    // Send push notification (with retry)
-    let notificationResult = { success: false };
-    const MAX_NOTIFICATION_RETRIES = 2;
-    for (let attempt = 0; attempt <= MAX_NOTIFICATION_RETRIES; attempt++) {
-      notificationResult = await sendPushNotification(
-        workerPushToken,
-        notificationTitle,
-        notificationBody,
-        notificationData
-      );
-      if (notificationResult.success) break;
-      if (attempt < MAX_NOTIFICATION_RETRIES) {
-        logger.warn('Push notification failed, retrying', { attempt: attempt + 1, jobId });
-        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-      }
-    }
-
-    // Atomically claim the dedup slot — create() fails if doc already exists
+    // Claim the dedup slot before sending the external push side effect.
     try {
       await notificationLogRef.create({
         jobId,
@@ -142,20 +226,47 @@ exports.onJobAssignTrigger = onDocumentCreated({
         managerName,
         jobTitle,
         companyId,
-        sentAt: admin.firestore.FieldValue.serverTimestamp(),
-        notificationSent: notificationResult.success,
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentAt: null,
+        notificationSent: false,
+        status: 'claimed',
         // TTL: auto-expire after 30 days (configure Firestore TTL policy on this field)
         expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        messageId: notificationResult.messageId || null,
-        duration: Date.now() - startTime
       });
     } catch (dedupErr) {
       if (dedupErr.code === 6 /* ALREADY_EXISTS */) {
-        logger.info('Notification already sent (dedup race caught)', { jobId, notificationLogId });
+        logger.info('Notification already claimed (dedup race caught)', { jobId, notificationLogId });
         return;
       }
       throw dedupErr;
     }
+
+    // Send push notification (with retry)
+    let notificationResult = { success: false };
+    const MAX_NOTIFICATION_RETRIES = 2;
+    for (let attempt = 0; attempt <= MAX_NOTIFICATION_RETRIES; attempt++) {
+      notificationResult = await sendPushNotification(
+        workerPushToken,
+        notificationTitle,
+        notificationBody,
+        notificationData,
+        workerUserId
+      );
+      if (notificationResult.success) break;
+      if (attempt < MAX_NOTIFICATION_RETRIES) {
+        logger.warn('Push notification failed, retrying', { attempt: attempt + 1, jobId });
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+
+    // Atomically claim the dedup slot — create() fails if doc already exists
+    await notificationLogRef.update({
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      notificationSent: notificationResult.success,
+      status: notificationResult.success ? 'sent' : 'failed',
+      messageId: notificationResult.messageId || null,
+      duration: Date.now() - startTime
+    });
 
     logger.info('Job assignment notification sent', {
       jobId,
@@ -276,15 +387,7 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
       timestamp: new Date().toISOString()
     };
 
-    // Send push notification
-    const notificationResult = await sendPushNotification(
-      managerPushToken,
-      notificationTitle,
-      notificationBody,
-      notificationData
-    );
-
-    // Atomically claim the dedup slot — create() fails if doc already exists
+    // Claim the dedup slot before sending the external push side effect.
     try {
       await notificationLogRef.create({
         jobId,
@@ -295,20 +398,38 @@ exports.onJobSubmitTrigger = onDocumentUpdated({
         managerEmail,
         jobTitle,
         companyId,
-        sentAt: admin.firestore.FieldValue.serverTimestamp(),
-        notificationSent: notificationResult.success,
+        claimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentAt: null,
+        notificationSent: false,
+        status: 'claimed',
         // TTL: auto-expire after 30 days (configure Firestore TTL policy on this field)
         expireAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        messageId: notificationResult.messageId || null,
-        duration: Date.now() - startTime
       });
     } catch (dedupErr) {
       if (dedupErr.code === 6 /* ALREADY_EXISTS */) {
-        logger.info('Notification already sent (dedup race caught)', { jobId, notificationLogId });
+        logger.info('Notification already claimed (dedup race caught)', { jobId, notificationLogId });
         return;
       }
       throw dedupErr;
     }
+
+    // Send push notification
+    const notificationResult = await sendPushNotification(
+      managerPushToken,
+      notificationTitle,
+      notificationBody,
+      notificationData,
+      managerUserId
+    );
+
+    // Atomically claim the dedup slot — create() fails if doc already exists
+    await notificationLogRef.update({
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      notificationSent: notificationResult.success,
+      status: notificationResult.success ? 'sent' : 'failed',
+      messageId: notificationResult.messageId || null,
+      duration: Date.now() - startTime
+    });
 
     logger.info('Job submission notification sent', {
       jobId,
@@ -368,7 +489,7 @@ exports.deleteJobV1 = onCall(async (request) => {
   const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
 
   // Use a transaction for atomic read-check-delete to prevent race conditions
-  const deletedStatus = await dbRef.runTransaction(async (tx) => {
+  const deleteResult = await dbRef.runTransaction(async (tx) => {
     const jobSnap = await tx.get(jobRef);
 
     if (!jobSnap.exists) {
@@ -403,6 +524,16 @@ exports.deleteJobV1 = onCall(async (request) => {
       }
     }
 
+    let ownerUid = '';
+    const assignedWid = String(jobData.wid || '').trim();
+    if (assignedWid) {
+      const workerRef = dbRef.doc(companyWorkerDocPath(companyId, assignedWid));
+      const workerSnap = await tx.get(workerRef);
+      ownerUid = workerSnap.exists ? String(workerSnap.data()?.uid || '').trim() : '';
+    }
+
+    const storagePaths = collectJobFileStoragePaths(jobId, jobData);
+
     tx.delete(jobRef);
 
     // Bump cache inside transaction
@@ -412,10 +543,38 @@ exports.deleteJobV1 = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    return jobData.status;
+    return { status: jobData.status, ownerUid, storagePaths };
   });
 
-  logger.info('deleteJobV1: job deleted', { companyId, jobId, uid, status: deletedStatus });
+  const bucket = admin.storage().bucket();
+  for (const storagePath of deleteResult.storagePaths) {
+    try {
+      await bucket.file(storagePath).delete({ ignoreNotFound: true });
+    } catch (storageError) {
+      logger.error('deleteJobV1: failed to delete canonical job file', {
+        companyId,
+        jobId,
+        storagePath,
+        error: storageError.message,
+      });
+    }
+  }
+
+  if (deleteResult.ownerUid) {
+    try {
+      const [files] = await bucket.getFiles({ prefix: `${deleteResult.ownerUid}/jobs/${jobId}/` });
+      await Promise.all(files.map((file) => file.delete({ ignoreNotFound: true })));
+    } catch (storageError) {
+      logger.error('deleteJobV1: failed to delete legacy job file folder', {
+        companyId,
+        jobId,
+        ownerUid: deleteResult.ownerUid,
+        error: storageError.message,
+      });
+    }
+  }
+
+  logger.info('deleteJobV1: job deleted', { companyId, jobId, uid, status: deleteResult.status });
   return { success: true, jobId };
 });
 
@@ -465,22 +624,14 @@ exports.acceptJobV1 = onCall(async (request) => {
 
     const now = new Date().toISOString();
 
-    // Update job status in-place
-    tx.update(jobRef, {
-      status: 'finished',
-      finishedAt: jobData.finishedAt || now,
-      isCert: jobData.isCert === true,
-      acceptedBy: uid,
-      acceptedAt: now,
-      updatedAt: now,
-    });
-
     // Deduct worker inventory if partsUsed exists
-    const partsUsed = jobData.partsUsed || jobData.parts || [];
+    const partsUsed = normalizePartsUsed(jobData.partsUsed || jobData.parts || []);
     const jobWid = jobData.wid;
 
     // Resolve worker UID from wid for inventory deduction
     let workerUid = null;
+    let workerInvRef = null;
+    let workerInvSnap = null;
     if (jobWid) {
       const workerDocRef = dbRef.doc(companyWorkerDocPath(companyId, jobWid));
       const workerDocSnap = await tx.get(workerDocRef);
@@ -490,10 +641,21 @@ exports.acceptJobV1 = onCall(async (request) => {
     }
 
     if (Array.isArray(partsUsed) && partsUsed.length > 0 && workerUid) {
-      const workerInvRef = dbRef.doc(`users/${workerUid}/data/inventory`);
-      const workerInvSnap = await tx.get(workerInvRef);
+      workerInvRef = dbRef.doc(`users/${workerUid}/data/inventory`);
+      workerInvSnap = await tx.get(workerInvRef);
+    }
 
-      if (workerInvSnap.exists) {
+    // Update job status in-place after all reads; Firestore transactions reject read-after-write.
+    tx.update(jobRef, {
+      status: 'finished',
+      finishedAt: jobData.finishedAt || now,
+      isCert: jobData.isCert === true,
+      acceptedBy: uid,
+      acceptedAt: now,
+      updatedAt: now,
+    });
+
+    if (workerInvRef && workerInvSnap?.exists) {
         const invData = workerInvSnap.data() || {};
         const currentParts = Array.isArray(invData.parts) ? invData.parts : [];
 
@@ -517,7 +679,6 @@ exports.acceptJobV1 = onCall(async (request) => {
           inventory: admin.firestore.FieldValue.increment(1),
           lastUpdated: now,
         }, { merge: true });
-      }
     }
 
     // Bump company cache
@@ -563,6 +724,7 @@ exports.createJobV1 = onCall(async (request) => {
     allowedRoles: ['manager', 'user', 'dev'],
     allowSoloScope: true,
   });
+  const callerProfile = await getUserProfileOrThrow(uid);
 
   // Solo users (role=user) can only create finished jobs
   if (resolvedRole === 'user' && jobType === 'pending') {
@@ -604,7 +766,6 @@ exports.createJobV1 = onCall(async (request) => {
     }
 
     const currentJid = Number(counterSnap.data()?.next || 1);
-    tx.set(jnextRef, { next: currentJid + 1 });
 
     // No prefix — plain sequential ID
     const jobId = String(currentJid);
@@ -612,34 +773,42 @@ exports.createJobV1 = onCall(async (request) => {
 
     const now = new Date().toISOString();
 
-    // Build job document — clean field whitelist (no duplicates)
-    const ALLOWED_JOB_FIELDS = [
-      'title', 'description', 'notes', 'location', 'address',
-      'category', 'priority', 'dueDate', 'tags', 'images',
-      'wname', 'wid', 'mname', 'mid',
-      'cid', 'cname', 'cphone',
-      'parts', 'partsUsed',
-      'timeFrom', 'timeTo', 'travelDistance',
-      'signingPerson', 'photos', 'signature',
-      'finishedAt',
-    ];
-    const jobPayload = {};
-    for (const key of ALLOWED_JOB_FIELDS) {
-      if (data[key] !== undefined) {
-        jobPayload[key] = data[key];
-      }
+    let jobPayload;
+    try {
+      jobPayload = await resolveJobMutationPayload({
+        input: data,
+        resolvedRole,
+        callerProfile,
+        jobType,
+        isCreate: true,
+        maxArrayLength: MAX_JOB_ARRAY_LENGTH,
+        loadWorkerByWid: (wid) => loadWorkerIdentity(tx, dbRef, companyId, wid),
+        loadClientById: (clientId) => loadClientIdentity(tx, dbRef, companyId, clientId),
+        expectedFileJobId: jobId,
+        expectedFileOwnerUid: resolvedRole === 'user' ? uid : undefined,
+      });
+    } catch (error) {
+      rethrowJobMutationError(error);
     }
 
-    // Validate array field lengths to prevent oversized documents
-    for (const arrField of ['parts', 'partsUsed', 'images', 'photos', 'tags']) {
-      if (Array.isArray(jobPayload[arrField]) && jobPayload[arrField].length > MAX_JOB_ARRAY_LENGTH) {
-        throw new HttpsError('invalid-argument', `${arrField} exceeds maximum length (${MAX_JOB_ARRAY_LENGTH})`);
+    let userInventoryUpdate = null;
+    if (resolvedRole === 'user' && jobType === 'finished') {
+      const usedParts = normalizePartsUsed(jobPayload.partsUsed || []);
+      if (usedParts.length > 0) {
+        const inventoryRef = dbRef.doc(`users/${uid}/data/inventory`);
+        const inventorySnap = await tx.get(inventoryRef);
+        const inventoryData = inventorySnap.exists ? (inventorySnap.data() || {}) : {};
+        const currentParts = Array.isArray(inventoryData.parts) ? inventoryData.parts : [];
+        userInventoryUpdate = {
+          inventoryRef,
+          parts: currentParts.map((part) => {
+            const usedPart = usedParts.find((entry) => entry.id === part.id);
+            if (!usedPart) return part;
+            const currentQuantity = Number(part.quantity || 0);
+            return { ...part, quantity: Math.max(0, currentQuantity - usedPart.quantity) };
+          }),
+        };
       }
-    }
-
-    // No more syncJobAssigneeFields — clean fields only
-    if (jobType !== 'finished') {
-      delete jobPayload.finishedAt;
     }
 
     const jobDoc = {
@@ -655,7 +824,18 @@ exports.createJobV1 = onCall(async (request) => {
       jobDoc.finishedAt = jobPayload.finishedAt || now;
     }
 
+    tx.set(jnextRef, { next: currentJid + 1 });
     tx.set(jobRef, jobDoc);
+    if (userInventoryUpdate) {
+      tx.set(userInventoryUpdate.inventoryRef, {
+        parts: userInventoryUpdate.parts,
+        lastUpdated: now,
+      }, { merge: true });
+      tx.set(dbRef.doc(`users/${uid}/data/cache`), {
+        inventory: admin.firestore.FieldValue.increment(1),
+        lastUpdated: now,
+      }, { merge: true });
+    }
 
     // Bump company cache
     const companyCacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
@@ -700,29 +880,26 @@ exports.updateJobV1 = onCall(async (request) => {
     allowedRoles: ['manager', 'worker', 'user', 'dev'],
     allowSoloScope: true,
   });
+  const callerProfile = await getUserProfileOrThrow(uid);
 
   // Pre-compute caller wid before transaction (profile is immutable for this request)
   let callerWid = '';
-  if (resolvedRole === 'worker') {
-    const workerProfile = await admin.firestore().doc(userProfileDocPath(uid)).get();
-    callerWid = workerProfile.exists ? String(workerProfile.data()?.wid || '') : '';
+  if (requiresAssignedJobScope(resolvedRole, isSoloScope)) {
+    callerWid = String(callerProfile?.wid || '');
   }
 
   const raw = { ...data };
 
-  // Positive field whitelist — only allow known job-data fields through
-  const ALLOWED_UPDATE_FIELDS = [
+  const updates = {};
+  for (const key of [
     'title', 'description', 'notes', 'location', 'address',
     'category', 'priority', 'dueDate', 'tags', 'images',
-    'wname', 'wid', 'mname', 'mid',
-    'cid', 'cname', 'cphone',
+    'wid', 'cid', 'cname', 'cphone',
     'parts', 'partsUsed',
     'timeFrom', 'timeTo', 'travelDistance',
     'signingPerson', 'photos', 'signature',
-    'finishedAt', 'status', 'isCert', 'deniedAt', 'deniedBy',
-  ];
-  const updates = {};
-  for (const key of ALLOWED_UPDATE_FIELDS) {
+    'finishedAt', 'status', 'deniedAt', 'deniedBy',
+  ]) {
     if (raw[key] !== undefined) {
       updates[key] = raw[key];
     }
@@ -731,8 +908,9 @@ exports.updateJobV1 = onCall(async (request) => {
   // Role-specific restrictions for workers
   if (resolvedRole === 'worker') {
     delete updates.wid;
-    delete updates.mid;
-    delete updates.isCert;
+    delete updates.cid;
+    delete updates.cname;
+    delete updates.cphone;
     delete updates.deniedAt;
     delete updates.deniedBy;
     // Workers cannot set status to finished or denied — must go through acceptJobV1
@@ -747,16 +925,9 @@ exports.updateJobV1 = onCall(async (request) => {
   if (updates.status && !VALID_STATUSES.includes(updates.status)) {
     throw new HttpsError('invalid-argument', `Invalid status: ${updates.status}. Valid: ${VALID_STATUSES.join(', ')}`);
   }
-
-  // Validate array field lengths to prevent oversized documents on updates
-  for (const arrField of ['parts', 'partsUsed', 'images', 'photos', 'tags']) {
-    if (Array.isArray(updates[arrField]) && updates[arrField].length > MAX_JOB_ARRAY_LENGTH) {
-      throw new HttpsError('invalid-argument', `${arrField} exceeds maximum length (${MAX_JOB_ARRAY_LENGTH})`);
-    }
+  if (raw.isCert !== undefined) {
+    throw new HttpsError('permission-denied', 'isCert is server-managed and cannot be updated directly');
   }
-
-  updates.updatedAt = new Date().toISOString();
-
   const dbRef = admin.firestore();
   const jobRef = dbRef.doc(`companies/${companyId}/jobs/${jobId}`);
 
@@ -771,9 +942,9 @@ exports.updateJobV1 = onCall(async (request) => {
     const existingJob = jobSnap.data();
 
     // Worker can only update their own assigned jobs
-    if (resolvedRole === 'worker') {
+    if (requiresAssignedJobScope(resolvedRole, isSoloScope)) {
       if (String(existingJob.wid || '') !== callerWid) {
-        throw new HttpsError('permission-denied', 'Workers can only update their own assigned jobs');
+        throw new HttpsError('permission-denied', 'You can only update your assigned jobs');
       }
     }
 
@@ -789,7 +960,37 @@ exports.updateJobV1 = onCall(async (request) => {
       throw new HttpsError('failed-precondition', 'Denied job cannot be reopened. Create a new job instead.');
     }
 
-    tx.update(jobRef, updates);
+    let resolvedUpdates;
+    try {
+      resolvedUpdates = await resolveJobMutationPayload({
+        input: updates,
+        existingJob,
+        resolvedRole,
+        callerProfile,
+        jobType: existingJob.status === 'finished' ? 'finished' : 'pending',
+        isCreate: false,
+        maxArrayLength: MAX_JOB_ARRAY_LENGTH,
+        loadWorkerByWid: (wid) => loadWorkerIdentity(tx, dbRef, companyId, wid),
+        loadClientById: (clientId) => loadClientIdentity(tx, dbRef, companyId, clientId),
+        expectedFileJobId: jobId,
+        expectedFileOwnerUid: requiresAssignedJobScope(resolvedRole, isSoloScope) ? uid : undefined,
+      });
+    } catch (error) {
+      rethrowJobMutationError(error);
+    }
+
+    resolvedUpdates.updatedAt = new Date().toISOString();
+    if (updates.status) {
+      resolvedUpdates.status = updates.status;
+    }
+    if (updates.deniedAt !== undefined) {
+      resolvedUpdates.deniedAt = updates.deniedAt;
+    }
+    if (updates.deniedBy !== undefined) {
+      resolvedUpdates.deniedBy = updates.deniedBy;
+    }
+
+    tx.update(jobRef, resolvedUpdates);
 
     // Bump cache inside transaction
     const cacheRef = dbRef.doc(`companies/${companyId}/data/cache`);
@@ -801,6 +1002,78 @@ exports.updateJobV1 = onCall(async (request) => {
 
   logger.info('updateJobV1: job updated', { companyId, jobId, uid, role: resolvedRole });
   return { success: true, jobId };
+});
+
+exports.createJobFileDownloadUrlV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
+  const jobId = typeof data.jobId === 'string' ? data.jobId.trim() : '';
+  const storagePath = normalizeJobFileStoragePath(data.storagePath);
+
+  if (!companyId || !jobId || !storagePath) {
+    throw new HttpsError('invalid-argument', 'companyId, jobId, and storagePath are required');
+  }
+
+  const pathParts = storagePath.split('/');
+  if (pathParts.length < 4 || pathParts[1] !== 'jobs' || pathParts[2] !== jobId) {
+    throw new HttpsError('invalid-argument', 'storagePath does not match the requested job');
+  }
+
+  const ownerUid = pathParts[0];
+  const { resolvedRole, isSoloScope } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: ['manager', 'worker', 'user', 'dev'],
+    allowSoloScope: true,
+  });
+
+  const callerProfile = await getUserProfileOrThrow(uid);
+  const jobRef = admin.firestore().doc(`companies/${companyId}/jobs/${jobId}`);
+  const jobSnap = await jobRef.get();
+  if (!jobSnap.exists) {
+    throw new HttpsError('not-found', 'Job not found');
+  }
+
+  const jobData = jobSnap.data() || {};
+  const canonicalPaths = collectJobFileStoragePaths(jobId, jobData);
+  if (!canonicalPaths.includes(storagePath)) {
+    throw new HttpsError('permission-denied', 'Requested file is not attached to this job');
+  }
+
+  if (requiresAssignedJobScope(resolvedRole, isSoloScope)) {
+    const callerWid = String(callerProfile?.wid || '');
+    if (!callerWid || String(jobData.wid || '') !== callerWid || ownerUid !== uid) {
+      throw new HttpsError('permission-denied', 'You can only access files for your assigned jobs');
+    }
+  } else {
+    const assignedWid = String(jobData.wid || '').trim();
+    if (!assignedWid) {
+      throw new HttpsError('permission-denied', 'Job file owner could not be resolved');
+    }
+    const workerSnap = await admin.firestore().doc(companyWorkerDocPath(companyId, assignedWid)).get();
+    const assignedUid = workerSnap.exists ? String(workerSnap.data()?.uid || '') : '';
+    if (!assignedUid || assignedUid !== ownerUid) {
+      throw new HttpsError('permission-denied', 'Job file owner does not match the assigned worker');
+    }
+  }
+
+  const [downloadURL] = await admin.storage().bucket().file(storagePath).getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: Date.now() + JOB_FILE_DOWNLOAD_URL_TTL_MS,
+  });
+
+  return {
+    success: true,
+    downloadURL,
+    expiresAt: new Date(Date.now() + JOB_FILE_DOWNLOAD_URL_TTL_MS).toISOString(),
+  };
 });
 
 module.exports = exports;

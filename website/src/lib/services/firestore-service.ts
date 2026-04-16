@@ -342,7 +342,7 @@ export async function listClients(
   hasMore: boolean;
 }> {
   const pageSize = opts?.pageSize || 100;
-  const constraints: QueryConstraint[] = [limit(pageSize)];
+  const constraints: QueryConstraint[] = [orderBy("cid", "asc"), limit(pageSize)];
   if (opts?.lastDoc) {
     constraints.push(startAfter(opts.lastDoc));
   }
@@ -394,7 +394,7 @@ export async function updateClient(companyId: string, clientId: string, payload:
 /* ─── Documents ─── */
 
 export async function listDocuments(companyId: string): Promise<DocumentRecord[]> {
-  const snap = await getDocs(query(companyDocumentsCollection(companyId), orderBy("createdAt", "desc")));
+  const snap = await getDocs(query(companyDocumentsCollection(companyId), orderBy("createdAt", "desc"), limit(100)));
   return snap.docs.map((docSnap) => {
     const raw = docSnap.data() as Record<string, unknown>;
     const rawType = raw.documentType ?? raw.type;
@@ -464,4 +464,16 @@ export async function listDocuments(companyId: string): Promise<DocumentRecord[]
               : undefined),
     } satisfies DocumentRecord;
   });
+}
+
+export async function getDocumentDownloadUrl(companyId: string, documentId: string): Promise<string> {
+  const callable = httpsCallable<
+    { companyId: string; documentId: string },
+    { success: boolean; downloadURL?: string }
+  >(functions, "createDocumentDownloadUrlV1");
+  const result = await callable({ companyId, documentId });
+  if (!result.data.success || !result.data.downloadURL) {
+    throw new Error("Document download URL is unavailable");
+  }
+  return result.data.downloadURL;
 }

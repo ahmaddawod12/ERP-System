@@ -11,7 +11,10 @@ const APP_ROLES = new Set<Role>(["manager", "worker", "user", "basic", "dev"]);
 
 function normalizeRoleValue(role: unknown): Role {
   const raw = String(role ?? "").trim().toLowerCase() as Role;
-  return APP_ROLES.has(raw) ? raw : "user";
+  if (!APP_ROLES.has(raw)) {
+    throw new ApiRouteError(403, "invalid_role", "User profile has an invalid role");
+  }
+  return raw;
 }
 
 export async function getUserProfileOrThrow(uid: string): Promise<UserProfile> {

@@ -1,14 +1,8 @@
+import { getSubscriptionTierForRole, getTierRank } from "@smart-job/contracts";
 import type { Role, Tier } from "@/lib/types";
 
-const tierOrder: Record<Tier, number> = {
-  Basic: 0,
-  Solo: 1,
-  Team: 2,
-  Enterprise: 3,
-};
-
 export function requireTier(currentTier: Tier, minTier: Tier) {
-  return tierOrder[currentTier] >= tierOrder[minTier];
+  return getTierRank(currentTier) >= getTierRank(minTier);
 }
 
 export function hasRole(role: Role, allowed: Role[]) {
@@ -51,8 +45,5 @@ export function canAccessSection(role: Role, tier: Tier, section: AppSection) {
 }
 
 export function defaultTierForRole(role: Role, accountType: "solo" | "business"): Tier {
-  if (role === "basic") return "Basic";
-  if (accountType === "solo") return "Solo";
-  if (role === "worker" || role === "manager" || role === "dev") return "Team";
-  return "Solo";
+  return getSubscriptionTierForRole(role, accountType);
 }

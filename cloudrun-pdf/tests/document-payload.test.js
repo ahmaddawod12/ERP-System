@@ -57,7 +57,6 @@ test('buildStoredDocumentRecord preserves metadata for non-tax documents', () =>
     totalBeforeVat: 100,
     vatAmount: 18,
     totalWithVat: 118,
-    downloadURL: 'https://example.com/doc.pdf',
     storagePath: 'companies/acme/2026-03/18/18.pdf',
     normalizedDocumentId: '18',
   });
@@ -71,4 +70,5 @@ test('buildStoredDocumentRecord preserves metadata for non-tax documents', () =>
   assert.equal(record.paymentInfo, 'front desk');
   assert.equal(record.invoiceReference, 'TI-55');
   assert.equal(record.documentData.client.clientVatNumber, '123456789');
+  assert.equal(record.downloadURL, undefined);
 });

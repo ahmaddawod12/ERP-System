@@ -10,13 +10,15 @@ const {
   userProfileDocPath,
   userCacheDocPath,
   companyWorkerDocPath,
+  companyManagerDocPath,
   requireNonEmptyString,
   optionalTrimmedString,
   normalizeRole,
   validateCompanyId,
   assertHttpCompanyAccess,
-  assertTargetUserInCompany,
+  assertTargetWorkerScopedUserInCompany,
   HTTP_COMPANY_MANAGER_ROLES,
+  isValidEmail,
 } = require('./shared');
 
 /**
@@ -54,24 +56,41 @@ exports.updateProfileV1 = onCall(async (request) => {
   const profileData = profileSnap.data();
   const companyId = profileData.companyId;
   const wid = profileData.wid;
+  const mid = profileData.mid;
 
   const updates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
   if (name !== undefined) updates.name = name;
   if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
 
-  // If user belongs to a company with a wid, use a transaction to keep
-  // the profile and worker docs in sync atomically.
-  if (companyId && wid) {
-    const workerRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
+  // Keep profile and any denormalized company membership doc in sync atomically.
+  if (companyId && (wid || mid)) {
+    const workerRef = wid
+      ? admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)))
+      : null;
+    const managerRef = mid
+      ? admin.firestore().doc(companyManagerDocPath(companyId, String(mid)))
+      : null;
     await admin.firestore().runTransaction(async (tx) => {
-      const workerSnap = await tx.get(workerRef);
+      const workerSnap = workerRef ? await tx.get(workerRef) : null;
+      const managerSnap = managerRef ? await tx.get(managerRef) : null;
+      const membershipUpdates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+      if (name !== undefined) membershipUpdates.name = name;
+      if (phoneNumber !== undefined) membershipUpdates.phoneNumber = phoneNumber;
+
       tx.update(profileRef, updates);
-      if (workerSnap.exists) {
-        const workerUpdates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-        if (name !== undefined) workerUpdates.name = name;
-        if (phoneNumber !== undefined) workerUpdates.phoneNumber = phoneNumber;
-        tx.update(workerRef, workerUpdates);
-        logger.info('updateProfileV1: synced worker doc atomically', { uid, companyId, wid, fields: Object.keys(workerUpdates) });
+
+      if (workerRef && workerSnap?.exists) {
+        tx.update(workerRef, membershipUpdates);
+        logger.info('updateProfileV1: synced worker doc atomically', {
+          uid, companyId, wid, fields: Object.keys(membershipUpdates),
+        });
+      }
+
+      if (managerRef && managerSnap?.exists) {
+        tx.update(managerRef, membershipUpdates);
+        logger.info('updateProfileV1: synced manager doc atomically', {
+          uid, companyId, mid, fields: Object.keys(membershipUpdates),
+        });
       }
     });
   } else {
@@ -143,7 +162,7 @@ exports.updatePushTokenV1 = onCall(async (request) => {
 /**
  * Callable Function: updateBusinessInfoV1
  * Updates business_info fields EXCEPT vat_number and document_numbers.
- * Only manager/user/basic roles with company access can call this.
+ * Only manager/dev roles with company access can call this.
  */
 exports.updateBusinessInfoV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -180,7 +199,14 @@ exports.updateBusinessInfoV1 = onCall(async (request) => {
   let hasChange = false;
   for (const field of ALLOWED_FIELDS) {
     if (data[field] !== undefined) {
-      updates[field] = typeof data[field] === 'string' ? data[field].trim() : data[field];
+      const value = typeof data[field] === 'string' ? data[field].trim() : data[field];
+      if (typeof value === 'string' && value.length > 300) {
+        throw new HttpsError('invalid-argument', `${field} is too long`);
+      }
+      if ((field === 'business_email' || field === 'accountant_email') && value && !isValidEmail(value)) {
+        throw new HttpsError('invalid-argument', `${field} must be a valid email`);
+      }
+      updates[field] = value;
       hasChange = true;
     }
   }
@@ -226,6 +252,9 @@ exports.updateCacheV1 = onCall(async (request) => {
   const field = typeof data.field === 'string' ? data.field.trim() : '';
   const action = typeof data.action === 'string' ? data.action.trim() : 'increment';
   const targetUid = typeof data.targetUid === 'string' ? data.targetUid.trim() : '';
+  if (!['increment', 'delete'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'action must be increment or delete');
+  }
 
   if (!field) {
     throw new HttpsError('invalid-argument', 'field is required');
@@ -262,7 +291,7 @@ exports.updateCacheV1 = onCall(async (request) => {
       allowedRoles: HTTP_COMPANY_MANAGER_ROLES,
       allowSoloScope: false,
     });
-    await assertTargetUserInCompany(targetUid, companyId);
+    await assertTargetWorkerScopedUserInCompany(targetUid, companyId);
   }
 
   const resolvedUid = targetUid || uid;

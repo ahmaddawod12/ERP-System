@@ -215,7 +215,10 @@ export default function UserInventory() {
       }
 
       const targetUid = getUid() || user.uid;
-      const companyId = getCompanyId() || targetUid;
+      const companyId = getCompanyId();
+      if (!companyId) {
+        throw new Error('Company ID not found');
+      }
       const quantity = parseInt(newPart.quantity, 10);
       const lowThreshold = parseInt(newPart.lowThreshold, 10);
       if (!quantity || quantity <= 0 || Number.isNaN(lowThreshold) || lowThreshold < 0) {

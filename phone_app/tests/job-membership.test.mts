@@ -1,10 +1,10 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   buildJobMembershipQueryValues,
   normalizeMembershipId,
   roleUsesScopedJobAccess,
-} = require('../contexts/job-membership.js');
+} from '../contexts/job-membership.ts';
 
 test('worker and user roles require scoped job access', () => {
   assert.equal(roleUsesScopedJobAccess('worker'), true);

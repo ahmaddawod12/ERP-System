@@ -5,8 +5,8 @@
 import { getApp } from '@react-native-firebase/app';
 import {
   initializeAppCheck,
-  ReactNativeFirebaseAppCheckProvider,
 } from '@react-native-firebase/app-check';
+import appCheck from '@react-native-firebase/app-check';
 import {
   getFirestore,
   collection,
@@ -61,8 +61,7 @@ export const app = getApp();
 
 // Initialize App Check — required for Cloud Functions enforcement
 // Uses DeviceCheck (iOS) and Play Integrity (Android) attestation providers
-// @ts-ignore - ReactNativeFirebaseAppCheckProvider is exported as type-only from index, but the class exists at runtime
-const appCheckProvider = new ReactNativeFirebaseAppCheckProvider();
+const appCheckProvider = appCheck().newReactNativeFirebaseAppCheckProvider();
 appCheckProvider.configure({
   apple: {
     provider: __DEV__ ? 'debug' : 'deviceCheck',

@@ -15,6 +15,7 @@
  *   src/inventory.js — updateInventoryV1
  *   src/profile.js   — profile, push token, cache, business info
  *   src/misc.js      — requestUpgradeV1, contactRequestV1
+ *   src/support.js   — support conversation mutations
  */
 
 // Ensure shared module (admin init, global options) runs first
@@ -32,4 +33,5 @@ Object.assign(
   require("./src/inventory"),
   require("./src/profile"),
   require("./src/misc"),
+  require("./src/support"),
 );

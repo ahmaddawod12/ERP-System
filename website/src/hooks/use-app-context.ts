@@ -1,13 +1,15 @@
 "use client";
 
+import { getSubscriptionTierForRole } from "@smart-job/contracts";
 import { useAuth } from "@/hooks/use-auth";
 
 export function useAppContext() {
   const { user, profile, subscription, loading, refreshUserData } = useAuth();
 
   const role = profile?.role ?? null;
-  // Dev role gets full access (Enterprise tier) even without a subscription record
-  const tier = role === "dev" ? "Enterprise" : (subscription?.tier ?? "Basic");
+  const tier = role
+    ? (subscription?.tier ?? getSubscriptionTierForRole(role, profile?.accountType))
+    : "Basic";
 
   return {
     user,

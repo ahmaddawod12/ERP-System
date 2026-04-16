@@ -12,7 +12,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, storage as fbStorage, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
+import { auth, db, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -209,7 +209,7 @@ export default function Userjob() {
     switch (status?.toLowerCase()) {
       case 'finished': return '#10b981';
       case 'pending': return '#f59e0b';
-      case 'declined': return '#ef4444';
+      case 'denied': return '#ef4444';
       default: return '#6b7280';
     }
   };
@@ -528,17 +528,6 @@ export default function Userjob() {
           onPress: async () => {
             try {
               const uid = getUid() || auth.currentUser.uid;
-
-              // Delete job files from storage
-              try {
-                const jobFolderRef = fbStorage().ref(`${uid}/jobs/${jobId}`);
-                const fileList = await jobFolderRef.listAll();
-                for (const fileRef of fileList.items) {
-                  try { await fileRef.delete(); } catch (e) { /* ignore */ }
-                }
-              } catch (storageError) {
-                console.log('Error deleting storage files:', storageError);
-              }
 
               const companyId = getCompanyId();
               if (!companyId) {

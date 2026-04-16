@@ -207,7 +207,7 @@ export default function WorkersUsers() {
   };
 
   const handleAddWorker = async () => {
-    if (!newWorker.email || !newWorker.password || !newWorker.name) {
+    if (!newWorker.email || !newWorker.name) {
       alert.error('Error', t.fillAllFields);
       return;
     }
@@ -215,11 +215,6 @@ export default function WorkersUsers() {
     const email = normalizeEmail(newWorker.email);
     if (!isValidEmail(email)) {
       alert.error('Error', t.invalidEmail);
-      return;
-    }
-
-    if (newWorker.password.length < 8) {
-      alert.error('Error', t.shortPassword);
       return;
     }
 
@@ -242,7 +237,6 @@ export default function WorkersUsers() {
       const result = await manageWorkerFn({
         action: 'add',
         email,
-        password: newWorker.password,
         name: newWorker.name.trim(),
         phoneNumber: newWorker.phoneNumber || '',
         companyId,
@@ -306,10 +300,6 @@ export default function WorkersUsers() {
         workerUid: editingWorker.uid,
         wid: editingWorker.wid,
       };
-
-      if (editingWorker.password) {
-        payload.newPassword = editingWorker.password;
-      }
 
       const manageWorkerFn = httpsCallable(functions, 'manageWorker');
       await manageWorkerFn(payload);
@@ -451,13 +441,9 @@ export default function WorkersUsers() {
             autoCapitalize="none"
             editable={!isEdit}
           />
-          <AppInput
-            label={t.password}
-            value={data.password}
-            onChangeText={(value) => setData({ ...data, password: value })}
-            placeholder={isEdit ? 'Leave empty to keep current password' : 'Minimum 8 characters'}
-            secureTextEntry
-          />
+          <AppText variant="caption" style={{ color: palette.textSecondary }}>
+            Workers claim or reset their own password from the login screen.
+          </AppText>
           <AppInput
             label={t.phoneNumber}
             value={data.phoneNumber}

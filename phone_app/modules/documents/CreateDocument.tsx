@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 /**
  * CreateDocument.js - Unified Document Creation Screen
  * 
@@ -42,65 +42,9 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
 import { useAuth, useDocumentTask } from '../../hooks';
 import { middleEastFunctions, httpsCallable, db, doc, getDoc } from '../../firebase';
-import { DOC_TYPE } from '/contracts';
-
-// Document type configurations (keyed by numeric type)
-const DOCUMENT_CONFIGS = {
-  [DOC_TYPE.TAX_INVOICE]: {
-    icon: 'file-document',
-    gradient: ['#10B981', '#059669'],
-    requiresVatNumber: true, // VAT required for all tax invoices
-    requiresInvoiceSelection: false,
-    requiresPaymentMethod: false,
-    hasReceiptMode: false,
-    itemFields: ['description', 'price', 'quantity'],
-  },
-  [DOC_TYPE.RECEIPT]: {
-    icon: 'receipt',
-    gradient: ['#06B6D4', '#0891B2'],
-    requiresVatNumber: false,
-    requiresInvoiceSelection: false, // Now optional - user can choose
-    requiresPaymentMethod: true,
-    hasReceiptMode: true, // Has two modes: auto from invoice or manual
-    itemFields: ['description', 'price', 'quantity'],
-  },
-  [DOC_TYPE.PRICE_PROPOSAL]: {
-    icon: 'file-document-edit',
-    gradient: ['#3B82F6', '#2563EB'],
-    requiresVatNumber: false,
-    requiresInvoiceSelection: false,
-    requiresPaymentMethod: false,
-    hasReceiptMode: false,
-    itemFields: ['description', 'price', 'quantity'],
-  },
-  [DOC_TYPE.DELIVERY_NOTE]: {
-    icon: 'truck-delivery',
-    gradient: ['#8B5CF6', '#7C3AED'],
-    requiresVatNumber: false,
-    requiresInvoiceSelection: false,
-    requiresPaymentMethod: false,
-    hasReceiptMode: false,
-    itemFields: ['description', 'price', 'quantity'],
-  },
-  [DOC_TYPE.RETURN_CERTIFICATE]: {
-    icon: 'file-certificate',
-    gradient: ['#EC4899', '#DB2777'],
-    requiresVatNumber: false,
-    requiresInvoiceSelection: false,
-    requiresPaymentMethod: false,
-    hasReceiptMode: false,
-    itemFields: ['description', 'price', 'quantity'],
-  },
-  [DOC_TYPE.REFUND]: {
-    icon: 'cash-refund',
-    gradient: ['#F59E0B', '#D97706'],
-    requiresVatNumber: false,
-    requiresInvoiceSelection: false,
-    requiresPaymentMethod: false,
-    hasReceiptMode: false,
-    itemFields: ['description', 'price', 'quantity'],
-  },
-};
+import { DOC_TYPE } from '@smart-job/contracts';
+import { DOCUMENT_CONFIGS, getPaymentMethods } from './document-config';
+import { getDocumentTranslations } from './document-copy';
 
 export default function CreateDocument() {
   const router = useRouter();
@@ -194,17 +138,10 @@ export default function CreateDocument() {
   ]);
 
   // Payment methods for receipt
-  const paymentMethods = [
-    { id: 'cash', label: language === 'en' ? 'Cash' : language === 'he' ? 'מזומן' : 'نقدي' },
-    { id: 'credit', label: language === 'en' ? 'Credit Card' : language === 'he' ? 'כרטיס אשראי' : 'بطاقة ائتمان' },
-    { id: 'transfer', label: language === 'en' ? 'Bank Transfer' : language === 'he' ? 'העברה בנקאית' : 'تحويل بنكي' },
-    { id: 'check', label: language === 'en' ? 'Check' : language === 'he' ? 'צ\'ק' : 'شيك' },
-    { id: 'bit', label: language === 'en' ? 'Bit' : language === 'he' ? 'ביט' : 'بت' },
-    { id: 'paybox', label: language === 'en' ? 'PayBox' : language === 'he' ? 'פייבוקס' : 'بايبوكس' },
-  ];
+  const paymentMethods = getPaymentMethods(language);
 
   // Translations
-  const t = getTranslations(language, documentType);
+  const t = getDocumentTranslations(language, documentType);
 
   // Filter cached documents to get tax invoices (for receipt auto mode)
   const taxInvoiceDocuments = useMemo(() => {
@@ -365,14 +302,14 @@ export default function CreateDocument() {
     if (!formData.customerName.trim()) {
       alert.error(
         'Error',
-        language === 'he' ? 'שם לקוח נדרש' : language === 'ar' ? 'اسم العميل مطلوب' : 'Customer name is required'
+        language === 'he' ? '×©× ×œ×§×•×— × ×“×¨×©' : language === 'ar' ? 'Ø§Ø³Ù… Ø§Ù„Ø¹Ù…ÙŠÙ„ Ù…Ø·Ù„ÙˆØ¨' : 'Customer name is required'
       );
       return;
     }
     if (config.requiresVatNumber && !formData.clientVatNumber.trim()) {
       alert.error(
         'Error',
-        language === 'he' ? 'מספר עוסק מורשה נדרש' : language === 'ar' ? 'رقم ضريبة القيمة المضافة مطلوب' : 'Customer VAT number is required'
+        language === 'he' ? '×ž×¡×¤×¨ ×¢×•×¡×§ ×ž×•×¨×©×” × ×“×¨×©' : language === 'ar' ? 'Ø±Ù‚Ù… Ø¶Ø±ÙŠØ¨Ø© Ø§Ù„Ù‚ÙŠÙ…Ø© Ø§Ù„Ù…Ø¶Ø§ÙØ© Ù…Ø·Ù„ÙˆØ¨' : 'Customer VAT number is required'
       );
       return;
     }
@@ -632,7 +569,7 @@ export default function CreateDocument() {
       });
     },
     onGenerateComplete: (url, docId) => {
-      console.log('✅ onGenerateComplete called - Document generated, URL:', url, 'ID:', docId);
+      console.log('âœ… onGenerateComplete called - Document generated, URL:', url, 'ID:', docId);
       safeCleanupStates();
       
       const pdfUrl = url;
@@ -749,7 +686,7 @@ export default function CreateDocument() {
         if (formData.clientVatNumber?.trim() && formData.clientVatNumber.trim() !== (selectedClientObj.vatNumber || '')) updates.vatNumber = formData.clientVatNumber.trim();
         if (Object.keys(updates).length > 0) {
           await updateClient(selectedClientObj.id, updates);
-          console.log('✅ Updated existing client with new fields:', Object.keys(updates));
+          console.log('âœ… Updated existing client with new fields:', Object.keys(updates));
         }
       } catch (e) {
         console.log('Update client failed (non-critical):', e);
@@ -898,14 +835,15 @@ export default function CreateDocument() {
         language: language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en',
         date: formData.documentDate,
         notes: formData.notes || '',
+        idempotencyKey: `tax_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
       };
 
       // Call getInvoiceApproval to submit to Tax Authority
-      console.log('📋 Submitting to Tax Authority...');
+      console.log('ðŸ“‹ Submitting to Tax Authority...');
       const getApprovalFunction = httpsCallable(middleEastFunctions, 'getInvoiceApproval');
       
       const approvalResult = await getApprovalFunction(documentData);
-      console.log('✅ Tax Authority response:', approvalResult.data);
+      console.log('âœ… Tax Authority response:', approvalResult.data);
 
       if (!approvalResult.data.success) {
         throw new Error(approvalResult.data.error || 'Tax Authority did not approve the invoice');
@@ -915,12 +853,12 @@ export default function CreateDocument() {
 
       // Listen to PDF generation task
       if (pdfTaskId) {
-        console.log('📄 Listening to PDF generation task:', pdfTaskId);
+        console.log('ðŸ“„ Listening to PDF generation task:', pdfTaskId);
         listenToTask(pdfTaskId, 'generate');
         // Keep loading state active - will be cleared by onGenerateComplete or onError
       } else {
         // No PDF task - approval completed but no PDF generation
-        console.warn('⚠️ No PDF generation task returned from Tax Authority approval');
+        console.warn('âš ï¸ No PDF generation task returned from Tax Authority approval');
         setIsSubmitting(false);
         alert.hideLoading();
         
@@ -1032,7 +970,7 @@ export default function CreateDocument() {
                 >
                   <View style={styles.recommendedBadge}>
                     <AppText style={styles.recommendedBadgeText}>
-                      {language === 'en' ? 'Recommended' : language === 'he' ? 'מומלץ' : 'موصى به'}
+                      {language === 'en' ? 'Recommended' : language === 'he' ? '×ž×•×ž×œ×¥' : 'Ù…ÙˆØµÙ‰ Ø¨Ù‡'}
                     </AppText>
                   </View>
                   <LinearGradient
@@ -1053,13 +991,13 @@ export default function CreateDocument() {
                     <View style={styles.featureItem}>
                       <Ionicons name="checkmark-circle" size={16} color="#10B981" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
-                        {language === 'en' ? 'Pre-filled data' : language === 'he' ? 'נתונים מוכנים' : 'بيانات جاهزة'}
+                        {language === 'en' ? 'Pre-filled data' : language === 'he' ? '× ×ª×•× ×™× ×ž×•×›× ×™×' : 'Ø¨ÙŠØ§Ù†Ø§Øª Ø¬Ø§Ù‡Ø²Ø©'}
                       </AppText>
                     </View>
                     <View style={styles.featureItem}>
                       <Ionicons name="checkmark-circle" size={16} color="#10B981" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
-                        {language === 'en' ? 'Invoice linked' : language === 'he' ? 'מקושר לחשבונית' : 'مرتبط بالفاتورة'}
+                        {language === 'en' ? 'Invoice linked' : language === 'he' ? '×ž×§×•×©×¨ ×œ×—×©×‘×•× ×™×ª' : 'Ù…Ø±ØªØ¨Ø· Ø¨Ø§Ù„ÙØ§ØªÙˆØ±Ø©'}
                       </AppText>
                     </View>
                   </View>
@@ -1089,13 +1027,13 @@ export default function CreateDocument() {
                     <View style={styles.featureItem}>
                       <Ionicons name="create-outline" size={16} color="#6B7280" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
-                        {language === 'en' ? 'Full control' : language === 'he' ? 'שליטה מלאה' : 'تحكم كامل'}
+                        {language === 'en' ? 'Full control' : language === 'he' ? '×©×œ×™×˜×” ×ž×œ××”' : 'ØªØ­ÙƒÙ… ÙƒØ§Ù…Ù„'}
                       </AppText>
                     </View>
                     <View style={styles.featureItem}>
                       <Ionicons name="document-outline" size={16} color="#6B7280" />
                       <AppText style={[styles.featureText, { color: colors.textSecondary }]}>
-                        {language === 'en' ? 'No invoice needed' : language === 'he' ? 'ללא חשבונית' : 'بدون فاتورة'}
+                        {language === 'en' ? 'No invoice needed' : language === 'he' ? '×œ×œ× ×—×©×‘×•× ×™×ª' : 'Ø¨Ø¯ÙˆÙ† ÙØ§ØªÙˆØ±Ø©'}
                       </AppText>
                     </View>
                   </View>
@@ -1370,7 +1308,7 @@ export default function CreateDocument() {
                       )}
                     </View>
                     <AppText style={[styles.proposalMeta, { color: colors.textSecondary }]}>
-                      {proposal.items?.length || 0} {t.proposalItems} · ₪{proposalTotal.toFixed(2)}
+                      {proposal.items?.length || 0} {t.proposalItems} Â· â‚ª{proposalTotal.toFixed(2)}
                     </AppText>
                   </TouchableOpacity>
                 );
@@ -1474,7 +1412,7 @@ export default function CreateDocument() {
                 <View style={[styles.lockedBadge, { backgroundColor: colors.backgroundLight }]}>
                   <Ionicons name="lock-closed" size={14} color={colors.textSecondary} />
                   <AppText style={[styles.lockedBadgeText, { color: colors.textSecondary }]}>
-                    {language === 'en' ? 'From Invoice' : language === 'he' ? 'מהחשבונית' : 'من الفاتورة'}
+                    {language === 'en' ? 'From Invoice' : language === 'he' ? '×ž×”×—×©×‘×•× ×™×ª' : 'Ù…Ù† Ø§Ù„ÙØ§ØªÙˆØ±Ø©'}
                   </AppText>
                 </View>
               )}
@@ -1594,7 +1532,7 @@ export default function CreateDocument() {
             <View style={[styles.totalContainer, { borderTopColor: colors.border }]}>
               <AppText style={[styles.totalLabel, { color: colors.textPrimary }]}>{t.total}</AppText>
               <AppText style={[styles.totalValue, { color: colors.primary }]}>
-                ₪{calculateTotal().toFixed(2)}
+                â‚ª{calculateTotal().toFixed(2)}
               </AppText>
             </View>
           </View>
@@ -1716,7 +1654,7 @@ export default function CreateDocument() {
                                   : new Date(invoice.createdAt).toLocaleDateString()}
                               </AppText>
                               <AppText style={[styles.invoiceItemAmount, { color: colors.primary }]}>
-                                ₪{totalAmount.toFixed(2)}
+                                â‚ª{totalAmount.toFixed(2)}
                               </AppText>
                             </View>
                           </View>
@@ -1858,256 +1796,6 @@ export default function CreateDocument() {
 }
 
 // Translation helper function
-function getTranslations(language, documentType) {
-  // Document names keyed by numeric type codes
-  const documentNames = {
-    en: {
-      [305]: 'Tax Invoice',       // DOC_TYPE.TAX_INVOICE
-      [400]: 'Receipt',           // DOC_TYPE.RECEIPT
-      [10]: 'Price Proposal',     // DOC_TYPE.PRICE_PROPOSAL
-      [200]: 'Delivery Note',     // DOC_TYPE.DELIVERY_NOTE
-      [210]: 'Return Certificate',// DOC_TYPE.RETURN_CERTIFICATE
-      [330]: 'Refund',            // DOC_TYPE.REFUND
-    },
-    he: {
-      [305]: 'חשבונית מס',
-      [400]: 'קבלה',
-      [10]: 'הצעת מחיר',
-      [200]: 'תעודת משלוח',
-      [210]: 'תעודת החזרה',
-      [330]: 'החזר כספי',
-    },
-    ar: {
-      [305]: 'فاتورة ضريبية',
-      [400]: 'إيصال',
-      [10]: 'عرض السعر',
-      [200]: 'إشعار تسليم',
-      [210]: 'شهادة إرجاع',
-      [330]: 'استرداد',
-    },
-  };
-
-  const docName = documentNames[language]?.[documentType] || documentNames.en[documentType] || 'Document';
-
-  if (language === 'en') {
-    return {
-      title: `Create ${docName}`,
-      documentTypeName: docName,
-      customerDetails: 'Customer Details',
-      customerName: 'Full Name / Business Name',
-      customerEmail: 'Email Address',
-      customerAddress: 'Address',
-      customerCity: 'City',
-      customerPhone: 'Phone',
-      customerId: 'ID / Company Number',
-      clientVatNumber: 'Customer VAT Number',
-      itemsTitle: `${docName} Items`,
-      item: 'Item',
-      itemDescription: 'Product/Service Description',
-      itemPrice: 'Price',
-      itemQuantity: 'Quantity',
-      addItem: 'Add Item',
-      removeItem: 'Remove Item',
-      total: 'Total',
-      required: 'Required',
-      optional: 'Optional',
-      cancel: 'Cancel',
-      preview: 'Preview',
-      submit: `Create ${docName}`,
-      successTitle: 'Success!',
-      documentCreated: `${docName} created successfully!`,
-      openPdf: 'Open PDF',
-      done: 'Done',
-      previewTitle: `${docName} Preview`,
-      pdfReady: 'Your PDF is ready to view or share',
-      // Validation messages
-      customerNameRequired: 'Customer name is required',
-      vatNumberRequired: 'Customer VAT number is required',
-      atLeastOneItem: 'At least one item is required',
-      atLeastOneItemWithPrice: 'At least one item with description and price is required',
-      // Receipt mode selection
-      selectReceiptMode: 'How would you like to create this receipt?',
-      selectReceiptModeDescription: 'Choose to auto-fill from an existing invoice or enter details manually.',
-      autoFromInvoice: 'From Invoice',
-      autoFromInvoiceDescription: 'Auto-fill receipt details from an existing tax invoice',
-      manualEntry: 'Manual Entry',
-      manualEntryDescription: 'Enter all receipt details manually',
-      changeMode: 'Change',
-      // Receipt specific
-      selectInvoice: 'Select Invoice',
-      tapToSelectInvoice: 'Tap to select an invoice',
-      changeInvoice: 'Change',
-      invoiceNumber: 'Invoice #',
-      searchInvoices: 'Search invoices...',
-      loadingInvoices: 'Loading invoices...',
-      noInvoicesFound: 'No invoices found',
-      invoiceRequired: 'Please select an invoice',
-      paymentDetails: 'Payment Details',
-      paymentMethod: 'Payment Method',
-      paymentMethodRequired: 'Please select a payment method',
-      paymentInfo: 'Payment Reference/Details',
-      paymentInfoPlaceholder: 'Enter payment reference or details',
-      paymentInfoCheckPlaceholder: 'Check number, bank, date',
-      paymentInfoTransferPlaceholder: 'Transfer reference number',
-      paymentInfoCreditPlaceholder: 'Last 4 digits, approval number',
-      // 2-step Tax Invoice flow
-      continueToItems: 'Continue to Items',
-      backToClient: 'Back to Client',
-      priceProposals: 'Price Proposals',
-      priceProposal: 'Price Proposal',
-      selectProposal: 'Load items from a previous price proposal',
-      noProposals: 'No matching price proposals found',
-      proposalItems: 'items',
-      selected: 'Selected',
-      finishedJobs: 'Finished Jobs',
-      finishedJob: 'Job',
-      selectFinishedJob: 'Load parts & quantities from a completed job',
-    };
-  } else if (language === 'he') {
-    return {
-      title: `יצירת ${docName}`,
-      documentTypeName: docName,
-      customerDetails: 'פרטי לקוח',
-      customerName: 'שם מלא / שם עסק',
-      customerEmail: 'כתובת אימייל',
-      customerAddress: 'כתובת',
-      customerCity: 'עיר',
-      customerPhone: 'טלפון',
-      customerId: 'ת.ז / ח.פ',
-      clientVatNumber: 'מספר עוסק מורשה של הלקוח',
-      itemsTitle: `פריטי ${docName}`,
-      item: 'פריט',
-      itemDescription: 'תיאור מוצר/שירות',
-      itemPrice: 'מחיר',
-      itemQuantity: 'כמות',
-      addItem: 'הוסף פריט',
-      removeItem: 'הסר פריט',
-      total: 'סה"כ',
-      required: 'חובה',
-      optional: 'אופציונלי',
-      cancel: 'ביטול',
-      preview: 'תצוגה מקדימה',
-      submit: `צור ${docName}`,
-      successTitle: '!הצלחה',
-      documentCreated: `${docName} נוצר בהצלחה!`,
-      openPdf: 'פתח PDF',
-      done: 'סיום',
-      previewTitle: `תצוגה מקדימה של ${docName}`,
-      pdfReady: 'ה-PDF שלך מוכן לצפייה או שיתוף',
-      // Validation messages
-      customerNameRequired: 'שם לקוח הוא שדה חובה',
-      vatNumberRequired: 'מספר עוסק מורשה של הלקוח הוא שדה חובה',
-      atLeastOneItem: 'נדרש לפחות פריט אחד',
-      atLeastOneItemWithPrice: 'נדרש לפחות פריט אחד עם תיאור ומחיר',
-      // Receipt mode selection
-      selectReceiptMode: 'איך תרצה ליצור את הקבלה?',
-      selectReceiptModeDescription: 'בחר למלא אוטומטית מחשבונית קיימת או להזין פרטים ידנית.',
-      autoFromInvoice: 'מחשבונית',
-      autoFromInvoiceDescription: 'מילוי אוטומטי של פרטי הקבלה מחשבונית מס קיימת',
-      manualEntry: 'הזנה ידנית',
-      manualEntryDescription: 'הזנת כל פרטי הקבלה באופן ידני',
-      changeMode: 'שנה',
-      // Receipt specific
-      selectInvoice: 'בחר חשבונית',
-      tapToSelectInvoice: 'לחץ לבחירת חשבונית',
-      changeInvoice: 'שנה',
-      invoiceNumber: 'חשבונית #',
-      searchInvoices: 'חפש חשבוניות...',
-      loadingInvoices: 'טוען חשבוניות...',
-      noInvoicesFound: 'לא נמצאו חשבוניות',
-      invoiceRequired: 'יש לבחור חשבונית',
-      paymentDetails: 'פרטי תשלום',
-      paymentMethod: 'אמצעי תשלום',
-      paymentMethodRequired: 'יש לבחור אמצעי תשלום',
-      paymentInfo: 'פרטי תשלום / אסמכתא',
-      paymentInfoPlaceholder: 'הזן פרטי תשלום או אסמכתא',
-      paymentInfoCheckPlaceholder: 'מספר צ\'ק, בנק, תאריך',
-      paymentInfoTransferPlaceholder: 'מספר אסמכתא של העברה',
-      paymentInfoCreditPlaceholder: '4 ספרות אחרונות, מספר אישור',
-      // 2-step Tax Invoice flow
-      continueToItems: 'המשך לפריטים',
-      backToClient: 'חזרה ללקוח',
-      priceProposals: 'הצעות מחיר',
-      priceProposal: 'הצעת מחיר',
-      selectProposal: 'טען פריטים מהצעת מחיר קודמת',
-      noProposals: 'לא נמצאו הצעות מחיר תואמות',
-      proposalItems: 'פריטים',
-      selected: 'נבחר',
-    };
-  } else {
-    return {
-      title: `إنشاء ${docName}`,
-      documentTypeName: docName,
-      customerDetails: 'تفاصيل العميل',
-      customerName: 'الاسم الكامل / اسم الشركة',
-      customerEmail: 'عنوان البريد الإلكتروني',
-      customerAddress: 'العنوان',
-      customerCity: 'المدينة',
-      customerPhone: 'الهاتف',
-      customerId: 'رقم الهوية / رقم الشركة',
-      clientVatNumber: 'رقم ضريبة القيمة المضافة للعميل',
-      itemsTitle: `عناصر ${docName}`,
-      item: 'عنصر',
-      itemDescription: 'وصف المنتج/الخدمة',
-      itemPrice: 'السعر',
-      itemQuantity: 'الكمية',
-      addItem: 'إضافة عنصر',
-      removeItem: 'إزالة عنصر',
-      total: 'المجموع',
-      required: 'مطلوب',
-      optional: 'اختياري',
-      cancel: 'إلغاء',
-      preview: 'معاينة',
-      submit: `إنشاء ${docName}`,
-      successTitle: '!نجاح',
-      documentCreated: `تم إنشاء ${docName} بنجاح!`,
-      openPdf: 'فتح PDF',
-      done: 'تم',
-      previewTitle: `معاينة ${docName}`,
-      pdfReady: 'PDF الخاص بك جاهز للعرض أو المشاركة',
-      // Validation messages
-      customerNameRequired: 'اسم العميل مطلوب',
-      vatNumberRequired: 'رقم ضريبة القيمة المضافة للعميل مطلوب',
-      atLeastOneItem: 'مطلوب عنصر واحد على الأقل',
-      atLeastOneItemWithPrice: 'مطلوب عنصر واحد على الأقل مع الوصف والسعر',
-      // Receipt mode selection
-      selectReceiptMode: 'كيف تريد إنشاء هذا الإيصال؟',
-      selectReceiptModeDescription: 'اختر الملء التلقائي من فاتورة موجودة أو إدخال التفاصيل يدويًا.',
-      autoFromInvoice: 'من فاتورة',
-      autoFromInvoiceDescription: 'ملء تلقائي لتفاصيل الإيصال من فاتورة ضريبية موجودة',
-      manualEntry: 'إدخال يدوي',
-      manualEntryDescription: 'إدخال جميع تفاصيل الإيصال يدويًا',
-      changeMode: 'تغيير',
-      // Receipt specific
-      selectInvoice: 'اختر فاتورة',
-      tapToSelectInvoice: 'انقر لاختيار فاتورة',
-      changeInvoice: 'تغيير',
-      invoiceNumber: 'فاتورة #',
-      searchInvoices: 'البحث في الفواتير...',
-      loadingInvoices: 'جاري تحميل الفواتير...',
-      noInvoicesFound: 'لم يتم العثور على فواتير',
-      invoiceRequired: 'يرجى اختيار فاتورة',
-      paymentDetails: 'تفاصيل الدفع',
-      paymentMethod: 'طريقة الدفع',
-      paymentMethodRequired: 'يرجى اختيار طريقة الدفع',
-      paymentInfo: 'مرجع/تفاصيل الدفع',
-      paymentInfoPlaceholder: 'أدخل مرجع أو تفاصيل الدفع',
-      paymentInfoCheckPlaceholder: 'رقم الشيك، البنك، التاريخ',
-      paymentInfoTransferPlaceholder: 'رقم مرجع التحويل',
-      paymentInfoCreditPlaceholder: 'آخر 4 أرقام، رقم الموافقة',
-      // 2-step Tax Invoice flow
-      continueToItems: 'متابعة إلى العناصر',
-      backToClient: 'العودة إلى العميل',
-      priceProposals: 'عروض الأسعار',
-      priceProposal: 'عرض سعر',
-      selectProposal: 'تحميل العناصر من عرض سعر سابق',
-      noProposals: 'لم يتم العثور على عروض أسعار مطابقة',
-      proposalItems: 'عناصر',
-      selected: 'محدد',
-    };
-  }
-}
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2692,6 +2380,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.bold,
   },
 });
+
 
 
 

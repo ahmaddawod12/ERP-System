@@ -175,7 +175,7 @@ export async function fetchAllRecentJobs(
       try {
         const [pendingSnapshot, recentSnapshot] = await Promise.all([
           getDocs(query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
-          getDocs(query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
+          getDocs(query(jobsRef, where('updatedAt', '>=', ninetyDaysAgo))),
         ]);
         const merged = new Map();
         pendingSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
@@ -207,7 +207,7 @@ export async function fetchAllRecentJobs(
         try {
           const [pendingSnapshot, recentSnapshot] = await Promise.all([
             getDocs((query as any)(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))),
-            getDocs((query as any)(jobsRef, ...scopedConstraints, where('createdAt', '>=', ninetyDaysAgo))),
+            getDocs((query as any)(jobsRef, ...scopedConstraints, where('updatedAt', '>=', ninetyDaysAgo))),
           ]);
           const merged = new Map();
           pendingSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));

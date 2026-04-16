@@ -37,6 +37,11 @@ export type DateLike = FirestoreTimestamp | string | Date;
 /** Nullable shorthand for optional backend fields. */
 export type Maybe<T> = T | null | undefined;
 
+export interface JobFileRef {
+  storagePath?: string;
+  uri?: string;
+}
+
 // ── User / Profile ─────────────────────────────────────────────────────────
 export interface UserProfile {
   uid: string;
@@ -114,8 +119,8 @@ export interface Job {
   timeFrom?: string;
   timeTo?: string;
   notes?: string;
-  photos?: string[];
-  signature?: string;
+  photos?: Array<string | JobFileRef>;
+  signature?: string | JobFileRef;
   items?: JobItem[];
   createdAt?: DateLike;
   updatedAt?: DateLike;
@@ -165,7 +170,6 @@ export interface AppDocument {
   vatAmount?: number;
   netAmount?: number;
   items?: DocumentItem[];
-  pdfUrl?: string;
   createdAt?: DateLike;
   updatedAt?: DateLike;
 }

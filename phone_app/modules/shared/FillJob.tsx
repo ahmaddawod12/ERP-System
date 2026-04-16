@@ -18,7 +18,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, storage as fbStorage, FieldValue, doc, getDoc, functions, httpsCallable } from '../../firebase';
+import { auth, db, storage as fbStorage, doc, getDoc, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -27,6 +27,11 @@ import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
+import {
+  extractStoragePathFromJobFile,
+  getImmediateJobFileUri,
+  resolveJobFileUri,
+} from './job-file-utils';
 
 // Generate a temporary ID for file upload paths (not used as Firestore doc ID)
 function generateTempId() {
@@ -85,6 +90,7 @@ export default function FillJob() {
   const [submitting, setSubmitting] = useState(false);
   const [refreshedSignatureURL, setRefreshedSignatureURL] = useState(null);
   const [signatureLoading, setSignatureLoading] = useState(false);
+  const [resolvedPhotoPreviewUrls, setResolvedPhotoPreviewUrls] = useState([]);
 
   // Travel distance state - manual input (km)
   const [travelDistance, setTravelDistance] = useState(
@@ -229,52 +235,42 @@ export default function FillJob() {
     modeMetric: 'الوضع',
   };
 
-  // Function to extract storage path and get fresh download URL
-  const refreshSignatureURL = async (signatureURL) => {
-    if (!signatureURL || typeof signatureURL !== 'string') {
+  const refreshSignatureURL = async (signatureRef) => {
+    if (!signatureRef) {
       console.log('No signature URL to refresh');
+      setRefreshedSignatureURL(null);
       return null;
     }
 
     try {
       setSignatureLoading(true);
-      console.log('🔄 Refreshing signature URL from Firebase Storage...');
-      
-      // Extract storage path from the URL
-      // URL format: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encodedPath}?alt=media&token={token}
-      const urlParts = signatureURL.split('/o/');
-      if (urlParts.length < 2) {
-        console.warn('Invalid Firebase Storage URL format');
-        return signatureURL; // Return original if can't parse
-      }
-      
-      const encodedPath = urlParts[1].split('?')[0];
-      const storagePath = decodeURIComponent(encodedPath);
-      
-      console.log('📁 Storage path:', storagePath);
-      
-      // Get fresh download URL from Firebase Storage
-      const storageRef = fbStorage().ref(storagePath);
-      const freshURL = await storageRef.getDownloadURL();
+      const companyId = getCompanyId();
+      const currentJobId = editingJob?.id || null;
+      const freshURL = await resolveJobFileUri(signatureRef, companyId, currentJobId);
       
       console.log('✅ Fresh signature URL obtained');
       setRefreshedSignatureURL(freshURL);
-      setSignatureLoading(false);
       return freshURL;
     } catch (error) {
       console.error('❌ Error refreshing signature URL:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
+      setRefreshedSignatureURL(null);
+      return null;
+    } finally {
       setSignatureLoading(false);
-      
-      // If file not found, return null to hide the image
-      if (error.code === 'storage/object-not-found') {
-        console.warn('⚠️ Signature file not found in storage');
-        return null;
-      }
-      
-      // For other errors, try to use the original URL
-      return signatureURL;
+    }
+  };
+
+  const refreshPhotoPreviewUrls = async (photos) => {
+    try {
+      const companyId = getCompanyId();
+      const currentJobId = editingJob?.id || null;
+      const nextUrls = await Promise.all(
+        (Array.isArray(photos) ? photos : []).map((photo) => resolveJobFileUri(photo, companyId, currentJobId)),
+      );
+      setResolvedPhotoPreviewUrls(nextUrls.filter(Boolean));
+    } catch (error) {
+      console.error('Error resolving photo preview URLs:', error);
+      setResolvedPhotoPreviewUrls([]);
     }
   };
 
@@ -293,17 +289,24 @@ export default function FillJob() {
     console.log('jobData.signature:', jobData.signature);
     console.log('==============================');
     
-    // Refresh signature URL if it exists
-    if (jobData.signature) {
-      refreshSignatureURL(jobData.signature);
-    }
-    
     // Check if returning from parts selection
     if (global.onPartsSelected && params.returnFromParts) {
       // Parts already updated via global callback
       delete params.returnFromParts;
     }
   }, []);
+
+  useEffect(() => {
+    void refreshPhotoPreviewUrls(jobData.photos);
+  }, [editingJob?.id, jobData.photos]);
+
+  useEffect(() => {
+    if (!jobData.signature) {
+      setRefreshedSignatureURL(null);
+      return;
+    }
+    void refreshSignatureURL(jobData.signature);
+  }, [editingJob?.id, jobData.signature]);
 
   // Watch for cached inventory changes and re-sync local state
   useEffect(() => {
@@ -352,6 +355,11 @@ export default function FillJob() {
 
   const handlePhotosSelected = (photos) => {
     setJobData({ ...jobData, photos });
+    setResolvedPhotoPreviewUrls(
+      (Array.isArray(photos) ? photos : [])
+        .map((photo) => getImmediateJobFileUri(photo))
+        .filter(Boolean),
+    );
     setShowPhotoPicker(false);
   };
 
@@ -359,8 +367,7 @@ export default function FillJob() {
     setJobData({ ...jobData, signature });
     setShowSignature(false);
     
-    // Set the refreshed URL to the local signature URI so it displays immediately
-    setRefreshedSignatureURL(signature);
+    setRefreshedSignatureURL(getImmediateJobFileUri(signature));
     
     setTimeout(() => {
       alert.success('Success', 'Signature saved!');
@@ -391,23 +398,27 @@ export default function FillJob() {
     }
   };
 
-  const uploadFileToStorage = async (uri, uid, jobId, fileName) => {
+  const uploadFileToStorage = async (fileRef, uid, jobId, fileName) => {
     try {
-      // Skip if already uploaded
-      if (uri.startsWith('https://firebasestorage.googleapis.com') || 
-          uri.startsWith('https://storage.googleapis.com')) {
-        return uri;
+      const existingStoragePath = extractStoragePathFromJobFile(fileRef);
+      if (existingStoragePath) {
+        return { storagePath: existingStoragePath, uploaded: false };
       }
 
-      const storageRef = fbStorage().ref(`${uid}/jobs/${jobId}/${fileName}`);
-      const response = await fetch(uri);
+      const localUri = getImmediateJobFileUri(fileRef);
+      if (!localUri) {
+        throw new Error('Job file must be a local URI or canonical storage reference');
+      }
+
+      const storagePath = `${uid}/jobs/${jobId}/${fileName}`;
+      const storageRef = fbStorage().ref(storagePath);
+      const response = await fetch(localUri);
       const blob = await response.blob();
 
       try {
         await storageRef.put(blob);
-        const downloadURL = await storageRef.getDownloadURL();
-        console.log('Upload complete:', downloadURL);
-        return downloadURL;
+        console.log('Upload complete:', storagePath);
+        return { storagePath, uploaded: true };
       } catch (error) {
         console.error('Upload error:', error);
         throw error;
@@ -419,21 +430,44 @@ export default function FillJob() {
   };
 
   const uploadJobFiles = async (uid, jobId, photos, signature) => {
-    const photoURLs = [];
-    let signatureURL = null;
+    const photoRefs = [];
+    let signatureRef = null;
+    const uploadedStoragePaths = [];
 
     // Upload photos
     for (let i = 0; i < photos.length; i++) {
-      const photoURL = await uploadFileToStorage(photos[i], uid, jobId, `photo_${i + 1}.jpg`);
-      photoURLs.push(photoURL);
+      const photoRef = await uploadFileToStorage(photos[i], uid, jobId, `photo_${i + 1}.jpg`);
+      photoRefs.push(photoRef);
+      if (photoRef?.uploaded && photoRef.storagePath) {
+        uploadedStoragePaths.push(photoRef.storagePath);
+      }
     }
 
     // Upload signature
     if (signature) {
-      signatureURL = await uploadFileToStorage(signature, uid, jobId, 'signature.png');
+      signatureRef = await uploadFileToStorage(signature, uid, jobId, 'signature.png');
+      if (signatureRef?.uploaded && signatureRef.storagePath) {
+        uploadedStoragePaths.push(signatureRef.storagePath);
+      }
     }
 
-    return { photoURLs, signatureURL };
+    return { photoRefs, signatureRef, uploadedStoragePaths };
+  };
+
+  const cleanupUploadedJobFiles = async (storagePaths) => {
+    const uniquePaths = [...new Set((Array.isArray(storagePaths) ? storagePaths : []).filter(Boolean))];
+    if (uniquePaths.length === 0) {
+      return;
+    }
+
+    await Promise.all(uniquePaths.map(async (storagePath) => {
+      try {
+        await fbStorage().ref(storagePath).delete();
+        console.log('🧹 Removed orphaned upload:', storagePath);
+      } catch (cleanupError) {
+        console.warn('Failed to remove orphaned upload:', storagePath, cleanupError);
+      }
+    }));
   };
 
   const validateForm = () => {
@@ -534,6 +568,8 @@ export default function FillJob() {
       language === 'he' ? 'אנא המתן בזמן שאנו שומרים את פרטי המשימה...' : 
       'يرجى الانتظار بينما نحفظ تفاصيل مهمتك...'
     );
+    let uploadedStoragePaths = [];
+    let jobPersisted = false;
     try {
       const user = auth.currentUser;
       const uid = getUid() || user.uid;
@@ -547,13 +583,19 @@ export default function FillJob() {
         throw new Error('User does not belong to a company');
       }
 
-      // Upload files
-      const { photoURLs, signatureURL } = await uploadJobFiles(
-        uid,
-        jobId,
-        jobData.photos,
-        jobData.signature
-      );
+      let photoRefs = [];
+      let signatureRef = null;
+      if (mode !== 'user') {
+        const uploadResult = await uploadJobFiles(
+          uid,
+          jobId,
+          jobData.photos,
+          jobData.signature
+        );
+        photoRefs = uploadResult.photoRefs;
+        signatureRef = uploadResult.signatureRef;
+        uploadedStoragePaths = uploadResult.uploadedStoragePaths || [];
+      }
 
       // Auto-save new client or update existing client with missing fields
       let clientId = selectedClientObj?.id || null;
@@ -593,8 +635,8 @@ export default function FillJob() {
         cphone: jobData.cphone || '',
         ...(clientId && { cid: clientId }),
         signingPerson: jobData.signingPerson,
-        photos: photoURLs,
-        signature: signatureURL,
+        photos: photoRefs,
+        signature: signatureRef,
         status: mode === 'user' ? 'finished' : 'waiting',
         ...(mode === 'user'
           ? { wid: profile?.wid ? String(profile.wid) : null, wname: profile?.name || '' }
@@ -619,20 +661,40 @@ export default function FillJob() {
           companyId,
           type: 'finished',
           ...jobToSave,
+          photos: [],
+          signature: null,
+          idempotencyKey: `job_${Date.now()}_${jobId}`,
         });
 
         const serverJobId = result.data?.jobId || result.jobId;
+        const userUploadResult = await uploadJobFiles(
+          uid,
+          serverJobId,
+          jobData.photos,
+          jobData.signature
+        );
+        uploadedStoragePaths = userUploadResult.uploadedStoragePaths || [];
+        const updateJobFn = httpsCallable(functions, 'updateJobV1');
+        await updateJobFn({
+          companyId,
+          jobId: serverJobId,
+          photos: userUploadResult.photoRefs,
+          signature: userUploadResult.signatureRef,
+        });
+        jobPersisted = true;
+        photoRefs = userUploadResult.photoRefs;
+        signatureRef = userUploadResult.signatureRef;
         
         // Update local cache with the server-generated ID
         console.log('📦 FillJob: Adding to local cache...');
-        await addJob({ ...jobToSave, id: serverJobId }, false);
+        await addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: serverJobId }, false);
         
         console.log('✅ FillJob: Job saved successfully');
         
         // Decrease inventory after job is successfully saved
         if (selectedParts && selectedParts.length > 0) {
           console.log('📦 FillJob: Deducting parts from inventory...');
-          await decreaseInventoryParts(uid);
+          console.log('Solo inventory deduction is handled by createJobV1.');
         }
       } else {
         console.log('💾 FillJob: Updating worker pending job via Cloud Function...', jobId);
@@ -641,6 +703,7 @@ export default function FillJob() {
         // Note: Firestore trigger will automatically send push notification to manager when status changes to 'waiting'
         const updateJobFn = httpsCallable(functions, 'updateJobV1');
         await updateJobFn({ companyId, jobId, ...jobToSave });
+        jobPersisted = true;
         
         console.log('✅ FillJob: Worker job updated in Firestore');
         
@@ -664,6 +727,9 @@ export default function FillJob() {
         router.back();
       }, 500);
     } catch (error) {
+      if (!jobPersisted && uploadedStoragePaths.length > 0) {
+        await cleanupUploadedJobFiles(uploadedStoragePaths);
+      }
       console.error('Error saving job:', error);
       alert.hideLoading();
       alert.error('Error', 'Failed to save job');
@@ -912,8 +978,8 @@ export default function FillJob() {
 
             {jobData.photos.length > 0 && (
               <ScrollView horizontal style={styles.photosList}>
-                {jobData.photos.map((photo, index) => (
-                  <Image key={index} source={{ uri: photo }} style={styles.photoPreview} />
+                {resolvedPhotoPreviewUrls.map((photoUri, index) => (
+                  <Image key={index} source={{ uri: photoUri }} style={styles.photoPreview} />
                 ))}
               </ScrollView>
             )}
@@ -1024,7 +1090,7 @@ export default function FillJob() {
             </View>
 
             {/* Show existing signature prominently if it exists */}
-            {jobData.signature && typeof jobData.signature === 'string' && jobData.signature.trim() !== '' && (
+            {jobData.signature && (
               <View style={[styles.signatureContainer, { backgroundColor: colors.background, padding: spacing.md, borderRadius: borderRadius.md, marginBottom: spacing.md }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm }}>
                   <MaterialCommunityIcons name="check-circle" size={20} color={colors.success} />

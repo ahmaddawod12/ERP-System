@@ -26,7 +26,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable, increment } from '../firebase';
+import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
 import { safeJsonParse } from '../utils/helpers';
@@ -36,6 +36,10 @@ import {
   fetchAllRecentJobs as _fetchAllRecentJobs,
 } from './cache-fetchers';
 import { useArchiveQuery } from '../hooks/useArchiveQuery';
+import { useCacheVersionActions } from './use-cache-version-actions';
+import { useCacheJobActions } from './use-cache-job-actions';
+import { useCacheWorkerActions } from './use-cache-worker-actions';
+import { useCacheClientActions } from './use-cache-client-actions';
 
 // Extracted MMKV utilities (zero React dependencies)
 import {
@@ -544,8 +548,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
                       ? (query as any)(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))
                       : query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
                     getDocs(scopedConstraints.length > 0
-                      ? (query as any)(jobsRef, ...scopedConstraints, where('createdAt', '>=', ninetyDaysAgo))
-                      : query(jobsRef, where('createdAt', '>=', ninetyDaysAgo))),
+                      ? (query as any)(jobsRef, ...scopedConstraints, where('updatedAt', '>=', ninetyDaysAgo))
+                      : query(jobsRef, where('updatedAt', '>=', ninetyDaysAgo))),
                   ]);
                   const fullMap = new Map();
                   pendingSnap.docs.forEach((d: any) => fullMap.set(d.id, { id: d.id, ...d.data() }));
@@ -967,297 +971,56 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     saveToLocalCache(localVersionsKey, localVersions);
   }, [saveToLocalCache]);
 
-  /**
-   * Increment cache version in Firebase for user cache fields (profile, inventory).
-   * Company cache versions are managed by Cloud Functions only.
-   */
-  const incrementCacheVersion = useCallback(async (field: string, isCompanyCache = false) => {
-    if (isCompanyCache) {
-      // Company cache versions are bumped by Cloud Functions, not the client.
-      // Just pre-increment locally for optimistic UI.
-      preIncrementVersion(field, true);
-      return;
-    }
-    
-    const uid = getUid();
-    try {
-      // Pre-increment local version
-      preIncrementVersion(field, false);
-      
-      // Update Firebase user cache
-      const cacheRef = doc(db, `users/${uid}/data/cache`);
-      await updateDoc(cacheRef, { [field]: increment(1) });
-    } catch (error) {
-      console.error(`Error incrementing ${field} version:`, error);
-    }
-  }, [getUid, preIncrementVersion]);
+  const {
+    incrementCacheVersion,
+    updateProfile,
+    updateInventory,
+  } = useCacheVersionActions({
+    getUid,
+    getCompanyId,
+    saveToLocalCache,
+    preIncrementVersion,
+  });
 
-  /**
-   * Update profile cache
-   */
-  const updateProfile = useCallback(async (newProfile: any) => {
-    saveToLocalCache(CACHE_KEYS.PROFILE, newProfile);
-    await incrementCacheVersion('profile', false);
-  }, [saveToLocalCache, incrementCacheVersion]);
+  const {
+    addJob,
+    updateJob,
+    removeJob,
+    acceptJob,
+  } = useCacheJobActions({
+    getUserRole,
+    jobs,
+    companyJobs,
+    saveToLocalCache,
+    preIncrementVersion,
+  });
 
-  /**
-   * Update inventory cache
-   */
-  const updateInventory = useCallback(async (newInventory: any) => {
-    const uid = getUid();
-    const companyId = getCompanyId() || uid;
-    if (!uid) {
-      console.error('Cannot update inventory: no uid');
-      return;
-    }
-    if (!companyId) {
-      console.error('Cannot update inventory: no companyId');
-      return;
-    }
-    
-    // 1. Update local cache FIRST
-    saveToLocalCache(CACHE_KEYS.INVENTORY, newInventory);
-    
-    // 2. Save via Cloud Function (server-authoritative inventory mutation path)
-    const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
-    await updateInventoryFn({
-      companyId,
-      action: 'replaceParts',
-      scope: 'user',
-      targetUid: uid,
-      parts: Array.isArray(newInventory) ? newInventory : [],
-    });
-    
-    console.log('Inventory updated via Cloud Function');
-  }, [saveToLocalCache, getUid, getCompanyId]);
+  const {
+    updateWorkers,
+    addWorker,
+    editWorker,
+    deleteWorker,
+  } = useCacheWorkerActions({
+    workers,
+    getUserRole,
+    getCompanyId,
+    saveToLocalCache,
+    preIncrementVersion,
+  });
 
-  /**
-   * Add a job to the unified jobs cache (prevents duplicates).
-   * Cloud Functions handle Firestore writes and version bumps.
-   * This does optimistic local cache updates only.
-   */
-  const addJob = useCallback((job: any) => {
-    const role = getUserRole();
-    
-    if (!job.id) {
-      console.error('Cannot add job without ID');
-      return;
-    }
-    
-    // Helper to add job without duplicates
-    const addJobToArray = (arr: any[], newJob: any) => {
-      const filtered = arr.filter((j: any) => j.id !== newJob.id);
-      return [...filtered, newJob];
-    };
-    
-    if (role === 'manager') {
-      const updated = addJobToArray(companyJobs, job);
-      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, updated);
-    } else {
-      const updated = addJobToArray(jobs, job);
-      saveToLocalCache(CACHE_KEYS.JOBS, updated);
-    }
-    
-    // Pre-increment jobsVersion so snapshot listener won't double-fetch
-    preIncrementVersion('jobsVersion', true);
-  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Update a job in the unified jobs cache.
-   */
-  const updateJob = useCallback((jobId: string, updates: any) => {
-    const role = getUserRole();
-    
-    const updateInArray = (arr: any[]) =>
-      arr.map((j: any) => j.id === jobId ? { ...j, ...updates } : j);
-    
-    if (role === 'manager') {
-      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, updateInArray(companyJobs));
-    } else {
-      saveToLocalCache(CACHE_KEYS.JOBS, updateInArray(jobs));
-    }
-    
-    preIncrementVersion('jobsVersion', true);
-  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Remove a job from the unified jobs cache.
-   */
-  const removeJob = useCallback((jobId: string) => {
-    const role = getUserRole();
-    
-    if (role === 'manager') {
-      const filtered = companyJobs.filter((j: any) => j.id !== jobId);
-      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, filtered);
-    } else {
-      const filtered = jobs.filter((j: any) => j.id !== jobId);
-      saveToLocalCache(CACHE_KEYS.JOBS, filtered);
-    }
-    
-    preIncrementVersion('jobsVersion', true);
-  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Accept/finish a job: update status in-place within the unified jobs cache.
-   * No more collection move or ID conversion needed.
-   * 
-   * @param {string} jobId - The job ID
-   * @param {object} updates - Fields to merge (e.g. { status: 'finished', finishedAt: ... })
-   */
-  const acceptJob = useCallback((jobId: string, updates: any) => {
-    const role = getUserRole();
-    
-    const mergeUpdates = (arr: any[]) =>
-      arr.map((j: any) => j.id === jobId ? { ...j, ...updates } : j);
-    
-    if (role === 'manager') {
-      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, mergeUpdates(companyJobs));
-    } else {
-      saveToLocalCache(CACHE_KEYS.JOBS, mergeUpdates(jobs));
-    }
-    
-    preIncrementVersion('jobsVersion', true);
-  }, [getUserRole, jobs, companyJobs, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Update workers list (manager only)
-   */
-  const updateWorkers = useCallback(async (newWorkers: any) => {
-    saveToLocalCache(CACHE_KEYS.WORKERS, newWorkers);
-  }, [saveToLocalCache]);
-
-  /**
-   * Add worker to cache (called AFTER cloud function creates Auth user and Firestore docs)
-   * Updates:
-   * 1. Local cache workers list
-   * 2. Increment cache version
-   * 
-   * @param {string} wid - Worker ID 
-   * @param {object} workerData - { email, name, phoneNumber, uid }
-   */
-  const addWorker = useCallback(async (wid: string, workerData: any) => {
-    const role = getUserRole();
-    const companyId = getCompanyId();
-    
-    if (role !== 'manager') {
-      console.error('Only managers can add workers');
-      throw new Error('Only managers can add workers');
-    }
-    
-    if (!companyId) {
-      console.error('No company name found');
-      throw new Error('No company name found');
-    }
-    
-    console.log(`?? Adding worker ${wid} to cache...`);
-    
-    try {
-      // 1. Update local cache
-      const updatedWorkers = {
-        ...workers,
-        [wid]: {
-          uid: workerData.uid,
-          wid: workerData.wid ?? null,
-          email: workerData.email,
-          name: workerData.name,
-          phoneNumber: workerData.phoneNumber,
-          role: 'worker',
-          companyId: companyId
-        }
-      };
-      saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
-      
-      // 2. Pre-increment local workersVersion (CF handles Firebase bump)
-      preIncrementVersion('workersVersion', true);
-      
-      console.log(`Worker ${wid} added to cache successfully`);
-      
-    } catch (error) {
-      console.error('Error adding worker to cache:', error);
-      throw error;
-    }
-  }, [workers, getUserRole, getCompanyId, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Edit worker details (called AFTER cloud function updates Firestore)
-   * Can update: name, phoneNumber
-   * CANNOT update: email (immutable)
-   * 
-   * @param {string} wid - Worker ID to edit in cache  
-   * @param {object} updates - { name?, phoneNumber? }
-   */
-  const editWorker = useCallback(async (wid: string, updates: any) => {
-    const role = getUserRole();
-    const companyId = getCompanyId();
-    
-    if (role !== 'manager') {
-      console.error('Only managers can edit workers');
-      throw new Error('Only managers can edit workers');
-    }
-    
-    if (!companyId) {
-      console.error('No company name found');
-      throw new Error('No company name found');
-    }
-    
-    console.log(`?? Editing worker ${wid} in cache...`);
-    
-    try {
-      // 1. Update local cache
-      const currentWorker = workers[wid];
-      if (!currentWorker) {
-        throw new Error('Worker not found in cache');
-      }
-      const { password, ...safeUpdates } = updates || {};
-      
-      const updatedWorkerData = {
-        ...currentWorker,
-        ...safeUpdates,
-        email: currentWorker.email // Email is immutable
-      };
-      
-      const updatedWorkers = {
-        ...workers,
-        [wid]: updatedWorkerData
-      };
-      saveToLocalCache(CACHE_KEYS.WORKERS, updatedWorkers);
-      
-      // 2. Pre-increment local workersVersion (CF handles Firebase bump)
-      preIncrementVersion('workersVersion', true);
-      
-      console.log(`Worker ${wid} updated in cache successfully`);
-      
-    } catch (error) {
-      console.error('Error editing worker in cache:', error);
-      throw error;
-    }
-  }, [workers, getUserRole, getCompanyId, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Delete worker from cache (called AFTER cloud function deletes Auth user and Firestore docs)
-   * Removes:
-   * 1. Worker from local cache
-   * 2. Increment cache version
-   * 
-   * @param {string} wid - Worker ID to delete from cache
-   */
-  const deleteWorker = useCallback(async (wid: string) => {
-    
-    try {
-      // 1. Remove from local cache
-      const { [wid]: deletedWorker, ...remainingWorkers } = workers;
-      saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
-      
-      // 2. Pre-increment local workersVersion (CF handles Firebase bump)
-      preIncrementVersion('workersVersion', true);
-      
-      console.log(`Worker ${wid} deleted from cache successfully`);
-      
-    } catch (error) {
-      console.error('Error deleting worker from cache:', error);
-      throw error;
-    }
-  }, [workers, getUserRole, getCompanyId, saveToLocalCache, preIncrementVersion]);
+  const {
+    fetchClients,
+    addClient,
+    updateClient,
+    deleteClient,
+  } = useCacheClientActions({
+    db,
+    getCompanyId,
+    clients,
+    saveToLocalCache,
+    preIncrementVersion,
+    setClients,
+  });
 
   /**
    * Add document
@@ -1276,35 +1039,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   }, [documents, saveToLocalCache, preIncrementVersion]);
 
   /**
-   * Fetch all clients from companies/{companyId}/clients
-   */
-  const fetchClients = useCallback(async (companyId?: string) => {
-    try {
-      const cName = companyId || getCompanyId();
-      if (!cName) {
-        console.warn('?? No company name for fetchClients');
-        return [];
-      }
-      console.log('?? [FIREBASE READ] Fetching clients from Firebase...');
-      const clientsRef = collection(db, 'companies', cName, 'clients');
-      const snapshot = await getDocs(clientsRef);
-      const clientsList: any[] = [];
-      snapshot.forEach((d: any) => {
-        clientsList.push({ id: d.id, ...d.data() });
-      });
-      // Sort by numeric ID so newest clients appear last
-      clientsList.sort((a: any, b: any) => parseInt(a.id) - parseInt(b.id));
-      saveToLocalCache(CACHE_KEYS.CLIENTS, clientsList);
-      setClients(clientsList); // Update state immediately
-      console.log(`? Fetched ${clientsList.length} clients`);
-      return clientsList;
-    } catch (error) {
-      console.error('Error fetching clients:', error);
-      return [];
-    }
-  }, [getCompanyId, saveToLocalCache]);
-
-  /**
    * Add a new client using a Firestore transaction
    * - Reads companies/{companyId} document for cid field
    * - Increments cid in company doc
@@ -1314,7 +1048,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * @param {Object} clientData - { name, phone, email, address, city, vatNumber }
    * @returns {Object} - The created client with id
    */
-  const addClient = useCallback(async (clientData: any) => {
+  const legacyAddClient = useCallback(async (clientData: any) => {
     const companyId = getCompanyId();
     console.log('?? Adding client to company:', companyId);
 
@@ -1355,7 +1089,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   /**
    * Update an existing client
    */
-  const updateClient = useCallback(async (clientId: string, updates: any) => {
+  const legacyUpdateClient = useCallback(async (clientId: string, updates: any) => {
     const companyId = getCompanyId();
     if (!companyId) throw new Error('Company name not found');
 
@@ -1386,7 +1120,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * The CF handles the Firestore delete and increments the company cache version,
    * so other devices (and the snapshot listener) are notified automatically.
    */
-  const deleteClient = useCallback(async (clientId: string) => {
+  const legacyDeleteClient = useCallback(async (clientId: string) => {
     const companyId = getCompanyId();
     if (!companyId) throw new Error('Company name not found');
 

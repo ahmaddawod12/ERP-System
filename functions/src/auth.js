@@ -25,7 +25,10 @@ const {
   sendPushNotification,
   requireNonEmptyString,
   optionalTrimmedString,
+  getSubscriptionTierForRole,
+  getEnabledModulesForTier,
 } = require('./shared');
+const crypto = require('crypto');
 
 // ─── manageWorker ────────────────────────────────────────────────────────────
 
@@ -58,24 +61,24 @@ exports.manageWorker = onCall(async (request) => {
     }
 
     // Validate required parameters
-    if (!normalizedEmail || !companyId) {
-      throw new HttpsError('invalid-argument', 'Email and company name are required');
+    if (!companyId) {
+      throw new HttpsError('invalid-argument', 'Company name is required');
     }
     validateCompanyId(companyId);
-    if (!isValidEmail(normalizedEmail)) {
+    if ((action === 'add' || normalizedEmail) && !isValidEmail(normalizedEmail)) {
       throw new HttpsError('invalid-argument', 'Invalid worker email format');
     }
-    if (password && password.length < 8) {
-      throw new HttpsError('invalid-argument', 'Password must be at least 8 characters');
-    }
-    if (newPassword && newPassword.length < 8) {
-      throw new HttpsError('invalid-argument', 'New password must be at least 8 characters');
+    if (newPassword) {
+      throw new HttpsError('invalid-argument', 'Managers cannot set worker passwords. Ask the worker to use password reset.');
     }
 
     // ========== ADD WORKER ==========
     if (action === 'add') {
-      if (!password) {
-        throw new HttpsError('invalid-argument', 'Password is required for adding a worker');
+      if (!normalizedEmail) {
+        throw new HttpsError('invalid-argument', 'Email is required for adding a worker');
+      }
+      if (password) {
+        throw new HttpsError('invalid-argument', 'Managers cannot set worker passwords. Ask the worker to use password reset to claim the account.');
       }
       await verifyManagerAuth(request.auth, null, companyId);
 
@@ -92,12 +95,17 @@ exports.manageWorker = onCall(async (request) => {
       try {
         userRecord = await admin.auth().createUser({
           email: normalizedEmail,
-          password: password,
+          password: crypto.randomBytes(24).toString('base64url'),
           ...(name ? { displayName: String(name).trim() } : {}),
         });
+        await admin.auth().setCustomUserClaims(userRecord.uid, {
+          role: 'worker',
+          companyId,
+          forcePasswordReset: true,
+        });
       } catch (authError) {
-        logger.error('Failed to create Auth user for worker', { error: authError.message });
-        throw new HttpsError('internal', `Failed to create worker Auth account: ${authError.message}`);
+        logger.error('Failed to create Auth user for worker', { error: authError.message, code: authError.code });
+        throw new HttpsError('internal', 'Failed to create worker Auth account');
       }
       const workerUid = userRecord.uid;
 
@@ -306,8 +314,9 @@ exports.manageWorker = onCall(async (request) => {
 
       // Prepare Authentication updates
       const authUpdates = {};
-      if (newPassword) {
-        authUpdates.password = newPassword;
+      if (normalizedEmail) {
+        authUpdates.email = normalizedEmail;
+        authUpdates.emailVerified = false;
       }
       if (name !== undefined) {
         authUpdates.displayName = String(name || '').trim();
@@ -315,7 +324,17 @@ exports.manageWorker = onCall(async (request) => {
 
       // Update Firebase Authentication
       if (Object.keys(authUpdates).length > 0) {
-        await admin.auth().updateUser(workerUid, authUpdates);
+        const { customClaims, ...userUpdates } = authUpdates;
+        if (Object.keys(userUpdates).length > 0) {
+          await admin.auth().updateUser(workerUid, userUpdates);
+        }
+        if (customClaims) {
+          const existingUser = await admin.auth().getUser(workerUid);
+          await admin.auth().setCustomUserClaims(workerUid, {
+            ...(existingUser.customClaims || {}),
+            ...customClaims,
+          });
+        }
         logger.info(`Updated Authentication for worker: ${redactEmail(normalizedEmail)}`, {
           updatedFields: Object.keys(authUpdates),
         });
@@ -333,7 +352,9 @@ exports.manageWorker = onCall(async (request) => {
       if (newRole) {
         firestoreUpdates.role = newRole;
       }
-      firestoreUpdates.email = normalizedEmail;
+      if (normalizedEmail) {
+        firestoreUpdates.email = normalizedEmail;
+      }
       firestoreUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
       // Atomic batch: update profile + worker list + cache in one commit
@@ -346,7 +367,9 @@ exports.manageWorker = onCall(async (request) => {
       const workerListRef = admin.firestore().doc(companyWorkerDocPath(companyId, String(wid)));
       const updateData = {};
       updateData.uid = workerUid;
-      updateData.email = normalizedEmail;
+      if (normalizedEmail) {
+        updateData.email = normalizedEmail;
+      }
       updateData.wid = Number(wid);
       updateData.role = newRole || existingRole;
       updateData.password = admin.firestore.FieldValue.delete(); // Remove legacy plaintext password field
@@ -396,7 +419,8 @@ exports.manageWorker = onCall(async (request) => {
       throw new HttpsError('invalid-argument', 'Password is too weak');
     }
     
-    throw new HttpsError('internal', `Failed to ${requestedAction} worker: ` + error.message);
+    logger.error('manageWorker failed', { action: requestedAction, error: error.message, code: error.code });
+    throw new HttpsError('internal', `Failed to ${requestedAction} worker`);
   }
 });
 
@@ -424,6 +448,16 @@ exports.registerBusinessV1 = onCall(async (request) => {
   if (!accountType) {
     throw new HttpsError('invalid-argument', 'accountType must be solo or business');
   }
+  const isValidProvisioningTuple =
+    (role === 'manager' && accountType === 'business') ||
+    (role === 'user' && accountType === 'solo') ||
+    (role === 'basic' && accountType === 'solo');
+  if (!isValidProvisioningTuple) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Invalid role/accountType combination. Allowed combinations are manager+business, user+solo, or basic+solo'
+    );
+  }
 
   // Validate name
   const name = typeof data.name === 'string' ? data.name.trim() : '';
@@ -431,7 +465,7 @@ exports.registerBusinessV1 = onCall(async (request) => {
 
   // Validate business info fields
   // Solo users (user/basic) don't require business fields; managers do.
-  const isSoloRole = (role === 'user' || role === 'basic');
+  const isSoloRole = accountType === 'solo';
   const heName = isSoloRole
     ? optionalTrimmedString(data.he_name || data.name || '', 200)
     : requireNonEmptyString(data.he_name || '', 'he_name', 1, 200);
@@ -488,16 +522,8 @@ exports.registerBusinessV1 = onCall(async (request) => {
   if (accountantPhone) businessData.accountant_phone = accountantPhone;
 
   // Determine subscription tier
-  const tierMap = { manager: 'Team', user: 'Solo', basic: 'Basic' };
-  const tier = tierMap[role] || 'Basic';
-  const enabledModules = {
-    team: tier === 'Team' || tier === 'Enterprise',
-    solojob: tier !== 'Basic',
-    documents: true,
-    teaminventory: tier === 'Team' || tier === 'Enterprise',
-    companyinventory: tier === 'Team' || tier === 'Enterprise',
-    inventory: tier !== 'Basic',
-  };
+  const tier = getSubscriptionTierForRole(role, accountType);
+  const enabledModules = getEnabledModulesForTier(tier);
 
   // Transactional registration — prevents race where concurrent calls both pass precheck
   await dbRef.runTransaction(async (tx) => {

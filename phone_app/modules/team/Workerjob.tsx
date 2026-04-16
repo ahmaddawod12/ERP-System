@@ -87,7 +87,6 @@ export default function Workerjob() {
     title: 'המשימות שלי',
     noJobs: 'אין משימות מוקצות עדיין',
     pending: 'ממתין',
-    received: 'התקבל',
     waiting: 'ממתין לאישור',
     accepted: 'אושר',
     denied: 'נדחה',
@@ -116,7 +115,6 @@ export default function Workerjob() {
     title: 'المهام المعينة لي',
     noJobs: 'لا توجد مهام معينة بعد',
     pending: 'قيد الانتظار',
-    received: 'مستلم',
     waiting: 'في انتظار الموافقة',
     accepted: 'مقبول',
     denied: 'مرفوض',
@@ -341,7 +339,6 @@ export default function Workerjob() {
       const updates = {
         status: 'waiting',
         wname: profile.name || '',
-        receivedAt: new Date().toISOString(),
       };
 
       const updateJobFn = httpsCallable(functions, 'updateJobV1');
@@ -577,7 +574,7 @@ export default function Workerjob() {
                       <MaterialCommunityIcons name="pencil-box" size={24} color="white" />
                     </TouchableOpacity>
                   )}
-                  {(job.status === 'waiting' || job.status === 'received') && (
+                  {job.status === 'waiting' && (
                     <TouchableOpacity
                       style={[styles.iconButton, styles.editIconButton, !canEditJob(job) && styles.disabledIconButton]}
                       onPress={(e) => {

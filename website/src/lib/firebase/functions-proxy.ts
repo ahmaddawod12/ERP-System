@@ -25,7 +25,20 @@ function getProjectId() {
 function getFunctionsBaseUrl() {
   const explicitBase = process.env.FIREBASE_FUNCTIONS_BASE_URL;
   if (explicitBase) {
-    return trimTrailingSlash(explicitBase);
+    const parsed = new URL(explicitBase);
+    const isLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    const isCloudFunctions = parsed.hostname.endsWith(".cloudfunctions.net");
+    if (process.env.NODE_ENV === "production" && (!isCloudFunctions || parsed.protocol !== "https:")) {
+      throw new ApiRouteError(
+        500,
+        "functions_base_url_invalid",
+        "Function proxy base URL must be an HTTPS Cloud Functions host in production",
+      );
+    }
+    if (!isLocal && parsed.protocol !== "https:") {
+      throw new ApiRouteError(500, "functions_base_url_invalid", "Function proxy base URL must use HTTPS");
+    }
+    return trimTrailingSlash(parsed.toString());
   }
 
   const region = getFunctionsRegion();
@@ -78,15 +91,20 @@ export async function proxyToHttpFunction(
   }
 
   let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     response = await fetch(getFunctionUrl(functionName), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       cache: "no-store",
+      signal: controller.signal,
     });
   } catch {
     throw new ApiRouteError(502, "function_unreachable", "Could not reach Cloud Function endpoint");
+  } finally {
+    clearTimeout(timeout);
   }
 
   let payload: unknown;

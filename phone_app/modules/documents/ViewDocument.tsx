@@ -30,6 +30,8 @@ import { AppText, GlobalHeader, ScrollableContainer } from '../../components';
 import { DOC_TYPE } from '@smart-job/contracts';
 import { safeJsonParse } from '../../utils/helpers';
 import { useAlert } from '../../contexts/AlertContext';
+import { useCache } from '../../contexts/CacheContext';
+import { getDocumentDownloadUrl } from './document-download';
 
 // Document type configurations
 const DOCUMENT_CONFIGS = {
@@ -90,6 +92,7 @@ export default function ViewDocument() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
+  const { getCompanyId } = useCache();
   const colors = getColors(isDarkMode);
   
   // Parse document from params (passed from DocumentHistory)
@@ -172,6 +175,29 @@ export default function ViewDocument() {
     return methods[method] || method;
   };
 
+  const openDocumentPdf = async () => {
+    try {
+      const companyId = getCompanyId();
+      const documentId = document.documentId || document.id;
+      if (!document.storagePath || !companyId || !documentId) {
+        throw new Error('PDF not available');
+      }
+
+      const url = await getDocumentDownloadUrl(companyId, documentId);
+
+      if (!url) {
+        throw new Error('PDF not available');
+      }
+
+      await Linking.openURL(url);
+    } catch (_error) {
+      alert.error(
+        language === 'en' ? 'Error' : language === 'he' ? 'שגיאה' : 'خطأ',
+        language === 'en' ? 'Could not open PDF' : language === 'he' ? 'לא ניתן לפתוח את ה-PDF' : 'تعذر فتح ملف PDF'
+      );
+    }
+  };
+
   if (!document) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
@@ -241,13 +267,10 @@ export default function ViewDocument() {
         </View>
 
         {/* Download PDF Button */}
-        {document.downloadURL && (
+        {document.storagePath && (
           <TouchableOpacity
             style={styles.downloadButton}
-            onPress={() => Linking.openURL(document.downloadURL).catch(() => {
-              alert(language === 'en' ? 'Error' : language === 'he' ? 'שגיאה' : 'خطأ',
-                language === 'en' ? 'Could not open PDF' : language === 'he' ? 'לא ניתן לפתוח את ה-PDF' : 'تعذر فتح ملف PDF');
-            })}
+            onPress={() => void openDocumentPdf()}
             activeOpacity={0.8}
           >
             <LinearGradient

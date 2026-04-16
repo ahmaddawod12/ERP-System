@@ -2,7 +2,7 @@
 /**
  * SoloJob Module
  * Roles: user, manager
- * Gate: enabledModules.jobs
+ * Gate: enabledModules.solojob
  */
 export { default as Userjob } from './Userjob';
 export { default as FillJob } from '../shared/FillJob';

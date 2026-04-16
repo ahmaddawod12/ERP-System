@@ -23,7 +23,7 @@ import {
   ScreenHeroCard,
   SearchInput,
 } from '../../components';
-import { DOC_TYPE } from '/contracts';
+import { DOC_TYPE } from '@smart-job/contracts';
 
 const translations = {
   en: {

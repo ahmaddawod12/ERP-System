@@ -1,9 +1,9 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const {
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
   isProfileCacheOwnedByUser,
   resolveCachedSessionIdentity,
-} = require('../contexts/cache-identity.js');
+} from '../contexts/cache-identity.ts';
 
 test('cache identity refuses scoped cache from a different authenticated user', () => {
   const resolved = resolveCachedSessionIdentity({

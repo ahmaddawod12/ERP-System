@@ -37,6 +37,7 @@ const { resolveJoinCompanyMembership } = require('./invite-membership');
 exports.createInviteV1 = onRequest({
   region: "us-central1",
   cors: CORS_ALLOWED_ORIGINS,
+  enforceAppCheck: false,
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -44,7 +45,7 @@ exports.createInviteV1 = onRequest({
 
   // P1-4: Rate limit invite creation per IP
   const inviteIp = getClientIp(req);
-  if (isRateLimited(`invite_${inviteIp}`)) {
+  if (await isRateLimited(`invite_${inviteIp}`)) {
     return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
 
@@ -106,6 +107,7 @@ exports.createInviteV1 = onRequest({
 exports.joinCompanyV1 = onRequest({
   region: "us-central1",
   cors: CORS_ALLOWED_ORIGINS,
+  enforceAppCheck: false,
 }, async (req, res) => {
   if (req.method !== 'POST') {
     return sendHttpError(res, 405, 'method_not_allowed', 'Only POST is allowed');
@@ -113,7 +115,7 @@ exports.joinCompanyV1 = onRequest({
 
   // P1-4: Rate limit join attempts per IP
   const joinIp = getClientIp(req);
-  if (isRateLimited(`join_${joinIp}`)) {
+  if (await isRateLimited(`join_${joinIp}`)) {
     return sendHttpError(res, 429, 'rate_limited', 'Too many requests. Please try again later.');
   }
 

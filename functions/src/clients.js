@@ -6,8 +6,20 @@ const {
   isValidEmail,
   validateCompanyId,
   assertHttpCompanyAccess,
-  HTTP_COMPANY_CLIENT_ROLES,
 } = require('./shared');
+
+const CLIENT_MUTATION_ROLES = ['manager', 'user', 'dev'];
+
+function trimBounded(value, fieldName, max, required = false) {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (required && !trimmed) {
+    throw new HttpsError('invalid-argument', `${fieldName} is required`);
+  }
+  if (trimmed.length > max) {
+    throw new HttpsError('invalid-argument', `${fieldName} exceeds ${max} characters`);
+  }
+  return trimmed;
+}
 
 exports.addClientV1 = onCall(async (request) => {
   if (!request.auth) {
@@ -20,17 +32,14 @@ exports.addClientV1 = onCall(async (request) => {
   const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
   validateCompanyId(companyId);
 
-  const name = typeof data.name === 'string' ? data.name.trim() : '';
-  if (!name) {
-    throw new HttpsError('invalid-argument', 'name is required');
-  }
+  const name = trimBounded(data.name, 'name', 160, true);
 
-  const email     = typeof data.email     === 'string' ? data.email.trim()     : '';
-  const phone     = typeof data.phone     === 'string' ? data.phone.trim()     : '';
-  const address   = typeof data.address   === 'string' ? data.address.trim()   : '';
-  const city      = typeof data.city      === 'string' ? data.city.trim()      : '';
-  const vatNumber = typeof data.vatNumber === 'string' ? data.vatNumber.trim() : '';
-  const notes     = typeof data.notes     === 'string' ? data.notes.trim()     : '';
+  const email     = trimBounded(data.email, 'email', 320);
+  const phone     = trimBounded(data.phone, 'phone', 40);
+  const address   = trimBounded(data.address, 'address', 240);
+  const city      = trimBounded(data.city, 'city', 120);
+  const vatNumber = trimBounded(data.vatNumber, 'vatNumber', 40);
+  const notes     = trimBounded(data.notes, 'notes', 1000);
 
   if (email && !isValidEmail(email)) {
     throw new HttpsError('invalid-argument', 'Invalid email format');
@@ -39,7 +48,7 @@ exports.addClientV1 = onCall(async (request) => {
   const { resolvedRole } = await assertHttpCompanyAccess({
     uid,
     companyId,
-    allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+    allowedRoles: CLIENT_MUTATION_ROLES,
     allowSoloScope: true,
   });
 
@@ -102,6 +111,7 @@ exports.deleteClientV1 = onCall(async (request) => {
   if (!companyId || typeof companyId !== 'string' || !companyId.trim()) {
     throw new HttpsError('invalid-argument', 'companyId is required');
   }
+  validateCompanyId(companyId.trim());
   if (!clientId || typeof clientId !== 'string' || !clientId.trim()) {
     throw new HttpsError('invalid-argument', 'clientId is required');
   }
@@ -109,7 +119,7 @@ exports.deleteClientV1 = onCall(async (request) => {
   const { resolvedRole } = await assertHttpCompanyAccess({
     uid,
     companyId,
-    allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+    allowedRoles: CLIENT_MUTATION_ROLES,
     allowSoloScope: true,
   });
 
@@ -119,6 +129,13 @@ exports.deleteClientV1 = onCall(async (request) => {
 
   if (!clientSnap.exists) {
     throw new HttpsError('not-found', 'Client not found');
+  }
+  const [jobRefSnap, documentRefSnap] = await Promise.all([
+    db.collection(`companies/${companyId}/jobs`).where('cid', '==', clientId).limit(1).get(),
+    db.collection(`companies/${companyId}/documents`).where('cid', '==', clientId).limit(1).get(),
+  ]);
+  if (!jobRefSnap.empty || !documentRefSnap.empty) {
+    throw new HttpsError('failed-precondition', 'Client is referenced by jobs or documents and cannot be deleted');
   }
 
   // Delete client and bump the company cache version in one atomic batch
@@ -149,11 +166,12 @@ exports.updateClientV1 = onCall(async (request) => {
   if (!companyId || !clientId) {
     throw new HttpsError('invalid-argument', 'companyId and clientId are required');
   }
+  validateCompanyId(companyId);
 
   const { resolvedRole } = await assertHttpCompanyAccess({
     uid,
     companyId,
-    allowedRoles: HTTP_COMPANY_CLIENT_ROLES,
+    allowedRoles: CLIENT_MUTATION_ROLES,
     allowSoloScope: true,
   });
 
@@ -169,14 +187,10 @@ exports.updateClientV1 = onCall(async (request) => {
   const updates = {};
   const incomingName = data.name !== undefined ? data.name : data.cname;
   if (incomingName !== undefined) {
-    const trimmedName = String(incomingName || '').trim();
-    if (!trimmedName) {
-      throw new HttpsError('invalid-argument', 'name cannot be empty');
-    }
-    updates.cname = trimmedName;
+    updates.cname = trimBounded(incomingName, 'name', 160, true);
   }
   if (data.email !== undefined) {
-    const email = String(data.email || '').trim();
+    const email = trimBounded(data.email, 'email', 320);
     if (email && !isValidEmail(email)) {
       throw new HttpsError('invalid-argument', 'Invalid email format');
     }
@@ -184,13 +198,12 @@ exports.updateClientV1 = onCall(async (request) => {
   }
   const incomingPhone = data.phone !== undefined ? data.phone : data.cphone;
   if (incomingPhone !== undefined) {
-    const trimmedPhone = String(incomingPhone || '').trim();
-    updates.cphone = trimmedPhone;
+    updates.cphone = trimBounded(incomingPhone, 'phone', 40);
   }
-  if (data.address !== undefined) updates.address = String(data.address || '').trim();
-  if (data.city !== undefined) updates.city = String(data.city || '').trim();
-  if (data.vatNumber !== undefined) updates.vatNumber = String(data.vatNumber || '').trim();
-  if (data.notes !== undefined) updates.notes = String(data.notes || '').trim();
+  if (data.address !== undefined) updates.address = trimBounded(data.address, 'address', 240);
+  if (data.city !== undefined) updates.city = trimBounded(data.city, 'city', 120);
+  if (data.vatNumber !== undefined) updates.vatNumber = trimBounded(data.vatNumber, 'vatNumber', 40);
+  if (data.notes !== undefined) updates.notes = trimBounded(data.notes, 'notes', 1000);
   updates.updatedAt = new Date().toISOString();
 
   // Atomic batch: update client + bump cache version

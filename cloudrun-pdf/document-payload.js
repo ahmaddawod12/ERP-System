@@ -112,7 +112,6 @@ function buildStoredDocumentRecord({
   totalBeforeVat,
   vatAmount,
   totalWithVat,
-  downloadURL,
   storagePath,
   normalizedDocumentId,
 }) {
@@ -122,7 +121,7 @@ function buildStoredDocumentRecord({
   const normalizedCreatedAt = coerceTrimmedString(createdAt) || new Date().toISOString();
   const normalizedConfirmationNumber = normalizedDocumentData.taxAuthorityConfirmationNumber;
 
-  return {
+  const record = {
     type: documentType,
     documentType,
     documentId: normalizedDocumentId,
@@ -150,7 +149,6 @@ function buildStoredDocumentRecord({
     totalBeforeVat: roundCurrency(totalBeforeVat),
     vatAmount: roundCurrency(vatAmount),
     totalWithVat: roundCurrency(totalWithVat),
-    downloadURL,
     storagePath,
     jobsData: normalizedDocumentData.jobsData,
     priceProposalId: normalizedDocumentData.priceProposalId,
@@ -158,6 +156,8 @@ function buildStoredDocumentRecord({
     taxAuthorityConfirmationNumber: normalizedConfirmationNumber,
     documentData: normalizedDocumentData,
   };
+
+  return record;
 }
 
 module.exports = {

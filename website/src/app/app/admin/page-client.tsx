@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { collection, getDocs, orderBy, query, updateDoc, doc } from "firebase/firestore";
+import { useCallback, useEffect, useState } from "react";
 import { ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
@@ -9,42 +8,89 @@ import { DataTable } from "@/components/ui/DataTable";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { LoadingState } from "@/components/states/loading-state";
-import { db } from "@/lib/firebase/client";
+import { useAppToast } from "@/hooks/use-toast";
+import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
 
 interface UpgradeRequest {
   id: string;
   uid: string;
+  email?: string | null;
   currentTier: string;
-  requestedTier: string;
+  requestedTier: string | null;
   message: string;
   status: string;
-  createdAt: string;
+  createdAt: string | null;
+  updatedAt?: string | null;
+  moderatedAt?: string | null;
+  moderationNote?: string;
 }
 
 export default function AdminClient() {
   const [items, setItems] = useState<UpgradeRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const { toast } = useAppToast();
   const pendingCount = items.filter((item) => item.status === "pending").length;
   const approvedCount = items.filter((item) => item.status === "approved").length;
   const rejectedCount = items.filter((item) => item.status === "rejected").length;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    const snap = await getDocs(query(collection(db, "upgrade_requests"), orderBy("createdAt", "desc")));
-    setItems(snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as Omit<UpgradeRequest, "id">) })));
-    setLoading(false);
-  };
+    try {
+      const response = await fetch("/api/upgrades/list", {
+        method: "POST",
+        headers: await buildAuthedJsonHeaders(),
+        body: JSON.stringify({ limit: 200 }),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{ items: UpgradeRequest[] }>;
+      if (!response.ok || !payload.ok) {
+        throw new Error(getClientApiErrorMessage(payload, "Failed to load upgrade requests"));
+      }
+      setItems(payload.data.items);
+    } catch (error) {
+      toast({
+        title: "Upgrade request load failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
-  const markStatus = async (id: string, status: string) => {
-    await updateDoc(doc(db, "upgrade_requests", id), {
-      status,
-      updatedAt: new Date().toISOString(),
-    });
-    await load();
+  const markStatus = async (id: string, status: "approved" | "rejected") => {
+    setActionId(id);
+    try {
+      const response = await fetch("/api/upgrades/moderate", {
+        method: "POST",
+        headers: await buildAuthedJsonHeaders(),
+        body: JSON.stringify({ requestId: id, status }),
+      });
+      const payload = (await response.json()) as ClientApiResponse<{ requestId: string; status: string }>;
+      if (!response.ok || !payload.ok) {
+        throw new Error(getClientApiErrorMessage(payload, "Failed to update request"));
+      }
+      await load();
+      toast({
+        title: `Request ${status}`,
+        description: `Upgrade request ${id} is now ${status}.`,
+        variant: status === "approved" ? "success" : "info",
+      });
+    } catch (error) {
+      toast({
+        title: "Moderation failed",
+        description: error instanceof Error ? error.message : "Unexpected error",
+        variant: "error",
+      });
+    } finally {
+      setActionId(null);
+    }
   };
 
   return (
@@ -163,10 +209,20 @@ export default function AdminClient() {
                   header: "Actions",
                   render: (row) => (
                     <div className="flex gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => void markStatus(row.id, "approved")}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={actionId === row.id}
+                        onClick={() => void markStatus(row.id, "approved")}
+                      >
                         Approve
                       </Button>
-                      <Button size="sm" variant="danger" onClick={() => void markStatus(row.id, "rejected")}>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        disabled={actionId === row.id}
+                        onClick={() => void markStatus(row.id, "rejected")}
+                      >
                         Reject
                       </Button>
                     </div>

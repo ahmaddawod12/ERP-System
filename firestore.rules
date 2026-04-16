@@ -182,18 +182,8 @@ service cloud.firestore {
         signedIn() && request.auth.uid == uid
       ) || canManagerAccessWorkerData(uid);
 
-      allow create: if isAdmin() || (
-        signedIn() && request.auth.uid == uid
-      ) || canManagerAccessWorkerData(uid);
-
-      // Tighten updates: only allow known version fields (profile, inventory, subscription, lastUpdated)
-      allow update: if isAdmin() || canManagerAccessWorkerData(uid) || (
-        signedIn() && request.auth.uid == uid
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['profile', 'inventory', 'subscription', 'lastUpdated'])
-      );
-
-      allow delete: if isAdmin() || canManagerAccessWorkerData(uid);
+      // Cache versions are bumped by Cloud Functions only.
+      allow create, update, delete: if false;
     }
 
     // ── user inventory: user can write own inventory; manager can write worker's inventory ──
@@ -206,13 +196,13 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── Company root document (cid, wid, jid fields) ──
-    // Members can read. Create only by company creator.
-    // No client update or delete — Cloud Functions handle counter increments.
+    // ── Company root document ──
+    // Members can read. Create/update/delete are backend-controlled.
+    // Sequential counters now live in companies/{companyId}/counters/* docs.
     match /companies/{companyId} {
       allow read: if canReadCompany(companyId);
       allow create: if false;
-      // Counter increments (cid, wid, jid) are handled by Cloud Functions only
+      // Company root is read-only to clients.
       allow update, delete: if false;
     }
 
@@ -240,10 +230,10 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ── company cache: managers can write directly ──
+    // ── company cache: backend-controlled summary versions ──
     match /companies/{companyId}/data/cache {
       allow read: if canReadCompany(companyId);
-      allow create, update, delete: if canManageCompany(companyId);
+      allow create, update, delete: if false;
     }
 
     // ── Token: NO client access ──
@@ -256,6 +246,12 @@ service cloud.firestore {
     match /companies/{companyId}/workers/{workerId} {
       allow read: if canReadCompany(companyId);
       // create/update/delete handled by Cloud Functions (manageWorker, joinCompanyV1)
+      allow create, update, delete: if false;
+    }
+
+    match /companies/{companyId}/managers/{managerId} {
+      allow read: if canReadCompany(companyId);
+      // create/update/delete handled by Cloud Functions (registerBusinessV1, manageWorker, joinCompanyV1)
       allow create, update, delete: if false;
     }
 
@@ -311,12 +307,8 @@ service cloud.firestore {
     // ── Inventory Picks ──
     match /companies/{companyId}/inventory_picks/{pickId} {
       allow read: if canReadCompany(companyId);
-      allow create: if canManageCompany(companyId) || (
-        isCompanyWorker(companyId) &&
-        companyRole(companyId) in ["worker", "user"] &&
-        request.resource.data.workerId == request.auth.uid
-      );
-      allow update, delete: if canManageCompany(companyId);
+      // Reserved path — all mutations stay backend-controlled.
+      allow create, update, delete: if false;
     }
 
     // ── Document Tasks ──
@@ -330,20 +322,14 @@ service cloud.firestore {
     // ── Conversations (Support Chat) ──
     match /conversations/{conversationId} {
       allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow delete: if isAdmin();
+      allow create, update, delete: if false;
 
       match /messages/{messageId} {
         allow read: if isAdmin() || (
           signedIn() &&
           get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid
         );
-        allow create: if isAdmin() || (
-          signedIn() &&
-          get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid
-        );
-        allow update, delete: if isAdmin();
+        allow create, update, delete: if false;
       }
     }
 
@@ -352,7 +338,8 @@ service cloud.firestore {
       // Created via requestUpgradeV1 Cloud Function only.
       allow create: if false;
       allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
-      allow update, delete: if isAdmin();
+      // Moderation stays backend-controlled via moderateUpgradeRequestV1.
+      allow update, delete: if false;
     }
 
     // ── Contact Requests ──

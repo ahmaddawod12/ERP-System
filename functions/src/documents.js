@@ -4,7 +4,6 @@ const {
   onCall,
   HttpsError,
   onDocumentUpdated,
-  getAuthenticatedUserProfile,
   assertHttpCompanyAccess,
   validateCompanyId,
   GENERATE_DOCUMENT_ALLOWED_ROLES,
@@ -20,7 +19,57 @@ const {
   clearCompanyBusyFlag,
   acquireCompanyBusyFlag,
   publishGenerateTaskHelper,
+  getUserProfileOrThrow,
 } = require('./shared');
+const {
+  buildArchiveStoragePath,
+  filterArchiveItemsForRole,
+  normalizeArchiveMonthInput,
+  parseArchivePayload,
+} = require('./archive-access');
+
+const DOCUMENT_DOWNLOAD_URL_TTL_MS = 15 * 60 * 1000;
+
+function normalizeDocumentType(value) {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(numeric) || !Object.values(DOC_TYPE).includes(numeric)) {
+    throw new HttpsError('invalid-argument', 'Unsupported document type');
+  }
+  return numeric;
+}
+
+function validateDocumentItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new HttpsError('invalid-argument', 'At least one item is required');
+  }
+  if (items.length > MAX_ITEMS_PER_DOCUMENT) {
+    throw new HttpsError('invalid-argument', `Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed per document`);
+  }
+  return items.map((item, index) => {
+    const quantity = Number(item?.quantity ?? 1);
+    const price = Number(item?.price);
+    const description = String(item?.description || item?.name || '').trim();
+    if (!description || description.length > 240) {
+      throw new HttpsError('invalid-argument', `items[${index}].description is required and must be 240 characters or less`);
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new HttpsError('invalid-argument', `items[${index}].quantity must be a positive finite number`);
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      throw new HttpsError('invalid-argument', `items[${index}].price must be a non-negative finite number`);
+    }
+    return { ...item, description, quantity, price };
+  });
+}
+
+function assertCompanyDocumentStoragePath(companyId, storagePath) {
+  const normalized = String(storagePath || '').trim().replace(/^\/+/, '');
+  const expectedPrefix = `companies/${companyId}/documents/`;
+  if (!normalized || normalized.includes('..') || normalized.includes('?') || !normalized.startsWith(expectedPrefix)) {
+    throw new HttpsError('failed-precondition', 'Document file path is invalid');
+  }
+  return normalized;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Exported Cloud Functions
@@ -61,17 +110,14 @@ exports.publishPreviewTask = onCall({
     if (!documentData.client || !documentData.client.name) {
       throw new HttpsError('invalid-argument', 'Client name is required');
     }
-    if (!documentData.items || !Array.isArray(documentData.items) || documentData.items.length === 0) {
-      throw new HttpsError('invalid-argument', 'At least one item is required');
-    }
-    if (documentData.items.length > MAX_ITEMS_PER_DOCUMENT) {
-      throw new HttpsError('invalid-argument', `Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed per document`);
-    }
+    const numericDocType = normalizeDocumentType(documentType);
+    const normalizedItems = validateDocumentItems(documentData.items);
 
-    const { role } = await getAuthenticatedUserProfile(request.auth, {
-      allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
-      requireCompany: true,
+    const { resolvedRole: role } = await assertHttpCompanyAccess({
+      uid,
       companyId,
+      allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
+      allowSoloScope: true,
     });
     logger.info('User authorized for preview task', { uid, role, companyId, documentType });
 
@@ -95,13 +141,12 @@ exports.publishPreviewTask = onCall({
 
     // Get preview document number (current counter value, not incremented)
     // Convert documentType to number for consistency
-    const numericDocType = typeof documentType === 'number' ? documentType : Number(documentType);
     const documentNumbers = businessInfo.document_numbers || {};
     const previewDocumentNumber = documentNumbers[numericDocType] || 1;
 
     // Calculate totals
     let totalBeforeVat = 0;
-    documentData.items.forEach(item => {
+    normalizedItems.forEach(item => {
       totalBeforeVat += (item.quantity || 1) * (item.price || 0);
     });
     const vatAmount = totalBeforeVat * VAT_RATE;
@@ -110,6 +155,7 @@ exports.publishPreviewTask = onCall({
     // Prepare complete document data for Cloud Run
     const completeDocumentData = {
       ...documentData,
+      items: normalizedItems,
       company: companyData,
       documentNumber: previewDocumentNumber,
       totals: {
@@ -190,7 +236,7 @@ exports.publishPreviewTask = onCall({
       throw error;
     }
     
-    throw new HttpsError('internal', `Failed to publish preview task: ${error.message}`);
+    throw new HttpsError('internal', 'Failed to publish preview task');
   }
 });
 
@@ -218,7 +264,7 @@ exports.publishGenerateTask = onCall({
     }
 
     // Convert documentType to number for consistency
-    const numericDocType = typeof documentType === 'number' ? documentType : Number(documentType);
+    const numericDocType = normalizeDocumentType(documentType);
 
     // Validate based on document type
     if (numericDocType === DOC_TYPE.TAX_INVOICE) {
@@ -240,10 +286,11 @@ exports.publishGenerateTask = onCall({
       }
     }
 
-    const { role } = await getAuthenticatedUserProfile(request.auth, {
-      allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
-      requireCompany: true,
+    const { resolvedRole: role } = await assertHttpCompanyAccess({
+      uid,
       companyId,
+      allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
+      allowSoloScope: true,
     });
     logger.info('User authorized for generate task', { uid, role, companyId, documentType: numericDocType });
 
@@ -311,7 +358,8 @@ exports.publishGenerateTask = onCall({
       
     } else {
       // Other document types - prepare everything here
-      const { client, items, language, date, notes } = requestDocumentData;
+      const { client, language, date, notes } = requestDocumentData;
+      const items = validateDocumentItems(requestDocumentData.items);
       
       // Atomically read + increment document number to prevent race conditions
       const docNumResult = await admin.firestore().runTransaction(async (tx) => {
@@ -329,7 +377,7 @@ exports.publishGenerateTask = onCall({
       documentNumber = docNumResult;
       
       // Generate document ID using suffix
-      const typeSuffix = DOC_SUFFIX[numericDocType] || 'XX';
+      const typeSuffix = DOC_SUFFIX[numericDocType];
       
       documentId = `${typeSuffix}${documentNumber}-${companyId}`;
       
@@ -384,7 +432,7 @@ exports.publishGenerateTask = onCall({
       throw error;
     }
     
-    throw new HttpsError('internal', `Failed to publish generate task: ${error.message}`);
+    throw new HttpsError('internal', 'Failed to publish generate task');
   }
 });
 
@@ -430,32 +478,125 @@ exports.deleteDocumentV1 = onCall(async (request) => {
     );
   }
 
-  await documentRef.delete();
-
-  // Bump cache version so clients refresh their documents list
-  await dbRef.doc(`companies/${companyId}/data/cache`).set({
-    documentsVersion: admin.firestore.FieldValue.increment(1),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  }, { merge: true });
-
   const storagePath = typeof documentDataRecord.storagePath === 'string'
     ? documentDataRecord.storagePath.trim()
     : '';
   if (storagePath) {
-    try {
-      await admin.storage().bucket().file(storagePath).delete({ ignoreNotFound: true });
-    } catch (storageError) {
-      logger.error('deleteDocumentV1: failed to delete storage object', {
-        companyId,
-        documentId,
-        storagePath,
-        error: storageError.message,
-      });
-    }
+    const canonicalStoragePath = assertCompanyDocumentStoragePath(companyId, storagePath);
+    await admin.storage().bucket().file(canonicalStoragePath).delete({ ignoreNotFound: true });
   }
+
+  await dbRef.runTransaction(async (tx) => {
+    tx.delete(documentRef);
+    tx.set(dbRef.doc(`companies/${companyId}/data/cache`), {
+      documentsVersion: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
 
   logger.info('deleteDocumentV1: document deleted', { companyId, documentId, rawDocumentId, uid });
   return { success: true, documentId };
+});
+
+exports.createDocumentDownloadUrlV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
+  const rawDocumentId = typeof data.documentId === 'string' ? data.documentId.trim() : '';
+  const documentId = toDocumentDocId(rawDocumentId);
+
+  if (!documentId) {
+    throw new HttpsError('invalid-argument', 'documentId is required');
+  }
+
+  await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles: GENERATE_DOCUMENT_ALLOWED_ROLES,
+    allowSoloScope: true,
+  });
+
+  const documentRef = admin.firestore().doc(`companies/${companyId}/documents/${documentId}`);
+  const documentSnap = await documentRef.get();
+  if (!documentSnap.exists) {
+    throw new HttpsError('not-found', 'Document not found');
+  }
+
+  const storagePath = typeof documentSnap.data()?.storagePath === 'string'
+    ? documentSnap.data().storagePath.trim()
+    : '';
+  if (!storagePath) {
+    throw new HttpsError('failed-precondition', 'Document file is not available');
+  }
+  const canonicalStoragePath = assertCompanyDocumentStoragePath(companyId, storagePath);
+
+  const [downloadURL] = await admin.storage().bucket().file(canonicalStoragePath).getSignedUrl({
+    version: 'v4',
+    action: 'read',
+    expires: Date.now() + DOCUMENT_DOWNLOAD_URL_TTL_MS,
+  });
+
+  return {
+    success: true,
+    documentId,
+    downloadURL,
+    expiresAt: new Date(Date.now() + DOCUMENT_DOWNLOAD_URL_TTL_MS).toISOString(),
+  };
+});
+
+exports.fetchArchiveMonthV1 = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const uid = request.auth.uid;
+  const data = request.data || {};
+  const companyId = typeof data.companyId === 'string' ? data.companyId.trim() : '';
+  validateCompanyId(companyId);
+
+  const { archiveKey, dataType } = normalizeArchiveMonthInput(
+    data.year,
+    data.month,
+    data.dataType,
+  );
+
+  const allowedRoles = dataType === 'documents'
+    ? ['manager', 'user', 'basic', 'dev']
+    : ['manager', 'worker', 'user', 'dev'];
+
+  const { resolvedRole } = await assertHttpCompanyAccess({
+    uid,
+    companyId,
+    allowedRoles,
+    allowSoloScope: true,
+  });
+  const profile = await getUserProfileOrThrow(uid);
+  const storagePath = buildArchiveStoragePath(companyId, archiveKey);
+  const file = admin.storage().bucket().file(storagePath);
+  const [exists] = await file.exists();
+
+  if (!exists) {
+    return { success: true, archiveKey, dataType, items: [] };
+  }
+
+  const [contents] = await file.download();
+  const items = parseArchivePayload(contents, archiveKey);
+  const filteredItems = filterArchiveItemsForRole(items, dataType, resolvedRole, {
+    uid,
+    wid: profile?.wid,
+  });
+
+  return {
+    success: true,
+    archiveKey,
+    dataType,
+    items: filteredItems,
+  };
 });
 
 exports.onTaskCompleted = onDocumentUpdated({
@@ -488,5 +629,7 @@ module.exports = {
   publishPreviewTask: exports.publishPreviewTask,
   publishGenerateTask: exports.publishGenerateTask,
   deleteDocumentV1: exports.deleteDocumentV1,
+  createDocumentDownloadUrlV1: exports.createDocumentDownloadUrlV1,
+  fetchArchiveMonthV1: exports.fetchArchiveMonthV1,
   onTaskCompleted: exports.onTaskCompleted,
 };

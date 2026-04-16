@@ -1,6 +1,11 @@
 import {
+  ACCOUNT_TYPE_VALUES,
   paths,
   resolveCompanyScope,
+  TIER_VALUES,
+  type AccountTypeValue,
+  type TierValue,
+  type SubStatusValue,
 } from "@smart-job/contracts";
 
 export { paths, resolveCompanyScope };
@@ -14,11 +19,17 @@ export type Role = (typeof ROLES)[number];
  * These are display labels for the website pricing page; the contracts Tier
  * enum holds the canonical runtime values stored in Firestore.
  */
-export const TIERS = ["Basic", "Solo", "Team", "Enterprise"] as const;
-export type Tier = (typeof TIERS)[number];
+export const TIERS = [...TIER_VALUES] as const;
+export type Tier = TierValue;
 
-export type SubscriptionStatus = "active" | "inactive" | "pending" | "trial";
-export type AccountType = "solo" | "business";
+export const ACCOUNT_TYPES = [...ACCOUNT_TYPE_VALUES] as const;
+export type AccountType = AccountTypeValue;
+
+export type SubscriptionStatus = SubStatusValue | "inactive" | "pending";
+
+export interface JobFileRef {
+  storagePath?: string;
+}
 
 export interface UserProfile {
   uid: string;
@@ -114,8 +125,8 @@ export interface JobRecord {
   timeFrom?: string;
   timeTo?: string;
   signingPerson?: string;
-  photos?: string[];
-  signature?: string;
+  photos?: Array<string | JobFileRef>;
+  signature?: string | JobFileRef;
   partsUsed?: Array<{ id: number; name: string; quantity: number }>;
   travelDistance?: number | null;
   finishedAt?: string;
@@ -184,8 +195,7 @@ export interface DocumentRecord {
   clientCity?: string;
   clientVatNumber?: string;
   createdAt: string;
-  downloadURL?: string;
-  url?: { origin?: string; he?: string; en?: string };
+  storagePath?: string;
   notes?: string;
   confirmationNumber?: string;
   items?: Array<{

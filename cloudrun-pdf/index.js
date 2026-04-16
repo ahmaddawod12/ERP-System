@@ -22,10 +22,74 @@
 const express = require('express');
 const admin = require('firebase-admin');
 const puppeteer = require('puppeteer');
-const { v4: uuidv4 } = require('uuid');
 
 // Email service for document delivery
 const { getEmailServiceInstance, getDocumentTitle } = require('./emailService');
+
+const rawConsole = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+};
+
+function normalizeLogValue(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack || null,
+    };
+  }
+
+  if (value && typeof value === 'object') {
+    return value;
+  }
+
+  return value ?? null;
+}
+
+function writeStructuredLog(severity, fallbackMessage, firstArg, restArgs) {
+  const payload = {
+    severity,
+    message: typeof firstArg === 'string' ? firstArg : fallbackMessage,
+  };
+
+  const fields = {};
+  if (typeof firstArg !== 'string') {
+    fields.arg0 = normalizeLogValue(firstArg);
+  }
+
+  restArgs.forEach((arg, index) => {
+    const normalized = normalizeLogValue(arg);
+    if (
+      normalized &&
+      typeof normalized === 'object' &&
+      !Array.isArray(normalized)
+    ) {
+      Object.assign(fields, normalized);
+      return;
+    }
+
+    fields[`arg${typeof firstArg === 'string' ? index + 1 : index + 1}`] = normalized;
+  });
+
+  if (Object.keys(fields).length > 0) {
+    payload.fields = fields;
+  }
+
+  const line = JSON.stringify(payload);
+  if (severity === 'ERROR') {
+    rawConsole.error(line);
+  } else if (severity === 'WARNING') {
+    rawConsole.warn(line);
+  } else {
+    rawConsole.log(line);
+  }
+}
+
+console.log = (firstArg, ...restArgs) => writeStructuredLog('INFO', 'cloudrun-pdf log', firstArg, restArgs);
+console.warn = (firstArg, ...restArgs) => writeStructuredLog('WARNING', 'cloudrun-pdf warning', firstArg, restArgs);
+console.error = (firstArg, ...restArgs) => writeStructuredLog('ERROR', 'cloudrun-pdf error', firstArg, restArgs);
 
 const STORAGE_BUCKET = process.env.STORAGE_BUCKET;
 if (!STORAGE_BUCKET) {
@@ -40,16 +104,19 @@ const db = admin.firestore();
 const storage = admin.storage();
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 const PREVIEW_URL_EXPIRATION = 60 * 60; // 1 hour in seconds
+const GENERATED_TASK_URL_EXPIRATION = 15 * 60; // 15 minutes in seconds
+const GENERATED_EMAIL_URL_EXPIRATION = 24 * 60 * 60; // 24 hours in seconds
 const MAX_ITEMS_PER_DOCUMENT = 100;
 const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_CONCURRENT_TABS = 2; // Shared between preview and generate
 const TAB_WAIT_TIMEOUT = 10000; // 10 seconds
+const PROCESSING_STALE_AFTER_MS = Number(process.env.DOCUMENT_TASK_PROCESSING_STALE_AFTER_MS || 15 * 60 * 1000);
 const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
 const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCOUNTS || '')
   .split(',')
@@ -201,6 +268,7 @@ const {
 async function verifyPubSubRequest(req, res, next) {
   const expectedAudience = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
 
+  let oidcVerified = false;
   // Factor 1: Check OIDC JWT if present (primary auth in production)
   const authHeader = req.headers['authorization'] || '';
   if (expectedAudience && authHeader.startsWith('Bearer ')) {
@@ -228,15 +296,14 @@ async function verifyPubSubRequest(req, res, next) {
         const serviceAccountAllowed = PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
 
         if (issuerValid && emailValid && serviceAccountAllowed) {
-          // Valid OIDC token; allow request
-          return next();
+          oidcVerified = true;
+        } else {
+          console.warn('OIDC JWT rejected by claim validation', {
+            issuer,
+            email,
+            hasAllowlist: PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length > 0,
+          });
         }
-
-        console.warn('OIDC JWT rejected by claim validation', {
-          issuer,
-          email,
-          hasAllowlist: PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length > 0,
-        });
       } catch (oidcError) {
         console.warn('OIDC JWT verification failed:', oidcError.message);
         // Fall through to check shared token
@@ -246,10 +313,13 @@ async function verifyPubSubRequest(req, res, next) {
     console.warn('CLOUD_RUN_SERVICE_URL is not set; OIDC auth is disabled, using shared token fallback only');
   }
 
-  // Factor 2: Check shared token (required if OIDC not present/valid)
+  if (expectedAudience && !oidcVerified) {
+    return res.status(401).send('OIDC token required');
+  }
+
+  // Factor 2: Check shared token (required in addition to OIDC when configured)
   if (!PUBSUB_VERIFICATION_TOKEN) {
-    console.error('PUBSUB_VERIFICATION_TOKEN is missing - refusing requests');
-    return res.status(503).send('Service misconfigured');
+    return oidcVerified ? next() : res.status(503).send('Service misconfigured');
   }
 
   // Only accept token from header (not query string) to reduce leakage risk
@@ -412,7 +482,6 @@ async function processPreviewTask(taskData) {
     
     const bucket = storage.bucket();
     const file = bucket.file(filePath);
-    const downloadToken = uuidv4();
     
     await file.save(pdfBuffer, {
       metadata: {
@@ -424,12 +493,14 @@ async function processPreviewTask(taskData) {
           isPreview: 'true',
           taskId,
           expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString(),
-          firebaseStorageDownloadTokens: downloadToken
         }
       }
     });
-    
-    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
+    const [downloadUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + PREVIEW_URL_EXPIRATION * 1000,
+    });
     
     const totalTime = Date.now() - startTime;
     
@@ -492,6 +563,8 @@ async function processGenerateTask(taskData) {
   let page = null;
   let tabAcquired = false;
   let userRole = null;
+  let savedGeneratedFile = null;
+  let documentFinalized = false;
   
   try {
     if (!uid || !companyId) {
@@ -508,11 +581,20 @@ async function processGenerateTask(taskData) {
       }
 
       const taskState = taskSnap.data()?.status;
+      const processingStartedAt = taskSnap.data()?.processingStartedAt;
+      const processingStartedMillis = typeof processingStartedAt?.toMillis === 'function'
+        ? processingStartedAt.toMillis()
+        : Date.parse(String(processingStartedAt || ''));
       if (taskState === 'completed' || taskState === 'failed') {
         return { shouldProcess: false, reason: `already_${taskState}` };
       }
       if (taskState === 'processing') {
-        return { shouldProcess: false, reason: 'already_processing' };
+        if (Number.isFinite(processingStartedMillis) && Date.now() - processingStartedMillis < PROCESSING_STALE_AFTER_MS) {
+          return { shouldProcess: false, reason: 'already_processing' };
+        }
+        console.warn(`[generate:${taskId}] Reclaiming stale processing task`, {
+          processingStartedAt: processingStartedAt || null,
+        });
       }
       if (taskState !== 'queued' && taskState !== 'pending') {
         return { shouldProcess: false, reason: `invalid_state_${String(taskState || 'unknown')}` };
@@ -648,13 +730,13 @@ async function processGenerateTask(taskData) {
     
     const pdfSize = pdfBuffer.length;
     
+    const isNewDocument = documentType !== 305;
+
     // Upload to Storage (permanent)
     const fileName = `${normalizedDocumentId}.pdf`;
     const bucket = storage.bucket();
-    const yearMonth = date ? date.slice(0, 7) : new Date().toISOString().slice(0, 7);
-    const filePath = `companies/${companyId}/${yearMonth}/${normalizedDocumentId}/${fileName}`;
+    const filePath = `companies/${companyId}/documents/${fileName}`;
     const file = bucket.file(filePath);
-    const downloadToken = uuidv4();
     
     await file.save(pdfBuffer, {
       metadata: {
@@ -665,12 +747,21 @@ async function processGenerateTask(taskData) {
           createdBy: uid,
           generatedAt: new Date().toISOString(),
           pdfSize: pdfSize.toString(),
-          firebaseStorageDownloadTokens: downloadToken
         }
-      }
+      },
+      ...(isNewDocument ? { preconditionOpts: { ifGenerationMatch: 0 } } : {}),
     });
-    
-    const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(filePath)}?alt=media&token=${downloadToken}`;
+    savedGeneratedFile = file;
+    const [taskDownloadURL] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + GENERATED_TASK_URL_EXPIRATION * 1000,
+    });
+    const [emailDownloadURL] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + GENERATED_EMAIL_URL_EXPIRATION * 1000,
+    });
     
     // Documents are company-scoped; always bump the company cache summary version.
     const cachePath = `companies/${companyId}/data/cache`;
@@ -678,10 +769,9 @@ async function processGenerateTask(taskData) {
     
     // Save/update document data
     const documentRef = db.doc(`companies/${companyId}/documents/${documentDocId}`);
-    const isNewDocument = documentType !== 305;
     
     if (isNewDocument) {
-      await documentRef.set(buildStoredDocumentRecord({
+      await documentRef.create(buildStoredDocumentRecord({
         documentType,
         documentData,
         uid,
@@ -689,7 +779,6 @@ async function processGenerateTask(taskData) {
         totalBeforeVat,
         vatAmount,
         totalWithVat,
-        downloadURL,
         storagePath: filePath,
         normalizedDocumentId,
       }));
@@ -699,7 +788,7 @@ async function processGenerateTask(taskData) {
       console.log(`[generate:${taskId}] Document saved (counter already incremented by CF)`, { documentType, documentNumber, userRole });
     } else {
       await documentRef.update({
-        downloadURL,
+        downloadURL: admin.firestore.FieldValue.delete(),
         storagePath: filePath,
       });
     }
@@ -709,6 +798,7 @@ async function processGenerateTask(taskData) {
       documentsVersion: admin.firestore.FieldValue.increment(1),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
+    documentFinalized = true;
     console.log(`[generate:${taskId}] Updated document cache at ${cachePath}`);
 
     // ========================================================================
@@ -725,7 +815,7 @@ async function processGenerateTask(taskData) {
         const documentTitle = getDocumentTitle(documentType, documentNumber || normalizedDocumentId, language || 'he');
         
         console.log(`[generate:${taskId}] Sending email to client`, {
-          to: client.email,
+          hasRecipientEmail: true,
           documentTitle,
           documentType,
         });
@@ -734,7 +824,7 @@ async function processGenerateTask(taskData) {
           recipientEmail: client.email,
           recipientName: client.name,
           documentTitle,
-          documentUrl: downloadURL,
+          documentUrl: emailDownloadURL,
           language: language || 'he',
           businessInfo: company,
         });
@@ -763,7 +853,7 @@ async function processGenerateTask(taskData) {
     await db.collection('documentTasks').doc(taskId).update({
       status: 'completed',
       documentId: normalizedDocumentId,
-      downloadURL,
+      downloadURL: taskDownloadURL,
       storagePath: filePath,
       pdfSize,
       completedAt: (new Date()).toISOString(),
@@ -777,7 +867,7 @@ async function processGenerateTask(taskData) {
     });
     
     console.log(`[generate:${taskId}] Completed`, { documentId: normalizedDocumentId, pdfSize, totalTime, emailSent });
-    return { success: true, taskId, documentId: normalizedDocumentId, downloadURL, pdfSize, emailSent };
+    return { success: true, taskId, documentId: normalizedDocumentId, downloadURL: taskDownloadURL, pdfSize, emailSent };
     
   } catch (error) {
     console.error(`[generate:${taskId}] Failed:`, error.message);
@@ -787,6 +877,15 @@ async function processGenerateTask(taskData) {
     }
     if (tabAcquired) {
       releaseTab(taskId, 'generate');
+    }
+
+    if (savedGeneratedFile && !documentFinalized) {
+      try {
+        await savedGeneratedFile.delete({ ignoreNotFound: true });
+        console.warn(`[generate:${taskId}] Deleted orphaned generated PDF after finalize failure`);
+      } catch (cleanupError) {
+        console.error(`[generate:${taskId}] Failed to delete orphaned generated PDF:`, cleanupError.message);
+      }
     }
     
     try {
@@ -892,11 +991,8 @@ app.get('/health', async (req, res) => {
   res.status(200).json({
     status,
     service: 'pdf-service',
-    activeTabs,
-    maxTabs: MAX_CONCURRENT_TABS,
     hasBrowser: !!browserInstance,
     browserConnected: browserOk,
-    endpoints: ['/preview', '/generate', '/health']
   });
 });
 

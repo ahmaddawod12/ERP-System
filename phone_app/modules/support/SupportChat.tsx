@@ -1,4 +1,4 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 /**
  * SupportChat.js - User Support & Feedback Chat Page
  * 
@@ -26,13 +26,23 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
-import { db, auth, FieldValue, collection, doc, getDocs, addDoc, updateDoc, query, where } from '../../firebase';
+import { db, auth, collection, getDocs, query, where } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../theme';
 import { AppText, GlobalHeader, AppInput } from '../../components';
-import { appendConversationMessage, loadConversationThread } from './support-message-store';
+import { loadConversationThread } from './support-message-store';
+import {
+  appendSupportMessage,
+  createSupportConversation,
+  markSupportConversationRead,
+} from './support-api';
+import {
+  getSupportCategoryMeta,
+  getSupportTemplateQuestions,
+  getSupportTranslations,
+} from './support-copy';
 
 export default function SupportChat() {
   const router = useRouter();
@@ -63,112 +73,7 @@ export default function SupportChat() {
   
   const flatListRef = useRef(null);
 
-  const t = language === 'en' ? {
-    title: 'Support & Feedback',
-    placeholder: 'Type your message...',
-    send: 'Send',
-    emptyState: 'No messages yet. Send us your question or feedback!',
-    history: 'History',
-    startNew: 'Start New Conversation',
-    closed: 'This conversation is closed',
-    noHistory: 'No previous conversations',
-    hideChat: 'Hide',
-    hideConfirm: 'Hide this conversation from your history?',
-    yes: 'Yes',
-    cancel: 'Cancel',
-    hidden: 'Conversation hidden',
-    startConversation: 'Start Chat',
-    chooseCategory: 'How can we help you?',
-    reportBug: 'Report a Bug',
-    opinion: 'Tell us your opinion',
-    suggestion: 'Suggestion for improvements',
-    technicalSupport: 'Technical Support',
-    selectCategory: 'Select a category',
-    openChats: 'Open Conversations',
-    noOpenChats: 'No open conversations',
-    freeChat: 'Free Chat',
-    templateBug: 'Where did you encounter the issue?\n\nWhat were you doing when it happened?\n\nWhat error message did you see?\n\nPlease describe the issue:',
-    templateOpinion: 'What do you think about the app?\n\nWhat do you like most?\n\nWhat could be improved?\n\nYour feedback:',
-    templateSuggestion: 'What feature would you like to see?\n\nHow would it help you?\n\nYour suggestion:',
-    templateSupport: 'What do you need help with?\n\nPlease describe your issue in detail:',
-    sendMessage: 'Send',
-    fillTemplate: 'Fill out the template to help us understand your issue better',
-    question1: 'Question 1',
-    question2: 'Question 2',
-    question3: 'Question 3',
-    question4: 'Question 4',
-    answer: 'Your answer...',
-  } : language === 'he' ? {
-    title: 'תמיכה ומשוב',
-    placeholder: 'כתוב את ההודעה שלך...',
-    send: 'שלח',
-    emptyState: 'אין הודעות עדיין. שלח לנו שאלה או משוב!',
-    history: 'היסטוריה',
-    startNew: 'התחל שיחה חדשה',
-    closed: 'שיחה זו סגורה',
-    noHistory: 'אין שיחות קודמות',
-    hideChat: 'הסתר',
-    hideConfirm: 'להסתיר את השיחה מההיסטוריה?',
-    yes: 'כן',
-    cancel: 'ביטול',
-    hidden: 'השיחה הוסתרה',
-    startConversation: 'התחל צ\'אט',
-    chooseCategory: 'איך נוכל לעזור?',
-    reportBug: 'דיווח על תקלה',
-    opinion: 'ספר לנו את דעתך',
-    suggestion: 'הצעה לשיפור',
-    technicalSupport: 'תמיכה טכנית',
-    selectCategory: 'בחר קטגוריה',
-    openChats: 'שיחות פתוחות',
-    noOpenChats: 'אין שיחות פתוחות',
-    freeChat: 'צ\'אט חופשי',
-    templateBug: 'איפה נתקלת בבעיה?\n\nמה עשית כשזה קרה?\n\nאיזו הודעת שגיאה ראית?\n\nנא לתאר את הבעיה:',
-    templateOpinion: 'מה אתה חושב על האפליקציה?\n\nמה אהבת הכי הרבה?\n\nמה ניתן לשפר?\n\nהמשוב שלך:',
-    templateSuggestion: 'איזו תכונה תרצה לראות?\n\nאיך זה יעזור לך?\n\nההצעה שלך:',
-    templateSupport: 'במה אתה צריך עזרה?\n\nנא לתאר את הבעיה שלך בפירוט:',
-    sendMessage: 'שלח',
-    fillTemplate: 'מלא את התבנית כדי לעזור לנו להבין את הבעיה שלך',
-    question1: 'שאלה 1',
-    question2: 'שאלה 2',
-    question3: 'שאלה 3',
-    question4: 'שאלה 4',
-    answer: 'התשובה שלך...',
-  } : {
-    title: 'الدعم والملاحظات',
-    placeholder: 'اكتب رسالتك...',
-    send: 'إرسال',
-    emptyState: 'لا توجد رسائل حتى الآن. أرسل لنا سؤالك أو ملاحظاتك!',
-    history: 'السجل',
-    startNew: 'بدء محادثة جديدة',
-    closed: 'هذه المحادثة مغلقة',
-    noHistory: 'لا توجد محادثات سابقة',
-    hideChat: 'إخفاء',
-    hideConfirm: 'إخفاء هذه المحادثة من السجل؟',
-    yes: 'نعم',
-    cancel: 'إلغاء',
-    hidden: 'تم إخفاء المحادثة',
-    startConversation: 'بدء الدردشة',
-    chooseCategory: 'كيف يمكننا مساعدتك؟',
-    reportBug: 'الإبلاغ عن خطأ',
-    opinion: 'أخبرنا برأيك',
-    suggestion: 'اقتراحات للتحسين',
-    technicalSupport: 'الدعم التقني',
-    selectCategory: 'اختر فئة',
-    openChats: 'المحادثات المفتوحة',
-    noOpenChats: 'لا توجد محادثات مفتوحة',
-    templateBug: 'أين واجهت المشكلة؟\n\nماذا كنت تفعل عندما حدث ذلك؟\n\nما هي رسالة الخطأ التي رأيتها؟\n\nيرجى وصف المشكلة:',
-    templateOpinion: 'ما رأيك في التطبيق؟\n\nما الذي أعجبك أكثر؟\n\nما الذي يمكن تحسينه؟\n\nملاحظاتك:',
-    templateSuggestion: 'ما الميزة التي تود رؤيتها؟\n\nكيف ستساعدك؟\n\nاقتراحك:',
-    templateSupport: 'ما الذي تحتاج مساعدة فيه؟\n\nيرجى وصف مشكلتك بالتفصيل:',
-    useTemplate: 'استخدام النموذج',
-    skipTemplate: 'تخطي واكتب يدويًا',
-    fillTemplate: 'املأ النموذج لمساعدتنا على فهم مشكلتك بشكل أفضل',
-    question1: 'السؤال 1',
-    question2: 'السؤال 2',
-    question3: 'السؤال 3',
-    question4: 'السؤال 4',
-    answer: 'إجابتك...',
-  };
+  const t = getSupportTranslations(language);
 
   // Initialize on mount
   useEffect(() => {
@@ -268,13 +173,7 @@ export default function SupportChat() {
     setSending(true);
     
     try {
-      await appendConversationMessage({
-        conversationId,
-        senderUid: uid,
-        text: trimmedMessage,
-        unreadForDevDelta: 1,
-        unreadForUserValue: 0,
-      });
+      await appendSupportMessage(conversationId, trimmedMessage);
       
       // Refresh messages after sending
       await loadConversationMessages(conversationId);
@@ -353,9 +252,7 @@ export default function SupportChat() {
       
       // Mark as read for user
       try {
-        await updateDoc(doc(db, 'conversations', conv.id), {
-          unreadForUser: 0,
-        });
+        await markSupportConversationRead(conv.id);
       } catch (error) {
         console.error('Error marking as read:', error);
       }
@@ -394,19 +291,8 @@ export default function SupportChat() {
       // Ensure category is a string
       const categoryValue = typeof category === 'string' ? category : (typeof selectedCategory === 'string' ? selectedCategory : 'general');
       
-      const newConvRef = await addDoc(conversationsRef, {
-        userId: uid,
-        userName: profile.name,
-        status: 'open',
-        category: categoryValue,
-        lastMessage: '',
-        lastMessageAt: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-        unreadForUser: 0,
-        unreadForDev: 0,
-      });
-      
-      setConversationId(newConvRef.id);
+      const newConversationId = await createSupportConversation(categoryValue);
+      setConversationId(newConversationId);
       setConversationStatus('open');
       setMessages([]);
       
@@ -424,61 +310,6 @@ export default function SupportChat() {
     }
   };
 
-  // Get template questions based on category
-  const getTemplateQuestions = (category) => {
-    switch(category) {
-      case 'bug':
-        return [
-          language === 'en' ? 'Where did you encounter the issue?' :
-          language === 'he' ? 'איפה נתקלת בבעיה?' : 'أين واجهت المشكلة؟',
-          
-          language === 'en' ? 'What were you doing when it happened?' :
-          language === 'he' ? 'מה עשית כשזה קרה?' : 'ماذا كنت تفعل عندما حدث ذلك؟',
-          
-          language === 'en' ? 'What error message did you see?' :
-          language === 'he' ? 'איזו הודעת שגיאה ראית?' : 'ما هي رسالة الخطأ التي رأيتها؟',
-          
-          language === 'en' ? 'Please describe the issue:' :
-          language === 'he' ? 'נא לתאר את הבעיה:' : 'يرجى وصف المشكلة:',
-        ];
-      case 'opinion':
-        return [
-          language === 'en' ? 'What do you think about the app?' :
-          language === 'he' ? 'מה אתה חושב על האפליקציה?' : 'ما رأيك في التطبيق؟',
-          
-          language === 'en' ? 'What do you like most?' :
-          language === 'he' ? 'מה אהבת הכי הרבה?' : 'ما الذي أعجبك أكثر؟',
-          
-          language === 'en' ? 'What could be improved?' :
-          language === 'he' ? 'מה ניתן לשפר?' : 'ما الذي يمكن تحسينه؟',
-          
-          language === 'en' ? 'Your feedback:' :
-          language === 'he' ? 'המשוב שלך:' : 'ملاحظاتك:',
-        ];
-      case 'suggestion':
-        return [
-          language === 'en' ? 'What feature would you like to see?' :
-          language === 'he' ? 'איזו תכונה תרצה לראות?' : 'ما الميزة التي تود رؤيتها؟',
-          
-          language === 'en' ? 'How would it help you?' :
-          language === 'he' ? 'איך זה יעזור לך?' : 'كيف ستساعدك؟',
-          
-          language === 'en' ? 'Your suggestion:' :
-          language === 'he' ? 'ההצעה שלך:' : 'اقتراحك:',
-        ];
-      case 'support':
-        return [
-          language === 'en' ? 'What do you need help with?' :
-          language === 'he' ? 'במה אתה צריך עזרה?' : 'ما الذي تحتاج مساعدة فيه؟',
-          
-          language === 'en' ? 'Please describe your issue in detail:' :
-          language === 'he' ? 'נא לתאר את הבעיה שלך בפירוט:' : 'يرجى وصف مشكلتك بالتفصيل:',
-        ];
-      default:
-        return [];
-    }
-  };
-
   // Format template answers and send message directly
   const useTemplateAnswers = async () => {
     if (!conversationId || sending) return;
@@ -486,7 +317,7 @@ export default function SupportChat() {
     const user = auth.currentUser;
     if (!user) return;
     
-    const questions = getTemplateQuestions(selectedCategory);
+    const questions = getSupportTemplateQuestions(language, selectedCategory);
     let formattedMessage = '';
     
     questions.forEach((question, index) => {
@@ -505,13 +336,7 @@ export default function SupportChat() {
     setSending(true);
     
     try {
-      await appendConversationMessage({
-        conversationId,
-        senderUid: uid,
-        text: trimmedMessage,
-        unreadForDevDelta: 1,
-        unreadForUserValue: 0,
-      });
+      await appendSupportMessage(conversationId, trimmedMessage);
       
       // Refresh messages after sending
       await loadConversationMessages(conversationId);
@@ -600,26 +425,7 @@ export default function SupportChat() {
 
   const renderConversation = ({ item }) => {
     const isOpen = item.status === 'open';
-    
-    // Get category icon and color
-    const getCategoryIcon = () => {
-      switch(item.category) {
-        case 'bug':
-          return { icon: 'bug-outline', type: 'Ionicons', color: colors.error };
-        case 'opinion':
-          return { icon: 'comment-text-outline', type: 'MaterialCommunityIcons', color: '#9C27B0' };
-        case 'suggestion':
-          return { icon: 'bulb-outline', type: 'Ionicons', color: '#FF9800' };
-        case 'support':
-          return { icon: 'account-tie-outline', type: 'MaterialCommunityIcons', color: colors.primary };
-        case 'freeChat':
-          return { icon: 'chatbubbles-outline', type: 'Ionicons', color: '#4CAF50' };
-        default:
-          return { icon: 'chatbubble-outline', type: 'Ionicons', color: colors.textSecondary };
-      }
-    };
-    
-    const categoryIcon = getCategoryIcon();
+    const categoryIcon = getSupportCategoryMeta(item.category, colors, t);
     
     return (
       <View style={[styles.historyItem, { backgroundColor: colors.surface }]}>
@@ -650,7 +456,7 @@ export default function SupportChat() {
                 { backgroundColor: isOpen ? colors.success : colors.textSecondary }
               ]}>
                 <AppText style={styles.statusBadgeText}>
-                  {isOpen ? (language === 'en' ? 'Open' : language === 'he' ? 'פתוח' : 'مفتوح') : (language === 'en' ? 'Closed' : language === 'he' ? 'סגור' : 'مغلق')}
+                  {isOpen ? t.openStatus : t.closedStatus}
                 </AppText>
               </View>
             </View>
@@ -697,7 +503,7 @@ export default function SupportChat() {
           <TouchableOpacity onPress={toggleHistory} style={styles.historyBackButton}>
             <Ionicons name="arrow-back" size={24} color="white" />
             <AppText style={styles.historyBackText}>
-              {language === 'en' ? 'Back' : language === 'he' ? 'חזור' : 'رجوع'}
+              {language === 'en' ? 'Back' : language === 'he' ? '×—×–×•×¨' : 'Ø±Ø¬ÙˆØ¹'}
             </AppText>
           </TouchableOpacity>
           <AppText style={styles.historyHeaderTitle}>{t.history}</AppText>
@@ -774,11 +580,7 @@ export default function SupportChat() {
                     {selectedCategory === 'support' && <MaterialCommunityIcons name="account-tie-outline" size={20} color={colors.primary} />}
                     {selectedCategory === 'freeChat' && <Ionicons name="chatbubbles-outline" size={20} color="#4CAF50" />}
                     <AppText style={[styles.categoryDropdownText, { color: colors.textPrimary }]}>
-                      {selectedCategory === 'bug' ? t.reportBug :
-                       selectedCategory === 'opinion' ? t.opinion :
-                       selectedCategory === 'suggestion' ? t.suggestion :
-                       selectedCategory === 'support' ? t.technicalSupport :
-                       t.freeChat}
+                      {getSupportCategoryMeta(selectedCategory, colors, t).label}
                     </AppText>
                   </>
                 ) : (
@@ -913,7 +715,7 @@ export default function SupportChat() {
             </View>
             
             <ScrollView style={styles.templateFormFullScroll} showsVerticalScrollIndicator={false}>
-              {getTemplateQuestions(selectedCategory).map((question, index) => (
+              {getSupportTemplateQuestions(language, selectedCategory).map((question, index) => (
                 <View key={index} style={styles.templateQuestionContainer}>
                   <AppText style={[styles.templateQuestion, { color: colors.textPrimary }]}>
                     {question}
@@ -1449,5 +1251,6 @@ const styles = StyleSheet.create({
     fontWeight: typography.semibold,
   },
 });
+
 
 

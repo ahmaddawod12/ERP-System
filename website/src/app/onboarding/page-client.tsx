@@ -34,7 +34,7 @@ import { cn } from "@/lib/utils";
 
 const schema = z
   .object({
-    accountType: z.enum(["solo", "business", "basic"]),
+    workspaceMode: z.enum(["solo", "business", "basic"]),
     role: z.enum(["manager", "worker", "user", "basic"]),
     name: z.string().min(2, "Name is required"),
     phoneNumber: z.string().min(6, "Phone number is required"),
@@ -50,7 +50,7 @@ const schema = z
     theme: z.enum(["light", "dark"]),
   })
   .superRefine((value, ctx) => {
-    if (value.accountType === "solo" && value.role !== "user") {
+    if (value.workspaceMode === "solo" && value.role !== "user") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Solo accounts use user role.",
@@ -58,7 +58,7 @@ const schema = z
       });
     }
 
-    if (value.accountType === "basic" && value.role !== "basic") {
+    if (value.workspaceMode === "basic" && value.role !== "basic") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Basic accounts use basic role.",
@@ -67,7 +67,7 @@ const schema = z
     }
 
     if (
-      value.accountType === "business" &&
+      value.workspaceMode === "business" &&
       value.role !== "manager" &&
       value.role !== "worker"
     ) {
@@ -78,7 +78,7 @@ const schema = z
       });
     }
 
-    if (value.accountType === "business" && value.role === "manager") {
+    if (value.workspaceMode === "business" && value.role === "manager") {
       if (!value.companyName) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -116,7 +116,7 @@ const schema = z
       }
     }
 
-    if (value.accountType === "business" && value.role === "worker") {
+    if (value.workspaceMode === "business" && value.role === "worker") {
       if (!value.joinCompanyId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -178,19 +178,19 @@ export default function OnboardingClient() {
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      accountType: "solo",
+      workspaceMode: "solo",
       role: "user",
       language: "en",
       theme: "light",
     },
   });
 
-  const accountType = watch("accountType");
+  const workspaceMode = watch("workspaceMode");
   const role = watch("role");
-  const showCompanySetup = useMemo(() => accountType === "business", [accountType]);
+  const showCompanySetup = useMemo(() => workspaceMode === "business", [workspaceMode]);
   const totalSteps = steps.length;
   const progress = Math.round(((step + 1) / totalSteps) * 100);
-  const isWorkerJoinFlow = accountType === "business" && role === "worker";
+  const isWorkerJoinFlow = workspaceMode === "business" && role === "worker";
 
   useEffect(() => {
     if (!user) {
@@ -203,22 +203,22 @@ export default function OnboardingClient() {
   }, [profile?.role, router, user]);
 
   useEffect(() => {
-    if (accountType === "solo") {
+    if (workspaceMode === "solo") {
       setValue("role", "user");
       return;
     }
-    if (accountType === "basic") {
+    if (workspaceMode === "basic") {
       setValue("role", "basic");
       return;
     }
     if (role !== "manager" && role !== "worker") {
       setValue("role", "manager");
     }
-  }, [accountType, role, setValue]);
+  }, [workspaceMode, role, setValue]);
 
   const goNext = async () => {
     if (step === 0) {
-      const ok = await trigger(["accountType"]);
+      const ok = await trigger(["workspaceMode"]);
       if (ok) setStep(1);
       return;
     }
@@ -262,7 +262,15 @@ export default function OnboardingClient() {
     if (!user || !user.email) return;
 
     try {
-      if (values.accountType === "business" && values.role === "worker") {
+      const accountType = values.workspaceMode === "business" ? "business" : "solo";
+      const resolvedRole =
+        values.workspaceMode === "solo"
+          ? "user"
+          : values.workspaceMode === "basic"
+            ? "basic"
+            : values.role;
+
+      if (accountType === "business" && resolvedRole === "worker") {
         const response = await fetch("/api/onboarding/join-company", {
           method: "POST",
           headers: await buildAuthedJsonHeaders(),
@@ -293,26 +301,23 @@ export default function OnboardingClient() {
         >(functions, "registerBusinessV1");
 
         await registerFn({
-          role: values.accountType === "solo" ? "user" : values.role,
-          // CF normalizeAccountType only accepts "solo" | "business"; map "basic" to "solo"
-          accountType: values.accountType === "basic" ? "solo" : values.accountType,
+          role: resolvedRole,
+          accountType,
           name: values.name,
           phoneNumber: values.phoneNumber,
           he_name:
-            values.accountType === "solo" || values.accountType === "basic"
+            accountType === "solo"
               ? values.name
               : (values.companyName ?? ""),
           en_name:
-            values.accountType === "solo" || values.accountType === "basic"
+            accountType === "solo"
               ? values.name
               : (values.companyName ?? ""),
           vat_number: values.businessNumber ?? "",
           business_type:
-            values.accountType === "solo"
-              ? "solo"
-              : values.accountType === "basic"
-                ? "basic"
-                : (values.businessType ?? ""),
+            accountType === "solo"
+              ? (resolvedRole === "basic" ? "basic" : "solo")
+              : (values.businessType ?? ""),
           city: values.businessCity ?? "",
           address: values.businessAddress ?? "",
           business_phone: values.businessPhone ?? "",
@@ -461,7 +466,7 @@ export default function OnboardingClient() {
                     <label
                       className={cn(
                         "cursor-pointer rounded-2xl border p-4 transition",
-                        accountType === "solo"
+                        workspaceMode === "solo"
                           ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
                           : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
                       )}
@@ -469,7 +474,7 @@ export default function OnboardingClient() {
                       <input
                         type="radio"
                         value="solo"
-                        {...register("accountType")}
+                        {...register("workspaceMode")}
                         className="sr-only"
                       />
                       <div className="flex items-center gap-3">
@@ -487,7 +492,7 @@ export default function OnboardingClient() {
                     <label
                       className={cn(
                         "cursor-pointer rounded-2xl border p-4 transition",
-                        accountType === "business"
+                        workspaceMode === "business"
                           ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
                           : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
                       )}
@@ -495,7 +500,7 @@ export default function OnboardingClient() {
                       <input
                         type="radio"
                         value="business"
-                        {...register("accountType")}
+                        {...register("workspaceMode")}
                         className="sr-only"
                       />
                       <div className="flex items-center gap-3">
@@ -513,7 +518,7 @@ export default function OnboardingClient() {
                     <label
                       className={cn(
                         "cursor-pointer rounded-2xl border p-4 transition",
-                        accountType === "basic"
+                        workspaceMode === "basic"
                           ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
                           : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
                       )}
@@ -521,7 +526,7 @@ export default function OnboardingClient() {
                       <input
                         type="radio"
                         value="basic"
-                        {...register("accountType")}
+                        {...register("workspaceMode")}
                         className="sr-only"
                       />
                       <div className="flex items-center gap-3">
@@ -536,8 +541,8 @@ export default function OnboardingClient() {
                         </div>
                       </div>
                     </label>
-                    {errors.accountType?.message ? (
-                      <p className="text-xs text-red-600">{errors.accountType.message}</p>
+                    {errors.workspaceMode?.message ? (
+                      <p className="text-xs text-red-600">{errors.workspaceMode.message}</p>
                     ) : null}
                   </div>
                 ) : null}
@@ -557,13 +562,13 @@ export default function OnboardingClient() {
                       />
                     </div>
 
-                    {accountType === "solo" || accountType === "basic" ? (
+                    {workspaceMode === "solo" || workspaceMode === "basic" ? (
                       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/50">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                          Role: {accountType === "basic" ? "basic" : "user"}
+                          Role: {workspaceMode === "basic" ? "basic" : "user"}
                         </p>
                         <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                          {accountType === "basic"
+                          {workspaceMode === "basic"
                             ? "Basic accounts automatically use the basic role."
                             : "Solo accounts automatically use the user role."}
                         </p>

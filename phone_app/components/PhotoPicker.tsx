@@ -6,6 +6,7 @@ import { useThemeContext } from '../contexts/ThemeContext';
 import { useAlert } from '../contexts/AlertContext';
 import AppButton from './AppButton';
 import AppText from './AppText';
+import type { JobFileRef } from '../types';
 
 const normalizeAssets = (result: ImagePicker.ImagePickerResult | null): string[] => {
   if (!result || result.canceled || !Array.isArray(result.assets)) return [];
@@ -17,9 +18,9 @@ const normalizeAssets = (result: ImagePicker.ImagePickerResult | null): string[]
 export interface PhotoPickerProps {
   visible: boolean;
   onClose: () => void;
-  onPhotosSelected?: (uris: string[]) => void;
+  onPhotosSelected?: (uris: Array<string | JobFileRef>) => void;
   maxPhotos?: number;
-  existingPhotos?: string[];
+  existingPhotos?: Array<string | JobFileRef>;
 }
 
 export default function PhotoPicker({

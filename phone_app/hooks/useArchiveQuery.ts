@@ -13,7 +13,8 @@
 import { useCallback } from 'react';
 import {
   db,
-  storage as firebaseStorage,
+  functions,
+  httpsCallable,
   collection,
   getDocs,
   query,
@@ -27,7 +28,6 @@ import {
   TIER2_CACHE_TTL_MS,
   getCacheStartDate,
 } from '../contexts/mmkv-storage';
-import { safeJsonParse } from '../utils/helpers';
 import {
   buildJobMembershipQueryValues,
   roleUsesScopedJobAccess,
@@ -68,15 +68,15 @@ export function useArchiveQuery({
 }: ArchiveQueryDeps) {
 
   /**
-   * Download a single archive month from Cloud Storage.
-   * Results are cached in MMKV to avoid redundant downloads.
+   * Download a single archive month through the backend so role filtering
+   * happens server-side before archived data reaches the device.
    */
   const fetchFromArchive = useCallback(async (
     companyId: string,
     year: number,
     month: number,
     dataType: string,
-  ): Promise<any[] | null> => {
+  ): Promise<any[]> => {
     const suffix = dataType === 'finishedJobs' ? 'j' : 'd';
     const archiveKey = `${year}-${month}-${suffix}`;
     const mmkvCacheKey = `archive_${companyId}_${archiveKey}`;
@@ -87,36 +87,31 @@ export function useArchiveQuery({
       return cached;
     }
 
-    const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
-    console.log(`?? Downloading archive from Storage: ${storagePath}`);
+    console.log(`?? Fetching archive ${archiveKey} through backend`);
 
     try {
-      const ref = (firebaseStorage as any)().ref(storagePath);
-      const url = await ref.getDownloadURL();
+      const callable = httpsCallable(functions, 'fetchArchiveMonthV1');
+      const result = await callable({
+        companyId,
+        year,
+        month,
+        dataType,
+      }) as {
+        data?: { success?: boolean; items?: any[] };
+      };
 
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const jsonText = await response.text();
-      const docs = safeJsonParse<any[]>(jsonText);
-      if (!Array.isArray(docs)) {
-        console.error(`? Archive ${archiveKey}: response was not a valid JSON array`);
-        return null;
-      }
-
-      console.log(`?? Downloaded archive ${archiveKey}: ${docs.length} docs (${(jsonText.length / 1024).toFixed(1)} KB)`);
+      const docs = Array.isArray(result?.data?.items) ? result.data.items : [];
+      console.log(`?? Fetched archive ${archiveKey}: ${docs.length} docs`);
       mmkvHelpers.setObject(mmkvCacheKey, docs);
       return docs;
     } catch (error) {
-      if (
-        (error as any).code === 'storage/object-not-found' ||
-        (error as Error).message?.includes('404')
-      ) {
-        console.log(`?? No archive found for ${archiveKey} (not yet archived or no data)`);
-        return null;
+      const message = (error as Error)?.message || '';
+      if (message.includes('not-found') || message.includes('invalid')) {
+        console.log(`?? No archive found for ${archiveKey} or archive unavailable`);
+        return [];
       }
-      console.error(`? Error downloading archive ${archiveKey}:`, error);
-      return null;
+      console.error(`? Error fetching archive ${archiveKey}:`, error);
+      return [];
     }
   }, []);
 

@@ -1,3 +1,4 @@
+import { TIER_VALUES, UPGRADEABLE_TIERS } from "@smart-job/contracts";
 import { z } from "zod";
 
 const companyIdSchema = z
@@ -60,9 +61,23 @@ export const createClientSchema = z
 
 export const upgradeRequestSchema = z
   .object({
-    currentTier: z.enum(["Basic", "Solo", "Team", "Enterprise"]).optional(),
-    requestedTier: z.enum(["Solo", "Team", "Enterprise"]),
+    currentTier: z.enum(TIER_VALUES).optional(),
+    requestedTier: z.enum(UPGRADEABLE_TIERS),
     message: requiredText(10, 2000, "message"),
+  })
+  .strict();
+
+export const upgradeListSchema = z
+  .object({
+    limit: z.number().int().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const upgradeModerationSchema = z
+  .object({
+    requestId: requiredText(3, 128, "requestId"),
+    status: z.enum(["approved", "rejected", "pending"]),
+    moderationNote: optionalText(1000),
   })
   .strict();
 

@@ -16,9 +16,6 @@
 import { Platform, PermissionsAndroid } from 'react-native';
 import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notifee/react-native';
 import { 
-  db, 
-  doc, 
-  getDoc,
   functions,
   httpsCallable,
   messaging,
@@ -34,6 +31,7 @@ import {
   getAPNSToken,
   AuthorizationStatus
 } from '../firebase';
+import { mmkvHelpers, CACHE_KEYS } from '../contexts/mmkv-storage';
 
 // Default Android notification channel ID
 const DEFAULT_CHANNEL_ID = 'smart_job_default';
@@ -159,14 +157,10 @@ export async function registerPushTokenForUser(userId: string): Promise<boolean>
     }
 
     // Quick client-side check to skip if token hasn't changed
-    const profileRef = doc(db, 'users', userId, 'data', 'profile');
-    const profileSnap = await getDoc(profileRef);
-    if (profileSnap.exists()) {
-      const currentToken = profileSnap.data().pushToken;
-      if (currentToken === fcmToken) {
-        console.log('FCM token unchanged - skipping update');
-        return true;
-      }
+    const cachedProfile = mmkvHelpers.getObject<{ pushToken?: string }>(CACHE_KEYS.PROFILE);
+    if (cachedProfile?.pushToken === fcmToken) {
+      console.log('FCM token unchanged - skipping update');
+      return true;
     }
 
     // Use Cloud Function to update push token (profile is read-only from client)

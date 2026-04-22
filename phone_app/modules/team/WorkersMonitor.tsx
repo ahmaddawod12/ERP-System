@@ -9,12 +9,13 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { auth, db, collection, doc, getDocs, onSnapshot } from '../../firebase';
+import { auth } from '../../firebase';
 import { spacing, borderRadius, typography, shadows, getColors } from '../../theme';
 import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ViewJobDetails, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useCache } from '../../contexts/CacheContext';
+import { fetchCompanyWorkers, fetchUserInventoryParts } from '../../utils/read-model';
 
 export default function WorkersMonitor() {
   const router = useRouter();
@@ -319,14 +320,13 @@ export default function WorkersMonitor() {
       
       // Fallback to Firebase
       console.log('🔥 [FIREBASE READ] WorkersMonitor - fetching workers from Firebase (no cache)');
-      const workersRef = collection(db, 'companies', companyId, 'workers');
-      const workersSnapshot = await getDocs(workersRef);
+      const fetchedWorkers = await fetchCompanyWorkers(companyId);
 
-      if (!workersSnapshot.empty) {
+      if (fetchedWorkers.length > 0) {
         const workersData = {};
-        workersSnapshot.forEach(docSnap => {
-          const workerData = docSnap.data() || {};
-          const wid = docSnap.id;
+        fetchedWorkers.forEach((workerData) => {
+          const wid = workerData.wid || workerData.uid;
+          if (!wid) return;
           workersData[wid] = {
             ...workerData,
             wid,
@@ -334,7 +334,7 @@ export default function WorkersMonitor() {
         });
         
         // Save to cache for next time
-        await updateWorkersList(workersData);
+        await updateWorkers(workersData);
         
         // Keys are UIDs
         const workersList = Object.keys(workersData).map((wid) => {
@@ -363,29 +363,15 @@ export default function WorkersMonitor() {
         return () => {}; // Return empty cleanup function
       }
       
-      // NOTE: Worker jobs are now handled by separate cache-based effect (no Firebase reads)
-      // This function only sets up the inventory listener
+      const companyId = getCompanyId();
+      if (!companyId) {
+        setWorkerInventory([]);
+        return () => {};
+      }
 
-      // Real-time listener for worker inventory (not cached at company level)
-      const inventoryDocRef = doc(db, 'users', workerUid, 'data', 'inventory');
-      const unsubscribeInventory = onSnapshot(inventoryDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const inventoryData = docSnap.data();
-          const inventoryList = inventoryData.parts || [];
-          setWorkerInventory(inventoryList);
-        } else {
-          setWorkerInventory([]);
-        }
-      }, (error) => {
-        if (auth.currentUser && error.code !== 'permission-denied') {
-          console.error('Error loading worker inventory:', error);
-        }
-      });
-
-      // Return cleanup function for inventory listener
-      return () => {
-        unsubscribeInventory();
-      };
+      const inventoryList = await fetchUserInventoryParts(companyId, workerUid);
+      setWorkerInventory(inventoryList);
+      return () => {};
     } catch (error) {
       console.error('Error setting up worker data listeners:', error);
       return () => {}; // Return empty cleanup

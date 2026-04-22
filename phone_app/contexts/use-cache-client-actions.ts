@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
-import { collection, getDocs, functions, httpsCallable } from '../firebase';
+import { functions, httpsCallable } from '../firebase';
 import { CACHE_KEYS } from './mmkv-storage';
+import { callHttpFunction } from '../utils/httpFunctions';
 
 interface ClientActionsParams {
   db: any;
@@ -19,6 +20,23 @@ export function useCacheClientActions({
   preIncrementVersion,
   setClients,
 }: ClientActionsParams) {
+  const normalizeClient = useCallback((client: any) => {
+    const numericId = Number(client?.numericId ?? client?.cid ?? client?.id);
+    const resolvedId = String(client?.id ?? client?.cid ?? '').trim();
+    const name = String(client?.name ?? client?.cname ?? '').trim();
+    const phone = String(client?.phone ?? client?.cphone ?? '').trim();
+
+    return {
+      ...client,
+      id: resolvedId || (Number.isFinite(numericId) ? String(numericId) : ''),
+      cid: Number.isFinite(numericId) ? numericId : undefined,
+      cname: name,
+      cphone: phone || undefined,
+      name,
+      phone: phone || undefined,
+    };
+  }, []);
+
   const fetchClients = useCallback(async (companyId?: string) => {
     try {
       const resolvedCompanyId = companyId || getCompanyId();
@@ -26,13 +44,16 @@ export function useCacheClientActions({
         return [];
       }
 
-      const clientsRef = collection(db, 'companies', resolvedCompanyId, 'clients');
-      const snapshot = await getDocs(clientsRef);
-      const clientsList: any[] = [];
-      snapshot.forEach((docSnap: any) => {
-        clientsList.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      clientsList.sort((a: any, b: any) => parseInt(a.id) - parseInt(b.id));
+      const clientsList = (await callHttpFunction<any[]>('readModelV1', {
+        kind: 'clients',
+        companyId: resolvedCompanyId,
+      }))
+        .map(normalizeClient)
+        .sort((a: any, b: any) => {
+          const left = Number(a.cid ?? a.id ?? 0);
+          const right = Number(b.cid ?? b.id ?? 0);
+          return left - right;
+        });
       saveToLocalCache(CACHE_KEYS.CLIENTS, clientsList);
       setClients(clientsList);
       return clientsList;
@@ -40,7 +61,7 @@ export function useCacheClientActions({
       console.error('Error fetching clients:', error);
       return [];
     }
-  }, [db, getCompanyId, saveToLocalCache, setClients]);
+  }, [db, getCompanyId, normalizeClient, saveToLocalCache, setClients]);
 
   const addClient = useCallback(async (clientData: any) => {
     const companyId = getCompanyId();
@@ -50,17 +71,18 @@ export function useCacheClientActions({
 
     const addClientFn = httpsCallable(functions, 'addClientV1');
     const result = await addClientFn({ companyId, ...clientData });
-    const newClient = (result.data as { client?: any } | null | undefined)?.client;
-    if (!newClient) {
+    const rawClient = (result.data as { client?: any } | null | undefined)?.client;
+    if (!rawClient) {
       throw new Error('addClientV1 returned no client data');
     }
+    const newClient = normalizeClient(rawClient);
 
     const updatedClients = [...clients, newClient];
     saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
     setClients(updatedClients);
     preIncrementVersion('clientsVersion', true);
     return newClient;
-  }, [clients, getCompanyId, preIncrementVersion, saveToLocalCache, setClients]);
+  }, [clients, getCompanyId, normalizeClient, preIncrementVersion, saveToLocalCache, setClients]);
 
   const updateClient = useCallback(async (clientId: string, updates: any) => {
     const companyId = getCompanyId();

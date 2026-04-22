@@ -26,12 +26,14 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { db, auth, storage as firebaseStorage, doc, getDoc, setDoc, onSnapshot, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
+import { db, auth, storage as firebaseStorage, doc, setDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
 import { safeJsonParse } from '../utils/helpers';
 import {
   fetchDataFromFirebase as _fetchDataFromFirebase,
+  fetchCompanySyncState as _fetchCompanySyncState,
+  fetchUserSyncState as _fetchUserSyncState,
   fetchDocumentById as _fetchDocumentById,
   fetchAllRecentJobs as _fetchAllRecentJobs,
 } from './cache-fetchers';
@@ -51,31 +53,20 @@ import {
   setMmkvScope,
   scopedKey,
   mmkvHelpers,
-  getCacheStartDate,
   isWithinCacheRange,
+  getCacheStartDate,
   getDocumentType,
 } from './mmkv-storage';
 import {
   isProfileCacheOwnedByUser,
+  isScopedCacheCompanyMismatch,
   resolveCachedSessionIdentity,
 } from './cache-identity';
-import {
-  buildJobMembershipQueryValues,
-  roleUsesScopedJobAccess,
-} from './job-membership';
+import { roleUsesScopedJobAccess } from './job-membership';
+import { getNextCompanySyncPollIntervalMs } from './company-sync-poll';
 
 // Create context
 const CacheContext = createContext<CacheContextValue | null>(null);
-
-function buildJobMembershipConstraints(wid: string | number | null): any[] {
-  const values = buildJobMembershipQueryValues(wid);
-  if (values.length === 0) return [];
-  return [
-    values.length === 1
-      ? where('wid', '==', values[0])
-      : where('wid', 'in', values),
-  ];
-}
 
 // Custom hook to use cache
 export const useCache = (): CacheContextValue => {
@@ -122,6 +113,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const companyUnsubscribeRef = useRef<(() => void) | null>(null);
   const inventoryUnsubscribeRef = useRef<(() => void) | null>(null); // I9: Company inventory listener
   const listenersActiveRef = useRef(false); // Track if listeners are currently active
+  const userPollInFlightRef = useRef(false);
+  const companyPollInFlightRef = useRef(false);
+  const userPollIdleCountRef = useRef(0);
+  const companyPollIdleCountRef = useRef(0);
   
   // Get current user info from cache (canonical names)
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
@@ -273,6 +268,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     const cachedInventory = mmkvHelpers.getObject<InventoryPart[]>(CACHE_KEYS.INVENTORY);
     const cachedJobs = mmkvHelpers.getObject<Job[]>(CACHE_KEYS.JOBS);
     const cachedWorkers = mmkvHelpers.getObject<Record<string, Worker>>(CACHE_KEYS.WORKERS);
+    const cachedCompanyInventory = mmkvHelpers.getObject<InventoryPart[]>(CACHE_KEYS.COMPANY_INVENTORY);
     const cachedCompanyJobs = mmkvHelpers.getObject<Job[]>(CACHE_KEYS.COMPANY_JOBS);
     const cachedDocuments = mmkvHelpers.getObject<AppDocument[]>(CACHE_KEYS.DOCUMENTS);
     const cachedHasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO);
@@ -285,6 +281,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     if (cachedInventory) setInventory(cachedInventory);
     if (cachedJobs) setJobs(cachedJobs);
     if (cachedWorkers) setWorkers(cachedWorkers);
+    if (cachedCompanyInventory) setCompanyInventory(cachedCompanyInventory);
     if (cachedCompanyJobs) setCompanyJobs(cachedCompanyJobs);
     if (cachedDocuments) setDocuments(cachedDocuments);
     if (cachedClients) setClients(cachedClients);
@@ -324,6 +321,9 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         break;
       case CACHE_KEYS.WORKERS:
         setWorkers(data);
+        break;
+      case CACHE_KEYS.COMPANY_INVENTORY:
+        setCompanyInventory(data);
         break;
       case CACHE_KEYS.COMPANY_JOBS:
         setCompanyJobs(data);
@@ -365,6 +365,16 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const fetchCompanySyncState = useCallback(
+    (companyId: string) => _fetchCompanySyncState(companyId),
+    [],
+  );
+
+  const fetchUserSyncState = useCallback(
+    () => _fetchUserSyncState(),
+    [],
+  );
+
   /**
    * Get MMKV cache key for a field
    */
@@ -372,6 +382,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     const mapping: Record<string, string> = {
       'profile': CACHE_KEYS.PROFILE,
       'inventory': CACHE_KEYS.INVENTORY,
+      'companyInventory': CACHE_KEYS.COMPANY_INVENTORY,
       'subscription': CACHE_KEYS.SUBSCRIPTION,
       'jobs': CACHE_KEYS.JOBS,
       'companyJobs': CACHE_KEYS.COMPANY_JOBS,
@@ -382,19 +393,38 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     return mapping[field] || field;
   };
 
+  const applyBootstrappedJobDocumentCache = useCallback((role: string, jobsData: any[], documentsData: any[]) => {
+    if (role === 'manager') {
+      saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, jobsData);
+      saveToLocalCache(CACHE_KEYS.JOBS, []);
+      saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
+    } else if (role === 'worker') {
+      saveToLocalCache(CACHE_KEYS.JOBS, jobsData);
+      saveToLocalCache(CACHE_KEYS.DOCUMENTS, []);
+    } else if (role === 'basic') {
+      saveToLocalCache(CACHE_KEYS.JOBS, []);
+      saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
+    } else if (role === 'dev') {
+      saveToLocalCache(CACHE_KEYS.JOBS, []);
+      saveToLocalCache(CACHE_KEYS.DOCUMENTS, []);
+    } else {
+      saveToLocalCache(CACHE_KEYS.JOBS, jobsData);
+      saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
+    }
+  }, [saveToLocalCache]);
+
   /**
-   * Set up real-time listeners for cache version changes (snapshot listeners)
+   * Set up cache refresh listeners.
    * 
    * NEW ARCHITECTURE: Summary-based versioning
-   * - Company cache doc has: { jobsVersion, documentsVersion, clientsVersion, workersVersion, updatedAt }
+   * - Company sync state is polled through the backend read model
    * - On version change: full re-fetch of the changed collection
    * - User cache doc has: { profile, inventory, subscription, lastUpdated }
    * 
-   * All roles: user cache listener (profile/inventory) + company cache listener (version fields)
+   * All roles: user sync poller (profile/inventory) + company sync poller (version fields)
    */
   const setupCacheListeners = useCallback((uid: string, role: string, companyId: string | null) => {
     console.log(`Setting up cache listeners for ${role}...`);
-    const wid = getWid();
     
     // Dev role doesn't need cache listeners
     if (role === 'dev') {
@@ -417,218 +447,136 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     }
     
     // =====================================================
-    // USER CACHE LISTENER (for all roles - profile/inventory)
+    // USER SYNC POLLER (for all roles - profile/inventory)
     // =====================================================
-    const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
-    unsubscribeRef.current = onSnapshot(userCacheRef, async (snapshot) => {
-      if (!snapshot.exists()) return;
-      
-      const remoteVersions = snapshot.data() as Record<string, number> | undefined;
-      const localVersions: Record<string, number> = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
-      
-      console.log('User cache snapshot received');
-      
-      // Standard user cache fields
-      let standardFields = role === 'basic' ? ['profile'] : ['profile', 'inventory'];
-      standardFields.push('subscription');
-      
-      for (const field of standardFields) {
-        const remoteVersion = remoteVersions![field] || 0;
-        const localVersion = localVersions[field] || 0;
-        
-        if (remoteVersion > localVersion) {
-          console.log(`Version mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
-          if (field === 'subscription') {
-            const subData = await fetchDataFromFirebase('subscription', uid, companyId || '', role);
-            saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
-          } else {
-            const data = await fetchDataFromFirebase(field, uid, companyId || '', role);
-            if (data !== null) {
-              const cacheKey = getCacheKeyForField(field);
-              saveToLocalCache(cacheKey, data);
+    let userPollTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNextUserSyncPoll = () => {
+      const nextIntervalMs = getNextCompanySyncPollIntervalMs(userPollIdleCountRef.current);
+      userPollTimeoutId = setTimeout(() => {
+        void pollUserSyncState();
+      }, nextIntervalMs);
+    };
+
+    const pollUserSyncState = async () => {
+      if (userPollInFlightRef.current) return;
+      userPollInFlightRef.current = true;
+      try {
+        const remoteVersions = await fetchUserSyncState();
+        const localVersions: Record<string, number> = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
+        let standardFields = role === 'basic' ? ['profile'] : ['profile', 'inventory'];
+        standardFields.push('subscription');
+        let changed = false;
+
+        for (const field of standardFields) {
+          const remoteVersion = Number(remoteVersions[field as keyof typeof remoteVersions] || 0);
+          const localVersion = Number(localVersions[field] || 0);
+
+          if (remoteVersion > localVersion) {
+            console.log(`User sync mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
+            if (field === 'subscription') {
+              const subData = await fetchDataFromFirebase('subscription', uid, companyId || '', role);
+              saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
+            } else {
+              const data = await fetchDataFromFirebase(field, uid, companyId || '', role);
+              if (data !== null) {
+                const cacheKey = getCacheKeyForField(field);
+                saveToLocalCache(cacheKey, data);
+              }
             }
+            localVersions[field] = remoteVersion;
+            changed = true;
           }
-          localVersions[field] = remoteVersion;
+        }
+
+        if (changed) {
+          saveToLocalCache(CACHE_KEYS.CACHE_VERSIONS, localVersions);
+          userPollIdleCountRef.current = 0;
+        } else {
+          userPollIdleCountRef.current += 1;
+        }
+      } catch (error) {
+        console.error('User sync polling error:', error);
+      } finally {
+        userPollInFlightRef.current = false;
+        if (listenersActiveRef.current) {
+          scheduleNextUserSyncPoll();
         }
       }
-      
-      // Save updated versions
-      saveToLocalCache(CACHE_KEYS.CACHE_VERSIONS, localVersions);
-      
-    }, (error) => {
-      console.error('User cache listener error:', error);
-    });
+    };
+
+    userPollIdleCountRef.current = 0;
+    void pollUserSyncState();
+
+    unsubscribeRef.current = () => {
+      if (userPollTimeoutId) {
+        clearTimeout(userPollTimeoutId);
+        userPollTimeoutId = null;
+      }
+      userPollInFlightRef.current = false;
+      userPollIdleCountRef.current = 0;
+    };
     
     // =====================================================
-    // COMPANY CACHE LISTENER (for all non-dev roles)
-    // Listens to summary version fields and re-fetches on change
+    // COMPANY SYNC POLLER (for all non-dev roles)
+    // Polls backend summary version fields and re-fetches on change
     // =====================================================
     if (companyId) {
-      const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
-      companyUnsubscribeRef.current = onSnapshot(companyCacheRef, async (snapshot) => {
-        if (!snapshot.exists()) return;
-        
-        const remoteData = snapshot.data() as Record<string, any>;
-        const localVersions: Record<string, any> = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS) || {};
-        
-        console.log('Company cache snapshot received:', JSON.stringify({
-          jobsVersion: remoteData.jobsVersion,
-          documentsVersion: remoteData.documentsVersion,
-          clientsVersion: remoteData.clientsVersion,
-          workersVersion: remoteData.workersVersion,
-        }));
-        
-        // I2: Collect all changed-version fetches and run them in parallel
-        const fetchPromises: Promise<void>[] = [];
-        const versionUpdates: Record<string, any> = {};
+      let pollTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-        // --- JOBS VERSION CHECK (C1: incremental sync) ---
-        if (role !== 'basic' && role !== 'dev') {
+      const scheduleNextCompanySyncPoll = () => {
+        const nextIntervalMs = getNextCompanySyncPollIntervalMs(companyPollIdleCountRef.current);
+        pollTimeoutId = setTimeout(() => {
+          void pollCompanySyncState();
+        }, nextIntervalMs);
+      };
+
+      const pollCompanySyncState = async () => {
+        if (companyPollInFlightRef.current) return;
+        companyPollInFlightRef.current = true;
+        try {
+          const remoteData = await fetchCompanySyncState(companyId);
+          const localVersions: Record<string, any> = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS) || {};
+
+          console.log('Company sync state received:', JSON.stringify({
+            jobsVersion: remoteData.jobsVersion,
+            documentsVersion: remoteData.documentsVersion,
+            clientsVersion: remoteData.clientsVersion,
+            workersVersion: remoteData.workersVersion,
+            companyInventoryVersion: remoteData.companyInventoryVersion,
+          }));
+
+          const fetchPromises: Promise<void>[] = [];
+          const versionUpdates: Record<string, any> = {};
+
           const remoteJobsVersion = remoteData.jobsVersion || 0;
           const localJobsVersion = localVersions.jobsVersion || 0;
-          
-          if (remoteJobsVersion !== localJobsVersion) {
-            console.log(`Jobs version changed: local=${localJobsVersion}, remote=${remoteJobsVersion}`);
-            
-            fetchPromises.push((async () => {
-              try {
-                const lastSync = mmkvHelpers.getString(CACHE_KEYS.JOBS_LAST_SYNC) || null;
-                const ninetyDaysAgo = getCacheStartDate().toISOString();
-                const jobsRef = collection(db, 'companies', companyId, 'jobs');
-                
-                // C1: Incremental sync — only fetch jobs updated since lastSync
-                const cacheKey = role === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
-                if (lastSync) {
-                  let deltaQuery;
-                  if (roleUsesScopedJobAccess(role)) {
-                    const scopedConstraints = buildJobMembershipConstraints(wid);
-                    if (scopedConstraints.length === 0) {
-                      versionUpdates.jobsVersion = remoteJobsVersion;
-                      return;
-                    }
-                    deltaQuery = query(jobsRef,
-                      where('updatedAt', '>', lastSync),
-                      ...scopedConstraints
-                    );
-                  } else {
-                    deltaQuery = query(jobsRef, where('updatedAt', '>', lastSync));
-                  }
-                  const deltaSnap = await getDocs(deltaQuery);
-                  const updates = deltaSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-                  
-                  // Merge updates into existing cache
-                  const existingJobs: any[] = mmkvHelpers.getObject(cacheKey) || [];
-                  const merged = [...existingJobs];
-                  for (const updated of updates) {
-                    const idx = merged.findIndex((j: any) => j.id === updated.id);
-                    if (idx >= 0) merged[idx] = updated;
-                    else merged.push(updated);
-                  }
-                  // Apply 90-day expiry filter on merged result
-                  const filtered = merged.filter((j: any) => {
-                    if (j.status === 'pending' || j.status === 'waiting') return true;
-                    const dateField = j.updatedAt || j.createdAt;
-                    if (!dateField) return true;
-                    return dateField >= ninetyDaysAgo;
-                  });
-                  saveToLocalCache(cacheKey, filtered);
-                  mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
-                  console.log(`Incremental sync: ${updates.length} jobs updated, ${filtered.length} total`);
-                } else {
-                  // No JOBS_LAST_SYNC set yet — bootstrap with a full role-aware re-fetch
-                  const scopedConstraints = roleUsesScopedJobAccess(role)
-                    ? buildJobMembershipConstraints(wid)
-                    : [];
-                  if (roleUsesScopedJobAccess(role) && scopedConstraints.length === 0) {
-                    versionUpdates.jobsVersion = remoteJobsVersion;
-                    return;
-                  }
-                  const [pendingSnap, recentSnap] = await Promise.all([
-                    getDocs(scopedConstraints.length > 0
-                      ? (query as any)(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))
-                      : query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
-                    getDocs(scopedConstraints.length > 0
-                      ? (query as any)(jobsRef, ...scopedConstraints, where('updatedAt', '>=', ninetyDaysAgo))
-                      : query(jobsRef, where('updatedAt', '>=', ninetyDaysAgo))),
-                  ]);
-                  const fullMap = new Map();
-                  pendingSnap.docs.forEach((d: any) => fullMap.set(d.id, { id: d.id, ...d.data() }));
-                  recentSnap.docs.forEach((d: any) => fullMap.set(d.id, { id: d.id, ...d.data() }));
-                  const jobsData = Array.from(fullMap.values());
-                  saveToLocalCache(cacheKey, jobsData);
-                  mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
-                  console.log(`Full sync: ${jobsData.length} jobs from Firebase`);
-                }
-              } catch (error) {
-                console.error('Error syncing jobs:', error);
-              }
-              versionUpdates.jobsVersion = remoteJobsVersion;
-            })());
-          }
-        }
-        
-        // --- DOCUMENTS VERSION CHECK (C1: incremental sync) ---
-        if (role !== 'dev') {
           const remoteDocsVersion = remoteData.documentsVersion || 0;
           const localDocsVersion = localVersions.documentsVersion || 0;
-          
-          if (remoteDocsVersion !== localDocsVersion) {
-            console.log(`Documents version changed: local=${localDocsVersion}, remote=${remoteDocsVersion}`);
-            
+
+          if ((role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion) ||
+              (role !== 'dev' && remoteDocsVersion !== localDocsVersion)) {
+            console.log(`Company jobs/documents changed: jobs ${localJobsVersion}->${remoteJobsVersion}, docs ${localDocsVersion}->${remoteDocsVersion}`);
+
             fetchPromises.push((async () => {
-              try {
-                const lastSync = mmkvHelpers.getString(CACHE_KEYS.DOCS_LAST_SYNC) || null;
-                const ninetyDaysAgo = getCacheStartDate().toISOString();
-                const documentsRef = collection(db, 'companies', companyId, 'documents');
-                
-                // C1: Incremental sync for documents
-                if (lastSync) {
-                  const deltaQuery = query(documentsRef, where('updatedAt', '>', lastSync));
-                  const deltaSnap = await getDocs(deltaQuery);
-                  const updates = deltaSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-                  const now = new Date().toISOString();
-                  
-                  const existingDocs: any[] = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) || [];
-                  const merged = [...existingDocs];
-                  for (const updated of updates) {
-                    const idx = merged.findIndex((doc: any) => doc.id === updated.id);
-                    if (idx >= 0) merged[idx] = updated;
-                    else merged.push(updated);
-                  }
-                  // Apply 90-day expiry filter
-                  const filtered = merged.filter((d: any) => {
-                    const dateField = d.createdAt;
-                    if (!dateField) return true;
-                    return dateField >= ninetyDaysAgo;
-                  });
-                  saveToLocalCache(CACHE_KEYS.DOCUMENTS, filtered);
-                  mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, now);
-                  console.log(`Incremental sync: ${updates.length} docs updated, ${filtered.length} total`);
-                } else {
-                  // First sync — full fetch
-                  const documentsQuery = query(documentsRef, where('createdAt', '>=', ninetyDaysAgo));
-                  const docsSnapshot = await getDocs(documentsQuery);
-                  const documentsData = docsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-                  saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
-                  mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, new Date().toISOString());
-                  console.log(`Full sync: ${documentsData.length} documents from Firebase`);
-                }
-              } catch (error) {
-                console.error('Error syncing documents:', error);
+              const { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
+              applyBootstrappedJobDocumentCache(role, jobsData, documentsData);
+              mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
+              mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, new Date().toISOString());
+              if (role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion) {
+                versionUpdates.jobsVersion = remoteJobsVersion;
               }
-              versionUpdates.documentsVersion = remoteDocsVersion;
+              if (role !== 'dev' && remoteDocsVersion !== localDocsVersion) {
+                versionUpdates.documentsVersion = remoteDocsVersion;
+              }
             })());
           }
-        }
-        
-        // --- CLIENTS VERSION CHECK ---
-        {
+
           const remoteClientsVersion = remoteData.clientsVersion || 0;
           const localClientsVersion = localVersions.clientsVersion || 0;
-          
           if (remoteClientsVersion !== localClientsVersion) {
             console.log(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
-            
+
             fetchPromises.push((async () => {
               const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
               if (clientsData !== null) {
@@ -638,61 +586,83 @@ export function CacheProvider({ children }: { children: ReactNode }) {
               versionUpdates.clientsVersion = remoteClientsVersion;
             })());
           }
-        }
-        
-        // --- WORKERS VERSION CHECK (manager only) ---
-        if (role === 'manager') {
-          const remoteWorkersVersion = remoteData.workersVersion || 0;
-          const localWorkersVersion = localVersions.workersVersion || 0;
-          
-          if (remoteWorkersVersion !== localWorkersVersion) {
-            console.log(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
-            
-            fetchPromises.push((async () => {
-              const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
-              if (workersData !== null) {
-                saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
-              }
-              versionUpdates.workersVersion = remoteWorkersVersion;
-            })());
+
+          if (role === 'manager') {
+            const remoteWorkersVersion = remoteData.workersVersion || 0;
+            const localWorkersVersion = localVersions.workersVersion || 0;
+
+            if (remoteWorkersVersion !== localWorkersVersion) {
+              console.log(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
+
+              fetchPromises.push((async () => {
+                const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+                if (workersData !== null) {
+                  saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
+                }
+                versionUpdates.workersVersion = remoteWorkersVersion;
+              })());
+            }
+          }
+
+          if (role !== 'dev') {
+            const remoteCompanyInventoryVersion = remoteData.companyInventoryVersion || 0;
+            const localCompanyInventoryVersion = localVersions.companyInventoryVersion || 0;
+
+            if (remoteCompanyInventoryVersion !== localCompanyInventoryVersion) {
+              console.log(`Company inventory version changed: local=${localCompanyInventoryVersion}, remote=${remoteCompanyInventoryVersion}`);
+
+              fetchPromises.push((async () => {
+                const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
+                if (companyInventoryData !== null) {
+                  saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, companyInventoryData);
+                  setCompanyInventory(companyInventoryData);
+                }
+                versionUpdates.companyInventoryVersion = remoteCompanyInventoryVersion;
+              })());
+            }
+          }
+
+          if (fetchPromises.length > 0) {
+            await Promise.all(fetchPromises);
+          }
+
+          if (Object.keys(versionUpdates).length > 0) {
+            const updatedVersions = { ...localVersions, ...versionUpdates };
+            saveToLocalCache(CACHE_KEYS.COMPANY_VERSIONS, updatedVersions);
+            companyPollIdleCountRef.current = 0;
+          } else {
+            companyPollIdleCountRef.current += 1;
+          }
+        } catch (error) {
+          console.error('Company sync polling error:', error);
+        } finally {
+          companyPollInFlightRef.current = false;
+          if (listenersActiveRef.current) {
+            scheduleNextCompanySyncPoll();
           }
         }
-        
-        // I2: Run all fetches in parallel
-        if (fetchPromises.length > 0) {
-          await Promise.all(fetchPromises);
+      };
+
+      companyPollIdleCountRef.current = 0;
+      void pollCompanySyncState();
+
+      companyUnsubscribeRef.current = () => {
+        if (pollTimeoutId) {
+          clearTimeout(pollTimeoutId);
+          pollTimeoutId = null;
         }
-        
-        // Save updated company versions (after all fetches complete)
-        if (Object.keys(versionUpdates).length > 0) {
-          const updatedVersions = { ...localVersions, ...versionUpdates };
-          saveToLocalCache(CACHE_KEYS.COMPANY_VERSIONS, updatedVersions);
-        }
-        
-      }, (error) => {
-        console.error('Company cache listener error:', error);
-      });
+        companyPollInFlightRef.current = false;
+        companyPollIdleCountRef.current = 0;
+      };
     }
     
-    // =====================================================
-    // I9: COMPANY INVENTORY LISTENER (consistent lifecycle)
-    // Replaces the ad-hoc onSnapshot in CompanyInventory.js
-    // =====================================================
-    if (companyId && role !== 'dev') {
-      const companyInventoryRef = doc(db, 'companies', companyId, 'data', 'inventory');
-      inventoryUnsubscribeRef.current = onSnapshot(companyInventoryRef, (snapshot) => {
-        const data = snapshot.exists() ? snapshot.data()! : {} as Record<string, any>;
-        setCompanyInventory(Array.isArray(data.parts) ? data.parts : []);
-      }, (error) => {
-        console.error('Company inventory listener error:', error);
-      });
-    }
+    inventoryUnsubscribeRef.current = null;
     
     // Mark listeners as active
     listenersActiveRef.current = true;
     
     console.log(`Cache listeners set up for ${role}`);
-  }, [fetchDataFromFirebase, fetchDocumentById, saveToLocalCache, getWid]);
+  }, [applyBootstrappedJobDocumentCache, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, saveToLocalCache]);
 
   /**
    * Initialize cache for a user (called on login/app start)
@@ -729,9 +699,46 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       let role = cachedData.role;
       let companyId = cachedData.companyId;
       let profileData = cachedData.profile;
+      let shouldForceFreshBootstrap = !cachedData.hasCache;
+
+      if (uid && cachedData.hasCache && !cachedData.identityMismatch) {
+        const resolvedProfile = await fetchDataFromFirebase('profile', uid, '', role || '');
+
+        if (!resolvedProfile) {
+          console.error('? Could not resolve profile from Firebase');
+          setIsLoading(false);
+          return null;
+        }
+
+        const resolvedRole = typeof resolvedProfile.role === 'string'
+          ? resolvedProfile.role.toLowerCase()
+          : null;
+        const resolvedCompanyId = typeof resolvedProfile.companyId === 'string'
+          ? resolvedProfile.companyId.trim() || null
+          : null;
+        const companyMismatch = isScopedCacheCompanyMismatch(companyId, resolvedCompanyId);
+        const roleMismatch = Boolean(role && resolvedRole && role !== resolvedRole);
+
+        if (companyMismatch || roleMismatch || !profileData) {
+          console.warn('[CACHE] Refreshing scoped cache metadata from live profile', {
+            uid,
+            cachedCompanyId: companyId,
+            resolvedCompanyId,
+            companyMismatch,
+            roleMismatch,
+          });
+          profileData = resolvedProfile;
+          role = resolvedRole || role;
+          companyId = resolvedCompanyId;
+          shouldForceFreshBootstrap = true;
+
+          setMmkvScope(uid, companyId);
+          saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
+        }
+      }
       
       // If we have cached metadata, use it
-      if (!cachedData.identityMismatch && uid && role && companyId && profileData) {
+      if (!cachedData.identityMismatch && uid && role && companyId && profileData && !shouldForceFreshBootstrap) {
         console.log(`?? Using cached credentials: ${uid} (${role})`);
       } else {
         // Try to get from cached profile
@@ -784,7 +791,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       console.log(`?? Cache init: ${uid} (${role}) @ ${companyId}`);
       
       // STEP 3: Check if this is first time (no local cache) or returning user
-      if (!cachedData.hasCache) {
+      if (shouldForceFreshBootstrap) {
         console.log('?? No local cache found, performing full fresh fetch...');
         await fetchAllFresh(uid || '', role || '', companyId || '');
         // Check if business_info exists in Firestore (don't cache the data itself)
@@ -829,10 +836,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       // Fetch subscription for all roles
       if (companyId) {
         try {
-          const subRef = doc(db, 'companies', companyId, 'data', 'subscription');
-          const subSnap = await getDoc(subRef);
-          if (subSnap.exists()) {
-            const subData = subSnap.data() as Subscription;
+          const subData = await fetchDataFromFirebase('subscription', uid, companyId, role);
+          if (subData) {
             setSubscription(subData);
             saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
           }
@@ -849,6 +854,13 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         // Basic and dev roles: ensure inventory is empty
         saveToLocalCache(CACHE_KEYS.INVENTORY, []);
       }
+
+      if (role !== 'dev' && companyId) {
+        const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
+        if (companyInventoryData) saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, companyInventoryData);
+      } else {
+        saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, []);
+      }
       
       // Fetch role-specific standard fields
       if (role === 'manager') {
@@ -859,13 +871,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         console.log('?? Dev role: skipping workers fetch');
       }
       
-      // Check if business_info exists in Firestore (for registration check)
-      // Don't cache the data - Cloud Functions fetch it directly for security
+      // Check if business_info exists through the read model so SQL-backed
+      // companies do not depend on direct Firestore reads for registration state.
       if (role !== 'worker' && role !== 'dev' && companyId) {
         try {
-          const bizRef = doc(db, 'companies', companyId, 'data', 'business_info');
-          const bizDoc = await getDoc(bizRef);
-          mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, bizDoc.exists() ? 'true' : 'false');
+          const businessInfo = await fetchDataFromFirebase('business_info', uid, companyId, role);
+          mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, businessInfo ? 'true' : 'false');
         } catch (e) {
           console.warn('Could not check business_info existence:', (e as Error).message);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, 'false');
@@ -877,26 +888,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       const { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
       
       // Save fetched jobs to local cache (unified jobs collection)
-      if (role === 'manager') {
-        saveToLocalCache(CACHE_KEYS.COMPANY_JOBS, jobsData);
-        saveToLocalCache(CACHE_KEYS.JOBS, []);
-        saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
-      } else if (role === 'worker') {
-        saveToLocalCache(CACHE_KEYS.JOBS, jobsData);
-        saveToLocalCache(CACHE_KEYS.DOCUMENTS, []);
-      } else if (role === 'basic') {
-        // Basic role: NO jobs at all, only documents
-        saveToLocalCache(CACHE_KEYS.JOBS, []);
-        saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
-      } else if (role === 'dev') {
-        // Dev role: NO jobs, NO documents (support-only)
-        saveToLocalCache(CACHE_KEYS.JOBS, []);
-        saveToLocalCache(CACHE_KEYS.DOCUMENTS, []);
-      } else {
-        // User role
-        saveToLocalCache(CACHE_KEYS.JOBS, jobsData);
-        saveToLocalCache(CACHE_KEYS.DOCUMENTS, documentsData);
-      }
+      applyBootstrappedJobDocumentCache(role, jobsData, documentsData);
       
       // Fetch clients for all roles (shared company collection)
       if (companyId) {
@@ -911,29 +903,19 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       const versions: Record<string, any> = {};
       const companyVersions: Record<string, any> = {};
       
-      // Fetch user cache doc
-      const userCacheRef = doc(db, 'users', uid, 'data', 'cache');
-      const userCacheSnap = await getDoc(userCacheRef);
-      if (userCacheSnap.exists()) {
-        const userCacheData = userCacheSnap.data() as Record<string, any>;
-        Object.keys(userCacheData).forEach(key => {
-          if (key !== 'lastUpdated') {
-            versions[key] = userCacheData[key];
-          }
-        });
+      const remoteUserState = await fetchUserSyncState();
+      for (const key of ['profile', 'inventory', 'subscription']) {
+        if (remoteUserState[key as keyof typeof remoteUserState] !== undefined) {
+          versions[key] = remoteUserState[key as keyof typeof remoteUserState];
+        }
       }
       
-      // Fetch company cache doc (summary versions: jobsVersion, documentsVersion, clientsVersion, workersVersion)
+      // Fetch company sync state from the backend read model
       if (companyId) {
-        const companyCacheRef = doc(db, 'companies', companyId, 'data', 'cache');
-        const companyCacheSnap = await getDoc(companyCacheRef);
-        if (companyCacheSnap.exists()) {
-          const companyCacheData = companyCacheSnap.data() as Record<string, any>;
-          // Store summary version fields
-          for (const key of ['jobsVersion', 'documentsVersion', 'clientsVersion', 'workersVersion']) {
-            if (companyCacheData[key] !== undefined) {
-              companyVersions[key] = companyCacheData[key];
-            }
+        const remoteCompanyState = await fetchCompanySyncState(companyId);
+        for (const key of ['jobsVersion', 'documentsVersion', 'clientsVersion', 'workersVersion', 'companyInventoryVersion']) {
+          if (remoteCompanyState[key as keyof typeof remoteCompanyState] !== undefined) {
+            companyVersions[key] = remoteCompanyState[key as keyof typeof remoteCompanyState];
           }
         }
       }
@@ -954,7 +936,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   // @ts-ignore: fetchClients is declared after fetchAllFresh
-  }, [fetchDataFromFirebase, fetchAllRecentJobs, saveToLocalCache, setupCacheListeners]);
+  }, [applyBootstrappedJobDocumentCache, fetchCompanySyncState, fetchDataFromFirebase, fetchAllRecentJobs, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
 
   /**
    * Pre-increment a summary version field locally.

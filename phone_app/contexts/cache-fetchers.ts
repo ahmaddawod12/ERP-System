@@ -1,157 +1,157 @@
 /**
  * cache-fetchers.ts
  *
- * Pure Firebase data-fetching functions extracted from CacheContext.
- * These functions are stateless: they accept all required parameters and return
- * raw data without closing over any React component state.
- *
- * Extracted to keep CacheContext focused on orchestration and state management.
+ * Centralized read-model fetchers for CacheContext.
+ * These no longer read business data directly from Firestore.
  */
 
-import {
-  db,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-} from '../firebase';
 import {
   mmkvHelpers,
   CACHE_KEYS,
-  getCacheStartDate,
 } from './mmkv-storage';
-import {
-  buildJobMembershipQueryValues,
-  roleUsesScopedJobAccess,
-} from './job-membership';
+import { callHttpFunction } from '../utils/httpFunctions';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function buildJobMembershipConstraints(wid: string | number | null): any[] {
-  const values = buildJobMembershipQueryValues(wid);
-  if (values.length === 0) return [];
-  return [
-    values.length === 1
-      ? where('wid', '==', values[0])
-      : where('wid', 'in', values),
-  ];
+interface BootstrapPayload {
+  profile: any | null;
+  subscription: any | null;
+  businessInfo: any | null;
+  inventory: { parts: any[]; nextId: number; lastUpdated: string };
+  companyInventory: { parts: any[]; nextId: number; lastUpdated: string };
+  workers: any[] | Record<string, any>;
+  clients: any[];
+  jobs: any[];
+  documents: any[];
 }
 
-// ─── Exported fetchers ───────────────────────────────────────────────────────
+interface CompanySyncStatePayload {
+  jobsVersion: number;
+  documentsVersion: number;
+  clientsVersion: number;
+  workersVersion: number;
+  companyInventoryVersion: number;
+  updatedAt?: string;
+}
 
-/**
- * Fetch a single Firestore-backed field for a user/company.
- * Covers: profile, inventory, workers, business_info, clients, subscription.
- */
+interface UserSyncStatePayload {
+  profile: number;
+  inventory: number;
+  subscription: number;
+  updatedAt?: string;
+}
+
+async function readBootstrap(companyId: string, includeCollections = false): Promise<BootstrapPayload> {
+  return callHttpFunction<BootstrapPayload>('readModelV1', {
+    kind: 'bootstrap',
+    ...(companyId ? { companyId } : {}),
+    includeCollections,
+  });
+}
+
+function normalizeWorkersArray(workers: any[] | Record<string, any> | null | undefined) {
+  if (!workers) return {};
+  if (!Array.isArray(workers)) return workers;
+  return workers.reduce((accumulator: Record<string, any>, worker: any) => {
+    const wid = String(worker?.wid ?? '');
+    if (wid) {
+      accumulator[wid] = worker;
+    }
+    return accumulator;
+  }, {});
+}
+
 export async function fetchDataFromFirebase(
   field: string,
   uid: string,
   companyId: string,
   role: string,
 ): Promise<any> {
-  console.log(`?? [FIREBASE READ] Fetching ${field} from Firebase...`);
+  console.log(`?? [READ MODEL] Fetching ${field} from backend...`);
 
   try {
     switch (field) {
       case 'profile': {
-        const profileRef = doc(db, 'users', uid, 'data', 'profile');
-        const profileDoc = await getDoc(profileRef);
-        return profileDoc.exists() ? profileDoc.data() : null;
-      }
-
-      case 'inventory': {
-        const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
-        const inventoryDoc = await getDoc(inventoryRef);
-        if (inventoryDoc.exists()) {
-          return inventoryDoc.data()!.parts || [];
-        }
-        return [];
-      }
-
-      case 'workers': {
-        if (role === 'manager') {
-          const workersRef = collection(db, 'companies', companyId, 'workers');
-          const snapshot = await getDocs(workersRef);
-          const workersData: Record<string, any> = {};
-          snapshot.forEach((docSnap: any) => {
-            const workerDoc = docSnap.data() || {};
-            const wid = docSnap.id;
-            workersData[wid] = { ...workerDoc, wid };
-          });
-          return workersData;
-        }
-        return {};
-      }
-
-      case 'business_info':
-        // No longer cached — Cloud Functions fetch it directly for security.
-        return null;
-
-      case 'clients': {
-        if (!companyId) return [];
-        const clientsRef = collection(db, 'companies', companyId, 'clients');
-        const snapshot = await getDocs(clientsRef);
-        const clientsList: any[] = [];
-        snapshot.forEach((d: any) => {
-          clientsList.push({ id: d.id, ...d.data() });
-        });
-        clientsList.sort((a, b) => parseInt(a.id) - parseInt(b.id));
-        return clientsList;
+        const bootstrap = await readBootstrap(companyId, false);
+        return bootstrap.profile || null;
       }
 
       case 'subscription': {
-        if (!companyId) return null;
-        const subRef = doc(db, 'companies', companyId, 'data', 'subscription');
-        const subSnap = await getDoc(subRef);
-        return subSnap.exists() ? subSnap.data() : null;
+        const bootstrap = await readBootstrap(companyId, false);
+        return bootstrap.subscription || null;
+      }
+
+      case 'inventory': {
+        const inventory = await callHttpFunction<{ parts: any[]; nextId: number; lastUpdated: string }>('readModelV1', {
+          kind: 'inventory',
+          ...(companyId ? { companyId } : {}),
+          scope: 'user',
+          targetUid: uid,
+        });
+        return Array.isArray(inventory?.parts) ? inventory.parts : [];
+      }
+
+      case 'companyInventory': {
+        if (!companyId) return [];
+        const inventory = await callHttpFunction<{ parts: any[]; nextId: number; lastUpdated: string }>('readModelV1', {
+          kind: 'inventory',
+          companyId,
+          scope: 'company',
+        });
+        return Array.isArray(inventory?.parts) ? inventory.parts : [];
+      }
+
+      case 'workers': {
+        if (role !== 'manager' || !companyId) {
+          return {};
+        }
+        const workers = await callHttpFunction<any[]>('readModelV1', {
+          kind: 'workers',
+          companyId,
+        });
+        return normalizeWorkersArray(workers);
+      }
+
+      case 'business_info': {
+        const bootstrap = await readBootstrap(companyId, false);
+        return bootstrap.businessInfo || null;
+      }
+
+      case 'clients': {
+        if (!companyId) return [];
+        return callHttpFunction<any[]>('readModelV1', {
+          kind: 'clients',
+          companyId,
+        });
       }
 
       default:
         return null;
     }
   } catch (error) {
-    console.error(`Error fetching ${field} from Firebase:`, error);
+    console.error(`Error fetching ${field} from read model:`, error);
     return null;
   }
 }
 
-/**
- * Fetch a single job or document by ID.
- * Tries the `jobs` sub-collection first, then `documents`.
- */
 export async function fetchDocumentById(
   docId: string,
   _uid: string,
   companyId: string,
   _role: string,
 ): Promise<any | null> {
-  console.log(`[FIREBASE READ] Fetching document ${docId} from Firebase...`);
+  console.log(`[READ MODEL] Fetching document ${docId} from backend...`);
 
   try {
-    let docRef = doc(db, 'companies', companyId, 'jobs', docId);
-    let docSnap = await getDoc(docRef);
-    if (docSnap.exists()) return { id: docId, ...docSnap.data() };
-
-    docRef = doc(db, 'companies', companyId, 'documents', docId);
-    docSnap = await getDoc(docRef);
-    if (docSnap.exists()) return { id: docId, ...docSnap.data() };
-
-    console.warn(`Document ${docId} not found in jobs or documents collection`);
-    return null;
+    return await callHttpFunction<any | null>('readModelV1', {
+      kind: 'recordById',
+      companyId,
+      recordId: docId,
+    });
   } catch (error) {
     console.error(`Error fetching document ${docId}:`, error);
     return null;
   }
 }
 
-/**
- * Fetch all recent jobs (within 90 days for finished + all pending/waiting)
- * and documents from Firebase. Used for first-time cache population.
- *
- * Reads `wid` directly from MMKV so callers don't need to pass it.
- */
 export async function fetchAllRecentJobs(
   _uid: string,
   companyId: string,
@@ -162,91 +162,62 @@ export async function fetchAllRecentJobs(
     return { jobsData: [], documentsData: [] };
   }
 
-  console.log('[FIREBASE READ] Fetching all recent jobs from Firebase (first-time init)...');
-  const ninetyDaysAgo = getCacheStartDate().toISOString();
-  const wid = mmkvHelpers.getString(CACHE_KEYS.USER_WID);
+  console.log('[READ MODEL] Fetching bootstrap jobs/documents from backend...');
 
   try {
-    let jobsData: any[] = [];
-    let documentsData: any[] = [];
-
-    if (role === 'manager') {
-      const jobsRef = collection(db, 'companies', companyId, 'jobs');
-      try {
-        const [pendingSnapshot, recentSnapshot] = await Promise.all([
-          getDocs(query(jobsRef, where('status', 'in', ['pending', 'waiting']))),
-          getDocs(query(jobsRef, where('updatedAt', '>=', ninetyDaysAgo))),
-        ]);
-        const merged = new Map();
-        pendingSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-        recentSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-        jobsData = Array.from(merged.values());
-      } catch {
-        const jobsSnapshot = await getDocs(jobsRef);
-        const allJobs = jobsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-        jobsData = allJobs.filter((j: any) => {
-          if (j.status === 'pending' || j.status === 'waiting') return true;
-          const dateField = j.updatedAt || j.createdAt;
-          if (!dateField) return true;
-          return dateField >= ninetyDaysAgo;
-        });
-      }
-      console.log(`Fetched ${jobsData.length} jobs for manager`);
-
-      const documentsRef = collection(db, 'companies', companyId, 'documents');
-      const documentsSnapshot = await getDocs(
-        query(documentsRef, where('createdAt', '>=', ninetyDaysAgo)),
-      );
-      documentsData = documentsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      console.log(`Fetched ${documentsData.length} documents for manager`);
-
-    } else if (role === 'worker' || role === 'user') {
-      const jobsRef = collection(db, 'companies', companyId, 'jobs');
-      const scopedConstraints = buildJobMembershipConstraints(wid);
-      if (scopedConstraints.length > 0) {
-        try {
-          const [pendingSnapshot, recentSnapshot] = await Promise.all([
-            getDocs((query as any)(jobsRef, ...scopedConstraints, where('status', 'in', ['pending', 'waiting']))),
-            getDocs((query as any)(jobsRef, ...scopedConstraints, where('updatedAt', '>=', ninetyDaysAgo))),
-          ]);
-          const merged = new Map();
-          pendingSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-          recentSnapshot.docs.forEach((d: any) => merged.set(d.id, { id: d.id, ...d.data() }));
-          jobsData = Array.from(merged.values());
-        } catch {
-          const jobsSnapshot = await getDocs(query(jobsRef, ...scopedConstraints));
-          const allJobs = jobsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-          jobsData = allJobs.filter((j: any) => {
-            if (j.status === 'pending' || j.status === 'waiting') return true;
-            const dateField = j.updatedAt || j.createdAt;
-            if (!dateField) return true;
-            return dateField >= ninetyDaysAgo;
-          });
-        }
-      }
-      console.log(`Fetched ${jobsData.length} jobs for ${role}`);
-
-      if (role === 'user') {
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        const documentsSnapshot = await getDocs(
-          query(documentsRef, where('createdAt', '>=', ninetyDaysAgo)),
-        );
-        documentsData = documentsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-        console.log(`Fetched ${documentsData.length} documents for user`);
-      }
-
-    } else if (role === 'basic') {
-      const documentsRef = collection(db, 'companies', companyId, 'documents');
-      const documentsSnapshot = await getDocs(
-        query(documentsRef, where('createdAt', '>=', ninetyDaysAgo)),
-      );
-      documentsData = documentsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-      console.log(`Fetched ${documentsData.length} documents for basic user`);
-    }
-
-    return { jobsData, documentsData };
+    const bootstrap = await readBootstrap(companyId, true);
+    return {
+      jobsData: Array.isArray(bootstrap.jobs) ? bootstrap.jobs : [],
+      documentsData: Array.isArray(bootstrap.documents) ? bootstrap.documents : [],
+    };
   } catch (error) {
-    console.error('Error fetching all recent jobs:', error);
+    console.error('Error fetching bootstrap jobs/documents:', error);
     return { jobsData: [], documentsData: [] };
+  }
+}
+
+export async function fetchCompanySyncState(companyId: string): Promise<CompanySyncStatePayload> {
+  if (!companyId) {
+    return {
+      jobsVersion: 0,
+      documentsVersion: 0,
+      clientsVersion: 0,
+      workersVersion: 0,
+      companyInventoryVersion: 0,
+      updatedAt: '',
+    };
+  }
+
+  try {
+    return await callHttpFunction<CompanySyncStatePayload>('readModelV1', {
+      kind: 'companySyncState',
+      companyId,
+    });
+  } catch (error) {
+    console.error('Error fetching company sync state from read model:', error);
+    return {
+      jobsVersion: 0,
+      documentsVersion: 0,
+      clientsVersion: 0,
+      workersVersion: 0,
+      companyInventoryVersion: 0,
+      updatedAt: '',
+    };
+  }
+}
+
+export async function fetchUserSyncState(): Promise<UserSyncStatePayload> {
+  try {
+    return await callHttpFunction<UserSyncStatePayload>('readModelV1', {
+      kind: 'userSyncState',
+    });
+  } catch (error) {
+    console.error('Error fetching user sync state from read model:', error);
+    return {
+      profile: 0,
+      inventory: 0,
+      subscription: 0,
+      updatedAt: '',
+    };
   }
 }

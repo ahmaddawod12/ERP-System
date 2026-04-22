@@ -84,9 +84,9 @@ export default function WorkersClient() {
     }
   };
 
-  const handleRoleChange = async (wid: string | number, role: Role) => {
+  const handleRoleChange = async (wid: string | number, workerUid: string | undefined, role: Role) => {
     if (!companyId) return;
-    await updateWorkerRole(companyId, String(wid), role);
+    await updateWorkerRole(companyId, String(workerUid || ""), String(wid), role);
     await load();
     toast({ title: "Worker role updated", variant: "success" });
   };
@@ -225,7 +225,7 @@ export default function WorkersClient() {
                   render: (row) => (
                     <select
                       defaultValue={row.role}
-                      onChange={(event) => void handleRoleChange(row.wid, event.target.value as Role)}
+                      onChange={(event) => void handleRoleChange(row.wid, row.uid, event.target.value as Role)}
                       className="dashboard-table-select"
                     >
                       <option value="worker">worker</option>

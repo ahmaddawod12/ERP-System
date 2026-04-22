@@ -1,148 +1,203 @@
 # Smart-Job ERP Website
 
-Next.js App Router website for Smart-Job ERP (TypeScript + Tailwind + Firebase Web/Admin SDK).
+The website is the Next.js application for Smart-Job ERP. It owns public pages, authentication entry points, website-only onboarding, and the web dashboard/admin flows.
 
-## Stack
+## What Lives Here
 
-- Next.js App Router + TypeScript
-- Firebase Web SDK (Auth + Firestore)
-- Firebase Admin SDK (API routes + privileged proxy/auth checks)
+- Public marketing pages and product information
+- Login and password reset
+- User registration
+- Website-only onboarding and company join flows
+- Dashboard pages under `/app/*`
+- Server-side API proxies to Cloud Functions
+- Session handling for protected web routes
+
+## Current Stack
+
+- Next.js `^16.2.3`
+- React / React DOM `19.2.3`
+- TypeScript `^5`
+- Firebase Web SDK `^12.9.0`
+- Firebase Admin `^13.6.1`
 - React Hook Form + Zod
-- Tailwind CSS v4 with `tailwind-merge` (via `cn()` utility in `src/lib/utils.ts`)
-- EN/HE/AR i18n with RTL
-- Dark/light theme persistence
+- Tailwind CSS v4
+- `tailwind-merge` + `clsx`
+- `jose` for server/session token work
 
-## Route Coverage
+## Current Product Role
 
-- Public: `/`, `/features`, `/solutions/hvac`, `/solutions/field-services`, `/pricing`, `/security`, `/docs`, `/docs/*`, `/contact`, `/privacy`, `/terms`
-- Auth: `/register`, `/login`, `/forgot-password`
-- Protected: `/app`, `/app/jobs`, `/app/workers`, `/app/inventory`, `/app/inventory-picks`, `/app/clients`, `/app/documents`, `/app/settings`, `/app/upgrade`, `/app/admin`
+The website is the only supported onboarding surface.
 
-## Registration and Onboarding
+- `/register` creates Firebase Auth credentials.
+- `/onboarding` completes provisioning through backend flows.
+- Worker join flow is website-driven through `/api/onboarding/join-company`.
+- Basic workspace is exposed as a website choice, but the backend stores canonical values: `accountType: solo`, `role: basic`.
 
-- `/register` only creates Firebase Auth credentials.
-- `/onboarding` writes profile/business data through backend functions:
-  - Manager/solo provisioning: callable `registerBusinessV1`
-  - Worker join flow: `/api/onboarding/join-company` -> HTTP `joinCompanyV1`
-- Website keeps a UI-only Basic workspace choice, but backend writes stay canonical: `accountType: solo`, `role: basic`.
-- `companyId` is backend-assigned from `system/data/comid` and never derived from `uid`.
+The website is not a direct SQL client.
 
-## API Endpoints (Next.js -> Cloud Functions)
+- Protected writes go to Cloud Functions.
+- Read-model and protected backend routes are proxied through server API handlers.
+- The backend decides whether the active persistence layer is SQL or Firestore.
 
-- `POST /api/invites/create` -> `createInviteV1`
-- `POST /api/onboarding/join-company` -> `joinCompanyV1`
-- `POST /api/upgrades/request` -> `requestUpgradeV1`
-- `POST /api/upgrades/list` -> `listUpgradeRequestsV1`
-- `POST /api/upgrades/moderate` -> `moderateUpgradeRequestV1`
-- `POST /api/contact/request` -> `contactRequestV1` (no auth required)
-- `POST /api/auth/session` -> verifies a Firebase ID token server-side and sets the HttpOnly `__session` middleware cookie
+## Architecture Notes
 
-All endpoints return:
+### Auth model
 
-- Success: `{ ok: true, data }`
-- Failure: `{ ok: false, error: { code, message, details? } }`
+- Browser auth uses Firebase Auth.
+- Server-side protected routes rely on the `__session` cookie.
+- `/api/auth/session` verifies the Firebase ID token and sets the HttpOnly session cookie.
+- `middleware.ts` protects `/app/*` routes.
 
-## Document Generation (Pub/Sub)
+### Backend data flow
 
-Current document flows:
+- The website calls Next.js API routes.
+- API routes validate input and proxy to Cloud Functions.
+- Cloud Functions handle authorization, business rules, and persistence.
+- In SQL mode, the backend writes/reads through `@smart-job/db`.
 
-1. Preview: `publishPreviewTask` callable -> Pub/Sub `document-preview` -> Cloud Run PDF -> `documentTasks/{taskId}.previewURL`
-2. Generate: `publishGenerateTask` callable -> Pub/Sub `document-generate` -> Cloud Run PDF -> document record stores `storagePath`, while `documentTasks/{taskId}.downloadURL` carries a short-lived signed URL for immediate UX
-3. Tax invoice (305): `getInvoiceApproval` callable (me-west1) with a required `idempotencyKey` -> Tax Authority API -> PDF task
-4. Archive reads: backend callables such as `fetchArchiveMonthV1` load and filter archive JSON server-side before data is returned to clients
+### Route implementation pattern
 
-`useDocumentTask` (`src/hooks/use-document-task.ts`) manages task lifecycle via Firestore listeners on `documentTasks/{taskId}`.
-Saved history downloads should resolve through `createDocumentDownloadUrlV1`, not persisted bearer URLs on the document doc.
-Cloud Run PDF generation owns create-only non-tax document finalization and duplicate/stale task handling; website code must not write document records directly.
+All page routes follow the current server/client split:
 
-## Auth + Security Notes
+- `page.tsx` is the server wrapper and metadata entry.
+- `page-client.tsx` contains client hooks and interactivity.
 
-- Production API calls require `Authorization: Bearer <Firebase ID token>`.
-- Server routes validate request JSON with Zod before proxying.
-- Firestore rules lock all writes to `clients`, `jobs`, `documents`, `invites`, and `workers` collections (`allow create, update, delete: if false`). Only Cloud Functions (Admin SDK) can mutate them.
-- Manager membership docs at `companies/{companyId}/managers/{mid}` are readable to company members/admins but mutation-locked like workers.
-- Support and moderation flows should go through server/API proxies or Functions, not direct browser writes.
-- Server-side validation enforces `MAX_ITEMS_PER_DOCUMENT = 100` (tax invoices) and `MAX_JOB_ARRAY_LENGTH = 200` (job array fields).
-- Firestore rules remain least-privilege and role-scoped (`manager`, `worker`, `user`, `basic`, `dev`).
-- Storage access for company documents, company job files, and company archives is backend-controlled; browser code must use signed URLs or backend archive functions instead of direct bucket reads.
-- `auth-provider.tsx` sends Firebase ID tokens to `/api/auth/session`; that route sets the `HttpOnly` `__session` cookie used by `middleware.ts`. Do not write Firebase ID tokens into JavaScript-readable cookies.
-- Login redirect validation blocks `//` prefix URLs to prevent open redirects.
-- `buildAuthedJsonHeaders()` calls `getIdToken(true)` to force-refresh the Firebase ID token.
-- Invite, join-company, upgrade-request, and contact HTTP functions use Firestore-backed rate limiting in Functions; Next.js API routes are thin validation/proxy layers.
-- CSP includes `base-uri 'self'` and `form-action 'self'` directives. `'unsafe-inline'` in `script-src` is required by Next.js hydration — migrate to nonce-based CSP when Next.js supports it.
-- All page routes (dashboard and public auth pages) follow the server+client pattern: `page.tsx` (server, exports metadata) + `page-client.tsx` (client shell).
+## Route Map
 
-## Data Model
+### Public routes
 
-```
-users/{uid}/data/profile                      -> user profile
-users/{uid}/data/cache                        -> user cache versioning
-users/{uid}/data/inventory                    -> { parts: [...], nextId, lastUpdated }
+- `/`
+- `/features`
+- `/solutions/hvac`
+- `/solutions/field-services`
+- `/pricing`
+- `/security`
+- `/docs`
+- `/contact`
+- `/privacy`
+- `/terms`
 
-companies/{companyId}                         -> { companyId, createdBy, createdAt }
-companies/{companyId}/data/subscription       -> { tier, status, enabledModules }
-companies/{companyId}/data/business_info      -> business registration data
-companies/{companyId}/data/inventory          -> { parts: [...], nextId, lastUpdated }
-companies/{companyId}/data/cache              -> company cache versioning
-companies/{companyId}/tax_invoice_reservations/{documentId} -> reserved/approved/rejected invoice states
-companies/{companyId}/workers/{wid}           -> worker membership + role
-companies/{companyId}/managers/{mid}          -> manager membership + role
-companies/{companyId}/clients/{clientId}      -> client records
-companies/{companyId}/jobs/{jobId}            -> all jobs (status determines lifecycle)
-companies/{companyId}/documents/{docId}       -> generated documents (record + storagePath)
-companies/{companyId}/invites/{inviteId}      -> onboarding invite codes
+### Auth routes
 
-system/data/comid                             -> { comid: nextCompanyId, ... }
-upgrade_requests/{id}                         -> upgrade request tickets
-documentTasks/{taskId}                        -> preview/generate task state
-```
+- `/register`
+- `/login`
+- `/forgot-password`
+- `/onboarding`
 
-Inventory is still stored as an array document today, but backend mutations enforce a Firestore document-size budget. Do not add browser-side direct writes or a website-only subcollection migration.
+### Protected app routes
 
-Canonical IDs:
+- `/app`
+- `/app/jobs`
+- `/app/workers`
+- `/app/inventory`
+- `/app/inventory-picks`
+- `/app/clients`
+- `/app/documents`
+- `/app/settings`
+- `/app/upgrade`
+- `/app/admin`
 
-- Company IDs: backend-assigned numeric string from `system/data/comid`
-- Job IDs: server-generated sequential string IDs from `counters/jnext`
-- Tax invoice IDs: reserved as `TI{documentNumber}-{companyId}` before approval finalization
+### API routes in this app
+
+- `/api/auth/session`
+- `/api/invites/create`
+- `/api/onboarding/join-company`
+- `/api/contact/request`
+- `/api/documents/*`
+- `/api/read-model`
+- `/api/upgrades/request`
+- `/api/upgrades/list`
+- `/api/upgrades/moderate`
+
+## Persistence And Data Model Context
+
+The website operates against a backend that is SQL-capable and Firebase-integrated.
+
+- SQL becomes the backend persistence layer when the Functions environment is configured for SQL mode.
+- Firebase still remains part of the product for Auth, Storage, Functions, and some compatibility flows.
+- Direct client writes to protected business collections are intentionally blocked by Firestore rules.
+- Stored document/job file references use canonical `storagePath` values; the website requests short-lived URLs from the backend when needed.
+
+## Important Backend Assumptions
+
+- `uid` is the user identity.
+- `companyId` is the company scope.
+- Account types are canonical: `solo` and `business` only.
+- Job/document/client/invite/worker writes must go through the backend.
+- Company documents, company job files, and company archives are backend-controlled resources.
 
 ## Environment Variables
 
-Copy `.env.local.example` to `.env.local` and set:
+Copy `.env.local.example` to `.env.local`.
 
-- Public Firebase:
-  - `NEXT_PUBLIC_FIREBASE_API_KEY`
-  - `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
-  - `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
-  - `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
-  - `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
-  - `NEXT_PUBLIC_FIREBASE_APP_ID`
-- Admin SDK:
-  - `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON`
-  - or split vars: `FIREBASE_ADMIN_PROJECT_ID`, `FIREBASE_ADMIN_CLIENT_EMAIL`, `FIREBASE_ADMIN_PRIVATE_KEY`
-- Optional:
-  - `CLOUDRUN_PDF_URL`
+### Required public Firebase config
 
-### Emulator Variables
+- `NEXT_PUBLIC_FIREBASE_API_KEY`
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
+- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `NEXT_PUBLIC_FIREBASE_APP_ID`
 
-- `NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true`
-- `NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`
-- `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`
+### Optional browser/emulator config
+
+- `NEXT_PUBLIC_USE_FIREBASE_EMULATOR`
+- `NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST`
+
+### Optional PDF proxy target
+
+- `CLOUDRUN_PDF_URL`
+
+### Firebase Admin config
+
+Use either the full JSON variable or the split values.
+
+- `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON`
+- `FIREBASE_ADMIN_PROJECT_ID`
+- `FIREBASE_ADMIN_CLIENT_EMAIL`
+- `FIREBASE_ADMIN_PRIVATE_KEY`
+
+### Server emulator config
+
+- `FIRESTORE_EMULATOR_HOST`
+
+### Optional local App Check support
+
+- `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY`
 
 ## Local Development
 
 ```bash
 npm install
 npm run dev
-npm test
-npm run typecheck
-npm run lint
-npm run build
 ```
 
-## Deployment (Vercel)
+App available at `http://localhost:3000`.
 
-1. Set project root to `website/`
-2. Add required env vars
-3. Provide Firebase Admin credentials
-4. Disable emulator vars in production
-5. Deploy and verify API routes with real bearer tokens
+## Scripts
+
+```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+npm run test
+npm run typecheck
+npm run seed:demo
+```
+
+## Security And Access Model
+
+- API handlers should stay thin: validate input, verify auth, proxy to backend.
+- Protected backend actions require bearer-authenticated requests.
+- Session cookie handling must remain server-side only.
+- Do not write Firebase ID tokens into browser-readable cookies.
+- Direct browser writes to locked company collections are not part of the architecture.
+
+## Deployment
+
+- Deploy this app with `website/` as the project root.
+- Configure the Firebase public variables and Admin credentials.
+- Point production traffic at the deployed Cloud Functions and Cloud Run services expected by the backend.
+
+For full setup and infrastructure steps, use the root `SETUP.md`.

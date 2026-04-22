@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "allowJs": true,
+    "checkJs": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "index.ts",
+    "config.ts",
+    "access.ts",
+    "client.ts",
+    "clients.ts",
+    "company-counters.ts",
+    "company-profiles.ts",
+    "company-sync-state.ts",
+    "document-tasks.ts",
+    "documents.ts",
+    "inventory.ts",
+    "jobs.ts",
+    "membership.ts",
+    "provisioning.ts",
+    "read-model.ts",
+    "schema.ts",
+    "tax-authority.ts",
+    "tax-bookkeeping.ts",
+    "user-profiles.ts"
+  ],
+  "exclude": ["dist", "drizzle.config.js", "migrations"]
+}

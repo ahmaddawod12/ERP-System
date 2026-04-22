@@ -12,13 +12,14 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, doc, getDoc, onSnapshot, functions, httpsCallable } from '../../firebase';
+import { auth, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppButton, AppCard, AppEmptyState, AppInput, AppText, GlobalHeader, ScreenHeroCard, ScrollableContainer, SearchInput } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
+import { fetchUserInventoryParts } from '../../utils/read-model';
 
 export default function WorkerInventory() {
   const router = useRouter();
@@ -47,6 +48,7 @@ export default function WorkerInventory() {
   const alert = useAlert();
   const {
     inventory: cachedInventory,
+    companyInventory: cachedCompanyInventory,
     profile,
     getUid,
     getUserRole: getCachedUserRole,
@@ -227,26 +229,24 @@ export default function WorkerInventory() {
         setIsLoadingInventory(false);
       }
     } else {
-      // Viewing worker's inventory via WorkersMonitor → set up Firestore listener
-      const userDocRef = doc(db, 'users', targetUid, 'data', 'inventory');
+      const companyId = getCompanyId();
+      if (!companyId) {
+        setInventory([]);
+        setIsLoadingInventory(false);
+        return;
+      }
 
-      const unsubscribe = onSnapshot(userDocRef, (docSnapshot) => {
-        if (docSnapshot.exists()) {
-          const data = docSnapshot.data();
-          const partsArray = Array.isArray(data.parts) ? data.parts : [];
+      void fetchUserInventoryParts(companyId, targetUid)
+        .then((partsArray) => {
           setInventory(partsArray);
-        } else {
+        })
+        .catch((error) => {
+          console.log('Worker inventory fetch error:', error?.message || error);
           setInventory([]);
-        }
-        setIsLoadingInventory(false);
-      }, (error) => {
-        if (auth.currentUser && error.code !== 'permission-denied') {
-          console.log('Firestore listener error:', error.code);
-        }
-        setIsLoadingInventory(false);
-      });
-
-      unsubscribeRef.current = unsubscribe;
+        })
+        .finally(() => {
+          setIsLoadingInventory(false);
+        });
     }
 
     return () => {
@@ -268,27 +268,16 @@ export default function WorkerInventory() {
 
   // ─── Load company parts for manager/worker when picker opens ─
   const loadCompanyParts = useCallback(async () => {
-    const companyId = getCompanyId();
-    if (!companyId) return;
-
     setIsLoadingCompanyParts(true);
-    const companyInvRef = doc(db, 'companies', companyId, 'data', 'inventory');
-
     try {
-      const docSnap = await getDoc(companyInvRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        const parts = Array.isArray(data.parts) ? data.parts : [];
-        setCompanyParts(parts);
-      } else {
-        setCompanyParts([]);
-      }
+      const parts = Array.isArray(cachedCompanyInventory) ? cachedCompanyInventory : [];
+      setCompanyParts(parts);
     } catch (error) {
       console.error('Error loading company parts:', error);
     } finally {
       setIsLoadingCompanyParts(false);
     }
-  }, [getCompanyId]);
+  }, [cachedCompanyInventory]);
 
   // ─── Save inventory to Firestore & cache ─────────────────────
   const saveInventory = async (updatedInventory) => {

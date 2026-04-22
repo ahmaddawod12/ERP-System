@@ -43,6 +43,35 @@ export const joinCompanySchema = z
   })
   .strict();
 
+export const readModelSchema = z
+  .object({
+    kind: z.enum([
+      'bootstrap',
+      'workers',
+      'clients',
+      'jobs',
+      'documents',
+      'inventory',
+      'companySyncState',
+      'recordById',
+      'documentTask',
+    ]),
+    companyId: companyIdSchema.optional(),
+    includeCollections: z.boolean().optional(),
+    limit: z.number().int().min(1).max(10000).optional(),
+    status: z.union([z.string(), z.array(z.string())]).optional(),
+    dateField: z.enum(['createdAt', 'updatedAt', 'finishedAt', 'dueAt', 'documentDate']).optional(),
+    dateFrom: z.string().datetime().optional(),
+    dateTo: z.string().datetime().optional(),
+    documentType: z.number().int().optional(),
+    createdByUid: optionalText(200),
+    scope: z.enum(['company', 'user']).optional(),
+    targetUid: optionalText(200),
+    taskId: optionalText(200),
+    recordId: optionalText(200),
+  })
+  .strict();
+
 export const createClientSchema = z
   .object({
     companyId: companyIdSchema,

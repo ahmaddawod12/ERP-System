@@ -13,7 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
-import { auth, db, doc, getDoc, functions, httpsCallable } from '../../firebase';
+import { auth, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, shadows } from '../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -23,6 +23,7 @@ import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { fetchRecordById } from '../../utils/read-model';
 
 export default function Workerjob() {
   const router = useRouter();
@@ -232,11 +233,9 @@ export default function Workerjob() {
         try {
           const companyId = pendingJob.companyId || getCompanyId();
           const jobId = pendingJob.jobId;
-          const jobRef = doc(db, 'companies', companyId, 'jobs', jobId);
-          const jobSnapshot = await getDoc(jobRef);
+          const existingData = await fetchRecordById(companyId, jobId);
 
-          if (jobSnapshot.exists()) {
-            const existingData = jobSnapshot.data();
+          if (existingData) {
             const updatedJob = {
               ...existingData,
               ...pendingJob.jobData,

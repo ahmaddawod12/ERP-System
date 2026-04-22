@@ -31,9 +31,11 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { functions, db, doc, onSnapshot, httpsCallable } from '../firebase';
+import { functions, httpsCallable } from '../firebase';
+import { callHttpFunction } from '../utils/httpFunctions';
 
 const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const POLL_INTERVAL_MS = 2000;
 
 type TaskStatus = 'pending' | 'queued' | 'published' | 'completed' | 'failed' | null;
 type TaskType = 'preview' | 'generate' | null;
@@ -151,94 +153,65 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       }
     }, TASK_TIMEOUT_MS);
 
-    // Listen to task document - React Native Firebase modular API
-    const taskRef = doc(db, 'documentTasks', newTaskId);
-    unsubscribeRef.current = onSnapshot(taskRef, (snapshot: any) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data() as TaskData;
-        setTaskStatus(data.status as TaskStatus);
-        setTaskData(data);
+    // Poll task status via readModelV1 (SQL-compatible — Cloud Run writes state to SQL, not Firestore, in SQL mode)
+    let stopped = false;
+    unsubscribeRef.current = () => { stopped = true; };
 
-        if (data.status === 'completed') {
-          // Task completed successfully
-          console.log('📄 Task completed:', {
-            taskId: newTaskId,
-            taskType: data.taskType,
-            type,
-            hasDownloadURL: !!data.downloadURL,
-            hasPreviewURL: !!data.previewURL,
-            hasCallback: type === 'preview' ? !!callbacksRef.current.onPreviewComplete : !!callbacksRef.current.onGenerateComplete
-          });
-          
-          clearTimeout(timeoutRef.current ?? undefined);
-          setIsLoading(false);
-          
-          // Call appropriate callback based on task type
-          if (data.taskType === 'preview' || type === 'preview') {
-            if (callbacksRef.current.onPreviewComplete && data.previewURL) {
-              console.log('✅ Calling onPreviewComplete callback');
-              callbacksRef.current.onPreviewComplete(data.previewURL);
-            } else {
-              console.warn('⚠️ Preview callback not called:', {
-                hasCallback: !!callbacksRef.current.onPreviewComplete,
-                hasPreviewURL: !!data.previewURL
-              });
-            }
-          } else {
-            if (callbacksRef.current.onGenerateComplete) {
-              if (data.downloadURL) {
-                console.log('✅ Calling onGenerateComplete callback with URL:', data.downloadURL);
-                callbacksRef.current.onGenerateComplete(data.downloadURL, data.documentId);
-              } else {
-                console.warn('⚠️ Task completed but no downloadURL - calling callback anyway');
-                // Call callback even without URL to clear loading state
-                callbacksRef.current.onGenerateComplete(null, data.documentId);
+    const poll = async () => {
+      if (stopped) return;
+      try {
+        const data = await callHttpFunction<TaskData>('readModelV1', {
+          kind: 'documentTask',
+          taskId: newTaskId,
+        });
+
+        if (stopped) return;
+
+        if (data) {
+          setTaskStatus(data.status as TaskStatus);
+          setTaskData(data);
+
+          if (data.status === 'completed') {
+            clearTimeout(timeoutRef.current ?? undefined);
+            setIsLoading(false);
+            stopped = true;
+            unsubscribeRef.current = null;
+
+            if (data.taskType === 'preview' || type === 'preview') {
+              if (callbacksRef.current.onPreviewComplete && data.previewURL) {
+                callbacksRef.current.onPreviewComplete(data.previewURL);
               }
             } else {
-              console.warn('⚠️ onGenerateComplete callback not available');
+              if (callbacksRef.current.onGenerateComplete) {
+                callbacksRef.current.onGenerateComplete(data.downloadURL || null, data.documentId);
+              }
             }
-          }
-          
-          if (unsubscribeRef.current) {
-            unsubscribeRef.current();
+            return;
+          } else if (data.status === 'failed') {
+            clearTimeout(timeoutRef.current ?? undefined);
+            const errorMsg = data.error || 'Task failed';
+            setError(errorMsg);
+            setIsLoading(false);
+            stopped = true;
             unsubscribeRef.current = null;
-          }
-        } else if (data.status === 'failed') {
-          // Task failed
-          clearTimeout(timeoutRef.current ?? undefined);
-          const errorMsg = data.error || 'Task failed';
-          setError(errorMsg);
-          setIsLoading(false);
-          
-          if (callbacksRef.current.onError) {
-            callbacksRef.current.onError(errorMsg);
-          }
-          
-          if (unsubscribeRef.current) {
-            unsubscribeRef.current();
-            unsubscribeRef.current = null;
+
+            if (callbacksRef.current.onError) {
+              callbacksRef.current.onError(errorMsg);
+            }
+            return;
           }
         }
-      }
-    }, (err) => {
-      console.error('Error listening to task:', err);
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      const errorMsg = 'Failed to track task status';
-      setError(errorMsg);
-      setIsLoading(false);
-      
-      if (callbacksRef.current.onError) {
-        callbacksRef.current.onError(errorMsg);
+      } catch (err) {
+        console.error('Error polling task status:', err);
       }
 
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
+      // Still in progress — schedule next poll
+      if (!stopped) {
+        setTimeout(poll, POLL_INTERVAL_MS);
       }
-    });
+    };
+
+    poll();
   }, []);
 
   const publishPreview = useCallback(async (params: DocumentTaskParams): Promise<string> => {

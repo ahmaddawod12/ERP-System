@@ -12,13 +12,8 @@
 
 import { useCallback } from 'react';
 import {
-  db,
   functions,
   httpsCallable,
-  collection,
-  getDocs,
-  query,
-  where,
 } from '../firebase';
 import {
   mmkvHelpers,
@@ -32,17 +27,36 @@ import {
   buildJobMembershipQueryValues,
   roleUsesScopedJobAccess,
 } from '../contexts/job-membership';
+import { fetchCompanyDocuments, fetchCompanyJobs } from '../utils/read-model';
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
 function buildJobMembershipConstraints(wid: string | number | null): any[] {
   const values = buildJobMembershipQueryValues(wid);
   if (values.length === 0) return [];
-  return [
-    values.length === 1
-      ? where('wid', '==', values[0])
-      : where('wid', 'in', values),
-  ];
+  return values;
+}
+
+function normalizeTimestamp(value: any): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  return new Date(value).getTime();
+}
+
+function isWithinRange(value: any, startMs: number, endMs: number, inclusiveEnd = true): boolean {
+  const timestamp = normalizeTimestamp(value);
+  return inclusiveEnd
+    ? timestamp >= startMs && timestamp <= endMs
+    : timestamp >= startMs && timestamp < endMs;
+}
+
+function filterJobsByMembership(jobs: any[], role: string, wid: string | number | null) {
+  if (!roleUsesScopedJobAccess(role)) return jobs;
+  const values = buildJobMembershipConstraints(wid);
+  if (values.length === 0) return [];
+  const normalized = new Set(values.map((value) => String(value)));
+  return jobs.filter((job) => normalized.has(String(job?.wid ?? '')));
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -164,35 +178,28 @@ export function useArchiveQuery({
       });
 
       try {
-        let q: any;
         if (dataType === 'finishedJobs') {
-          const jobsRef = collection(db, 'companies', companyId, 'jobs');
-          if (roleUsesScopedJobAccess(safeRole)) {
-            const constraints = buildJobMembershipConstraints(safeWid);
-            if (constraints.length === 0) return cachedPart;
-            q = (query as any)(jobsRef,
-              where('status', '==', 'finished'),
-              where('finishedAt', '>=', monthStart.toISOString()),
-              where('finishedAt', '<', cacheStartDate.toISOString()),
-              ...constraints,
-            );
-          } else {
-            q = query(jobsRef,
-              where('status', '==', 'finished'),
-              where('finishedAt', '>=', monthStart.toISOString()),
-              where('finishedAt', '<', cacheStartDate.toISOString()),
-            );
-          }
-        } else {
-          const documentsRef = collection(db, 'companies', companyId, 'documents');
-          q = query(documentsRef,
-            where('createdAt', '>=', monthStart.toISOString()),
-            where('createdAt', '<', cacheStartDate.toISOString()),
+          const jobsData = filterJobsByMembership(
+            await fetchCompanyJobs(companyId, {
+              limit: 10000,
+              status: 'finished',
+              dateField: 'finishedAt',
+              dateFrom: new Date(monthStartMs).toISOString(),
+              dateTo: new Date(cacheStartMs - 1).toISOString(),
+            }),
+            safeRole,
+            safeWid,
           );
+          return [...cachedPart, ...jobsData];
+        } else {
+          const documentsData = await fetchCompanyDocuments(companyId, {
+            limit: 10000,
+            dateField: 'createdAt',
+            dateFrom: new Date(monthStartMs).toISOString(),
+            dateTo: new Date(cacheStartMs - 1).toISOString(),
+          });
+          return [...cachedPart, ...documentsData];
         }
-        const snap = await getDocs(q);
-        const fbData = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-        return [...cachedPart, ...fbData];
       } catch (error) {
         console.error('Error fetching partial month data:', error);
         return cachedPart;
@@ -207,42 +214,34 @@ export function useArchiveQuery({
     }
 
     try {
-      let q: any;
+      let backendData: any[] = [];
       if (dataType === 'finishedJobs') {
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (roleUsesScopedJobAccess(safeRole)) {
-          const constraints = buildJobMembershipConstraints(safeWid);
-          if (constraints.length === 0) return [];
-          q = (query as any)(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', monthStart.toISOString()),
-            where('finishedAt', '<=', monthEnd.toISOString()),
-            ...constraints,
-          );
-        } else {
-          q = query(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', monthStart.toISOString()),
-            where('finishedAt', '<=', monthEnd.toISOString()),
-          );
-        }
-      } else {
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        q = query(documentsRef,
-          where('createdAt', '>=', monthStart.toISOString()),
-          where('createdAt', '<=', monthEnd.toISOString()),
+        backendData = filterJobsByMembership(
+          await fetchCompanyJobs(companyId, {
+            limit: 10000,
+            status: 'finished',
+            dateField: 'finishedAt',
+            dateFrom: new Date(monthStartMs).toISOString(),
+            dateTo: new Date(monthEndMs).toISOString(),
+          }),
+          safeRole,
+          safeWid,
         );
+      } else {
+        backendData = await fetchCompanyDocuments(companyId, {
+          limit: 10000,
+          dateField: 'createdAt',
+          dateFrom: new Date(monthStartMs).toISOString(),
+          dateTo: new Date(monthEndMs).toISOString(),
+        });
       }
 
-      const snap = await getDocs(q);
-      const fbData = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-
-      if (fbData.length > 0) {
-        mmkvHelpers.setObject(tier2Key, { data: fbData, _ts: Date.now() });
-        return fbData;
+      if (backendData.length > 0) {
+        mmkvHelpers.setObject(tier2Key, { data: backendData, _ts: Date.now() });
+        return backendData;
       }
 
-      // Firestore returned nothing — check Storage archives for old months
+      // Backend returned nothing — check Storage archives for old months
       const archiveBoundary = new Date(now.getTime() - ARCHIVE_BOUNDARY_MS);
       if (monthEnd.getTime() < archiveBoundary.getTime()) {
         const archived = await fetchFromArchive(companyId, monthDate.getFullYear(), monthDate.getMonth() + 1, dataType);
@@ -310,55 +309,41 @@ export function useArchiveQuery({
     });
 
     try {
-      let q: any;
+      let backendData: any[] = [];
       if (dataType === 'finishedJobs') {
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (roleUsesScopedJobAccess(safeRole)) {
-          const constraints = buildJobMembershipConstraints(wid);
-          if (constraints.length === 0) return cachedPortion;
-          q = (query as any)(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', startDate.toISOString()),
-            where('finishedAt', '<', getCacheStartDate().toISOString()),
-            ...constraints,
-          );
-        } else {
-          q = query(jobsRef,
-            where('status', '==', 'finished'),
-            where('finishedAt', '>=', startDate.toISOString()),
-            where('finishedAt', '<', getCacheStartDate().toISOString()),
-          );
-        }
-      } else if (dataType === 'documents') {
-        const documentsRef = collection(db, 'companies', companyId, 'documents');
-        q = query(documentsRef,
-          where('createdAt', '>=', startDate.toISOString()),
-          where('createdAt', '<', getCacheStartDate().toISOString()),
+        backendData = filterJobsByMembership(
+          await fetchCompanyJobs(companyId, {
+            limit: 10000,
+            status: 'finished',
+            dateField: 'finishedAt',
+            dateFrom: new Date(startMs).toISOString(),
+            dateTo: new Date(cacheStartMs - 1).toISOString(),
+          }),
+          safeRole,
+          wid,
         );
+      } else if (dataType === 'documents') {
+        backendData = await fetchCompanyDocuments(companyId, {
+          limit: 10000,
+          dateField: 'createdAt',
+          dateFrom: new Date(startMs).toISOString(),
+          dateTo: new Date(cacheStartMs - 1).toISOString(),
+        });
       } else if (dataType === 'pendingJobs') {
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        if (roleUsesScopedJobAccess(safeRole)) {
-          const constraints = buildJobMembershipConstraints(wid);
-          if (constraints.length === 0) return cachedPortion;
-          q = (query as any)(jobsRef,
-            where('status', 'in', ['pending', 'waiting']),
-            where('createdAt', '>=', startDate.toISOString()),
-            where('createdAt', '<', getCacheStartDate().toISOString()),
-            ...constraints,
-          );
-        } else {
-          q = query(jobsRef,
-            where('status', 'in', ['pending', 'waiting']),
-            where('createdAt', '>=', startDate.toISOString()),
-            where('createdAt', '<', getCacheStartDate().toISOString()),
-          );
-        }
+        backendData = filterJobsByMembership(
+          await fetchCompanyJobs(companyId, {
+            limit: 10000,
+            status: ['pending', 'waiting'],
+            dateField: 'createdAt',
+            dateFrom: new Date(startMs).toISOString(),
+            dateTo: new Date(cacheStartMs - 1).toISOString(),
+          }),
+          safeRole,
+          wid,
+        );
       }
 
-      const snap = await getDocs(q);
-      const fbData = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-
-      if (fbData.length === 0 && dataType !== 'pendingJobs') {
+      if (backendData.length === 0 && dataType !== 'pendingJobs') {
         const archiveBoundary = new Date(Date.now() - ARCHIVE_BOUNDARY_MS);
         if (startMs < archiveBoundary.getTime()) {
           const archiveCheckEnd = new Date(Math.min(archiveBoundary.getTime(), cacheStartMs));
@@ -385,7 +370,7 @@ export function useArchiveQuery({
         }
       }
 
-      return [...cachedPortion, ...fbData];
+      return [...cachedPortion, ...backendData];
     } catch (error) {
       console.error('Error fetching data for date range:', error);
       return cachedPortion;

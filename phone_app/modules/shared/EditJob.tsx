@@ -13,7 +13,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db, doc, getDoc, functions, httpsCallable } from '../../firebase';
+import { functions, httpsCallable } from '../../firebase';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, AppInput, GlobalHeader, ScrollableContainer } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -21,6 +21,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { safeJsonParse } from '../../utils/helpers';
+import { fetchRecordById, fetchUserInventoryParts } from '../../utils/read-model';
 
 export default function EditJob() {
   const router = useRouter();
@@ -113,28 +114,21 @@ export default function EditJob() {
         return;
       }
 
-      // All jobs are in the unified 'jobs' collection
-      const jobRef = doc(db, 'companies', companyId, 'jobs', editingJob.id);
-
       // Get worker uid from wid for inventory access
       const workerWid = editingJob.wid;
       const workerEntry = cachedWorkersList ? cachedWorkersList[workerWid] : null;
       const workerId = workerEntry?.uid || null;
       
-      // Fetch the CURRENT job data from Firestore to get actual original parts
+      // Fetch the current job/inventory state through the read model before mutating.
       if (workerId && editingJob.partsUsed) {
-        const currentJobSnap = await getDoc(jobRef);
-        if (currentJobSnap.exists()) {
-          const currentJobData = currentJobSnap.data();
+        const currentJobData = await fetchRecordById(companyId, editingJob.id);
+        if (currentJobData) {
           const originalPartsInFirestore = currentJobData.partsUsed || [];
           
           // Calculate inventory changes
-          const inventoryRef = doc(db, 'users', workerId, 'data', 'inventory');
-          const inventorySnap = await getDoc(inventoryRef);
-          
-          if (inventorySnap.exists()) {
-            const inventoryData = inventorySnap.data();
-            let parts = inventoryData.parts;
+          const inventoryParts = await fetchUserInventoryParts(companyId, workerId);
+          if (Array.isArray(inventoryParts)) {
+            let parts = [...inventoryParts];
 
             // First, add back quantities for parts that were removed
             originalPartsInFirestore.forEach(originalPart => {

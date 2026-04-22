@@ -1,36 +1,20 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import {
+  buildLoginRedirectUrl,
+  hasValidRevocationCheckedSession,
+} from "@/lib/auth/session-middleware";
 
-const FIREBASE_JWKS = createRemoteJWKSet(
-  new URL(
-    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
-  ),
-);
+const SESSION_COOKIE = "__session";
 
-function resolveProjectId(): string | null {
-  return (
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
-    process.env.FIREBASE_ADMIN_PROJECT_ID ||
-    null
-  );
-}
-
-async function verifyFirebaseIdToken(
-  token: string,
-  projectId: string,
-): Promise<boolean> {
-  try {
-    const issuer = `https://securetoken.google.com/${projectId}`;
-    const { payload } = await jwtVerify(token, FIREBASE_JWKS, {
-      issuer,
-      audience: projectId,
-    });
-
-    return typeof payload.sub === "string" && payload.sub.length > 0;
-  } catch {
-    return false;
-  }
+function clearSessionCookie(response: NextResponse) {
+  response.cookies.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 export async function middleware(request: NextRequest) {
@@ -38,21 +22,21 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("__session")?.value;
-  const projectId = resolveProjectId();
-
-  const hasValidToken =
-    typeof token === "string" && typeof projectId === "string"
-      ? await verifyFirebaseIdToken(token, projectId)
-      : false;
+  const hasValidToken = await hasValidRevocationCheckedSession(
+    request.url,
+    request.headers.get("cookie"),
+  );
 
   if (!hasValidToken) {
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set(
-      "redirect",
-      `${request.nextUrl.pathname}${request.nextUrl.search}`,
+    const response = NextResponse.redirect(
+      buildLoginRedirectUrl(
+        request.url,
+        request.nextUrl.pathname,
+        request.nextUrl.search,
+      ),
     );
-    return NextResponse.redirect(loginUrl);
+    clearSessionCookie(response);
+    return response;
   }
 
   return NextResponse.next();

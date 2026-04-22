@@ -1,0 +1,87 @@
+import { callHttpFunction } from './httpFunctions';
+
+type ReadModelListOptions = {
+  limit?: number;
+  status?: string | string[];
+  dateField?: 'createdAt' | 'updatedAt' | 'finishedAt' | 'dueAt' | 'documentDate';
+  dateFrom?: string;
+  dateTo?: string;
+  documentType?: number;
+  createdByUid?: string;
+};
+
+function normalizeWorker(worker: any) {
+  return {
+    ...worker,
+    uid: String(worker?.uid ?? '').trim(),
+    wid: String(worker?.wid ?? worker?.memberNo ?? '').trim(),
+    email: String(worker?.email ?? '').trim(),
+    name: String(worker?.name ?? '').trim(),
+    phoneNumber: String(worker?.phoneNumber ?? worker?.phone ?? '').trim(),
+  };
+}
+
+export async function fetchCompanyWorkers(companyId: string) {
+  const workers = await callHttpFunction<any[]>('readModelV1', {
+    kind: 'workers',
+    companyId,
+  });
+
+  return (workers || [])
+    .map(normalizeWorker)
+    .filter((worker) => worker.wid || worker.uid || worker.email);
+}
+
+export async function fetchCompanyInventoryParts(companyId: string) {
+  const inventory = await callHttpFunction<{ parts?: any[] }>('readModelV1', {
+    kind: 'inventory',
+    companyId,
+    scope: 'company',
+  });
+
+  return Array.isArray(inventory?.parts) ? inventory.parts : [];
+}
+
+export async function fetchUserInventoryParts(companyId: string, targetUid: string) {
+  const inventory = await callHttpFunction<{ parts?: any[] }>('readModelV1', {
+    kind: 'inventory',
+    companyId,
+    scope: 'user',
+    targetUid,
+  });
+
+  return Array.isArray(inventory?.parts) ? inventory.parts : [];
+}
+
+function normalizeListOptions(limitOrOptions?: number | ReadModelListOptions): ReadModelListOptions {
+  if (typeof limitOrOptions === 'number') {
+    return { limit: limitOrOptions };
+  }
+  return limitOrOptions || {};
+}
+
+export async function fetchCompanyJobs(companyId: string, limitOrOptions?: number | ReadModelListOptions) {
+  const options = normalizeListOptions(limitOrOptions);
+  return callHttpFunction<any[]>('readModelV1', {
+    kind: 'jobs',
+    companyId,
+    ...options,
+  });
+}
+
+export async function fetchCompanyDocuments(companyId: string, limitOrOptions?: number | ReadModelListOptions) {
+  const options = normalizeListOptions(limitOrOptions);
+  return callHttpFunction<any[]>('readModelV1', {
+    kind: 'documents',
+    companyId,
+    ...options,
+  });
+}
+
+export async function fetchRecordById(companyId: string, recordId: string) {
+  return callHttpFunction<any | null>('readModelV1', {
+    kind: 'recordById',
+    companyId,
+    recordId,
+  });
+}

@@ -14,9 +14,24 @@ const {
   uploadString,
 } = require('firebase/storage');
 
+function resolveRepoRoot() {
+  const candidates = [
+    path.resolve(__dirname, '..', '..'),
+    path.resolve(__dirname, '..', '..', '..'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'storage.rules'))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to resolve repo root from ${__dirname}`);
+}
+
 const projectId = 'demo-smart-job';
 const storageRules = fs.readFileSync(
-  path.resolve(__dirname, '../../storage.rules'),
+  path.resolve(resolveRepoRoot(), 'storage.rules'),
   'utf8',
 );
 

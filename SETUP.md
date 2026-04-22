@@ -5,6 +5,7 @@ This is the single setup guide for a new Smart-Job ERP environment. It replaces 
 The starting point is an empty Firebase/GCP project. The target end state is:
 
 - Firebase Auth, Firestore, Storage, rules, indexes, TTL policies, and Cloud Functions are deployed.
+- Optional PostgreSQL persistence can be enabled for the SQL-first migration work under `packages/db`.
 - The Next.js website can register and onboard users.
 - The Expo mobile app can sign in existing users and receive push notifications.
 - Cloud Run PDF generation receives Pub/Sub tasks from Functions.
@@ -22,6 +23,7 @@ ERP-System/
 |-- cloudrun-pdf/        Cloud Run service for PDF preview/generation and optional email delivery.
 |-- cloudrun-archiver/   Cloud Run Job for monthly Firestore-to-Storage archives.
 |-- packages/contracts/  Shared enums, path helpers, account/tier semantics.
+|-- packages/db/         Shared PostgreSQL schema, Drizzle config, migrations, and SQL access helpers.
 |-- firebase.json        Firebase deploy and emulator config.
 |-- firestore.rules      Firestore access policy.
 |-- storage.rules        Storage access policy.
@@ -130,6 +132,9 @@ There is no root package manager workspace file today. Install each app/service 
 cd packages/contracts
 npm install
 
+cd ../db
+npm install
+
 cd ../../functions
 npm install
 
@@ -144,6 +149,13 @@ npm install
 
 cd ../cloudrun-archiver
 npm install
+```
+
+If you are enabling SQL persistence locally, apply the shared schema after installing the DB package:
+
+```bash
+cd packages/db
+npm run db:migrate
 ```
 
 ## 5. Firebase Web App Configuration
@@ -214,6 +226,13 @@ Create `functions/.env` for local and Firebase deploy-time environment variables
 ```dotenv
 CORS_ALLOWED_ORIGINS=http://localhost:3000,https://your-website.example
 
+SMART_JOB_PERSISTENCE_BACKEND=firestore
+DATABASE_URL=
+DATABASE_SSL_MODE=disable
+DATABASE_MAX_CONNECTIONS=10
+DATABASE_CONNECT_TIMEOUT_MS=10000
+DATABASE_IDLE_TIMEOUT_MS=30000
+
 TAX_AUTH_URL=
 TAX_TOKEN_URL=
 TAX_APPROVAL_URL=
@@ -227,6 +246,8 @@ APP_SCHEME=erpsystem
 Notes:
 
 - `CORS_ALLOWED_ORIGINS` must include local development and every deployed website origin that calls HTTP Functions.
+- Leave `SMART_JOB_PERSISTENCE_BACKEND=firestore` unless you are actively validating the SQL migration path. Setting it to `sql` requires a working PostgreSQL database and applied migrations.
+- `DATABASE_URL` may also be provided as `SMART_JOB_DATABASE_URL`. The backend auto-selects SQL mode when a database URL is present unless the persistence backend is explicitly forced to `firestore`.
 - Tax variables are required only for the Tax Authority OAuth/invoice approval flow.
 - Cloud Functions use Node 22.
 - HTTP Functions intentionally do not rely on direct browser App Check for trusted website server-proxy flows. Preserve the bearer-token checks in code.

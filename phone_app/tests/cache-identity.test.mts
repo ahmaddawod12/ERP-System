@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isProfileCacheOwnedByUser,
+  isScopedCacheCompanyMismatch,
   resolveCachedSessionIdentity,
 } from '../contexts/cache-identity.ts';
 
@@ -37,6 +38,12 @@ test('matching users can reuse scoped cache metadata', () => {
     canReadScopedCache: true,
     identityMismatch: false,
   });
+});
+
+test('same authenticated user must invalidate scoped cache when company scope changes', () => {
+  assert.equal(isScopedCacheCompanyMismatch('company-a', 'company-b'), true);
+  assert.equal(isScopedCacheCompanyMismatch('company-a', 'company-a'), false);
+  assert.equal(isScopedCacheCompanyMismatch(null, 'company-b'), true);
 });
 
 test('profile cache ownership rejects foreign cached profiles', () => {

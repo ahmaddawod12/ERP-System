@@ -200,6 +200,7 @@ export interface CacheVersions {
   documentsVersion?: number;
   clientsVersion?: number;
   workersVersion?: number;
+  companyInventoryVersion?: number;
   updatedAt?: DateLike;
 }
 

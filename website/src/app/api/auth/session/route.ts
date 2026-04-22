@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminAuth } from "@/lib/firebase/admin";
+import { extractCookieValue } from "@/lib/auth/session-middleware";
 
 const SESSION_COOKIE = "__session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60;
@@ -52,6 +53,25 @@ export async function POST(request: Request) {
     maxAge: 0,
   });
   return response;
+}
+
+export async function GET(request: Request) {
+  const token = extractCookieValue(request.headers.get("cookie"), SESSION_COOKIE) || "";
+  if (!token) {
+    const response = NextResponse.json({ ok: false, error: "missing_session" }, { status: 401 });
+    clearSessionCookie(response);
+    return response;
+  }
+
+  try {
+    await adminAuth().verifyIdToken(token, true);
+  } catch {
+    const response = NextResponse.json({ ok: false, error: "invalid_session" }, { status: 401 });
+    clearSessionCookie(response);
+    return response;
+  }
+
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE() {

@@ -4,6 +4,13 @@
   "description": "Shared constants, enums, and path builders for Smart-Job ERP",
   "main": "index.js",
   "types": "index.d.ts",
-  "files": ["*.js", "*.d.ts"],
+  "files": ["dist/**/*", "index.js", "index.d.ts"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  },
   "license": "PRIVATE"
 }

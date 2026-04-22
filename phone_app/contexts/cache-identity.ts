@@ -40,6 +40,15 @@ export function resolveCachedSessionIdentity({
   };
 }
 
+export function isScopedCacheCompanyMismatch(
+  cachedCompanyId: string | null | undefined,
+  resolvedCompanyId: string | null | undefined,
+): boolean {
+  const cached = normalizeCacheIdentityValue(cachedCompanyId);
+  const resolved = normalizeCacheIdentityValue(resolvedCompanyId);
+  return cached !== resolved;
+}
+
 export function isProfileCacheOwnedByUser(profile: { uid?: string } | null, uid: string | null): boolean {
   if (!profile || !uid) return true;
   const profileUid = normalizeCacheIdentityValue(profile.uid);

@@ -32,6 +32,7 @@ export const CACHE_KEYS = Object.freeze({
   
   // Company data (for managers)
   WORKERS: 'cache_workers',
+  COMPANY_INVENTORY: 'cache_company_inventory',
   
   // Business data
   DOCUMENTS: 'cache_documents',

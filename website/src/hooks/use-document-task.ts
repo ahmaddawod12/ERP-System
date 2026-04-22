@@ -11,11 +11,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { db, functions, middleEastFunctions } from "@/lib/firebase/client";
+import { functions, middleEastFunctions } from "@/lib/firebase/client";
+import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
 
 const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const TASK_POLL_INTERVAL_MS = 2000;
 
 export interface DocumentTaskCallbacks {
   onPreviewComplete?: (url: string) => void;
@@ -68,6 +69,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callbacksRef = useRef({ onPreviewComplete, onGenerateComplete, onError });
 
   // Keep callbacks ref current
@@ -79,8 +81,31 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
   useEffect(() => {
     return () => {
       unsubscribeRef.current?.();
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = null;
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
+  const fetchTaskState = useCallback(async (taskIdToRead: string) => {
+    const response = await fetch("/api/read-model", {
+      method: "POST",
+      headers: await buildAuthedJsonHeaders(),
+      body: JSON.stringify({ kind: "documentTask", taskId: taskIdToRead }),
+    });
+    const payload = await response.json() as { ok: boolean; data?: TaskData | null; error?: { message?: string } };
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload?.error?.message || "Failed to read task status");
+    }
+    return payload.data ?? null;
   }, []);
 
   /**
@@ -90,7 +115,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
   const listenToTask = useCallback(
     (newTaskId: string, type: "preview" | "generate" = "generate") => {
       // Clean up previous
-      unsubscribeRef.current?.();
+      stopPolling();
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
       setTaskId(newTaskId);
@@ -107,17 +132,11 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
         setTaskStatus("failed");
         setIsLoading(false);
         callbacksRef.current.onError?.(msg);
-        unsubscribeRef.current?.();
-        unsubscribeRef.current = null;
+        stopPolling();
       }, TASK_TIMEOUT_MS);
 
-      // Firestore listener
-      const taskRef = doc(db, "documentTasks", newTaskId);
-      unsubscribeRef.current = onSnapshot(
-        taskRef,
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const data = snapshot.data() as TaskData;
+      const handleTaskState = (data: TaskData | null) => {
+          if (!data) return;
           setTaskStatus(data.status ?? null);
           setTaskData(data);
 
@@ -135,31 +154,38 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
                 data.documentId ?? null,
               );
             }
-            unsubscribeRef.current?.();
-            unsubscribeRef.current = null;
+            stopPolling();
           } else if (data.status === "failed") {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             const msg = data.error || "Task failed";
             setError(msg);
             setIsLoading(false);
             callbacksRef.current.onError?.(msg);
-            unsubscribeRef.current?.();
-            unsubscribeRef.current = null;
+            stopPolling();
           }
-        },
-        (err) => {
-          console.error("Error listening to task:", err);
+      };
+
+      const pollOnce = async () => {
+        try {
+          const data = await fetchTaskState(newTaskId);
+          handleTaskState(data);
+        } catch (err) {
+          console.error("Error polling task:", err);
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
           const msg = "Failed to track task status";
           setError(msg);
           setIsLoading(false);
           callbacksRef.current.onError?.(msg);
-          unsubscribeRef.current?.();
-          unsubscribeRef.current = null;
-        },
-      );
+          stopPolling();
+        }
+      };
+
+      void pollOnce();
+      pollIntervalRef.current = setInterval(() => {
+        void pollOnce();
+      }, TASK_POLL_INTERVAL_MS);
     },
-    [],
+    [fetchTaskState, stopPolling],
   );
 
   /** Publish a preview task → publishPreviewTask (us-central1) */
@@ -259,8 +285,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
 
   /** Reset all state and clean up listeners */
   const reset = useCallback(() => {
-    unsubscribeRef.current?.();
-    unsubscribeRef.current = null;
+    stopPolling();
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -271,7 +296,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
     setTaskData(null);
     setError(null);
     setIsLoading(false);
-  }, []);
+  }, [stopPolling]);
 
   return {
     // Methods

@@ -1,0 +1,29 @@
+{
+  "name": "@smart-job/db",
+  "version": "0.1.0",
+  "description": "Shared Postgres schema and access helpers for Smart-Job ERP",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "files": [
+    "dist/**/*",
+    "index.js",
+    "config.js",
+    "migrations/*.sql"
+  ],
+  "dependencies": {
+    "@smart-job/contracts": "file:../contracts",
+    "drizzle-orm": "^0.44.2",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "drizzle-kit": "^0.31.4",
+    "typescript": "^5.9.2"
+  },
+  "license": "PRIVATE"
+}

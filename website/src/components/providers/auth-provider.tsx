@@ -10,8 +10,8 @@ import {
 } from "react";
 import type { User } from "firebase/auth";
 import { onIdTokenChanged, signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase/client";
+import { auth } from "@/lib/firebase/client";
+import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
 import type { UserProfile, UserSubscription } from "@/lib/types";
 
 interface AuthContextValue {
@@ -41,28 +41,25 @@ function normalizeProfile(profile: UserProfile | null): UserProfile | null {
 }
 
 async function loadUserProfile(uid: string) {
-  const profileRef = doc(db, "users", uid, "data", "profile");
-  const profileSnap = await getDoc(profileRef);
-  const profile = profileSnap.exists()
-    ? normalizeProfile(profileSnap.data() as UserProfile)
-    : null;
-  if (!profile) {
+  const response = await fetch("/api/read-model", {
+    method: "POST",
+    headers: await buildAuthedJsonHeaders(),
+    body: JSON.stringify({ kind: "bootstrap", includeCollections: false }),
+    credentials: "include",
+  });
+
+  const payload = (await response.json()) as {
+    ok: boolean;
+    data?: { profile: UserProfile | null; subscription: UserSubscription | null };
+  };
+
+  if (!response.ok || !payload.ok || !payload.data) {
     return { profile: null, subscription: null };
   }
 
-  const companyIdForSubscription = profile.companyId?.trim() ?? "";
-  if (!companyIdForSubscription) {
-    return { profile, subscription: null };
-  }
-
-  const subscriptionRef = doc(db, "companies", companyIdForSubscription, "data", "subscription");
-  const subscriptionSnap = await getDoc(subscriptionRef);
-
   return {
-    profile,
-    subscription: subscriptionSnap.exists()
-      ? (subscriptionSnap.data() as UserSubscription)
-      : null,
+    profile: normalizeProfile(payload.data.profile),
+    subscription: payload.data.subscription ?? null,
   };
 }
 

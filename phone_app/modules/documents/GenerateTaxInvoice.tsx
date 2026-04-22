@@ -4,7 +4,6 @@ import { View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { db, collection, doc, getDoc, getDocs, query, where, orderBy } from '../../firebase';
 import { getColors } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
@@ -14,6 +13,7 @@ import { GlobalHeader, LoadingOverlay } from '../../components';
 import TaxInvoiceJobList from './TaxInvoiceJobList';
 import TaxInvoiceFormModal from './TaxInvoiceFormModal';
 import { useTaxInvoiceSubmission } from './useTaxInvoiceSubmission';
+import { fetchCompanyInventoryParts, fetchCompanyJobs } from '../../utils/read-model';
 
 export default function GenerateTaxInvoice() {
   const router = useRouter();
@@ -28,6 +28,7 @@ export default function GenerateTaxInvoice() {
     clients: cachedClients,
     documents: cachedDocuments,
     inventory: cachedInventory,
+    companyInventory: cachedCompanyInventory,
   } = useCache();
   const colors = getColors(isDarkMode);
   const cachedCompanyFinishedJobs = useMemo(
@@ -307,19 +308,19 @@ export default function GenerateTaxInvoice() {
 
     const fetchCompanyInventory = async () => {
       try {
-        const invRef = doc(db, 'companies', cn, 'data', 'inventory');
-        const invDoc = await getDoc(invRef);
-        if (invDoc.exists()) {
-          const data = invDoc.data();
-          const parts = Array.isArray(data.parts) ? data.parts : [];
-          setCompanyInventoryParts(parts);
+        if (Array.isArray(cachedCompanyInventory) && cachedCompanyInventory.length > 0) {
+          setCompanyInventoryParts(cachedCompanyInventory);
+          return;
         }
+
+        const parts = await fetchCompanyInventoryParts(cn);
+        setCompanyInventoryParts(parts);
       } catch (error) {
         console.warn('Failed to fetch company inventory:', error);
       }
     };
     fetchCompanyInventory();
-  }, [getUserRole, getCachedCompanyId]);
+  }, [cachedCompanyInventory, getUserRole, getCachedCompanyId]);
 
   // Get the inventory parts based on role
   const getInventoryParts = () => {
@@ -370,33 +371,18 @@ export default function GenerateTaxInvoice() {
           return;
         }
 
-        // Fallback to Firebase query - use getDocs (single read) not onSnapshot
-        // Cache only stores last 90 days, so for older jobs we use normal read
-        const jobsRef = collection(db, 'companies', companyId, 'jobs');
-        const q = query(jobsRef, 
-          where('status', '==', 'finished'),
-          where('isCert', '!=', true),
-          orderBy('isCert', 'desc'),
-          orderBy('finishedAt', 'desc')
-        );
-        const snapshot = await getDocs(q);
-        const jobsData = [];
-        
-        for (const docSnap of snapshot.docs) {
-          const jobData = { id: docSnap.id, ...docSnap.data() };
-          
-          // Use wname directly from the job document
-          if (!jobData.wname) {
-            jobData.wname = 'Unknown';
-          }
-          
-          jobsData.push(jobData);
-        }
+        const jobsData = await fetchCompanyJobs(companyId)
+          .then((rows) => (rows || [])
+            .filter((job) => job.status === 'finished' && !job.isCert)
+            .map((job) => ({
+              ...job,
+              wname: job.wname || 'Unknown',
+            })));
 
         // Sort by finishedAt (newest first) - Already ordered by query but sort again for safety
         jobsData.sort((a, b) => {
-          const dateA = a.finishedAt?.toDate?.() || new Date(0);
-          const dateB = b.finishedAt?.toDate?.() || new Date(0);
+          const dateA = a.finishedAt ? new Date(a.finishedAt).getTime() : 0;
+          const dateB = b.finishedAt ? new Date(b.finishedAt).getTime() : 0;
           return dateB - dateA;
         });
 

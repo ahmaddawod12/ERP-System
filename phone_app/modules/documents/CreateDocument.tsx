@@ -41,10 +41,11 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
 import { useAuth, useDocumentTask } from '../../hooks';
-import { middleEastFunctions, httpsCallable, db, doc, getDoc } from '../../firebase';
+import { middleEastFunctions, httpsCallable } from '../../firebase';
 import { DOC_TYPE } from '@smart-job/contracts';
 import { DOCUMENT_CONFIGS, getPaymentMethods } from './document-config';
 import { getDocumentTranslations } from './document-copy';
+import { fetchCompanyInventoryParts } from '../../utils/read-model';
 
 export default function CreateDocument() {
   const router = useRouter();
@@ -64,6 +65,7 @@ export default function CreateDocument() {
     profile,
     clients: cachedClients,
     inventory: cachedInventory,
+    companyInventory: cachedCompanyInventory,
     getUserRole,
     addClient,
     updateClient,
@@ -218,19 +220,19 @@ export default function CreateDocument() {
 
     const fetchCompanyInventory = async () => {
       try {
-        const invRef = doc(db, 'companies', cn, 'data', 'inventory');
-        const invDoc = await getDoc(invRef);
-        if (invDoc.exists()) {
-          const data = invDoc.data();
-          const parts = Array.isArray(data.parts) ? data.parts : [];
-          setCompanyInventoryParts(parts);
+        if (Array.isArray(cachedCompanyInventory) && cachedCompanyInventory.length > 0) {
+          setCompanyInventoryParts(cachedCompanyInventory);
+          return;
         }
+
+        const parts = await fetchCompanyInventoryParts(cn);
+        setCompanyInventoryParts(parts);
       } catch (error) {
         console.warn('Failed to fetch company inventory:', error);
       }
     };
     fetchCompanyInventory();
-  }, [getUserRole, getCachedCompanyId]);
+  }, [cachedCompanyInventory, getUserRole, getCachedCompanyId]);
 
   // Get the inventory parts based on role (for item description search)
   const getInventoryParts = () => {

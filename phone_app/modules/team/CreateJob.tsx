@@ -10,13 +10,14 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth, db, collection, doc, getDocs, setDoc, functions, httpsCallable } from '../../firebase';
+import { auth, functions, httpsCallable } from '../../firebase';
 import { spacing, borderRadius, typography, shadows, getColors, gradients } from '../../theme';
 import { AppButton, AppCard, AppText, AppInput, SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
+import { fetchCompanyWorkers } from '../../utils/read-model';
 
 export default function CreateJob() {
   const router = useRouter();
@@ -166,30 +167,19 @@ export default function CreateJob() {
         return;
       }
 
-      // Fallback to Firebase (workers docs are now keyed by wid)
-      const workersRef = collection(db, 'companies', companyId, 'workers');
-      const workersSnapshot = await getDocs(workersRef);
-
-      if (!workersSnapshot.empty) {
+      const fetchedWorkers = await fetchCompanyWorkers(companyId);
+      if (fetchedWorkers.length > 0) {
         const workersData = {};
-        workersSnapshot.forEach(docSnap => {
-          const workerData = docSnap.data() || {};
-          const wid = workerData.wid || docSnap.id;
-          const uid = workerData.uid || docSnap.id;
-          workersData[wid] = {
-            ...workerData,
-            uid,
-            wid,
-          };
+        fetchedWorkers.forEach((workerData) => {
+          const wid = workerData.wid || workerData.uid;
+          if (!wid) return;
+          workersData[wid] = workerData;
         });
         
         // Save to cache for next time
         await updateWorkers(workersData);
         
-        const workersArray = Object.entries(workersData).map(([uid, data]) => ({
-          ...data,
-          uid,
-        }));
+        const workersArray = Object.values(workersData);
         setWorkers(workersArray);
       }
     } catch (error) {

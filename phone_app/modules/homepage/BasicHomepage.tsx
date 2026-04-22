@@ -3,11 +3,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { doc, getDoc, db } from '../../firebase';
 import { borderRadius, getColors, spacing } from '../../theme';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useCache } from '../../contexts/CacheContext';
+import { callHttpFunction } from '../../utils/httpFunctions';
 import { isSubscriptionActive, isModuleEnabled } from '../shared';
 import {
   AppCard,
@@ -183,6 +183,27 @@ const compactSections = (t, businessInfo) => [
   },
 ].filter((section) => section.items.length > 0);
 
+function normalizeBusinessInfo(data) {
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  return {
+    heName: data.he_name || '',
+    enName: data.en_name || '',
+    vatNumber: data.vat_number || '',
+    businessType: data.business_type || '',
+    address: data.address || '',
+    city: data.city || '',
+    businessEmail: data.business_email || '',
+    businessPhone: data.business_phone || '',
+    businessFax: data.business_fax || '',
+    accountantName: data.accountant_name || '',
+    accountantEmail: data.accountant_email || '',
+    accountantPhone: data.accountant_phone || '',
+  };
+}
+
 export default function BasicHomepage() {
   const router = useRouter();
   const { language } = useLanguageContext();
@@ -192,6 +213,7 @@ export default function BasicHomepage() {
   const [activeTab, setActiveTab] = useState('business');
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
+  const companyId = getCompanyId();
 
   const hasDocs = isModuleEnabled(subscription, 'documents');
   const subActive = isSubscriptionActive(subscription);
@@ -208,31 +230,19 @@ export default function BasicHomepage() {
   }, [activeTab, availableTabs.join('|')]);
 
   useEffect(() => {
-    const companyId = getCompanyId();
     if (!companyId) return;
 
     let cancelled = false;
 
     (async () => {
       try {
-        const businessRef = doc(db, 'companies', companyId, 'data', 'business_info');
-        const businessSnap = await getDoc(businessRef);
-        if (!businessSnap.exists() || cancelled) return;
-        const data = businessSnap.data();
-        setBusinessInfo({
-          heName: data?.he_name || '',
-          enName: data?.en_name || '',
-          vatNumber: data?.vat_number || '',
-          businessType: data?.business_type || '',
-          address: data?.address || '',
-          city: data?.city || '',
-          businessEmail: data?.business_email || '',
-          businessPhone: data?.business_phone || '',
-          businessFax: data?.business_fax || '',
-          accountantName: data?.accountant_name || '',
-          accountantEmail: data?.accountant_email || '',
-          accountantPhone: data?.accountant_phone || '',
+        const bootstrap = await callHttpFunction<{ businessInfo?: Record<string, unknown> | null }>('readModelV1', {
+          kind: 'bootstrap',
+          companyId,
+          includeCollections: false,
         });
+        if (cancelled) return;
+        setBusinessInfo(normalizeBusinessInfo(bootstrap?.businessInfo));
       } catch (error) {
         console.warn('BasicHomepage: failed to load business info', error?.message || error);
       }
@@ -241,7 +251,7 @@ export default function BasicHomepage() {
     return () => {
       cancelled = true;
     };
-  }, [getCompanyId]);
+  }, [companyId]);
 
   const tabItems = [
     { key: 'business', label: t.businessTab, icon: 'domain', iconLibrary: 'material' },

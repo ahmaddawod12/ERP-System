@@ -8,9 +8,24 @@ const {
   initializeTestEnvironment,
 } = require('@firebase/rules-unit-testing');
 
+function resolveRepoRoot() {
+  const candidates = [
+    path.resolve(__dirname, '..', '..'),
+    path.resolve(__dirname, '..', '..', '..'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'firestore.rules'))) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to resolve repo root from ${__dirname}`);
+}
+
 const projectId = 'demo-smart-job';
 const firestoreRules = fs.readFileSync(
-  path.resolve(__dirname, '../../firestore.rules'),
+  path.resolve(resolveRepoRoot(), 'firestore.rules'),
   'utf8',
 );
 

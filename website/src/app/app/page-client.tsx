@@ -1,16 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, doc, getCountFromServer, getDoc, query, where } from "firebase/firestore";
 import { BarChart3, Building2, ShieldCheck, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { db } from "@/lib/firebase/client";
 import { useAppContext } from "@/hooks/use-app-context";
-import { buildMembershipQueryValues, roleUsesScopedJobAccess } from "@/lib/job-access";
-import { resolveCompanyScope } from "@/lib/services/firestore-service";
-import type { InventoryDoc } from "@/lib/types";
+import { roleUsesScopedJobAccess } from "@/lib/job-access";
+import { loadBootstrapReadModel, resolveCompanyScope } from "@/lib/services/firestore-service";
 
 interface StatItem {
   label: string;
@@ -22,50 +19,51 @@ export default function AppOverviewClient() {
   const [stats, setStats] = useState<StatItem[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
       if (!profile || !uid) return;
-      const items: StatItem[] = [];
       const scopeId = resolveCompanyScope(companyId);
       if (!scopeId) {
         setStats([]);
         return;
       }
 
-      const jobsCollection = collection(db, "companies", scopeId, "jobs");
-      const workerQueryValues = buildMembershipQueryValues(profile.wid);
-      const jobsCount =
-        roleUsesScopedJobAccess(profile.role)
-          ? workerQueryValues.length > 0
-            ? await getCountFromServer(
-                query(
-                  jobsCollection,
-                  workerQueryValues.length === 1
-                    ? where("wid", "==", workerQueryValues[0])
-                    : where("wid", "in", [...workerQueryValues]),
-                ),
-              )
-            : null
-          : await getCountFromServer(jobsCollection);
-      const clientsCount = await getCountFromServer(collection(db, "companies", scopeId, "clients"));
-      items.push({
-        label: roleUsesScopedJobAccess(profile.role) ? "My Jobs" : "Total Jobs",
-        value: jobsCount?.data().count ?? 0,
-      });
-      items.push({ label: "Clients", value: clientsCount.data().count });
+      try {
+        const bootstrap = await loadBootstrapReadModel(scopeId, true);
+        if (cancelled) return;
 
-      // Inventory parts count from single-doc
-      const useCompanyInventory = profile.role === "manager" || profile.role === "dev";
-      const invRef = useCompanyInventory
-        ? doc(db, "companies", scopeId, "data", "inventory")
-        : doc(db, "users", uid, "data", "inventory");
-      const invSnap = await getDoc(invRef);
-      const invData = invSnap.exists() ? (invSnap.data() as InventoryDoc) : null;
-      items.push({ label: "Inventory Parts", value: invData?.parts?.length ?? 0 });
+        const useCompanyInventory = profile.role === "manager" || profile.role === "dev";
+        const inventoryPartsCount = useCompanyInventory
+          ? (bootstrap.companyInventory?.parts?.length ?? 0)
+          : (bootstrap.inventory?.parts?.length ?? 0);
 
-      setStats(items);
+        setStats([
+          {
+            label: roleUsesScopedJobAccess(profile.role) ? "My Jobs" : "Total Jobs",
+            value: bootstrap.jobs?.length ?? 0,
+          },
+          {
+            label: "Clients",
+            value: bootstrap.clients?.length ?? 0,
+          },
+          {
+            label: "Inventory Parts",
+            value: inventoryPartsCount,
+          },
+        ]);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Failed to load overview stats", error);
+          setStats([]);
+        }
+      }
     }
 
     void load();
+    return () => {
+      cancelled = true;
+    };
   }, [companyId, profile, uid]);
 
   return (

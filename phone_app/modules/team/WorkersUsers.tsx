@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, collection, db, functions, getDocs, httpsCallable } from '../../firebase';
+import { auth, functions, httpsCallable } from '../../firebase';
 import {
   borderRadius,
   getColors,
@@ -32,6 +32,7 @@ import {
   GlobalHeader,
   LoadingSpinner,
 } from '../../components';
+import { fetchCompanyWorkers } from '../../utils/read-model';
 
 const translations = {
   en: {
@@ -177,24 +178,15 @@ export default function WorkersUsers() {
         return;
       }
 
-      const workersCollectionRef = collection(db, 'companies', companyId, 'workers');
-      const workersSnapshot = await getDocs(workersCollectionRef);
+      const fetchedWorkers = await fetchCompanyWorkers(companyId);
       const workersData = {};
-      const workersList = workersSnapshot.docs
-        .map((docSnap) => {
-          const data = docSnap.data() || {};
-          const wid = docSnap.id;
-          if (!data.email) return null;
-          workersData[wid] = {
-            uid: data.uid || wid,
-            wid: data.wid || wid,
-            email: data.email || '',
-            phoneNumber: data.phoneNumber || '',
-            name: data.name || '',
-          };
-          return workersData[wid];
-        })
-        .filter(Boolean);
+      const workersList = fetchedWorkers
+        .filter((worker) => worker.email)
+        .map((worker) => {
+          const wid = worker.wid || worker.uid;
+          workersData[wid] = worker;
+          return worker;
+        });
 
       setWorkers(workersList);
       await updateWorkers(workersData);

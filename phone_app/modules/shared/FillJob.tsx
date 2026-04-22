@@ -18,7 +18,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, storage as fbStorage, doc, getDoc, functions, httpsCallable } from '../../firebase';
+import { auth, storage as fbStorage, functions, httpsCallable } from '../../firebase';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -27,6 +27,7 @@ import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
+import { fetchUserInventoryParts } from '../../utils/read-model';
 import {
   extractStoragePathFromJobFile,
   getImmediateJobFileUri,
@@ -521,11 +522,9 @@ export default function FillJob() {
       // If cache is empty, fetch from Firebase as fallback
       if (partsArray.length === 0) {
         console.warn('⚠️ Cached inventory is empty, fetching from Firebase...');
-        const inventoryRef = doc(db, 'users', uid, 'data', 'inventory');
-        const inventorySnap = await getDoc(inventoryRef);
-        if (inventorySnap.exists()) {
-          const inventoryDoc = inventorySnap.data();
-          partsArray = Array.isArray(inventoryDoc.parts) ? inventoryDoc.parts : [];
+        const companyId = getCompanyId();
+        if (companyId) {
+          partsArray = await fetchUserInventoryParts(companyId, uid);
         }
       }
 

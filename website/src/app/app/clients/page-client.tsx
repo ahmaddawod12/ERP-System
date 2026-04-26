@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { httpsCallable } from "firebase/functions";
 import { Building2, ShieldCheck, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
@@ -14,8 +13,13 @@ import { LoadingState } from "@/components/states/loading-state";
 import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
-import { functions } from "@/lib/firebase/client";
-import { listClients, resolveCompanyScope, updateClient } from "@/lib/services/firestore-service";
+import {
+  createClient as createClientRecord,
+  deleteClient as deleteClientRecord,
+  listClients,
+  resolveCompanyScope,
+  updateClient,
+} from "@/lib/services/firestore-service";
 import type { ClientRecord } from "@/lib/types";
 
 interface ClientForm {
@@ -70,8 +74,7 @@ export default function ClientsClient() {
   const createClient = async () => {
     if (!scopeId || !form.name) return;
     try {
-      const addClientFn = httpsCallable(functions, "addClientV1");
-      await addClientFn({ companyId: scopeId, ...form });
+      await createClientRecord(scopeId, form);
       setForm(initialForm);
       await load();
       toast({ title: "Client created", variant: "success" });
@@ -103,8 +106,7 @@ export default function ClientsClient() {
   const removeClient = async (clientId: string) => {
     if (!scopeId) return;
     try {
-      const deleteClientFn = httpsCallable(functions, "deleteClientV1");
-      await deleteClientFn({ companyId: scopeId, clientId });
+      await deleteClientRecord(scopeId, clientId);
       await load();
       toast({ title: "Client deleted", variant: "info" });
     } catch (error) {
@@ -225,7 +227,7 @@ export default function ClientsClient() {
 
             <div className="mt-5 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
               <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
-                Create and delete operations go through callable functions rather than direct client writes.
+                Create and delete operations go through server API proxy routes rather than direct browser callable calls.
               </div>
               <div className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
                 <div className="flex flex-wrap gap-2">

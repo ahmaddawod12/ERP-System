@@ -45,13 +45,16 @@ export default function UpgradeClient() {
   const onSubmit = async (values: FormValues) => {
     if (!uid) return;
     try {
-      const response = await fetch("/api/upgrades/request", {
+      const response = await fetch("/api/callable", {
         method: "POST",
         headers: await buildAuthedJsonHeaders(),
         body: JSON.stringify({
-          currentTier: subscription?.tier ?? "Basic",
-          requestedTier: values.requestedTier,
-          message: values.message,
+          operation: "requestUpgradeV1",
+          payload: {
+            currentTier: subscription?.tier ?? "Basic",
+            requestedTier: values.requestedTier,
+            message: values.message,
+          },
         }),
       });
       const payload = (await response.json()) as ClientApiResponse<{ requestId: string }>;
@@ -93,7 +96,7 @@ export default function UpgradeClient() {
                 Billing is not enabled yet. Use this form to request a manual tier upgrade.
               </p>
             </div>
-            <div className="dashboard-stat min-w-[15rem]">
+            <div className="dashboard-stat min-w-60">
               <p className="text-sm text-slate-500 dark:text-slate-400">Current tier</p>
               <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
                 {subscription?.tier ?? "Basic"}

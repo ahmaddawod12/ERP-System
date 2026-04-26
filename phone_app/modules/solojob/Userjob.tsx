@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View,
   TouchableOpacity,
@@ -12,7 +11,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, db, doc, getDoc, setDoc, deleteDoc, functions, httpsCallable } from '../../firebase';
+import { auth, functions, httpsCallable } from '../../firebase';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -21,6 +20,33 @@ import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
+import type { DateLike, Job, JobItem } from '../../types';
+import type { DateFilterRange } from '../../components/DateFilter';
+
+type UserJobRecord = Job & {
+  isCert?: boolean;
+  customer?: string;
+  partsUsed?: JobItem[];
+};
+
+type UserJobDraft = {
+  jobData?: Partial<UserJobRecord>;
+  selectedParts?: JobItem[];
+};
+
+type PendingJobRecord = {
+  uid?: string;
+  jobData?: Partial<UserJobRecord>;
+};
+
+function getDateLikeTime(value: DateLike | null | undefined): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof (value as { toDate?: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  return new Date(String(value)).getTime();
+}
 
 export default function Userjob() {
   const router = useRouter();
@@ -45,18 +71,18 @@ export default function Userjob() {
   const colors = getColors(isDarkMode);
 
   // ─── State ──────────────────────────────────────────────────────
-  const [jobs, setJobs] = useState([]);
+  const [jobs, setJobs] = useState<UserJobRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const hasInitialLoadedRef = useRef(false);
   const [isOnline, setIsOnline] = useState(true);
   const [pendingJobCount, setPendingJobCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [selectedJobDetails, setSelectedJobDetails] = useState(null);
+  const [selectedJobDetails, setSelectedJobDetails] = useState<UserJobRecord | null>(null);
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [clientFilter, setClientFilter] = useState('');
   const [showClientSelector, setShowClientSelector] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
-  const [dateFilter, setDateFilter] = useState({
+  const [dateFilter, setDateFilter] = useState<DateFilterRange>({
     type: 'last7days',
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)),
     endDate: (() => {
@@ -186,26 +212,26 @@ export default function Userjob() {
 
   // ─── Helpers ────────────────────────────────────────────────────
 
-  const isJobNew = (job) => {
+  const isJobNew = (job: UserJobRecord) => {
     if (!job.finishedAt && !job.createdAt) return false;
-    const jobDate = new Date(job.finishedAt || job.createdAt);
-    const hoursDiff = (new Date() - jobDate) / (1000 * 60 * 60);
+    const jobDate = getDateLikeTime(job.finishedAt || job.createdAt);
+    const hoursDiff = (Date.now() - jobDate) / (1000 * 60 * 60);
     return hoursDiff <= 24;
   };
 
-  const canEditJob = (job) => {
+  const canEditJob = (job: UserJobRecord) => {
     if (job.isCert === true) return false;
     if (job.finishedAt) {
-      const finishedDate = job.finishedAt.toDate ? job.finishedAt.toDate() : new Date(job.finishedAt);
-      const daysDiff = (new Date() - finishedDate) / (1000 * 60 * 60 * 24);
+      const finishedDateMs = getDateLikeTime(job.finishedAt);
+      const daysDiff = (Date.now() - finishedDateMs) / (1000 * 60 * 60 * 24);
       if (daysDiff > 7) return false;
     }
     return true;
   };
 
-  const canDeleteJob = (job) => job.isCert !== true;
+  const canDeleteJob = (job: UserJobRecord) => job.isCert !== true;
 
-  const getStatusColor = (status) => {
+  const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'finished': return '#10b981';
       case 'pending': return '#f59e0b';
@@ -214,55 +240,18 @@ export default function Userjob() {
     }
   };
 
-  const formatDate = (timestamp) => {
+  const formatDate = (timestamp: DateLike | null | undefined) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate?.() || new Date(timestamp);
+    const date = typeof (timestamp as { toDate?: () => Date }).toDate === 'function'
+      ? (timestamp as { toDate: () => Date }).toDate()
+      : new Date(String(timestamp));
     return date.toLocaleDateString();
   };
-
-  // ─── Data Loading ───────────────────────────────────────────────
-
-  // Fetch clients on mount
-  useEffect(() => {
-    const companyId = getCompanyId();
-    if (companyId && fetchClients) {
-      fetchClients(companyId);
-    }
-  }, [getCompanyId, fetchClients]);
-
-  // Initial data load + re-load on filter changes
-  useEffect(() => {
-    const initializeData = async () => {
-      await checkForDraft();
-      await loadJobs();
-      hasInitialLoadedRef.current = true;
-    };
-    initializeData();
-  }, [dateFilter, clientFilter]);
-
-  // Watch for cached jobs changes
-  useEffect(() => {
-    if (!hasInitialLoadedRef.current) return;
-    loadJobs();
-  }, [cachedJobs, cachedCompanyJobs, loadJobs, getUserRole]);
-
-  // Network listener — sync pending offline jobs when back online
-  useEffect(() => {
-    let previousOnlineState = true;
-    const unsubscribe = NetInfo.addEventListener(state => {
-      const currentOnlineState = state.isConnected;
-      if (!previousOnlineState && currentOnlineState) syncPendingJobs();
-      previousOnlineState = currentOnlineState;
-      setIsOnline(currentOnlineState);
-    });
-    checkPendingJobCount();
-    return () => unsubscribe();
-  }, []);
 
   const checkPendingJobCount = async () => {
     try {
       const pending = storage.getString('pendingJobs');
-      if (pending) setPendingJobCount((safeJsonParse(pending, [])).length);
+      if (pending) setPendingJobCount((safeJsonParse<PendingJobRecord[]>(pending, []) || []).length);
     } catch (error) {
       console.log('Error checking pending jobs:', error);
     }
@@ -275,9 +264,9 @@ export default function Userjob() {
     try {
       const draft = storage.getString('userjobDraft');
       if (draft) {
-        const parsed = safeJsonParse(draft);
-        if (parsed.jobData && (parsed.jobData.title || parsed.jobData.description ||
-            parsed.jobData.photos?.length > 0 || parsed.selectedParts?.length > 0)) {
+        const parsed = safeJsonParse<UserJobDraft | null>(draft, null);
+        if (parsed?.jobData && (parsed.jobData.title || parsed.jobData.description ||
+            (parsed.jobData.photos?.length ?? 0) > 0 || (parsed.selectedParts?.length ?? 0) > 0)) {
           alert.confirm(
             t.draftFound,
             t.draftFoundMessage,
@@ -286,7 +275,7 @@ export default function Userjob() {
                 text: t.discardDraft,
                 style: 'destructive',
                 onPress: async () => {
-                  storage.delete('userjobDraft');
+                  storage.remove('userjobDraft');
                 },
               },
               {
@@ -298,7 +287,7 @@ export default function Userjob() {
                 text: t.continueWithDraft,
                 style: 'default',
                 onPress: async () => {
-                  storage.delete('userjobDraft');
+                  storage.remove('userjobDraft');
                   // Navigate to FillJob with the draft data
                   router.push({
                     pathname: '/FillJob',
@@ -325,21 +314,20 @@ export default function Userjob() {
     try {
       const pending = storage.getString('pendingJobs');
       if (!pending) return;
-      const pendingArray = safeJsonParse(pending, []);
+      const pendingArray = safeJsonParse<PendingJobRecord[]>(pending, []) || [];
       if (pendingArray.length === 0) return;
 
       setIsSyncing(true);
-      const failedJobs = [];
+      const failedJobs: PendingJobRecord[] = [];
 
       for (const pendingJob of pendingArray) {
         try {
-          const uid = pendingJob.uid || getUid();
           const companyId = getCompanyId();
 
           if (!companyId) throw new Error('No companyId');
 
           const jobPayload = {
-            ...pendingJob.jobData,
+            ...(pendingJob.jobData || {}),
           };
 
           // Use createJobV1 Cloud Function for atomic creation
@@ -348,9 +336,12 @@ export default function Userjob() {
             companyId,
             type: 'finished',
             ...jobPayload,
-          });
+          }) as { data?: { jobId?: string } };
 
-          const serverJobId = result.data?.jobId || result.jobId;
+          const serverJobId = result.data?.jobId;
+          if (!serverJobId) {
+            throw new Error('Job was created without a server job ID');
+          }
 
           const jobToSave = {
             id: serverJobId,
@@ -360,7 +351,7 @@ export default function Userjob() {
             updatedAt: new Date().toISOString(),
           };
 
-          await addJob(jobToSave, false);
+          addJob(jobToSave);
         } catch (error) {
           console.error('Error syncing job:', error);
           failedJobs.push(pendingJob);
@@ -372,7 +363,7 @@ export default function Userjob() {
         setPendingJobCount(failedJobs.length);
         alert.error(t.syncError);
       } else {
-        storage.delete('pendingJobs');
+        storage.remove('pendingJobs');
         setPendingJobCount(0);
         alert.success(
           language === 'en' ? 'Sync Complete' : language === 'he' ? 'סנכרון הושלם' : 'اكتمل التزامن',
@@ -409,28 +400,28 @@ export default function Userjob() {
 
       // Beyond 90 days — fetch from archive / Firestore
       if (dateFilter.startDate < ninetyDaysAgo) {
-        const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs');
+        const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs') as UserJobRecord[];
         const filtered = olderJobs
-          .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt));
+          .sort((a, b) => getDateLikeTime(b.finishedAt) - getDateLikeTime(a.finishedAt));
         setJobs(filtered);
         setLoading(false);
         return;
       }
 
       // Recent data — use cache
-      let jobsList = [];
+      let jobsList: UserJobRecord[] = [];
       if (role === 'manager') {
-        jobsList = (cachedCompanyJobs || []).filter(job => job.status === 'finished');
+        jobsList = (cachedCompanyJobs || []).filter((job): job is UserJobRecord => job.status === 'finished');
       } else if (role === 'user') {
-        jobsList = (cachedJobs || []).filter(job => job.status === 'finished');
+        jobsList = (cachedJobs || []).filter((job): job is UserJobRecord => job.status === 'finished');
       } else {
-        jobsList = (cachedJobs || []).filter(job => job.status === 'finished');
+        jobsList = (cachedJobs || []).filter((job): job is UserJobRecord => job.status === 'finished');
       }
 
       // Apply date filter
       jobsList = jobsList.filter(job => {
-        const jobDate = new Date(job.finishedAt);
-        return jobDate >= dateFilter.startDate && jobDate <= dateFilter.endDate;
+        const jobDate = getDateLikeTime(job.finishedAt);
+        return jobDate >= dateFilter.startDate.getTime() && jobDate <= dateFilter.endDate.getTime();
       });
 
       // Apply client filter
@@ -444,7 +435,7 @@ export default function Userjob() {
       }
 
       // Sort by finishedAt descending
-      jobsList.sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt));
+      jobsList.sort((a, b) => getDateLikeTime(b.finishedAt) - getDateLikeTime(a.finishedAt));
 
       setJobs(jobsList);
       setLoading(false);
@@ -454,9 +445,50 @@ export default function Userjob() {
     }
   }, [cachedJobs, cachedCompanyJobs, dateFilter, clientFilter, getUid, getCompanyId, getUserRole, getDataForDateRange, isWithinCacheRange]);
 
+  // ─── Data Loading ───────────────────────────────────────────────
+
+  // Fetch clients on mount
+  useEffect(() => {
+    const companyId = getCompanyId();
+    if (companyId && fetchClients) {
+      fetchClients(companyId);
+    }
+  }, [getCompanyId, fetchClients]);
+
+  // Initial data load + re-load on filter changes
+  useEffect(() => {
+    const initializeData = async () => {
+      await checkForDraft();
+      await loadJobs();
+      hasInitialLoadedRef.current = true;
+    };
+    void initializeData();
+  }, [dateFilter, clientFilter, loadJobs]);
+
+  // Watch for cached jobs changes
+  useEffect(() => {
+    if (!hasInitialLoadedRef.current) return;
+    void loadJobs();
+  }, [cachedJobs, cachedCompanyJobs, loadJobs, getUserRole]);
+
+  // Network listener — sync pending offline jobs when back online
+  useEffect(() => {
+    let previousOnlineState = true;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const currentOnlineState = Boolean(state.isConnected);
+      if (!previousOnlineState && currentOnlineState) {
+        void syncPendingJobs();
+      }
+      previousOnlineState = currentOnlineState;
+      setIsOnline(currentOnlineState);
+    });
+    void checkPendingJobCount();
+    return () => unsubscribe();
+  }, []);
+
   // ─── Actions ────────────────────────────────────────────────────
 
-  const handleEditJob = (job) => {
+  const handleEditJob = (job: UserJobRecord) => {
     if (!canEditJob(job)) {
       let message = '';
       if (job.isCert === true) {
@@ -479,7 +511,7 @@ export default function Userjob() {
       return;
     }
 
-    storage.delete('userjobDraft');
+  storage.remove('userjobDraft');
 
     router.push({
       pathname: '/FillJob',
@@ -503,7 +535,7 @@ export default function Userjob() {
     });
   };
 
-  const handleDeleteJob = async (jobId) => {
+  const handleDeleteJob = async (jobId: string) => {
     const job = jobs.find(j => j.id === jobId);
     if (job && !canDeleteJob(job)) {
       alert.warning(
@@ -527,7 +559,11 @@ export default function Userjob() {
           style: 'destructive',
           onPress: async () => {
             try {
-              const uid = getUid() || auth.currentUser.uid;
+              const currentUser = auth.currentUser;
+              if (!currentUser) {
+                alert.error('Error', 'User session not found');
+                return;
+              }
 
               const companyId = getCompanyId();
               if (!companyId) {
@@ -538,7 +574,7 @@ export default function Userjob() {
               // Use deleteJobV1 Cloud Function for secure deletion
               const deleteJobFn = httpsCallable(functions, 'deleteJobV1');
               await deleteJobFn({ companyId, jobId });
-              await removeJob(jobId, false);
+              removeJob(jobId);
               alert.success('Success', 'Job deleted successfully');
               loadJobs();
             } catch (error) {
@@ -625,7 +661,7 @@ export default function Userjob() {
               {clientFilter || t.filterByClient}
             </AppText>
             {clientFilter.length > 0 ? (
-              <TouchableOpacity onPress={(e) => { e.stopPropagation(); setClientFilter(''); }}>
+              <TouchableOpacity onPress={() => { setClientFilter(''); }}>
                 <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             ) : (
@@ -750,7 +786,7 @@ export default function Userjob() {
       <DateFilter
         visible={showDateFilter}
         onClose={() => setShowDateFilter(false)}
-        onFilterChange={(filter) => { setDateFilter(filter); setShowDateFilter(false); }}
+        onFilterChange={(filter: DateFilterRange) => { setDateFilter(filter); setShowDateFilter(false); }}
         currentFilter={dateFilter.type}
         isDarkMode={isDarkMode}
         language={language}

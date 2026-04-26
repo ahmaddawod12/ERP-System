@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
@@ -88,23 +87,26 @@ export default function Login() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
-    } catch (error) {
+    } catch (error: unknown) {
       let errorMessage = 'Please check your credentials';
+      const authError = error as { code?: unknown; message?: unknown };
+      const errorCode = typeof authError.code === 'string' ? authError.code : '';
+      const rawMessage = typeof authError.message === 'string' ? authError.message : '';
 
-      if (error.code === 'auth/invalid-credential') {
+      if (errorCode === 'auth/invalid-credential') {
         errorMessage = 'Invalid email or password. Please check your credentials.';
-      } else if (error.code === 'auth/user-not-found') {
+      } else if (errorCode === 'auth/user-not-found') {
         errorMessage = 'No account found with this email.';
-      } else if (error.code === 'auth/wrong-password') {
+      } else if (errorCode === 'auth/wrong-password') {
         errorMessage = 'Incorrect password.';
-      } else if (error.code === 'auth/invalid-email') {
+      } else if (errorCode === 'auth/invalid-email') {
         errorMessage = 'Invalid email address format.';
-      } else if (error.code === 'auth/user-disabled') {
+      } else if (errorCode === 'auth/user-disabled') {
         errorMessage = 'This account has been disabled.';
-      } else if (error.code === 'auth/too-many-requests') {
+      } else if (errorCode === 'auth/too-many-requests') {
         errorMessage = 'Too many failed attempts. Please try again later.';
-      } else if (error.message) {
-        errorMessage = error.message;
+      } else if (rawMessage) {
+        errorMessage = rawMessage;
       }
 
       alert.error('Login Failed', errorMessage);

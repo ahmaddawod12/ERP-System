@@ -1,7 +1,7 @@
 /**
  * useDocumentTask Hook
  * 
- * Custom hook for publishing document tasks and listening for completion.
+ * Custom hook for publishing document tasks and polling for completion.
  * Uses Pub/Sub + Cloud Run architecture for scalable PDF generation.
  * 
  * @example
@@ -33,9 +33,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { functions, httpsCallable } from '../firebase';
 import { callHttpFunction } from '../utils/httpFunctions';
+import { getNextDocumentTaskPollIntervalMs } from './document-task-poll';
 
 const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const POLL_INTERVAL_MS = 2000;
 
 type TaskStatus = 'pending' | 'queued' | 'published' | 'completed' | 'failed' | null;
 type TaskType = 'preview' | 'generate' | null;
@@ -78,7 +78,7 @@ export interface UseDocumentTaskResult {
 }
 
 interface DocumentTaskParams {
-  documentType: string;
+  documentType: string | number;
   companyId: string;
   documentData?: Record<string, any>;
   documentId?: string;
@@ -153,9 +153,10 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       }
     }, TASK_TIMEOUT_MS);
 
-    // Poll task status via readModelV1 (SQL-compatible — Cloud Run writes state to SQL, not Firestore, in SQL mode)
+    // Poll task status via readModelV1 (SQL-compatible; Cloud Run writes state to SQL in SQL mode)
     let stopped = false;
     unsubscribeRef.current = () => { stopped = true; };
+    let consecutiveInFlightPolls = 0;
 
     const poll = async () => {
       if (stopped) return;
@@ -200,6 +201,11 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
             }
             return;
           }
+
+          const status = String(data.status || '').trim().toLowerCase();
+          if (status === 'pending' || status === 'queued' || status === 'processing' || status === 'published') {
+            consecutiveInFlightPolls += 1;
+          }
         }
       } catch (err) {
         console.error('Error polling task status:', err);
@@ -207,7 +213,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
       // Still in progress — schedule next poll
       if (!stopped) {
-        setTimeout(poll, POLL_INTERVAL_MS);
+        setTimeout(poll, getNextDocumentTaskPollIntervalMs(consecutiveInFlightPolls));
       }
     };
 

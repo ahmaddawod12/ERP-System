@@ -5,6 +5,12 @@ import {
   extractCookieValue,
   hasValidRevocationCheckedSession,
 } from "../src/lib/auth/session-middleware.ts";
+import {
+  createSessionCookieValue,
+  verifySessionCookieValue,
+} from "../src/lib/auth/session-token.ts";
+
+process.env.SESSION_COOKIE_SECRET = "test-session-secret";
 
 test("extractCookieValue reads the session cookie from a header", () => {
   assert.equal(
@@ -23,37 +29,78 @@ test("buildLoginRedirectUrl preserves the requested app path and query", () => {
 });
 
 test("hasValidRevocationCheckedSession rejects missing session cookies", async () => {
-  const fetchCalls: Array<{ input: URL | RequestInfo; init?: RequestInit }> = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
-    fetchCalls.push({ input, init });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
-  };
-
   const result = await hasValidRevocationCheckedSession(
     "https://example.com/app",
     null,
-    fetchImpl,
   );
 
   assert.equal(result, false);
-  assert.equal(fetchCalls.length, 0);
 });
 
-test("hasValidRevocationCheckedSession delegates to the session API and returns its result", async () => {
-  const fetchCalls: Array<{ input: URL | RequestInfo; init?: RequestInit }> = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
-    fetchCalls.push({ input, init });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
-  };
+test("session tokens round-trip and keep the auth payload", async () => {
+  const cookieValue = await createSessionCookieValue({
+    uid: "user-123",
+    provider: "supabase",
+    email: "user@example.com",
+    role: "manager",
+    companyId: "1007",
+    authTime: 1710000000,
+  });
+
+  const sessionPayload = await verifySessionCookieValue(cookieValue);
+
+  assert.deepEqual(sessionPayload, {
+    uid: "user-123",
+    provider: "supabase",
+    email: "user@example.com",
+    role: "manager",
+    companyId: "1007",
+    authTime: 1710000000,
+  });
+});
+
+test("hasValidRevocationCheckedSession accepts a valid signed session cookie", async () => {
+  const cookieValue = await createSessionCookieValue({ uid: "user-123", provider: "supabase" });
+
+  let fetchUrl: string | null = null;
+  let fetchCookieHeader: string | null = null;
 
   const result = await hasValidRevocationCheckedSession(
     "https://example.com/app/jobs",
-    "__session=test-token; theme=dark",
-    fetchImpl,
+    `__session=${encodeURIComponent(cookieValue)}; theme=dark`,
+    async (input, init) => {
+      fetchUrl = String(input);
+      fetchCookieHeader = init?.headers && "cookie" in init.headers
+        ? String((init.headers as Record<string, string>).cookie || "")
+        : null;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
   );
 
   assert.equal(result, true);
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(String(fetchCalls[0].input), "https://example.com/api/auth/session");
-  assert.equal(fetchCalls[0].init?.method, "GET");
+  assert.equal(fetchUrl, "https://example.com/api/auth/session");
+  assert.equal(fetchCookieHeader, `__session=${encodeURIComponent(cookieValue)}; theme=dark`);
+});
+
+test("hasValidRevocationCheckedSession rejects a tampered signed session cookie", async () => {
+  const cookieValue = await createSessionCookieValue({ uid: "user-123", provider: "supabase" });
+
+  const result = await hasValidRevocationCheckedSession(
+    "https://example.com/app/jobs",
+    `__session=${encodeURIComponent(`${cookieValue}broken`)}`,
+  );
+
+  assert.equal(result, false);
+});
+
+test("hasValidRevocationCheckedSession rejects when server validation fails", async () => {
+  const cookieValue = await createSessionCookieValue({ uid: "user-999", provider: "supabase" });
+
+  const result = await hasValidRevocationCheckedSession(
+    "https://example.com/app/jobs",
+    `__session=${encodeURIComponent(cookieValue)}`,
+    async () => new Response(JSON.stringify({ ok: false }), { status: 401 }),
+  );
+
+  assert.equal(result, false);
 });

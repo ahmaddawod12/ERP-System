@@ -26,7 +26,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { db, auth, collection, getDocs, query, where, orderBy, signOut } from '../../firebase';
+import { auth, signOut } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -37,6 +37,7 @@ import { loadConversationThread } from './support-message-store';
 import {
   appendSupportMessage,
   closeSupportConversation,
+  listSupportConversations,
   markSupportConversationRead,
 } from './support-api';
 
@@ -101,23 +102,7 @@ export default function DevInbox() {
   // Load conversations (one-time fetch, no realtime)
   const loadConversations = async () => {
     try {
-      const conversationsRef = collection(db, 'conversations');
-      // Fetch all open conversations so resolved-but-still-open threads remain visible.
-      const q = query(conversationsRef,
-        where('status', '==', 'open'),
-        orderBy('unreadForDev', 'desc'),
-        orderBy('lastMessageAt', 'desc')
-      );
-      
-      const snapshot = await getDocs(q);
-      
-      const convs = snapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data(),
-        lastMessageAt: docSnap.data().lastMessageAt?.toDate() || new Date(),
-        createdAt: docSnap.data().createdAt?.toDate() || new Date(),
-      }));
-      
+      const convs = await listSupportConversations('open');
       setConversations(convs);
       setLoading(false);
     } catch (error) {

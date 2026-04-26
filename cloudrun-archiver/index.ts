@@ -1,6 +1,12 @@
-import admin from 'firebase-admin';
 import { Storage } from '@google-cloud/storage';
 import { createHash } from 'crypto';
+import {
+  deleteArchivedDocumentsByIds,
+  deleteArchivedJobsByIds,
+  listArchivedCompanyDocuments,
+  listArchivedCompanyJobs,
+  listCompanyPublicIds,
+} from '@smart-job/db';
 import { getTargetMonth } from './archive-month';
 
 /**
@@ -106,17 +112,12 @@ if (!BUCKET_NAME) {
   throw new Error('ARCHIVE_BUCKET environment variable is required');
 }
 const MONTHS_LOOKBACK = 6; // Archive data older than 6 months
-const BATCH_SIZE = 500; // Firestore batch delete limit
-const QUERY_PAGE_SIZE = 5000; // Docs per paginated query
+const QUERY_PAGE_SIZE = Math.max(100, Number(process.env.ARCHIVER_QUERY_PAGE_SIZE || 5000) || 5000); // Docs per paginated query
+const COMPANY_ARCHIVE_CONCURRENCY = Math.max(1, Number(process.env.ARCHIVER_COMPANY_CONCURRENCY || 3) || 3);
 
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
-admin.initializeApp({
-  storageBucket: BUCKET_NAME
-});
-
-const db = admin.firestore();
 const storage = new Storage();
 const bucket = storage.bucket(BUCKET_NAME);
 
@@ -183,75 +184,6 @@ async function saveManifest(companyId, manifest) {
   });
 
   console.log(`📋 Manifest saved for ${companyId}`);
-}
-
-// ============================================================================
-// FIRESTORE QUERY HELPERS
-// ============================================================================
-
-/**
- * Query all documents in a collection within a date range.
- * Uses pagination to handle large datasets.
- * 
- * NOTE: Date fields (finishedAt, createdAt) are stored as ISO-8601 strings
- * by Cloud Functions (e.g. new Date().toISOString()). The range comparison
- * uses ISO string ordering which works correctly for this format.
- * If the schema ever migrates to Firestore Timestamps, the comparison
- * values here must be converted to Timestamps as well.
- * 
- * @param {string} collectionPath - Full Firestore collection path
- * @param {string} dateField - 'finishedAt' or 'createdAt'
- * @param {Date} startDate - Start of range (inclusive)
- * @param {Date} endDate - End of range (inclusive)
- * @returns {Array} - All matching documents with their IDs
- */
-async function queryDocumentsByDateRange(collectionPath, dateField, startDate, endDate, filters: any = {}) {
-  const allDocs = [];
-  const collRef = db.collection(collectionPath);
-
-  // Dates stored as ISO strings in Firestore
-  const startISO = startDate.toISOString();
-  const endISO = endDate.toISOString();
-
-  let lastDoc = null;
-  let hasMore = true;
-
-  while (hasMore) {
-    let q = collRef
-      .where(dateField, '>=', startISO)
-      .where(dateField, '<=', endISO);
-
-    // Apply additional equality filters (e.g. { status: 'finished' })
-    for (const [field, value] of Object.entries(filters)) {
-      q = q.where(field, '==', value);
-    }
-
-    q = q.orderBy(dateField, 'asc')
-      .limit(QUERY_PAGE_SIZE);
-
-    if (lastDoc) {
-      q = q.startAfter(lastDoc);
-    }
-
-    const snapshot = await q.get();
-
-    if (snapshot.empty) {
-      hasMore = false;
-      break;
-    }
-
-    snapshot.docs.forEach(doc => {
-      allDocs.push({ id: doc.id, ...doc.data() });
-    });
-
-    lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-    if (snapshot.docs.length < QUERY_PAGE_SIZE) {
-      hasMore = false;
-    }
-  }
-
-  return allDocs;
 }
 
 // ============================================================================
@@ -328,28 +260,31 @@ async function verifyArchive(companyId, archiveKey, expectedCount) {
   return true;
 }
 
-/**
- * Delete documents from Firestore in batches.
- * 
- * @param {string} collectionPath - Full Firestore collection path
- * @param {string} dateField - 'finishedAt' or 'createdAt'
- * @param {Date} startDate - Start of range (inclusive)
- * @param {Date} endDate - End of range (inclusive)
- * @returns {number} - Number of documents deleted
- */
-async function deleteDocumentsByIds(collectionPath, documentIds) {
-  let totalDeleted = 0;
-  for (let index = 0; index < documentIds.length; index += BATCH_SIZE) {
-    const batchIds = documentIds.slice(index, index + BATCH_SIZE);
-    const batch = db.batch();
-    batchIds.forEach((documentId) => {
-      batch.delete(db.doc(`${collectionPath}/${documentId}`));
-    });
-    await batch.commit();
-    totalDeleted += batchIds.length;
-    console.log(`Deleted archived id batch of ${batchIds.length} docs from ${collectionPath} (total: ${totalDeleted})`);
-  }
-  return totalDeleted;
+async function listArchiveRecords(companyId, target, kind) {
+  const queryOptions = kind === 'finishedJobs'
+    ? {
+      status: 'finished',
+      dateField: 'finishedAt',
+      dateFrom: target.startDate.toISOString(),
+      dateTo: target.endDate.toISOString(),
+      limit: QUERY_PAGE_SIZE,
+    }
+    : {
+      dateField: 'createdAt',
+      dateFrom: target.startDate.toISOString(),
+      dateTo: target.endDate.toISOString(),
+      limit: QUERY_PAGE_SIZE,
+    };
+
+  return kind === 'finishedJobs'
+    ? await listArchivedCompanyJobs(companyId, queryOptions)
+    : await listArchivedCompanyDocuments(companyId, queryOptions);
+}
+
+async function deleteArchiveRecords(companyId, kind, recordIds) {
+  return kind === 'finishedJobs'
+    ? await deleteArchivedJobsByIds(companyId, recordIds)
+    : await deleteArchivedDocumentsByIds(companyId, recordIds);
 }
 
 
@@ -375,9 +310,8 @@ async function processCompany(companyId, target) {
   if (manifest[finishedKey] && manifest[finishedKey].status !== 'uploaded_not_deleted') {
     console.log(`⏭️ ${finishedKey} already archived (${manifest[finishedKey].docCount} docs on ${manifest[finishedKey].archivedAt})`);
   } else {
-    const collectionPath = `companies/${companyId}/jobs`;
     if (manifest[finishedKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[finishedKey].docIds)) {
-      const deleted = await deleteDocumentsByIds(collectionPath, manifest[finishedKey].docIds);
+      const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', manifest[finishedKey].docIds);
       manifest[finishedKey] = {
         ...manifest[finishedKey],
         deletedCount: deleted,
@@ -387,7 +321,7 @@ async function processCompany(companyId, target) {
       };
       manifestUpdated = true;
     } else {
-    const docs = await queryDocumentsByDateRange(collectionPath, 'finishedAt', startDate, endDate, { status: 'finished' });
+    const docs = await listArchiveRecords(companyId, target, 'finishedJobs');
 
     if (docs.length === 0) {
       console.log(`📭 No finished jobs found for ${year}-${month}`);
@@ -411,7 +345,7 @@ async function processCompany(companyId, target) {
       await saveManifest(companyId, manifest);
 
       // Step 3: Delete from Firestore (only after verified upload)
-      const deleted = await deleteDocumentsByIds(collectionPath, docs.map((doc) => doc.id));
+      const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', docs.map((doc) => doc.id));
       console.log(`✅ Archived and deleted ${deleted} finished jobs for ${year}-${month}`);
 
 
@@ -432,9 +366,8 @@ async function processCompany(companyId, target) {
   if (manifest[documentsKey] && manifest[documentsKey].status !== 'uploaded_not_deleted') {
     console.log(`⏭️ ${documentsKey} already archived (${manifest[documentsKey].docCount} docs on ${manifest[documentsKey].archivedAt})`);
   } else {
-    const collectionPath = `companies/${companyId}/documents`;
     if (manifest[documentsKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[documentsKey].docIds)) {
-      const deleted = await deleteDocumentsByIds(collectionPath, manifest[documentsKey].docIds);
+      const deleted = await deleteArchiveRecords(companyId, 'documents', manifest[documentsKey].docIds);
       manifest[documentsKey] = {
         ...manifest[documentsKey],
         deletedCount: deleted,
@@ -444,7 +377,7 @@ async function processCompany(companyId, target) {
       };
       manifestUpdated = true;
     } else {
-    const docs = await queryDocumentsByDateRange(collectionPath, 'createdAt', startDate, endDate);
+    const docs = await listArchiveRecords(companyId, target, 'documents');
 
     if (docs.length === 0) {
       console.log(`📭 No documents found for ${year}-${month}`);
@@ -467,7 +400,7 @@ async function processCompany(companyId, target) {
       await saveManifest(companyId, manifest);
 
       // Step 3: Delete from Firestore
-      const deleted = await deleteDocumentsByIds(collectionPath, docs.map((doc) => doc.id));
+      const deleted = await deleteArchiveRecords(companyId, 'documents', docs.map((doc) => doc.id));
       console.log(`✅ Archived and deleted ${deleted} documents for ${year}-${month}`);
 
       // Step 4: Update manifest
@@ -496,20 +429,20 @@ async function processCompany(companyId, target) {
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('🚀 Smart-Job Archiver - Firestore → Cloud Storage Migration');
+  console.log('🚀 Smart-Job Archiver - Active Backend → Cloud Storage Migration');
   console.log('='.repeat(60));
 
   const target = getTargetMonth(new Date(), MONTHS_LOOKBACK);
   console.log(`📅 Target month: ${target.year}-${target.month}`);
   console.log(`📅 Date range: ${target.startDate.toISOString()} → ${target.endDate.toISOString()}`);
+  console.log('🗄️ Persistence backend: sql');
   console.log(`📦 Storage bucket: ${BUCKET_NAME}`);
   console.log(`📂 Archive path: companies/{companyId}/archives/`);
 
   // Discover all companies
   let companies = [];
   try {
-    const companiesSnapshot = await db.collection('companies').get();
-    companies = companiesSnapshot.docs.map(doc => doc.id);
+    companies = await listCompanyPublicIds();
     console.log(`\n🏢 Found ${companies.length} companies: ${companies.join(', ')}`);
   } catch (error) {
     console.error('❌ Failed to list companies:', error);
@@ -521,8 +454,8 @@ async function main() {
     process.exit(0);
   }
 
-  // Process companies in parallel batches of 3 to balance speed and resource usage
-  const CONCURRENCY = 3;
+  // Process companies in parallel batches with env-tunable concurrency.
+  const CONCURRENCY = COMPANY_ARCHIVE_CONCURRENCY;
   let successCount = 0;
   let failCount = 0;
   const errors = [];

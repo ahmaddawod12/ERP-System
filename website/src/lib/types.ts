@@ -17,7 +17,7 @@ export type Role = (typeof ROLES)[number];
  * Website-specific tiers (marketing names).
  * Maps to contracts Tier: Basic→Basic, Solo→User, Team→Team, Enterprise→Dev.
  * These are display labels for the website pricing page; the contracts Tier
- * enum holds the canonical runtime values stored in Firestore.
+ * enum holds the canonical runtime values used by backend persistence.
  */
 export const TIERS = [...TIER_VALUES] as const;
 export type Tier = TierValue;
@@ -138,7 +138,7 @@ export interface JobRecord {
 
 /**
  * Single inventory part — stored inside the `parts` array of the
- * inventory document (NOT as a separate Firestore document).
+ * inventory payload (NOT as a separate client-side write model).
  * Matches phone app pattern:
  *   Company parts: { id, name, active, dateAdded }
  *   User parts:    { id, name, quantity, lowThreshold, dateAdded }

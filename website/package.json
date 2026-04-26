@@ -9,8 +9,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "node --test --experimental-strip-types tests/*.test.mts",
-    "typecheck": "tsc --noEmit --pretty false",
-    "seed:demo": "node scripts/seed-demo.mjs"
+    "typecheck": "tsc --noEmit --pretty false"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

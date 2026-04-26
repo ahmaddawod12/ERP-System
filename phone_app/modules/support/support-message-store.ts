@@ -1,38 +1,24 @@
 // @ts-nocheck
-import {
-  db,
-  collection,
-  getDocs,
-  orderBy,
-  query,
-} from '../../firebase';
+import { getSupportConversationThread } from './support-api';
 
 interface SubcollectionMessage {
   id: string;
   senderUid: string;
   text: string;
   createdAt: Date | null;
-  source: 'subcollection';
+  source: 'sql';
 }
 
 export type ConversationMessage = SubcollectionMessage;
 
 export async function loadConversationThread(conversationId: string): Promise<ConversationMessage[]> {
-  const messagesRef = collection(db, 'conversations', conversationId, 'messages');
-
-  const messagesSnap = await getDocs(query(messagesRef, orderBy('createdAt', 'asc')));
-
-  const subcollectionMessages: SubcollectionMessage[] = messagesSnap.docs.map((messageSnap: any) => {
-    const data = messageSnap.data() || {};
-    return {
-      id: messageSnap.id,
-      senderUid: data.senderUid,
-      text: data.text,
-      createdAt: data.createdAt?.toDate?.() || null,
-      source: 'subcollection',
-    };
-  });
-
-  return subcollectionMessages;
+  const messages = await getSupportConversationThread(conversationId);
+  return messages.map((message: any) => ({
+    id: message.id,
+    senderUid: message.senderUid,
+    text: message.text,
+    createdAt: message.createdAt || null,
+    source: 'sql',
+  }));
 }
 

@@ -15,12 +15,13 @@ function assertOrder(firstNeedle, secondNeedle, message) {
 
 test('generate tasks reclaim stale processing records instead of getting stuck forever', () => {
   assert.match(source, /PROCESSING_STALE_AFTER_MS/);
-  assert.match(source, /Reclaiming stale processing task/);
+  assert.match(source, /claimSqlTaskProcessing\(/);
 });
 
-test('new generated PDFs use create-only storage and Firestore writes', () => {
+test('new generated PDFs use create-only storage and SQL finalization', () => {
   assert.match(source, /preconditionOpts:\s*\{\s*ifGenerationMatch:\s*0\s*\}/);
-  assert.match(source, /await documentRef\.create\(buildStoredDocumentRecord/);
+  assert.match(source, /completeSqlDocumentGeneration/);
+  assert.match(source, /bumpCompanyDocumentsVersion/);
 });
 
 test('generated PDF is deleted when Firestore finalization fails', () => {

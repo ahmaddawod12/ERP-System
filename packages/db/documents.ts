@@ -107,6 +107,33 @@ function normalizeStringList(value) {
   return single ? [single] : [];
 }
 
+function resolveDocumentDateColumnName(dateField: string): string {
+  switch (String(dateField || '').trim()) {
+    case 'documentDate': return 'd.document_date';
+    case 'updatedAt': return 'd.updated_at';
+    default: return 'd.created_at';
+  }
+}
+
+// ─── Cursor helpers ───────────────────────────────────────────────────────────
+function encodeDocumentsCursor(dateValue: Date | string | null, createdAt: Date | string | null): string {
+  const d = dateValue instanceof Date ? dateValue.toISOString() : (dateValue ?? '');
+  const c = createdAt instanceof Date ? createdAt.toISOString() : (createdAt ?? '');
+  return Buffer.from(JSON.stringify({ d, c })).toString('base64');
+}
+
+function decodeDocumentsCursor(cursor: string): { dateValue: Date; createdAt: Date } | null {
+  try {
+    const raw = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+    const dateValue = new Date(raw.d);
+    const createdAt = new Date(raw.c);
+    if (Number.isNaN(dateValue.getTime()) || Number.isNaN(createdAt.getTime())) return null;
+    return { dateValue, createdAt };
+  } catch {
+    return null;
+  }
+}
+
 function resolveDocumentDateColumnSql(dateField) {
   switch (String(dateField || '').trim()) {
     case 'documentDate':
@@ -251,18 +278,23 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) {
-    return [];
+    return { items: [], nextCursor: null };
   }
-  const rawLimit = Number(options.limit);
+  const rawLimit = Number(options.limit || options.pageSize);
   const effectiveLimit = Number.isInteger(rawLimit) && rawLimit > 0
     ? Math.min(rawLimit, 10000)
-    : 200;
+    : 50;
+  const afterCursor = options.afterCursor ? decodeDocumentsCursor(String(options.afterCursor)) : null;
   const requestedStatuses = normalizeStringList(options.status);
   const requestedDocumentType = Number(options.documentType);
   const requestedCreatedByUid = coerceTrimmedString(options.createdByUid);
   const requestedDateFrom = options.dateFrom ? asDate(options.dateFrom, null) : null;
   const requestedDateTo = options.dateTo ? asDate(options.dateTo, null) : null;
   const dateColumn = resolveDocumentDateColumnSql(options.dateField);
+  const dateColumnName = resolveDocumentDateColumnName(options.dateField);
+  const cursorFilter = afterCursor
+    ? sql` AND (${sql.raw(dateColumnName)}, d.created_at) < (${afterCursor.dateValue}, ${afterCursor.createdAt})`
+    : sql``;
 
   // Optional filter by a specific document code (used by getDocumentRecordById for targeted lookups).
   const documentCodeFilter = options.documentCode
@@ -291,6 +323,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       d.document_number,
       d.document_code,
       d.generation_status,
+      d.updated_at,
       d.client_name_snapshot,
       d.client_phone_snapshot,
       d.client_city_snapshot,
@@ -324,13 +357,16 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       ${dateFromFilter}
       ${dateToFilter}
       ${statusFilter}
+      ${cursorFilter}
     ORDER BY ${dateColumn} DESC, d.created_at DESC
-    LIMIT ${sql.raw(String(effectiveLimit))}
+    LIMIT ${sql.raw(String(effectiveLimit + 1))}
   `);
 
-  const documentRows = rows.rows || [];
+  const allRows = rows.rows || [];
+  const hasMore = allRows.length > effectiveLimit;
+  const documentRows = hasMore ? allRows.slice(0, effectiveLimit) : allRows;
   if (documentRows.length === 0) {
-    return [];
+    return { items: [], nextCursor: null };
   }
 
   const documentIds = documentRows.map((row) => row.id);
@@ -370,7 +406,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
     jobsByDocumentId.get(key).push({ jobId: String(row.job_no) });
   }
 
-  return documentRows.map((row) => {
+  const mappedRows = documentRows.map((row) => {
     const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
     const payloadClient = payload.client && typeof payload.client === 'object' ? payload.client : {};
     const items = itemsByDocumentId.get(String(row.id)) || [];
@@ -412,6 +448,21 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       invoiceReference: payload.invoiceReference || undefined,
     };
   });
+
+  const lastRow = documentRows[documentRows.length - 1];
+  // Choose the cursor date value from the selected column that matches the sort key.
+  const cursorDateValue: Date | string = (() => {
+    switch (String(options.dateField || '').trim()) {
+      case 'documentDate': return lastRow.document_date ?? lastRow.created_at;
+      case 'updatedAt': return lastRow.updated_at ?? lastRow.created_at;
+      default: return lastRow.created_at;
+    }
+  })();
+  const nextCursor = hasMore
+    ? encodeDocumentsCursor(cursorDateValue, lastRow.created_at)
+    : null;
+
+  return { items: mappedRows, nextCursor };
 }
 
 async function getDocumentRecordById(companyId, documentId, options: any = {}) {
@@ -423,7 +474,7 @@ async function getDocumentRecordById(companyId, documentId, options: any = {}) {
     documentCode,
     limit: 1,
   });
-  return results[0] || null;
+  return results.items[0] || null;
 }
 
 async function createOrUpdateDocumentRecord(input, options: any = {}) {
@@ -555,5 +606,5 @@ async function deleteDocumentRecord(input, options: any = {}) {
   });
 }
 
-export { createOrUpdateDocumentRecord, deleteDocumentRecord, getDocumentRecordById, listCompanyDocumentsDetailed };
+export { createOrUpdateDocumentRecord, deleteDocumentRecord, encodeDocumentsCursor, getDocumentRecordById, listCompanyDocumentsDetailed };
 

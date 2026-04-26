@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ClipboardList, Sparkles, UsersRound } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
@@ -57,6 +57,7 @@ export default function JobsClient() {
   const [finishedJobs, setFinishedJobs] = useState<JobRecord[]>([]);
   const [workers, setWorkers] = useState<WorkerProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const scopeId = resolveCompanyScope(companyId);
   const canManageCompanyJobs = role === "manager" || role === "dev";
@@ -89,24 +90,45 @@ export default function JobsClient() {
     return "default" as const;
   };
 
+  const loadJobsAbortRef = useRef<AbortController | null>(null);
+
   const loadJobs = useCallback(async () => {
     if (!scopeId) {
       setPendingJobs([]);
       setFinishedJobs([]);
       setWorkers([]);
+      setLoadError(null);
       setLoading(false);
       return;
     }
     setLoading(true);
-    const [jobsResult, workersResult] = await Promise.all([
-      listJobs(scopeId, buildListJobsOptions(role, profile)),
-      canManageCompanyJobs ? listWorkers(scopeId) : Promise.resolve([]),
-    ]);
-    setPendingJobs(jobsResult.pending);
-    setFinishedJobs(jobsResult.finished);
-    setWorkers(workersResult);
-    setLoading(false);
+    setLoadError(null);
+    // Cancel any in-flight request from a previous call.
+    loadJobsAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadJobsAbortRef.current = controller;
+    try {
+      const [jobsResult, workersResult] = await Promise.all([
+        listJobs(scopeId, buildListJobsOptions(role, profile), controller.signal),
+        canManageCompanyJobs ? listWorkers(scopeId) : Promise.resolve([]),
+      ]);
+      if (controller.signal.aborted) return;
+      setPendingJobs(jobsResult.pending);
+      setFinishedJobs(jobsResult.finished);
+      setWorkers(workersResult);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setLoadError(error instanceof Error ? error.message : "Failed to load jobs");
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
+    }
   }, [scopeId, canManageCompanyJobs, profile, role]);
+
+  // Abort any outstanding request when the component unmounts.
+  useEffect(() => () => { loadJobsAbortRef.current?.abort(); }, []);
 
   useEffect(() => {
     void loadJobs();
@@ -321,7 +343,19 @@ export default function JobsClient() {
 
         {loading ? <LoadingState /> : null}
 
-        {!loading && pendingJobs.length === 0 && finishedJobs.length === 0 ? (
+        {!loading && loadError ? (
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Couldn&apos;t load jobs</h2>
+                <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">{loadError}</p>
+              </div>
+              <Button onClick={() => void loadJobs()}>Retry</Button>
+            </div>
+          </Card>
+        ) : null}
+
+        {!loading && !loadError && pendingJobs.length === 0 && finishedJobs.length === 0 ? (
           <EmptyState
             title="No jobs yet"
             description={
@@ -332,7 +366,7 @@ export default function JobsClient() {
           />
         ) : null}
 
-        {!loading && pendingJobs.length > 0 ? (
+        {!loading && !loadError && pendingJobs.length > 0 ? (
           <Card>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -422,7 +456,7 @@ export default function JobsClient() {
           </Card>
         ) : null}
 
-        {!loading && finishedJobs.length > 0 ? (
+        {!loading && !loadError && finishedJobs.length > 0 ? (
           <Card>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>

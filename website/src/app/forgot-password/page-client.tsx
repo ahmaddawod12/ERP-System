@@ -1,10 +1,8 @@
 "use client";
 
-import { sendPasswordResetEmail } from "firebase/auth";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { auth } from "@/lib/firebase/client";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -28,7 +26,27 @@ export default function ForgotPasswordClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await sendPasswordResetEmail(auth, values.email);
+      const supabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/+$/, "");
+      const supabaseAnonKey = String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error("Supabase auth is not configured");
+      }
+
+      const response = await fetch(`${supabaseUrl}/auth/v1/recover`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          email: values.email,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error_description?: unknown; msg?: unknown };
+      if (!response.ok) {
+        throw new Error(String(payload.error_description || payload.msg || "Failed to send reset email"));
+      }
+
       toast({
         title: "Reset email sent",
         description: "Check your inbox for password reset instructions.",

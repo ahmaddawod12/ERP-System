@@ -14,7 +14,10 @@ function buildPoolConfig(env = process.env) {
     idleTimeoutMillis: config.idleTimeoutMillis,
     connectionTimeoutMillis: config.connectionTimeoutMillis,
     ssl: config.sslMode === 'require'
-      ? { rejectUnauthorized: false }
+      ? {
+        rejectUnauthorized: config.sslRejectUnauthorized,
+        ca: config.sslCa || undefined,
+      }
       : false,
   };
 }

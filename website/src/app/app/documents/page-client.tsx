@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Eye, FileText, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
@@ -56,6 +56,7 @@ export default function DocumentsClient() {
   /* ── History state ── */
   const [records, setRecords] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("history");
 
   /* ── Document detail modal ── */
@@ -124,21 +125,35 @@ export default function DocumentsClient() {
 
   /* ── Load data ── */
 
+  const loadRecordsAbortRef = useRef<AbortController | null>(null);
+
   const loadRecords = useCallback(async () => {
     if (!companyScopeId) {
       setRecords([]);
+      setLoadError(null);
       setLoading(false);
       return;
     }
     setLoading(true);
+    setLoadError(null);
+    loadRecordsAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadRecordsAbortRef.current = controller;
     try {
-      const result = await listDocuments(companyScopeId);
-      setRecords(result);
-    } catch {
-      // silent
+      const result = await listDocuments(companyScopeId, undefined, controller.signal);
+      if (!controller.signal.aborted) {
+        setRecords(result.items ?? []);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setLoadError(error instanceof Error ? error.message : "Failed to load documents");
+      }
     }
-    setLoading(false);
+    if (!controller.signal.aborted) setLoading(false);
   }, [companyScopeId]);
+
+  // Abort outstanding request on unmount.
+  useEffect(() => () => { loadRecordsAbortRef.current?.abort(); }, []);
 
   const loadClients = useCallback(async () => {
     if (!companyScopeId) {
@@ -854,6 +869,16 @@ export default function DocumentsClient() {
           <>
             {loading ? (
               <LoadingState />
+            ) : loadError ? (
+              <Card>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Couldn&apos;t load documents</h2>
+                    <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">{loadError}</p>
+                  </div>
+                  <Button onClick={() => void loadRecords()}>Retry</Button>
+                </div>
+              </Card>
             ) : records.length === 0 ? (
               <EmptyState
                 title="No documents generated yet"
@@ -1261,7 +1286,7 @@ function DocumentDetail({
           type="button"
           onClick={onOpenPdf}
           disabled={isOpening}
-          className="inline-flex items-center gap-2 rounded-[1rem] bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
+          className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
         >
           <CheckCircle2 className="h-4 w-4" />
           {isOpening ? "Opening..." : "Open PDF"}

@@ -5,8 +5,8 @@ const companyIdSchema = z
   .string()
   .trim()
   .min(1, "companyId is required")
-  .max(128, "companyId is too long")
-  .regex(/^[a-z0-9_-]+$/i, "companyId contains invalid characters");
+  .max(18, "companyId is too long")
+  .regex(/^\d+$/, "companyId must be a numeric public company ID");
 
 const optionalText = (max = 400) =>
   z
@@ -55,9 +55,12 @@ export const readModelSchema = z
       'companySyncState',
       'recordById',
       'documentTask',
+      'userSyncState',
     ]),
     companyId: companyIdSchema.optional(),
     includeCollections: z.boolean().optional(),
+    pageSize: z.number().int().min(1).max(200).optional(),
+    afterCursor: optionalText(200),
     limit: z.number().int().min(1).max(10000).optional(),
     status: z.union([z.string(), z.array(z.string())]).optional(),
     dateField: z.enum(['createdAt', 'updatedAt', 'finishedAt', 'dueAt', 'documentDate']).optional(),
@@ -116,5 +119,33 @@ export const contactRequestSchema = z
     email: z.string().trim().email("Valid email is required"),
     company: requiredText(2, 140, "company"),
     message: requiredText(8, 2000, "message"),
+  })
+  .strict();
+
+export const callableProxySchema = z
+  .object({
+    operation: z.enum([
+      "manageWorker",
+      "registerBusinessV1",
+      "createInviteV1",
+      "joinCompanyV1",
+      "createJobV1",
+      "updateJobV1",
+      "deleteJobV1",
+      "acceptJobV1",
+      "updateInventoryV1",
+      "addClientV1",
+      "deleteClientV1",
+      "updateClientV1",
+      "requestUpgradeV1",
+      "listUpgradeRequestsV1",
+      "moderateUpgradeRequestV1",
+      "publishPreviewTask",
+      "publishGenerateTask",
+      "getInvoiceApproval",
+      "createDocumentDownloadUrlV1",
+      "updateProfileV1",
+    ]),
+    payload: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();

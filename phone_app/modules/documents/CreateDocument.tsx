@@ -1,5 +1,4 @@
-﻿// @ts-nocheck
-/**
+﻿/**
  * CreateDocument.js - Unified Document Creation Screen
  * 
  * This component handles creation of all document types:
@@ -46,12 +45,135 @@ import { DOC_TYPE } from '@smart-job/contracts';
 import { DOCUMENT_CONFIGS, getPaymentMethods } from './document-config';
 import { getDocumentTranslations } from './document-copy';
 import { fetchCompanyInventoryParts } from '../../utils/read-model';
+import type { AlertButton, AppDocument, Client, DateLike, DocumentItem, InventoryPart } from '../../types';
+
+type ReceiptMode = 'auto' | 'manual' | null;
+
+type ModalType = 'invoiceSelect' | 'pdfPreview' | 'pdfViewer' | null;
+
+type CustomerSnapshot = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  id?: string;
+  clientVatNumber?: string;
+  customerVatNumber?: string;
+  vatNumber?: string;
+  vat_number?: string;
+  VAT?: string;
+};
+
+type InvoiceLineItem = {
+  description?: string;
+  price?: number | string;
+  quantity?: number | string;
+  partId?: string | number | null;
+};
+
+type DocumentFormItem = {
+  id: number;
+  description: string;
+  price: string;
+  quantity: string;
+  partId?: string | number | null;
+};
+
+type InvoiceDocumentRecord = Omit<AppDocument, 'items'> & {
+  cname?: string;
+  cphone?: string;
+  documentNumber?: string | number;
+  invoiceNumber?: string | number;
+  documentData?: {
+    client?: CustomerSnapshot;
+    items?: InvoiceLineItem[];
+  };
+  client?: CustomerSnapshot;
+  items?: InvoiceLineItem[];
+  clientId?: string;
+};
+
+type FormData = {
+  customerName: string;
+  customerEmail: string;
+  customerAddress: string;
+  customerCity: string;
+  customerPhone: string;
+  customerId: string;
+  clientVatNumber: string;
+  paymentMethod: string;
+  paymentInfo: string;
+  invoiceReference: string;
+  documentDate: string;
+  notes: string;
+};
+
+type BuiltClientData = {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  id: string;
+  clientId?: string;
+  clientVatNumber?: string;
+};
+
+type BuiltDocumentData = {
+  client: BuiltClientData;
+  items: Array<{ description: string; quantity: number; price: number; partId?: string | number | null }>;
+  language: 'he' | 'ar' | 'en';
+  date: string;
+  notes: string;
+  paymentMethod?: string;
+  paymentInfo?: string;
+  invoiceReference?: string | number;
+};
+
+type ClientUpdates = {
+  name?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  vatNumber?: string;
+};
+
+function toText(value: string | number | null | undefined): string {
+  return value == null ? '' : String(value);
+}
+
+function getErrorCode(error: unknown): string | null {
+  return typeof error === 'object' && error !== null && 'code' in error && typeof (error as { code?: unknown }).code === 'string'
+    ? ((error as { code: string }).code)
+    : null;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function formatDateLike(value: DateLike | Date | null | undefined): string {
+  const time = getDateLikeTime(value);
+  if (!time) return '';
+  return new Date(time).toLocaleDateString();
+}
+
+function getDateLikeTime(value: DateLike | Date | null | undefined): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof (value as { toDate?: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  return new Date(String(value)).getTime();
+}
 
 export default function CreateDocument() {
   const router = useRouter();
   const params = useLocalSearchParams();
   // Parse documentType as number from URL params
-  const documentType = params.type ? Number(params.type) : DOC_TYPE.PRICE_PROPOSAL;
+  const documentType = (params.type ? Number(params.type) : DOC_TYPE.PRICE_PROPOSAL) as keyof typeof DOCUMENT_CONFIGS;
   const config = DOCUMENT_CONFIGS[documentType] || DOCUMENT_CONFIGS[DOC_TYPE.PRICE_PROPOSAL];
   
   const insets = useSafeAreaInsets();
@@ -75,42 +197,42 @@ export default function CreateDocument() {
   
   // Refs for iOS freeze fix
   const isMountedRef = useRef(true);
-  const loadingTimeoutRef = useRef(null);
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const [companyId, setCompanyId] = useState('');
-  const [previewURL, setPreviewURL] = useState(null);
+  const [previewURL, setPreviewURL] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Receipt mode: 'auto' (from invoice) or 'manual'
-  const [receiptMode, setReceiptMode] = useState(null); // null = not selected yet
+  const [receiptMode, setReceiptMode] = useState<ReceiptMode>(null); // null = not selected yet
   
   // Invoice selection state (for receipt auto mode)
-  const [invoices, setInvoices] = useState([]);
-  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [invoices, setInvoices] = useState<InvoiceDocumentRecord[]>([]);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceDocumentRecord | null>(null);
   const [invoiceSearchText, setInvoiceSearchText] = useState('');
-  const [selectedClientObj, setSelectedClientObj] = useState(null);
+  const [selectedClientObj, setSelectedClientObj] = useState<Client | null>(null);
   
   // 2-step flow state: All document types use 2-step flow (Step 1: Client, Step 2: Items)
   // Exception: Receipt has its own mode selection flow before the 2-step flow
   const isTwoStepFlow = !config.hasReceiptMode; // true for all except Receipt (which has auto/manual selection first)
   const [currentStep, setCurrentStep] = useState(1);
-  const [selectedPriceProposal, setSelectedPriceProposal] = useState(null);
-  const [matchingProposals, setMatchingProposals] = useState([]);
+  const [selectedPriceProposal, setSelectedPriceProposal] = useState<InvoiceDocumentRecord | null>(null);
+  const [matchingProposals, setMatchingProposals] = useState<InvoiceDocumentRecord[]>([]);
 
-  const [companyInventoryParts, setCompanyInventoryParts] = useState([]);
+  const [companyInventoryParts, setCompanyInventoryParts] = useState<InventoryPart[]>([]);
   
   // Helper functions for unified modal
-  const openModal = (type) => setModalState({ visible: true, type });
+  const openModal = (type: Exclude<ModalType, null>) => setModalState({ visible: true, type });
   const closeModal = () => setModalState({ visible: false, type: null });
   
   // Unified Modal State (replaces multiple separate modals)
   const [modalState, setModalState] = useState({
     visible: false,
-    type: null, // 'invoiceSelect' | 'pdfPreview' | 'pdfViewer'
+    type: null as ModalType,
   });
   
   // Form data
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     // Customer Details
     customerName: '',
     customerEmail: '',
@@ -130,7 +252,7 @@ export default function CreateDocument() {
   });
 
   // Items array
-  const [items, setItems] = useState([
+  const [items, setItems] = useState<DocumentFormItem[]>([
     {
       id: Date.now(),
       description: '',
@@ -150,27 +272,31 @@ export default function CreateDocument() {
     if (!cachedDocuments || cachedDocuments.length === 0) return [];
     
     return cachedDocuments
-      .filter(cert => cert.type === DOC_TYPE.TAX_INVOICE || Number(cert.type) === DOC_TYPE.TAX_INVOICE)
-      .map(cert => ({
-        id: cert.id,
-        ...cert,
-        createdAt: cert.createdAt?.toDate?.() || 
-                   (cert.createdAt ? new Date(cert.createdAt) : new Date()),
-        documentData: cert.documentData || {
+      .filter((cert) => cert.type === DOC_TYPE.TAX_INVOICE || Number(cert.type) === DOC_TYPE.TAX_INVOICE)
+      .map((cert) => {
+        const record = cert as InvoiceDocumentRecord;
+        return {
+        ...record,
+        createdAt:
+          record.createdAt && typeof record.createdAt === 'object' && 'toDate' in record.createdAt
+            ? record.createdAt.toDate()
+            : record.createdAt
+              ? new Date(String(record.createdAt))
+              : new Date(),
+        documentData: record.documentData || {
           client: {
-            name: cert.cname || cert.client?.name || 'Unknown',
-            email: cert.client?.email || '',
-            phone: cert.cphone || cert.client?.phone || '',
-            address: cert.client?.address || '',
+            name: record.cname || record.client?.name || 'Unknown',
+            email: record.client?.email || '',
+            phone: record.cphone || record.client?.phone || '',
+            address: record.client?.address || '',
           },
-          items: cert.items || [],
+          items: record.items || [],
         },
-        documentNumber: cert.documentNumber || cert.invoiceNumber || cert.id,
-      }))
+        documentNumber: record.documentNumber || record.invoiceNumber || record.id,
+      };
+      })
       .sort((a, b) => {
-        const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
-        const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
-        return dateB.getTime() - dateA.getTime();
+        return getDateLikeTime(b.createdAt) - getDateLikeTime(a.createdAt);
       });
   }, [cachedDocuments]);
 
@@ -235,7 +361,7 @@ export default function CreateDocument() {
   }, [cachedCompanyInventory, getUserRole, getCachedCompanyId]);
 
   // Get the inventory parts based on role (for item description search)
-  const getInventoryParts = () => {
+  const getInventoryParts = (): InventoryPart[] => {
     const role = getUserRole();
     if (role === 'manager') return companyInventoryParts;
     if (role === 'user' || role === 'worker') return cachedInventory || [];
@@ -243,19 +369,21 @@ export default function CreateDocument() {
   };
 
   // Find matching price proposals for the selected client
-  const findMatchingProposals = (clientObj) => {
+  const findMatchingProposals = (clientObj: Client | null) => {
     if (!cachedDocuments || cachedDocuments.length === 0) {
       setMatchingProposals([]);
       return;
     }
 
-    const proposals = cachedDocuments.filter(cert => cert.type === DOC_TYPE.PRICE_PROPOSAL);
+    const proposals = cachedDocuments
+      .filter((cert) => cert.type === DOC_TYPE.PRICE_PROPOSAL)
+      .map((cert) => cert as InvoiceDocumentRecord);
     if (proposals.length === 0) {
       setMatchingProposals([]);
       return;
     }
 
-    let matched = [];
+    let matched: InvoiceDocumentRecord[] = [];
     // Match by clientId first
     if (clientObj?.id) {
       matched = proposals.filter(p => p.clientId === clientObj.id);
@@ -268,16 +396,14 @@ export default function CreateDocument() {
 
     // Sort by creation date (newest first)
     matched.sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA;
+      return getDateLikeTime(b.createdAt) - getDateLikeTime(a.createdAt);
     });
 
     setMatchingProposals(matched);
   };
 
   // Apply prices from selected price proposal to items
-  const applyPriceProposal = (proposal) => {
+  const applyPriceProposal = (proposal: InvoiceDocumentRecord) => {
     if (selectedPriceProposal?.id === proposal.id) {
       // Deselect
       setSelectedPriceProposal(null);
@@ -289,7 +415,7 @@ export default function CreateDocument() {
     if (!proposal.items || proposal.items.length === 0) return;
 
     // Load proposal items into the items list
-    const newItems = proposal.items.map(item => ({
+    const newItems: DocumentFormItem[] = proposal.items.map((item) => ({
       id: Date.now() + Math.random(),
       description: item.description || '',
       quantity: String(item.quantity || 1),
@@ -323,7 +449,7 @@ export default function CreateDocument() {
   };
 
   // Handle invoice selection (for receipt)
-  const handleSelectInvoice = (invoice) => {
+  const handleSelectInvoice = (invoice: InvoiceDocumentRecord) => {
     setSelectedInvoice(invoice);
     setSelectedClientObj(null); // Clear client selector since invoice fills customer data
     closeModal();
@@ -352,7 +478,7 @@ export default function CreateDocument() {
       customerId: clientData.id || '',
       // Load VAT number from invoice - check all possible field names (clientVatNumber is the standard field in tax invoices)
       clientVatNumber: clientData.clientVatNumber || clientData.customerVatNumber || clientData.vatNumber || clientData.vat_number || clientData.VAT || '',
-      invoiceReference: invoice.documentNumber || invoice.id,
+      invoiceReference: String(invoice.documentNumber || invoice.id),
     });
 
     setItems(invoiceItems.map((item, index) => ({
@@ -367,7 +493,7 @@ export default function CreateDocument() {
   const filteredInvoices = invoices.filter(invoice => {
     const searchLower = invoiceSearchText.toLowerCase();
     const clientName = (invoice.documentData?.client?.name || '').toLowerCase();
-    const docNumber = (invoice.documentNumber || '');
+    const docNumber = String(invoice.documentNumber || '');
     return clientName.includes(searchLower) || docNumber.includes(searchLower);
   });
 
@@ -381,7 +507,7 @@ export default function CreateDocument() {
     }]);
   };
 
-  const removeItem = (id) => {
+  const removeItem = (id: number) => {
     if (items.length === 1) {
       alert.error('Error', t.atLeastOneItem);
       return;
@@ -389,13 +515,13 @@ export default function CreateDocument() {
     setItems(items.filter(item => item.id !== id));
   };
 
-  const updateItem = (id, field, value) => {
+  const updateItem = (id: number, field: keyof DocumentFormItem, value: string | number | null) => {
     setItems(prev => {
       const updated = prev.map(item =>
         item.id === id ? { ...item, [field]: value } : item
       );
       // Auto-add row: if editing description of the last item AND it has inventory
-      if (field === 'description' && value.trim() && getInventoryParts().length > 0) {
+      if (field === 'description' && typeof value === 'string' && value.trim() && getInventoryParts().length > 0) {
         const lastItem = updated[updated.length - 1];
         if (lastItem && lastItem.id === id) {
           updated.push({
@@ -412,7 +538,7 @@ export default function CreateDocument() {
   };
 
   // Handle inventory part selection for item description
-  const handleItemPartSelect = (itemId, part) => {
+  const handleItemPartSelect = (itemId: number, part: InventoryPart) => {
     setItems(prev => {
       const updated = prev.map(item =>
         item.id === itemId ? { ...item, description: part.name, partId: part.id || part.name } : item
@@ -435,8 +561,8 @@ export default function CreateDocument() {
   // Calculate total
   const calculateTotal = () => {
     return items.reduce((sum, item) => {
-      const price = parseFloat(item.price) || 0;
-      const qty = parseFloat(item.quantity) || 1;
+      const price = Number(item.price) || 0;
+      const qty = Number(item.quantity) || 1;
       return sum + (price * qty);
     }, 0);
   };
@@ -469,7 +595,7 @@ export default function CreateDocument() {
 
     // At least one valid item required
     const validItems = items.filter(item => 
-      item.description.trim() && item.price.trim() && !isNaN(parseFloat(item.price))
+      item.description.trim() && toText(item.price).trim() && !Number.isNaN(Number(item.price))
     );
 
     if (validItems.length === 0) {
@@ -481,7 +607,7 @@ export default function CreateDocument() {
   };
   
   // iOS-safe validation error display
-  const showValidationError = (message) => {
+  const showValidationError = (message: string) => {
     // Use custom alert with timing delay for iOS to avoid modal issues
     const delay = Platform.OS === 'ios' ? 150 : 0;
     setTimeout(() => {
@@ -494,7 +620,7 @@ export default function CreateDocument() {
   };
   
   // iOS-safe success display
-  const showSuccessMessage = (title, message, buttons) => {
+  const showSuccessMessage = (title: string, message: string, buttons: Array<{ text: string; style?: 'default' | 'cancel' | 'destructive'; onPress?: () => void }>) => {
     // Use custom alert with timing delay for iOS to avoid modal freeze
     const delay = Platform.OS === 'ios' ? 150 : 0;
     setTimeout(() => {
@@ -507,7 +633,7 @@ export default function CreateDocument() {
   };
   
   // iOS-safe error display
-  const showErrorMessage = (title, message) => {
+  const showErrorMessage = (title: string, message: string) => {
     // Use custom alert with timing delay for iOS
     const delay = Platform.OS === 'ios' ? 150 : 0;
     setTimeout(() => {
@@ -579,7 +705,7 @@ export default function CreateDocument() {
       // Use longer delay for iOS
       const delay = Platform.OS === 'ios' ? 500 : 300;
       setTimeout(() => {
-        const buttons = [
+        const buttons: AlertButton[] = [
           {
             text: t.done,
             style: 'default',
@@ -625,15 +751,15 @@ export default function CreateDocument() {
   // Build document data for API
   const buildDocumentData = () => {
     const incomeItems = items
-      .filter(item => item.description.trim() && item.price && parseFloat(item.price) > 0)
+      .filter(item => item.description.trim() && toText(item.price) && Number(item.price) > 0)
       .map(item => ({
         description: item.description,
-        quantity: parseFloat(item.quantity) || 1,
-        price: parseFloat(item.price),
+        quantity: Number(item.quantity) || 1,
+        price: Number(item.price),
         ...(item.partId && { partId: item.partId }),
       }));
 
-    const clientData = {
+    const clientData: BuiltClientData = {
       name: formData.customerName,
       email: formData.customerEmail || '',
       phone: formData.customerPhone || '',
@@ -648,7 +774,7 @@ export default function CreateDocument() {
       clientData.clientVatNumber = formData.clientVatNumber;
     }
 
-    const docData = {
+    const docData: BuiltDocumentData = {
       client: clientData,
       items: incomeItems,
       language: language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en',
@@ -663,7 +789,7 @@ export default function CreateDocument() {
         docData.paymentInfo = formData.paymentInfo;
       }
       if (receiptMode === 'auto' && selectedInvoice) {
-        docData.invoiceReference = formData.invoiceReference || selectedInvoice.documentNumber;
+        docData.invoiceReference = formData.invoiceReference || String(selectedInvoice.documentNumber || '');
       }
     }
 
@@ -679,7 +805,7 @@ export default function CreateDocument() {
     if (selectedClientObj && formData.customerName.trim()) {
       // Update existing client with any newly filled fields
       try {
-        const updates = {};
+        const updates: ClientUpdates = {};
         if (formData.customerName.trim() && formData.customerName.trim() !== (selectedClientObj.name || '')) updates.name = formData.customerName.trim();
         if (formData.customerPhone?.trim() && formData.customerPhone.trim() !== (selectedClientObj.phone || '')) updates.phone = formData.customerPhone.trim();
         if (formData.customerEmail?.trim() && formData.customerEmail.trim() !== (selectedClientObj.email || '')) updates.email = formData.customerEmail.trim();
@@ -696,7 +822,7 @@ export default function CreateDocument() {
     } else if (!selectedClientObj && formData.customerName.trim()) {
       // Save as new client
       try {
-        const clientToSave = { name: formData.customerName.trim() };
+        const clientToSave: ClientUpdates & { name: string } = { name: formData.customerName.trim() };
         if (formData.customerPhone?.trim()) clientToSave.phone = formData.customerPhone.trim();
         if (formData.customerEmail?.trim()) clientToSave.email = formData.customerEmail.trim();
         if (formData.customerAddress?.trim()) clientToSave.address = formData.customerAddress.trim();
@@ -731,10 +857,10 @@ export default function CreateDocument() {
       alert.hideLoading();
       
       let errorMessage = `Failed to preview ${t.documentTypeName}`;
-      if (error.code === 'unauthenticated') {
+      if (getErrorCode(error) === 'unauthenticated') {
         errorMessage = 'Please login again to preview documents';
-      } else if (error.message) {
-        errorMessage = error.message;
+      } else {
+        errorMessage = getErrorMessage(error, errorMessage);
       }
       
       showErrorMessage('Error', errorMessage);
@@ -776,12 +902,12 @@ export default function CreateDocument() {
       alert.hideLoading();
       
       let errorMessage = `Failed to create ${t.documentTypeName}`;
-      if (error.code === 'unauthenticated') {
+      if (getErrorCode(error) === 'unauthenticated') {
         errorMessage = 'Please login again to create documents';
-      } else if (error.code === 'permission-denied') {
+      } else if (getErrorCode(error) === 'permission-denied') {
         errorMessage = 'You do not have permission to create documents';
-      } else if (error.message) {
-        errorMessage = error.message;
+      } else {
+        errorMessage = getErrorMessage(error, errorMessage);
       }
       
       showErrorMessage('Error', errorMessage);
@@ -795,11 +921,11 @@ export default function CreateDocument() {
 
     try {
       const incomeItems = items
-        .filter(item => item.description.trim() && item.price && parseFloat(item.price) > 0)
+        .filter(item => item.description.trim() && toText(item.price) && Number(item.price) > 0)
         .map(item => ({
           description: item.description,
-          quantity: parseFloat(item.quantity) || 1,
-          price: parseFloat(item.price),
+          quantity: Number(item.quantity) || 1,
+          price: Number(item.price),
         }));
 
       if (incomeItems.length === 0) {
@@ -844,7 +970,15 @@ export default function CreateDocument() {
       console.log('ðŸ“‹ Submitting to Tax Authority...');
       const getApprovalFunction = httpsCallable(middleEastFunctions, 'getInvoiceApproval');
       
-      const approvalResult = await getApprovalFunction(documentData);
+      const approvalResult = await getApprovalFunction(documentData) as {
+        data: {
+          success?: boolean;
+          error?: string;
+          documentId?: string;
+          pdfTaskId?: string;
+          confirmationNumber?: string;
+        };
+      };
       console.log('âœ… Tax Authority response:', approvalResult.data);
 
       if (!approvalResult.data.success) {
@@ -888,10 +1022,10 @@ export default function CreateDocument() {
       alert.hideLoading();
       
       let errorMessage = 'Failed to create tax invoice';
-      if (error.code === 'failed-precondition') {
-        errorMessage = error.message || 'Tax Authority did not approve the invoice. Please check your details.';
-      } else if (error.message) {
-        errorMessage = error.message;
+      if (getErrorCode(error) === 'failed-precondition') {
+        errorMessage = getErrorMessage(error, 'Tax Authority did not approve the invoice. Please check your details.');
+      } else {
+        errorMessage = getErrorMessage(error, errorMessage);
       }
       
       showErrorMessage('Error', errorMessage);
@@ -934,7 +1068,7 @@ export default function CreateDocument() {
       }
     } catch (error) {
       console.error('Error opening PDF:', error);
-      showErrorMessage('Error', 'Failed to open PDF: ' + (error.message || error));
+      showErrorMessage('Error', `Failed to open PDF: ${getErrorMessage(error, String(error))}`);
     }
   };
 
@@ -1277,9 +1411,9 @@ export default function CreateDocument() {
               </AppText>
               {matchingProposals.map((proposal) => {
                 const isSelected = selectedPriceProposal?.id === proposal.id;
-                const proposalDate = proposal.createdAt ? new Date(proposal.createdAt).toLocaleDateString() : '';
+                const proposalDate = formatDateLike(proposal.createdAt);
                 const proposalTotal = proposal.items
-                  ? proposal.items.reduce((s, it) => s + (parseFloat(it.price) || 0) * (parseFloat(it.quantity) || 1), 0)
+                  ? proposal.items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0)
                   : 0;
                 return (
                   <TouchableOpacity
@@ -1458,10 +1592,8 @@ export default function CreateDocument() {
                         editable={!isReadOnly}
                         style={[
                           styles.inputMultiline,
-                          { backgroundColor: colors.background, color: colors.textPrimary, borderColor: colors.border },
+                          { backgroundColor: colors.background, borderColor: colors.border },
                         ]}
-                        multiline
-                        numberOfLines={2}
                       />
                     ) : (
                     <AppInput
@@ -1627,7 +1759,7 @@ export default function CreateDocument() {
                     renderItem={({ item: invoice }) => {
                       const clientData = invoice.documentData?.client || {};
                       const totalAmount = (invoice.documentData?.items || [])
-                        .reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseFloat(item.quantity) || 1)), 0);
+                        .reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.quantity) || 1)), 0);
                       
                       return (
                         <TouchableOpacity
@@ -1651,9 +1783,7 @@ export default function CreateDocument() {
                             </AppText>
                             <View style={styles.invoiceItemRow}>
                               <AppText style={[styles.invoiceItemDate, { color: colors.textSecondary }]}>
-                                {invoice.createdAt instanceof Date 
-                                  ? invoice.createdAt.toLocaleDateString()
-                                  : new Date(invoice.createdAt).toLocaleDateString()}
+                                {formatDateLike(invoice.createdAt)}
                               </AppText>
                               <AppText style={[styles.invoiceItemAmount, { color: colors.primary }]}>
                                 â‚ª{totalAmount.toFixed(2)}

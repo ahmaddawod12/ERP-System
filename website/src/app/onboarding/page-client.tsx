@@ -28,8 +28,6 @@ import { getClientApiErrorMessage } from "@/lib/api/client";
 import {
   buildAuthedJsonHeaders,
 } from "@/lib/firebase/client-auth";
-import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 
 const schema = z
@@ -271,16 +269,19 @@ export default function OnboardingClient() {
             : values.role;
 
       if (accountType === "business" && resolvedRole === "worker") {
-        const response = await fetch("/api/onboarding/join-company", {
+        const response = await fetch("/api/callable", {
           method: "POST",
           headers: await buildAuthedJsonHeaders(),
           body: JSON.stringify({
-            email: user.email,
-            role: "worker",
-            name: values.name,
-            phoneNumber: values.phoneNumber,
-            companyId: values.joinCompanyId?.trim(),
-            inviteCode: values.inviteCode,
+            operation: "joinCompanyV1",
+            payload: {
+              email: user.email,
+              role: "worker",
+              name: values.name,
+              phoneNumber: values.phoneNumber,
+              companyId: values.joinCompanyId?.trim(),
+              inviteCode: values.inviteCode,
+            },
           }),
         });
 
@@ -295,12 +296,12 @@ export default function OnboardingClient() {
           );
         }
       } else {
-        const registerFn = httpsCallable<
-          Record<string, unknown>,
-          { success: boolean; companyId: string; role: string; tier: string }
-        >(functions, "registerBusinessV1");
-
-        await registerFn({
+        const response = await fetch("/api/callable", {
+          method: "POST",
+          headers: await buildAuthedJsonHeaders(),
+          body: JSON.stringify({
+            operation: "registerBusinessV1",
+            payload: {
           role: resolvedRole,
           accountType,
           name: values.name,
@@ -322,7 +323,22 @@ export default function OnboardingClient() {
           address: values.businessAddress ?? "",
           business_phone: values.businessPhone ?? "",
           business_email: user.email,
+            },
+          }),
         });
+
+        const data = (await response.json()) as ClientApiResponse<{
+          success: boolean;
+          companyId: string;
+          role: string;
+          tier: string;
+        }>;
+
+        if (!response.ok || !data.ok || !data.data.companyId) {
+          throw new Error(
+            getClientApiErrorMessage(data, "Onboarding registration failed"),
+          );
+        }
       }
 
       setLocale(values.language as Locale);
@@ -455,7 +471,7 @@ export default function OnboardingClient() {
 
               <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500 transition-all duration-300"
+                  className="h-full rounded-full bg-linear-to-r from-cyan-500 to-emerald-500 transition-all duration-300"
                   style={{ width: `${progress}%` }}
                 />
               </div>

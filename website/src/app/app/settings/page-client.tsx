@@ -4,18 +4,17 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { httpsCallable } from "firebase/functions";
 import { Globe2, Palette, Settings2, ShieldCheck, Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { functions } from "@/lib/firebase/client";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
 import { useTheme } from "@/components/providers/theme-provider";
+import { updateProfile as updateProfileSettings } from "@/lib/services/firestore-service";
 import type { Locale } from "@/lib/i18n/translations";
 
 const profileSchema = z.object({
@@ -50,8 +49,7 @@ export default function SettingsClient() {
 
   const saveProfile = async (values: ProfileFormValues) => {
     if (!uid || !profile) return;
-    const updateProfileFn = httpsCallable(functions, "updateProfileV1");
-    await updateProfileFn({ name: values.name, phoneNumber: values.phone });
+    await updateProfileSettings({ name: values.name, phoneNumber: values.phone });
     await refreshUserData();
     toast({ title: "Settings saved", variant: "success" });
   };

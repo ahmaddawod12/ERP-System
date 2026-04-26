@@ -169,12 +169,15 @@ async function getInventorySnapshot(internalCompanyId, scope, membershipId, opti
     };
   }
 
-  const nextIdResult = await db.execute(sql`
-    SELECT COALESCE(MAX(part_no), 0) + 1 AS next_part_no
-    FROM inventory_parts
-    WHERE company_id = ${internalCompanyId}
-  `);
-  const nextId = toNumber(nextIdResult.rows?.[0]?.next_part_no, 1);
+  const partCounterRows = await db
+    .select({ nextValue: companyCounters.nextValue })
+    .from(companyCounters)
+    .where(and(
+      eq(companyCounters.companyId, internalCompanyId),
+      eq(companyCounters.counterKey, 'part_no'),
+    ))
+    .limit(1);
+  const nextId = toNumber(partCounterRows[0]?.nextValue, 1);
 
   const partRows = await db.execute(sql`
     SELECT
@@ -245,15 +248,17 @@ async function listCompanyClients(companyId, options: any = {}) {
 }
 
 async function listCompanyJobs(companyId, profile, options: any = {}) {
+  // Returns { items: JobRecord[], nextCursor: string | null }
   return listCompanyJobsDetailed(companyId, profile, options);
 }
 
 async function listCompanyDocuments(companyId, profile, options: any = {}) {
-  if (!profile) return [];
+  if (!profile) return { items: [], nextCursor: null };
   const normalizedRole = String(profile.role || '').trim().toLowerCase();
   if (normalizedRole === 'worker') {
-    return [];
+    return { items: [], nextCursor: null };
   }
+  // Returns { items: DocumentRecord[], nextCursor: string | null }
   return listCompanyDocumentsDetailed(companyId, options);
 }
 
@@ -295,12 +300,20 @@ async function getBootstrapReadModel(uid, companyId = null, options: any = {}) {
   if (includeCollections) {
     const publicCompanyId = String(profile.companyId || companyId || '');
     // Fetch all four collections in parallel.
-    [payload.workers, payload.clients, payload.jobs, payload.documents] = await Promise.all([
+    const [workers, clients, jobsResult, documentsResult] = await Promise.all([
       listCompanyWorkers(publicCompanyId, options),
       listCompanyClients(publicCompanyId, options),
       listCompanyJobs(publicCompanyId, profile, options),
       listCompanyDocuments(publicCompanyId, profile, options),
     ]);
+    payload.workers = workers;
+    payload.clients = clients;
+    // Bootstrap always returns the first page of jobs/documents (no cursor) so clients
+    // can render immediately and load more on demand.
+    payload.jobs = jobsResult.items;
+    payload.documents = documentsResult.items;
+    payload.jobsNextCursor = jobsResult.nextCursor;
+    payload.documentsNextCursor = documentsResult.nextCursor;
   }
 
   return payload;
@@ -335,6 +348,7 @@ async function getDocumentTaskStatus(taskId, uid, options: any = {}) {
       status: documentTasks.status,
       taskType: documentTasks.taskType,
       previewUrl: documentTasks.previewUrl,
+      generateUrl: documentTasks.generateUrl,
       storagePath: documentTasks.storagePath,
       documentId: documentTasks.documentId,
       pdfSize: documentTasks.pdfSize,
@@ -357,7 +371,7 @@ async function getDocumentTaskStatus(taskId, uid, options: any = {}) {
       ? (row.previewUrl || row.requestPayload?.previewURL || null)
       : null,
     downloadURL: row.taskType === 'generate'
-      ? (row.requestPayload?.downloadURL || row.previewUrl || null)
+      ? (row.requestPayload?.downloadURL || row.generateUrl || null)
       : null,
     documentId: row.documentId || row.requestPayload?.publicDocumentId || null,
     pdfSize: row.pdfSize || null,

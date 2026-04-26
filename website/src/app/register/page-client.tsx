@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createUserWithEmailAndPassword } from "firebase/auth";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
-import { auth } from "@/lib/firebase/client";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -32,7 +30,7 @@ type FormValues = z.infer<typeof schema>;
 const setupFlow = [
   {
     title: "Create account",
-    description: "Email + password with Firebase Authentication.",
+    description: "Email + password with Supabase Authentication.",
   },
   {
     title: "Add profile and business info",
@@ -67,7 +65,28 @@ export default function RegisterClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await createUserWithEmailAndPassword(auth, values.email, values.password);
+      const supabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/+$/, "");
+      const supabaseAnonKey = String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error("Supabase auth is not configured");
+      }
+
+      const response = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: supabaseAnonKey,
+        },
+        body: JSON.stringify({
+          email: values.email,
+          password: values.password,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error_description?: unknown; msg?: unknown };
+      if (!response.ok) {
+        throw new Error(String(payload.error_description || payload.msg || "Registration failed"));
+      }
+
       toast({
         title: "Account created",
         description: "Continue through onboarding to save role and business setup.",
@@ -100,7 +119,7 @@ export default function RegisterClient() {
                 Registration is now a guided flow: create account first, then complete onboarding in modern step-by-step screens.
               </p>
 
-              <div className="mt-6 rounded-[1.5rem] border border-slate-200/70 bg-white/75 px-4 py-4 dark:border-white/10 dark:bg-slate-900/55">
+              <div className="mt-6 rounded-3xl border border-slate-200/70 bg-white/75 px-4 py-4 dark:border-white/10 dark:bg-slate-900/55">
                 <div className="flex items-start gap-3">
                   <ShieldCheck className="mt-0.5 h-5 w-5 text-slate-950 dark:text-white" />
                   <div>
@@ -136,7 +155,7 @@ export default function RegisterClient() {
               </div>
             </Card>
 
-            <Card className="glass-panel rounded-[2rem] p-6 sm:p-8">
+            <Card className="glass-panel rounded-4xl p-6 sm:p-8">
               <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-900 dark:text-slate-100">
                 Start with account credentials
               </h2>

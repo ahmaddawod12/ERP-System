@@ -1,5 +1,9 @@
-import { Pool, type PoolClient, type QueryResult } from 'pg';
-import { getSqlConnectionString, isSqlPersistenceEnabledForCloudRun } from './persistence';
+import { type PoolClient } from 'pg';
+import {
+  connectSharedSqlClient,
+  isSharedSqlStoreEnabled,
+  runSharedSqlQuery,
+} from './sql-store';
 
 type ClaimResult = {
   shouldProcess: boolean;
@@ -14,36 +18,8 @@ type TaskCompletionOptions = {
   publicDocumentId?: string | null;
 };
 
-let pool: Pool | null = null;
-
 export function isSqlTaskStoreEnabled(): boolean {
-  return isSqlPersistenceEnabledForCloudRun();
-}
-
-function getPool(): Pool | null {
-  if (!isSqlTaskStoreEnabled()) {
-    return null;
-  }
-  const connectionString = getSqlConnectionString();
-  if (!connectionString) {
-    throw new Error('SQL task store is enabled but no database connection string is configured');
-  }
-  if (!pool) {
-    pool = new Pool({
-      connectionString,
-      max: 5,
-      ssl: process.env.PGSSLMODE === 'disable' ? false : undefined,
-    });
-  }
-  return pool;
-}
-
-async function runQuery(queryText: string, values: unknown[]): Promise<QueryResult | null> {
-  const activePool = getPool();
-  if (!activePool) {
-    return null;
-  }
-  return activePool.query(queryText, values);
+  return isSharedSqlStoreEnabled();
 }
 
 export async function claimTaskProcessing(taskId: string, options: { staleAfterMs?: number } = {}): Promise<ClaimResult> {
@@ -52,8 +28,7 @@ export async function claimTaskProcessing(taskId: string, options: { staleAfterM
   }
 
   const staleAfterMs = Math.max(1_000, Number(options.staleAfterMs || 15 * 60 * 1000) || 15 * 60 * 1000);
-  const activePool = getPool();
-  const client = await (activePool as Pool).connect();
+  const client = await connectSharedSqlClient() as PoolClient;
 
   try {
     await client.query('BEGIN');
@@ -117,7 +92,7 @@ export async function claimTaskProcessing(taskId: string, options: { staleAfterM
 export async function markTaskProcessing(taskId: string): Promise<void> {
   if (!isSqlTaskStoreEnabled()) return;
 
-  await runQuery(
+  await runSharedSqlQuery(
     `
       UPDATE document_tasks
       SET status = 'processing',
@@ -142,21 +117,26 @@ export async function markTaskCompleted(taskId: string, options: TaskCompletionO
     payloadPatch.publicDocumentId = options.publicDocumentId;
   }
 
-  await runQuery(
+  const previewUrl = options.taskType === 'preview' ? options.resultUrl || null : null;
+  const generateUrl = options.taskType === 'generate' ? options.resultUrl || null : null;
+
+  await runSharedSqlQuery(
     `
       UPDATE document_tasks
       SET status = 'completed',
           preview_url = $2,
-          storage_path = $3,
-          pdf_size = $4,
+          generate_url = $3,
+          storage_path = $4,
+          pdf_size = $5,
           error = NULL,
           completed_at = NOW(),
-          request_payload = COALESCE(request_payload, '{}'::jsonb) || $5::jsonb
+          request_payload = COALESCE(request_payload, '{}'::jsonb) || $6::jsonb
       WHERE task_key = $1
     `,
     [
       String(taskId || '').trim(),
-      options.resultUrl || null,
+      previewUrl,
+      generateUrl,
       options.storagePath || null,
       options.pdfSize ?? null,
       JSON.stringify(payloadPatch),
@@ -167,7 +147,7 @@ export async function markTaskCompleted(taskId: string, options: TaskCompletionO
 export async function markTaskFailed(taskId: string, errorMessage?: string): Promise<void> {
   if (!isSqlTaskStoreEnabled()) return;
 
-  await runQuery(
+  await runSharedSqlQuery(
     `
       UPDATE document_tasks
       SET status = 'failed',

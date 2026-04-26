@@ -7,8 +7,8 @@ export const revalidate = 3600;
 const items = [
   {
     icon: ShieldCheck,
-    title: "Firebase-backed auth + storage",
-    description: "Email/password authentication with Firestore role-aware document access and scoped company data.",
+    title: "Supabase-backed auth",
+    description: "Email/password authentication with SQL-backed runtime data access and scoped company boundaries.",
   },
   {
     icon: UserRoundCheck,
@@ -23,7 +23,7 @@ const items = [
 ];
 
 const principles = [
-  "Firebase Auth uid is the account identity.",
+  "Supabase auth uid is the account identity.",
   "companyId scopes business data and is allocated server-side.",
   "Protected collections are mutated by backend flows, not client writes.",
   "Canonical status and field naming reduce schema drift across surfaces.",
@@ -39,7 +39,7 @@ export default function SecurityPage() {
             Secure by data model, role boundaries, and protected write paths.
           </h1>
           <p className="mt-4 text-base leading-8 text-slate-600 dark:text-slate-300">
-            Smart-Job ERP uses Firebase Authentication, Firestore rules, and backend-only mutation flows so account identity, company scope, and operational writes stay explicit.
+            Smart-Job ERP uses Supabase Authentication, SQL-backed backend flows, and backend-only mutation boundaries so account identity, company scope, and operational writes stay explicit.
           </p>
         </div>
 
@@ -49,7 +49,7 @@ export default function SecurityPage() {
             ["companyId", "Server-allocated business scope, never derived from email."],
             ["Cloud Functions", "Protected writes for jobs, clients, documents, workers, and invites."],
           ].map(([title, copy]) => (
-            <div key={title} className="glass-panel rounded-[1.5rem] px-4 py-4">
+            <div key={title} className="glass-panel rounded-3xl px-4 py-4">
               <p className="text-lg font-semibold text-slate-950 dark:text-white">{title}</p>
               <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">{copy}</p>
             </div>
@@ -77,7 +77,7 @@ export default function SecurityPage() {
             <ul className="mt-6 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
               <li className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
-                <span>Primary account identity: Firebase Auth uid.</span>
+                <span>Primary account identity: Supabase auth uid.</span>
               </li>
               <li className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />

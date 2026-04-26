@@ -30,7 +30,7 @@ const features = [
   {
     icon: Radio,
     title: "Realtime collaboration",
-    description: "Firestore sync keeps manager and field workers aligned on status and assignments.",
+    description: "SQL-backed read models keep manager and field workers aligned on status and assignments.",
   },
   {
     icon: Globe2,

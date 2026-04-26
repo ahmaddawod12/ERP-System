@@ -1,6 +1,6 @@
-const COMPANY_SYNC_POLL_MIN_INTERVAL_MS = 15_000;
-const COMPANY_SYNC_POLL_MAX_INTERVAL_MS = 120_000;
-const COMPANY_SYNC_POLL_BACKOFF_STEPS = 3;
+const COMPANY_SYNC_POLL_MIN_INTERVAL_MS = 30_000;
+const COMPANY_SYNC_POLL_MAX_INTERVAL_MS = 300_000;
+const COMPANY_SYNC_POLL_BACKOFF_STEPS = 4;
 
 export function getNextCompanySyncPollIntervalMs(consecutiveIdlePolls: number): number {
   const normalizedIdlePolls = Math.max(0, Math.trunc(Number(consecutiveIdlePolls) || 0));

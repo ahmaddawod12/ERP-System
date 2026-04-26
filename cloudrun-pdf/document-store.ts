@@ -1,7 +1,4 @@
-import { Pool, type QueryResult } from 'pg';
-import { getSqlConnectionString, isSqlPersistenceEnabledForCloudRun } from './persistence';
-
-let pool: Pool | null = null;
+import { isSharedSqlStoreEnabled, runSharedSqlQuery } from './sql-store';
 
 type DocumentGenerationInput = {
   companyId: string | number;
@@ -16,39 +13,13 @@ type DocumentGenerationFailureInput = {
 };
 
 export function isSqlDocumentStoreEnabled(): boolean {
-  return isSqlPersistenceEnabledForCloudRun();
-}
-
-function getPool(): Pool | null {
-  if (!isSqlDocumentStoreEnabled()) {
-    return null;
-  }
-  const connectionString = getSqlConnectionString();
-  if (!connectionString) {
-    throw new Error('SQL document store is enabled but no database connection string is configured');
-  }
-  if (!pool) {
-    pool = new Pool({
-      connectionString,
-      max: 5,
-      ssl: process.env.PGSSLMODE === 'disable' ? false : undefined,
-    });
-  }
-  return pool;
-}
-
-async function runQuery(queryText: string, values: unknown[]): Promise<QueryResult | null> {
-  const activePool = getPool();
-  if (!activePool) {
-    return null;
-  }
-  return activePool.query(queryText, values);
+  return isSharedSqlStoreEnabled();
 }
 
 export async function completeDocumentGeneration({ companyId, documentId, storagePath }: DocumentGenerationInput): Promise<void> {
   if (!isSqlDocumentStoreEnabled()) return;
 
-  const result = await runQuery(
+  const result = await runSharedSqlQuery(
     `
       UPDATE documents AS d
       SET storage_path = $3,
@@ -70,7 +41,7 @@ export async function completeDocumentGeneration({ companyId, documentId, storag
 export async function failDocumentGeneration({ companyId, documentId, errorMessage }: DocumentGenerationFailureInput): Promise<void> {
   if (!isSqlDocumentStoreEnabled()) return;
 
-  await runQuery(
+  await runSharedSqlQuery(
     `
       UPDATE documents AS d
       SET generation_status = 'failed',

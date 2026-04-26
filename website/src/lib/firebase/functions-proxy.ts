@@ -6,60 +6,55 @@ function trimTrailingSlash(value: string) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
 
-function getFunctionsRegion() {
-  return process.env.FIREBASE_FUNCTIONS_REGION || "us-central1";
-}
+const EDGE_FUNCTION_NAME_MAP: Record<string, string> = {
+  mutationGatewayV1: "mutation-gateway",
+  mutationGatewayMeWest1V1: "mutation-gateway-me-west1",
+  readModelV1: "read-model",
+  createInviteV1: "invites/create",
+  joinCompanyV1: "invites/join",
+  requestUpgradeV1: "upgrades/request",
+  listUpgradeRequestsV1: "upgrades/list",
+  moderateUpgradeRequestV1: "upgrades/moderate",
+  contactRequestV1: "contact/request",
+};
 
-function getProjectId() {
-  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_ADMIN_PROJECT_ID;
-  if (!projectId) {
-    throw new ApiRouteError(
-      500,
-      "functions_project_id_missing",
-      "Firebase project ID is not configured for function proxy",
-    );
-  }
-  return projectId;
-}
-
-function getFunctionsBaseUrl() {
-  const explicitBase = process.env.FIREBASE_FUNCTIONS_BASE_URL;
+function getEdgeFunctionsBaseUrl() {
+  const explicitBase = process.env.BACKEND_EDGE_FUNCTIONS_BASE_URL;
   if (explicitBase) {
     const parsed = new URL(explicitBase);
     const isLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
-    const isCloudFunctions = parsed.hostname.endsWith(".cloudfunctions.net");
-    if (process.env.NODE_ENV === "production" && (!isCloudFunctions || parsed.protocol !== "https:")) {
+    if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:") {
       throw new ApiRouteError(
         500,
-        "functions_base_url_invalid",
-        "Function proxy base URL must be an HTTPS Cloud Functions host in production",
+        "edge_base_url_invalid",
+        "Supabase Edge base URL must be HTTPS in production",
       );
     }
     if (!isLocal && parsed.protocol !== "https:") {
-      throw new ApiRouteError(500, "functions_base_url_invalid", "Function proxy base URL must use HTTPS");
+      throw new ApiRouteError(500, "edge_base_url_invalid", "Supabase Edge base URL must use HTTPS");
     }
     return trimTrailingSlash(parsed.toString());
   }
 
-  const region = getFunctionsRegion();
-  const projectId = getProjectId();
-  const emulatorEnabled =
-    process.env.NODE_ENV !== "production" &&
-    (
-      process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true" ||
-      Boolean(process.env.FIRESTORE_EMULATOR_HOST)
+  const supabaseUrl = trimTrailingSlash(
+    String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim(),
+  );
+  if (!supabaseUrl) {
+    throw new ApiRouteError(
+      500,
+      "supabase_url_missing",
+      "Supabase URL is not configured for edge proxy",
     );
-
-  if (emulatorEnabled) {
-    const emulatorOrigin = trimTrailingSlash(process.env.FIREBASE_FUNCTIONS_EMULATOR_ORIGIN || "http://127.0.0.1:5001");
-    return `${emulatorOrigin}/${projectId}/${region}`;
   }
-
-  return `https://${region}-${projectId}.cloudfunctions.net`;
+  return `${supabaseUrl}/functions/v1`;
 }
 
-function getFunctionUrl(functionName: string) {
-  return `${getFunctionsBaseUrl()}/${functionName}`;
+function getEdgeFunctionPath(functionName: string): string {
+  return EDGE_FUNCTION_NAME_MAP[functionName] || functionName;
+}
+
+function getEdgeFunctionUrl(functionName: string) {
+  return `${getEdgeFunctionsBaseUrl()}/${getEdgeFunctionPath(functionName)}`;
 }
 
 function assertFunctionPayload(payload: unknown) {
@@ -76,8 +71,9 @@ export async function proxyToHttpFunction(
   request: Request,
   functionName: string,
   body: unknown,
-  options?: { requireAuth?: boolean },
+  options?: { requireAuth?: boolean; region?: string },
 ) {
+  void options?.region;
   const requireAuth = options?.requireAuth !== false;
   if (requireAuth) {
     // P1-3: Verify auth server-side before proxying (defense-in-depth)
@@ -94,7 +90,7 @@ export async function proxyToHttpFunction(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    response = await fetch(getFunctionUrl(functionName), {
+    response = await fetch(getEdgeFunctionUrl(functionName), {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -102,7 +98,7 @@ export async function proxyToHttpFunction(
       signal: controller.signal,
     });
   } catch {
-    throw new ApiRouteError(502, "function_unreachable", "Could not reach Cloud Function endpoint");
+    throw new ApiRouteError(502, "edge_unreachable", "Could not reach Supabase Edge endpoint");
   } finally {
     clearTimeout(timeout);
   }

@@ -2,7 +2,7 @@
   "name": "@smart-job/db",
   "version": "0.1.0",
   "description": "Shared Postgres schema and access helpers for Smart-Job ERP",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -11,8 +11,8 @@
   },
   "files": [
     "dist/**/*",
-    "index.js",
-    "config.js",
+    "dist/index.js",
+    "dist/config.js",
     "migrations/*.sql"
   ],
   "dependencies": {

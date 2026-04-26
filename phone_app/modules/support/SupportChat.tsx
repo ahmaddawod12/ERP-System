@@ -26,7 +26,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
-import { db, auth, collection, getDocs, query, where } from '../../firebase';
+import { auth } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
@@ -36,6 +36,7 @@ import { loadConversationThread } from './support-message-store';
 import {
   appendSupportMessage,
   createSupportConversation,
+  listSupportConversations,
   markSupportConversationRead,
 } from './support-api';
 import {
@@ -89,25 +90,7 @@ export default function SupportChat() {
 
     try {
       setLoading(true);
-      const uid = user.uid;
-      
-      // Fetch only open conversations
-      const conversationsRef = collection(db, 'conversations');
-      const q = query(conversationsRef, 
-        where('userId', '==', uid),
-        where('status', '==', 'open')
-      );
-      const openSnapshot = await getDocs(q);
-      
-      // Map and sort open conversations
-      const allOpenConversations = openSnapshot.docs
-        .map(docSnap => ({ 
-          id: docSnap.id, 
-          ...docSnap.data(),
-          lastMessageAt: docSnap.data().lastMessageAt?.toDate() || new Date(),
-          createdAt: docSnap.data().createdAt?.toDate() || new Date(),
-        }))
-        .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+      const allOpenConversations = await listSupportConversations('open');
       
       // Load hidden conversations from local storage
       const hiddenStr = storage.getString('hiddenConversations');
@@ -191,40 +174,13 @@ export default function SupportChat() {
     if (!user) return;
     
     setLoadingHistory(true);
-    const uid = user.uid;
     
     try {
-      const conversationsRef = collection(db, 'conversations');
-      const q = query(conversationsRef,
-        where('userId', '==', uid),
-        where('status', '==', 'closed')
-      );
-      const snapshot = await getDocs(q);
-      
-      // Get all closed conversations, exclude hidden ones, and sort
-      const convs = snapshot.docs
-        .map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          lastMessageAt: doc.data().lastMessageAt?.toDate() || new Date(),
-          createdAt: doc.data().createdAt?.toDate() || new Date(),
-        }))
+      const convs = (await listSupportConversations('closed'))
         .filter(conv => !hiddenConversations.includes(conv.id))
         .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
       
-      // Fetch open conversations for main page refresh
-      const openQuery = query(conversationsRef,
-        where('userId', '==', uid),
-        where('status', '==', 'open')
-      );
-      const openSnapshot = await getDocs(openQuery);
-      const openConvs = openSnapshot.docs
-        .map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          lastMessageAt: doc.data().lastMessageAt?.toDate() || new Date(),
-          createdAt: doc.data().createdAt?.toDate() || new Date(),
-        }))
+      const openConvs = (await listSupportConversations('open'))
         .filter(conv => !hiddenConversations.includes(conv.id))
         .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
       
@@ -284,10 +240,6 @@ export default function SupportChat() {
     setHasNoConversation(false);
     
     try {
-      // Create new conversation
-      const conversationsRef = collection(db, 'conversations');
-      const uid = user.uid;
-      
       // Ensure category is a string
       const categoryValue = typeof category === 'string' ? category : (typeof selectedCategory === 'string' ? selectedCategory : 'general');
       

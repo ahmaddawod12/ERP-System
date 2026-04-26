@@ -4,19 +4,17 @@
  * useDocumentTask Hook (Web SDK port)
  *
  * Mirrors the phone app's useDocumentTask hook.
- * Uses Firebase Web SDK httpsCallable + onSnapshot to:
+ * Uses server proxy callables plus adaptive polling against readModelV1 to:
  *   - publish preview / generate tasks via Cloud Functions (Pub/Sub)
- *   - listen on documentTasks/{taskId} for completion
+ *   - poll document task state until completion through backend read-model APIs
  *   - call getInvoiceApproval on me-west1 for tax invoices
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { httpsCallable } from "firebase/functions";
-import { functions, middleEastFunctions } from "@/lib/firebase/client";
 import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
+import { getNextDocumentTaskPollIntervalMs } from "@/lib/document-task-poll";
 
 const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const TASK_POLL_INTERVAL_MS = 2000;
 
 export interface DocumentTaskCallbacks {
   onPreviewComplete?: (url: string) => void;
@@ -57,6 +55,12 @@ export interface TaskData {
   [key: string]: unknown;
 }
 
+type CallableResponse<T> = {
+  ok: boolean;
+  data?: T;
+  error?: { message?: string };
+};
+
 export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
   const { onPreviewComplete, onGenerateComplete, onError } = options;
 
@@ -69,7 +73,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbacksRef = useRef({ onPreviewComplete, onGenerateComplete, onError });
 
   // Keep callbacks ref current
@@ -81,7 +85,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
   useEffect(() => {
     return () => {
       unsubscribeRef.current?.();
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, []);
@@ -89,9 +93,9 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
   const stopPolling = useCallback(() => {
     unsubscribeRef.current?.();
     unsubscribeRef.current = null;
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
     }
   }, []);
 
@@ -106,6 +110,19 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
       throw new Error(payload?.error?.message || "Failed to read task status");
     }
     return payload.data ?? null;
+  }, []);
+
+  const callServerCallable = useCallback(async <T>(operation: string, payload: unknown) => {
+    const response = await fetch("/api/callable", {
+      method: "POST",
+      headers: await buildAuthedJsonHeaders(),
+      body: JSON.stringify({ operation, payload }),
+    });
+    const body = await response.json() as CallableResponse<T>;
+    if (!response.ok || !body.ok || !body.data) {
+      throw new Error(body?.error?.message || `${operation} failed`);
+    }
+    return body.data;
   }, []);
 
   /**
@@ -165,10 +182,20 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
           }
       };
 
+      let consecutiveInFlightPolls = 0;
+
       const pollOnce = async () => {
         try {
           const data = await fetchTaskState(newTaskId);
           handleTaskState(data);
+
+          const status = String(data?.status || '').trim().toLowerCase();
+          if (status === 'pending' || status === 'queued' || status === 'processing' || status === 'published') {
+            consecutiveInFlightPolls += 1;
+            pollTimeoutRef.current = setTimeout(() => {
+              void pollOnce();
+            }, getNextDocumentTaskPollIntervalMs(consecutiveInFlightPolls));
+          }
         } catch (err) {
           console.error("Error polling task:", err);
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -181,9 +208,6 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
       };
 
       void pollOnce();
-      pollIntervalRef.current = setInterval(() => {
-        void pollOnce();
-      }, TASK_POLL_INTERVAL_MS);
     },
     [fetchTaskState, stopPolling],
   );
@@ -194,16 +218,15 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
       setIsLoading(true);
       setError(null);
       try {
-        const callable = httpsCallable<PublishParams, { success: boolean; taskId: string; error?: string }>(
-          functions,
+        const result = await callServerCallable<{ success: boolean; taskId: string; error?: string }>(
           "publishPreviewTask",
+          params,
         );
-        const result = await callable(params);
-        if (result.data.success && result.data.taskId) {
-          listenToTask(result.data.taskId, "preview");
-          return result.data.taskId;
+        if (result.success && result.taskId) {
+          listenToTask(result.taskId, "preview");
+          return result.taskId;
         }
-        throw new Error(result.data.error || "Failed to publish preview task");
+        throw new Error(result.error || "Failed to publish preview task");
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to publish preview task";
         setError(msg);
@@ -212,7 +235,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
         throw err;
       }
     },
-    [listenToTask],
+    [callServerCallable, listenToTask],
   );
 
   /** Publish a generate task → publishGenerateTask (us-central1) */
@@ -221,16 +244,17 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
       setIsLoading(true);
       setError(null);
       try {
-        const callable = httpsCallable<
-          PublishParams,
+        const result = await callServerCallable<
           { success: boolean; taskId: string; documentId?: string; error?: string }
-        >(functions, "publishGenerateTask");
-        const result = await callable(params);
-        if (result.data.success && result.data.taskId) {
-          listenToTask(result.data.taskId, "generate");
-          return result.data.taskId;
+        >(
+          "publishGenerateTask",
+          params,
+        );
+        if (result.success && result.taskId) {
+          listenToTask(result.taskId, "generate");
+          return result.taskId;
         }
-        throw new Error(result.data.error || "Failed to publish generate task");
+        throw new Error(result.error || "Failed to publish generate task");
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to publish generate task";
         setError(msg);
@@ -239,7 +263,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
         throw err;
       }
     },
-    [listenToTask],
+    [callServerCallable, listenToTask],
   );
 
   /**
@@ -251,8 +275,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
       setIsLoading(true);
       setError(null);
       try {
-        const callable = httpsCallable<
-          InvoiceApprovalParams,
+        const result = await callServerCallable<
           {
             success: boolean;
             documentId?: string;
@@ -261,17 +284,19 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
             confirmationNumber?: string;
             error?: string;
           }
-        >(middleEastFunctions, "getInvoiceApproval");
-        const result = await callable(params);
+        >(
+          "getInvoiceApproval",
+          params,
+        );
 
-        if (result.data.success) {
+        if (result.success) {
           // Listen for the PDF generation task
-          if (result.data.pdfTaskId) {
-            listenToTask(result.data.pdfTaskId, "generate");
+          if (result.pdfTaskId) {
+            listenToTask(result.pdfTaskId, "generate");
           }
-          return result.data;
+          return result;
         }
-        throw new Error(result.data.error || "Invoice approval failed");
+        throw new Error(result.error || "Invoice approval failed");
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Invoice approval failed";
         setError(msg);
@@ -280,7 +305,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
         throw err;
       }
     },
-    [listenToTask],
+    [callServerCallable, listenToTask],
   );
 
   /** Reset all state and clean up listeners */

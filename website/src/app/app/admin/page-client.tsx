@@ -39,10 +39,13 @@ export default function AdminClient() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/upgrades/list", {
+      const response = await fetch("/api/callable", {
         method: "POST",
         headers: await buildAuthedJsonHeaders(),
-        body: JSON.stringify({ limit: 200 }),
+        body: JSON.stringify({
+          operation: "listUpgradeRequestsV1",
+          payload: { limit: 200 },
+        }),
       });
       const payload = (await response.json()) as ClientApiResponse<{ items: UpgradeRequest[] }>;
       if (!response.ok || !payload.ok) {
@@ -67,10 +70,13 @@ export default function AdminClient() {
   const markStatus = async (id: string, status: "approved" | "rejected") => {
     setActionId(id);
     try {
-      const response = await fetch("/api/upgrades/moderate", {
+      const response = await fetch("/api/callable", {
         method: "POST",
         headers: await buildAuthedJsonHeaders(),
-        body: JSON.stringify({ requestId: id, status }),
+        body: JSON.stringify({
+          operation: "moderateUpgradeRequestV1",
+          payload: { requestId: id, status },
+        }),
       });
       const payload = (await response.json()) as ClientApiResponse<{ requestId: string; status: string }>;
       if (!response.ok || !payload.ok) {

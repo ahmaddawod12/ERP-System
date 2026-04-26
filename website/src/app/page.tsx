@@ -248,7 +248,7 @@ export default function HomePage() {
             </p>
             <div className="mt-6 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
               {[
-                "Realtime Firestore sync for jobs and workers",
+                "SQL-backed read model for jobs and workers",
                 "Cloud Run PDF generation with queue-aware workflows",
                 "Role and tier gating across routes and modules",
                 "English, Hebrew, and Arabic support with RTL readiness",

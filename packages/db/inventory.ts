@@ -9,6 +9,7 @@ const {
   inventoryParts,
 } = require('./schema');
 const {
+  allocateCompanyCounter,
   findActiveMembership,
   resolveCompanyByPublicId,
 } = require('./membership');
@@ -119,16 +120,16 @@ async function lockCompanyInventoryPartAllocation(tx, companyInternalId) {
 
 async function allocateInventoryPartNo(tx, companyInternalId) {
   await lockCompanyInventoryPartAllocation(tx, companyInternalId);
-  const result = await tx.execute(sql`
-    SELECT COALESCE(MAX(part_no), 0) + 1 AS next_part_no
-    FROM inventory_parts
-    WHERE company_id = ${companyInternalId}
-  `);
-  const nextPartNo = Number(result.rows?.[0]?.next_part_no || 1);
-  if (!Number.isInteger(nextPartNo) || nextPartNo < 1) {
-    throw new Error('Failed to allocate inventory part number');
+  try {
+    return await allocateCompanyCounter(tx, companyInternalId, 'part_no');
+  } catch {
+    await tx.execute(sql`
+      INSERT INTO company_counters (company_id, counter_key, next_value, updated_at)
+      VALUES (${companyInternalId}, 'part_no', 2, NOW())
+      ON CONFLICT (company_id, counter_key) DO NOTHING
+    `);
+    return allocateCompanyCounter(tx, companyInternalId, 'part_no');
   }
-  return nextPartNo;
 }
 
 async function getInventoryPartByNo(tx, companyInternalId, partNo) {

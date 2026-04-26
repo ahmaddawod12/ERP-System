@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import { ArrowRight, CheckCircle2, ShieldCheck, Wrench } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { auth } from "@/lib/firebase/client";
+import { signInWithConfiguredProvider } from "@/lib/firebase/client-auth";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -33,7 +32,7 @@ export default function LoginClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await signInWithEmailAndPassword(auth, values.email, values.password);
+      await signInWithConfiguredProvider(values.email, values.password);
       const redirect = searchParams.get("redirect");
       // Validate redirect is a safe internal path (no protocol-relative URLs like //evil.com)
       if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
@@ -78,7 +77,7 @@ export default function LoginClient() {
             </div>
           </Card>
 
-          <Card className="glass-panel rounded-[2rem] p-6 sm:p-8">
+          <Card className="glass-panel rounded-4xl p-6 sm:p-8">
             <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-900 dark:text-slate-100">Login</h2>
             <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
               Access your Smart-Job ERP web account.

@@ -13,7 +13,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "firebase-admin": "^13.8.0",
+    "@smart-job/db": "file:../packages/db",
     "@google-cloud/storage": "^7.19.0"
   },
   "devDependencies": {

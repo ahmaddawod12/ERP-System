@@ -5,14 +5,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { auth, onAuthStateChanged } from '../firebase';
-import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import type { SupabaseAuthUser } from '../firebase';
 
 /**
  * Hook for managing authentication state
  * @returns {Object} { user, loading, error, uid, userRole }
  */
 export interface UseAuthResult {
-  user: FirebaseAuthTypes.User | null;
+  user: SupabaseAuthUser | null;
   loading: boolean;
   error: Error | null;
   uid: string | null;
@@ -21,7 +21,7 @@ export interface UseAuthResult {
 }
 
 export const useAuth = (): UseAuthResult => {
-  const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
+  const [user, setUser] = useState<SupabaseAuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error] = useState<Error | null>(null);
 

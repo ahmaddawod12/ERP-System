@@ -162,11 +162,14 @@ async function markDocumentTaskCompleted(taskId, options: any = {}) {
   const db = options.db || getDb(options.env);
   const payloadPatch = buildTaskPayloadPatch(options);
   const patchJson = JSON.stringify(payloadPatch);
+  const previewUrl = options.taskType === 'preview' ? options.resultUrl || null : null;
+  const generateUrl = options.taskType === 'generate' ? options.resultUrl || null : null;
 
   await db.execute(require('drizzle-orm').sql`
     UPDATE document_tasks
     SET status = 'completed',
-        preview_url = ${options.taskType === 'preview' ? options.resultUrl || null : null},
+        preview_url = ${previewUrl},
+        generate_url = ${generateUrl},
         storage_path = ${options.storagePath || null},
         pdf_size = ${options.pdfSize ?? null},
         error = NULL,

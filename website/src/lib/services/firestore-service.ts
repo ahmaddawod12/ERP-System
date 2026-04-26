@@ -1,8 +1,5 @@
 "use client";
 
-import type { DocumentSnapshot } from "firebase/firestore";
-import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase/client";
 import { getClientApiErrorMessage, type ClientApiResponse } from "@/lib/api/client";
 import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
 import { canListCompanyJobs } from "@/lib/job-access";
@@ -18,6 +15,8 @@ import type {
   WorkerProfile,
 } from "@/lib/types";
 
+type DocumentSnapshot = unknown;
+
 interface BootstrapReadModel {
   profile: UserProfile | null;
   subscription: UserSubscription | null;
@@ -28,24 +27,57 @@ interface BootstrapReadModel {
   clients: ClientRecord[];
   jobs: JobRecord[];
   documents: DocumentRecord[];
+  jobsNextCursor?: string | null;
+  documentsNextCursor?: string | null;
 }
+
+type CallableOperation =
+  | "manageWorker"
+  | "createJobV1"
+  | "updateJobV1"
+  | "deleteJobV1"
+  | "acceptJobV1"
+  | "updateInventoryV1"
+  | "addClientV1"
+  | "deleteClientV1"
+  | "updateClientV1"
+  | "createDocumentDownloadUrlV1"
+  | "updateProfileV1";
 
 export function resolveCompanyScope(companyId: string | null | undefined): string | null {
   const normalized = (companyId ?? "").trim();
   return normalized || null;
 }
 
-async function fetchReadModel<T>(body: Record<string, unknown>): Promise<T> {
+async function fetchReadModel<T>(body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const response = await fetch("/api/read-model", {
     method: "POST",
     headers: await buildAuthedJsonHeaders(),
     body: JSON.stringify(body),
+    signal,
   });
   const payload = (await response.json()) as ClientApiResponse<T>;
   if (!response.ok || !payload.ok) {
     throw new Error(getClientApiErrorMessage(payload, "Read model request failed"));
   }
   return payload.data;
+}
+
+async function callServerCallable<T>(
+  operation: CallableOperation,
+  payload: Record<string, unknown>,
+): Promise<T> {
+  const response = await fetch("/api/callable", {
+    method: "POST",
+    headers: await buildAuthedJsonHeaders(),
+    body: JSON.stringify({ operation, payload }),
+  });
+
+  const bodyPayload = (await response.json()) as ClientApiResponse<T>;
+  if (!response.ok || !bodyPayload.ok) {
+    throw new Error(getClientApiErrorMessage(bodyPayload, "Callable request failed"));
+  }
+  return bodyPayload.data;
 }
 
 export async function loadBootstrapReadModel(companyId?: string | null, includeCollections = false) {
@@ -65,8 +97,7 @@ export async function updateWorkerRole(companyId: string, workerUid: string, wid
     throw new Error("Worker UID is required");
   }
 
-  const manageWorkerFn = httpsCallable<Record<string, unknown>, { success: boolean }>(functions, "manageWorker");
-  await manageWorkerFn({
+  await callServerCallable<{ success: boolean }>("manageWorker", {
     action: "edit",
     companyId,
     workerUid,
@@ -91,26 +122,32 @@ export async function listJobs(
     role?: Role;
     wid?: string;
     pageSize?: number;
-    lastDoc?: DocumentSnapshot;
+    afterCursor?: string;
   },
+  signal?: AbortSignal,
 ) {
   if (!canListCompanyJobs(opts?.role, opts?.wid ?? null)) {
     return {
       jobs: [],
       pending: [],
       finished: [],
-      lastDoc: null,
+      nextCursor: null,
       hasMore: false,
     };
   }
 
-  const allJobs = await fetchReadModel<JobRecord[]>({ kind: "jobs", companyId });
+  const body: Record<string, unknown> = { kind: "jobs", companyId };
+  if (opts?.pageSize) body.pageSize = opts.pageSize;
+  if (opts?.afterCursor) body.afterCursor = opts.afterCursor;
+
+  const result = await fetchReadModel<{ items: JobRecord[]; nextCursor: string | null }>(body, signal);
+  const allJobs = result.items ?? [];
   return {
     jobs: allJobs,
     pending: allJobs.filter((job) => isPendingLikeStatus(job.status)),
     finished: allJobs.filter((job) => isClosedJobStatus(job.status)),
-    lastDoc: null as DocumentSnapshot | null,
-    hasMore: false,
+    nextCursor: result.nextCursor ?? null,
+    hasMore: Boolean(result.nextCursor),
   };
 }
 
@@ -118,34 +155,41 @@ export async function createJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt">,
 ) {
-  const createJobFn = httpsCallable<Record<string, unknown>, { success: boolean; jobId: string; jid: number }>(functions, "createJobV1");
-  const result = await createJobFn({ companyId, type: "pending", ...payload });
-  return result.data.jobId;
+  const result = await callServerCallable<{ success: boolean; jobId: string; jid: number }>("createJobV1", {
+    companyId,
+    type: "pending",
+    ...payload,
+  });
+  return result.jobId;
 }
 
 export async function createFinishedJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt" | "status">,
 ) {
-  const createJobFn = httpsCallable<Record<string, unknown>, { success: boolean; jobId: string; jid: number }>(functions, "createJobV1");
-  const result = await createJobFn({ companyId, type: "finished", ...payload });
-  return result.data.jobId;
+  const result = await callServerCallable<{ success: boolean; jobId: string; jid: number }>("createJobV1", {
+    companyId,
+    type: "finished",
+    ...payload,
+  });
+  return result.jobId;
 }
 
 export async function updateJob(companyId: string, jobId: string, payload: Partial<JobRecord>) {
   if (payload.status === "finished") {
-    const acceptJobFn = httpsCallable<Record<string, unknown>, { success: boolean; jobId: string }>(functions, "acceptJobV1");
-    await acceptJobFn({ companyId, jobId });
+    await callServerCallable<{ success: boolean; jobId: string }>("acceptJobV1", { companyId, jobId });
     return;
   }
 
-  const updateJobFn = httpsCallable<Record<string, unknown>, { success: boolean; jobId: string }>(functions, "updateJobV1");
-  await updateJobFn({ companyId, jobId, ...payload });
+  await callServerCallable<{ success: boolean; jobId: string }>("updateJobV1", {
+    companyId,
+    jobId,
+    ...payload,
+  });
 }
 
 export async function deleteJob(companyId: string, jobId: string) {
-  const deleteJobFn = httpsCallable<Record<string, unknown>, { success: boolean; jobId: string }>(functions, "deleteJobV1");
-  await deleteJobFn({ companyId, jobId });
+  await callServerCallable<{ success: boolean; jobId: string }>("deleteJobV1", { companyId, jobId });
 }
 
 export async function getCompanyInventory(companyId: string): Promise<InventoryDoc> {
@@ -156,8 +200,7 @@ export async function addCompanyInventoryPart(
   companyId: string,
   part: Omit<InventoryPart, "id" | "dateAdded">,
 ) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
     companyId,
     action: "addPart",
     scope: "company",
@@ -167,13 +210,21 @@ export async function addCompanyInventoryPart(
 }
 
 export async function toggleCompanyInventoryPart(companyId: string, partId: number) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({ companyId, action: "togglePart", scope: "company", partId });
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
+    companyId,
+    action: "togglePart",
+    scope: "company",
+    partId,
+  });
 }
 
 export async function removeCompanyInventoryPart(companyId: string, partId: number) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({ companyId, action: "removePart", scope: "company", partId });
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
+    companyId,
+    action: "removePart",
+    scope: "company",
+    partId,
+  });
 }
 
 export async function getUserInventory(uid: string): Promise<InventoryDoc> {
@@ -185,8 +236,7 @@ export async function addUserInventoryPart(
   part: Omit<InventoryPart, "id" | "dateAdded">,
   companyId: string,
 ) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
     companyId,
     action: "addPart",
     scope: "user",
@@ -203,8 +253,7 @@ export async function updateUserInventoryPart(
   updates: Partial<Pick<InventoryPart, "name" | "quantity" | "lowThreshold">>,
   companyId: string,
 ) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
     companyId,
     action: "updatePart",
     scope: "user",
@@ -217,8 +266,7 @@ export async function updateUserInventoryPart(
 }
 
 export async function removeUserInventoryPart(uid: string, partId: number, companyId: string) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
     companyId,
     action: "removePart",
     scope: "user",
@@ -232,8 +280,7 @@ export async function pickCompanyParts(
   uid: string,
   partsToPick: Array<{ id: number; name: string; quantity: number }>,
 ) {
-  const fn = httpsCallable(functions, "updateInventoryV1");
-  await fn({
+  await callServerCallable<{ success: boolean }>("updateInventoryV1", {
     companyId,
     action: "pickParts",
     scope: "company",
@@ -250,6 +297,7 @@ export async function listClients(
   lastDoc: DocumentSnapshot | null;
   hasMore: boolean;
 }> {
+  void opts;
   const clients = await fetchReadModel<ClientRecord[]>({ kind: "clients", companyId });
   return {
     clients,
@@ -259,22 +307,46 @@ export async function listClients(
 }
 
 export async function updateClient(companyId: string, clientId: string, payload: Partial<ClientRecord>) {
-  const fn = httpsCallable<Record<string, unknown>, { success: boolean; clientId: string }>(functions, "updateClientV1");
-  await fn({ companyId, clientId, ...payload });
+  await callServerCallable<{ success: boolean; clientId: string }>("updateClientV1", {
+    companyId,
+    clientId,
+    ...payload,
+  });
 }
 
-export async function listDocuments(companyId: string): Promise<DocumentRecord[]> {
-  return fetchReadModel<DocumentRecord[]>({ kind: "documents", companyId });
+export async function createClient(companyId: string, payload: object) {
+  await callServerCallable<{ success: boolean; clientId: string }>("addClientV1", {
+    companyId,
+    ...(payload as Record<string, unknown>),
+  });
+}
+
+export async function deleteClient(companyId: string, clientId: string) {
+  await callServerCallable<{ success: boolean; clientId: string }>("deleteClientV1", { companyId, clientId });
+}
+
+export async function listDocuments(
+  companyId: string,
+  opts?: { pageSize?: number; afterCursor?: string },
+  signal?: AbortSignal,
+): Promise<{ items: DocumentRecord[]; nextCursor: string | null }> {
+  const body: Record<string, unknown> = { kind: "documents", companyId };
+  if (opts?.pageSize) body.pageSize = opts.pageSize;
+  if (opts?.afterCursor) body.afterCursor = opts.afterCursor;
+  return fetchReadModel<{ items: DocumentRecord[]; nextCursor: string | null }>(body, signal);
 }
 
 export async function getDocumentDownloadUrl(companyId: string, documentId: string): Promise<string> {
-  const callable = httpsCallable<{ companyId: string; documentId: string }, { success: boolean; downloadURL?: string }>(
-    functions,
+  const result = await callServerCallable<{ success: boolean; downloadURL?: string }>(
     "createDocumentDownloadUrlV1",
+    { companyId, documentId },
   );
-  const result = await callable({ companyId, documentId });
-  if (!result.data.success || !result.data.downloadURL) {
+  if (!result.success || !result.downloadURL) {
     throw new Error("Document download URL is unavailable");
   }
-  return result.data.downloadURL;
+  return result.downloadURL;
+}
+
+export async function updateProfile(values: { name: string; phoneNumber: string }) {
+  await callServerCallable<{ success: boolean }>("updateProfileV1", values);
 }

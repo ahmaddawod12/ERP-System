@@ -14,6 +14,38 @@ jobs:
           node-version: 22
       - run: node scripts/check-no-ts-nocheck.mjs
 
+  packages_contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/contracts/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  packages_db:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/db/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
   website:
     runs-on: ubuntu-latest
     defaults:
@@ -48,21 +80,6 @@ jobs:
       - run: npm test
       - run: npm run typecheck
 
-  functions:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: functions
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: functions/package-lock.json
-      - run: npm ci
-      - run: npm test
-
   cloudrun_pdf:
     runs-on: ubuntu-latest
     defaults:
@@ -92,3 +109,33 @@ jobs:
           cache-dependency-path: cloudrun-archiver/package-lock.json
       - run: npm ci
       - run: npm test
+
+  supabase_edge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check Supabase edge runtime
+        run: deno check supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+
+  perf_budget:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check performance budget
+        run: node scripts/check-perf-budget.mjs
+
+  cloudrun_images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build PDF service image
+        run: docker build -t smart-job-cloudrun-pdf:ci ./cloudrun-pdf
+      - name: Build archiver image
+        run: docker build -t smart-job-cloudrun-archiver:ci ./cloudrun-archiver

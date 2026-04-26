@@ -8,14 +8,18 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { User } from "firebase/auth";
-import { onIdTokenChanged, signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase/client";
 import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
+import {
+  getCurrentAccessToken,
+  getCurrentAuthUser,
+  signOutConfiguredProvider,
+  subscribeConfiguredAuthState,
+  type ClientAuthUser,
+} from "@/lib/firebase/client-auth";
 import type { UserProfile, UserSubscription } from "@/lib/types";
 
 interface AuthContextValue {
-  user: User | null;
+  user: ClientAuthUser | null;
   profile: UserProfile | null;
   subscription: UserSubscription | null;
   loading: boolean;
@@ -40,7 +44,7 @@ function normalizeProfile(profile: UserProfile | null): UserProfile | null {
   };
 }
 
-async function loadUserProfile(uid: string) {
+async function loadUserProfile() {
   const response = await fetch("/api/read-model", {
     method: "POST",
     headers: await buildAuthedJsonHeaders(),
@@ -77,19 +81,19 @@ async function syncAuthSession(token: string | null) {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<ClientAuthUser | null>(getCurrentAuthUser());
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [subscription, setSubscription] = useState<UserSubscription | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refreshUserData = useCallback(async () => {
-    if (!auth.currentUser) {
+    if (!getCurrentAuthUser()) {
       setProfile(null);
       setSubscription(null);
       return;
     }
     try {
-      const result = await loadUserProfile(auth.currentUser.uid);
+      const result = await loadUserProfile();
       setProfile(result.profile);
       setSubscription(result.subscription);
     } catch {
@@ -99,15 +103,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    return onIdTokenChanged(auth, async (nextUser) => {
+    return subscribeConfiguredAuthState(async (nextUser) => {
       try {
         setLoading(true);
         setUser(nextUser);
         if (nextUser) {
-          const token = await nextUser.getIdToken();
+          const token = await getCurrentAccessToken(true);
           await syncAuthSession(token);
           try {
-            const result = await loadUserProfile(nextUser.uid);
+            const result = await loadUserProfile();
             setProfile(result.profile);
             setSubscription(result.subscription);
           } catch {
@@ -132,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await signOut(auth);
+    await signOutConfiguredProvider();
   }, []);
 
   const value = useMemo<AuthContextValue>(

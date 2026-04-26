@@ -21,6 +21,8 @@ interface BootstrapPayload {
   clients: any[];
   jobs: any[];
   documents: any[];
+  jobsNextCursor?: string | null;
+  documentsNextCursor?: string | null;
 }
 
 interface CompanySyncStatePayload {
@@ -203,6 +205,48 @@ export async function fetchCompanySyncState(companyId: string): Promise<CompanyS
       companyInventoryVersion: 0,
       updatedAt: '',
     };
+  }
+}
+
+/**
+ * Fetches one page of jobs using cursor-based pagination.
+ */
+export async function fetchJobsPage(
+  companyId: string,
+  opts: { pageSize?: number; afterCursor?: string; signal?: AbortSignal } = {},
+): Promise<{ items: any[]; nextCursor: string | null }> {
+  try {
+    const body: Record<string, unknown> = {
+      kind: 'jobs',
+      companyId,
+      pageSize: opts.pageSize ?? 50,
+    };
+    if (opts.afterCursor) body.afterCursor = opts.afterCursor;
+    return await callHttpFunction<{ items: any[]; nextCursor: string | null }>('readModelV1', body, { signal: opts.signal });
+  } catch (error) {
+    console.error('Error fetching jobs page:', error);
+    return { items: [], nextCursor: null };
+  }
+}
+
+/**
+ * Fetches one page of documents using cursor-based pagination.
+ */
+export async function fetchDocumentsPage(
+  companyId: string,
+  opts: { pageSize?: number; afterCursor?: string; signal?: AbortSignal } = {},
+): Promise<{ items: any[]; nextCursor: string | null }> {
+  try {
+    const body: Record<string, unknown> = {
+      kind: 'documents',
+      companyId,
+      pageSize: opts.pageSize ?? 50,
+    };
+    if (opts.afterCursor) body.afterCursor = opts.afterCursor;
+    return await callHttpFunction<{ items: any[]; nextCursor: string | null }>('readModelV1', body, { signal: opts.signal });
+  } catch (error) {
+    console.error('Error fetching documents page:', error);
+    return { items: [], nextCursor: null };
   }
 }
 

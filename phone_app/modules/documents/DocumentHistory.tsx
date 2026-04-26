@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { View,
   StyleSheet,
@@ -8,7 +7,6 @@ import { View,
   Platform,
   Linking,
   ActivityIndicator,
-  SafeAreaView,
  } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -20,12 +18,59 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { AppText, GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal, ScreenHeroCard } from '../../components';
-import { auth, db, collection, query, where, orderBy, getDocs, doc, deleteDoc, functions, httpsCallable } from '../../firebase';
+import { AppText, AppButton, GlobalHeader, DateFilter, ScrollableContainer, ClientSelectorModal, ScreenHeroCard } from '../../components';
+import { auth, functions, httpsCallable } from '../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import type { DocTypeCode, DateLike, AppDocument } from '../../types';
+import type { DateFilterRange } from '../../components/DateFilter';
 import { DOC_TYPE } from '@smart-job/contracts';
 import { getDocumentDownloadUrl } from './document-download';
+
+type DocumentTypeFilter = 'all' | DocTypeCode;
+
+type DocumentLineItem = {
+  price?: number | string;
+  quantity?: number | string;
+  description?: string;
+};
+
+type DocumentHistoryRecord = AppDocument & {
+  income?: DocumentLineItem[];
+  notes?: string;
+  number?: string | number;
+  documentNumber?: string | number;
+  total?: number;
+  description?: string;
+  createdByName?: string;
+  createdByUid?: string;
+  storagePath?: string;
+  documentId?: string;
+};
+
+type DocumentDateFilter = {
+  type: DateFilterRange['type'];
+  startDate: Date | null;
+  endDate: Date | null;
+  label: string;
+};
+
+type DocumentTypeOption = {
+  id: DocumentTypeFilter;
+  label: string;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  color: string;
+  gradient: [string, string];
+};
+
+function getDateLikeTime(value: DateLike | null | undefined): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof (value as { toDate?: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  return new Date(String(value)).getTime();
+}
 
 export default function DocumentHistory() {
   const router = useRouter();
@@ -46,19 +91,19 @@ export default function DocumentHistory() {
   const colors = getColors(isDarkMode);
 
   const PAGE_SIZE = 50;
-  const [documents, setDocuments] = useState([]);
-  const [filteredDocuments, setFilteredDocuments] = useState([]);
+  const [documents, setDocuments] = useState<DocumentHistoryRecord[]>([]);
+  const [filteredDocuments, setFilteredDocuments] = useState<DocumentHistoryRecord[]>([]);
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(true);
-  const [selectedDocType, setSelectedDocType] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDocument, setSelectedDocument] = useState(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedDocType, setSelectedDocType] = useState<DocumentTypeFilter>('all');
+  const [selectedDocument] = useState<DocumentHistoryRecord | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [downloadingDoc, setDownloadingDoc] = useState(null);
-  const [sharingDoc, setSharingDoc] = useState(null);
+  const [downloadingDoc, setDownloadingDoc] = useState<string | null>(null);
+  const [sharingDoc, setSharingDoc] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showDateFilter, setShowDateFilter] = useState(false);
-  const [dateFilter, setDateFilter] = useState({
+  const [dateFilter, setDateFilter] = useState<DocumentDateFilter>({
     type: 'last7days',
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)),
     endDate: (() => {
@@ -204,7 +249,7 @@ export default function DocumentHistory() {
     total: 'المجموع',
   };
 
-  const documentTypes = [
+  const documentTypes: DocumentTypeOption[] = [
     { id: 'all', label: t.all, icon: 'file-document-multiple', color: '#6B7280', gradient: ['#6B7280', '#4B5563'] },
     { id: DOC_TYPE.TAX_INVOICE, label: t.taxInvoice, icon: 'receipt', color: '#10B981', gradient: ['#10B981', '#059669'] },
     { id: DOC_TYPE.PRICE_PROPOSAL, label: t.priceProposal, icon: 'file-document-edit', color: '#3B82F6', gradient: ['#3B82F6', '#2563EB'] },
@@ -225,23 +270,24 @@ export default function DocumentHistory() {
 
 
   // Helper function to calculate total from income items
-  const calculateTotal = (income) => {
+  const calculateTotal = (income?: DocumentLineItem[]) => {
     if (!income || !Array.isArray(income)) return 0;
     return income.reduce((sum, item) => {
-      const price = parseFloat(item.price) || 0;
-      const quantity = parseFloat(item.quantity) || 1;
+      const price = Number.parseFloat(String(item.price ?? 0)) || 0;
+      const quantity = Number.parseFloat(String(item.quantity ?? 1)) || 1;
       return sum + (price * quantity);
     }, 0);
   };
 
   // Helper function to get description from income items
-  const getDescriptionFromIncome = (income) => {
+  const getDescriptionFromIncome = (income?: DocumentLineItem[]) => {
     if (!income || !Array.isArray(income) || income.length === 0) return '';
     return income.map(item => item.description).filter(Boolean).join(', ');
   };
 
   const loadDocuments = async () => {
     try {
+      setLoadError(null);
       const user = auth.currentUser;
       if (!user) {
         setLoading(false);
@@ -262,30 +308,22 @@ export default function DocumentHistory() {
       // Cache contains last 90 days of documents
       if (cachedDocuments && cachedDocuments.length > 0) {
         console.log('📦 [CACHE READ] DocumentHistory - documents from cache:', cachedDocuments.length);
-        const docs = cachedDocuments.map(data => {
+        const docs: DocumentHistoryRecord[] = cachedDocuments.map((data) => {
           // Transform cached data to match expected structure
           return {
-            id: data.id,
             ...data,
+            id: data.id,
             type: data.type,
-            total: calculateTotal(data.income || data.items),
-            description: getDescriptionFromIncome(data.income || data.items) || data.notes,
-            documentNumber: data.documentNumber || data.number || data.id,
+            total: calculateTotal((data as DocumentHistoryRecord).income || data.items),
+            description: getDescriptionFromIncome((data as DocumentHistoryRecord).income || data.items) || (data as DocumentHistoryRecord).notes,
+            documentNumber: (data as DocumentHistoryRecord).documentNumber || (data as DocumentHistoryRecord).number || data.id,
           };
         });
 
         // Sort by creation date (newest first)
         docs.sort((a, b) => {
-          const getTime = (dateInput) => {
-            if (!dateInput) return 0;
-            if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-              return dateInput.toDate().getTime();
-            }
-            return new Date(dateInput).getTime();
-          };
-          
-          const dateA = getTime(a.createdAt);
-          const dateB = getTime(b.createdAt);
+          const dateA = getDateLikeTime(a.createdAt);
+          const dateB = getDateLikeTime(b.createdAt);
           return dateB - dateA;
         });
 
@@ -302,6 +340,7 @@ export default function DocumentHistory() {
     } catch (error) {
       console.error('Error loading documents:', error);
       setDocuments([]);
+      setLoadError(error instanceof Error ? error.message : String(error));
       setLoading(false);
     }
   };
@@ -325,13 +364,13 @@ export default function DocumentHistory() {
           const smartData = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'documents');
           
           // Transform the data
-          filtered = smartData.map(data => ({
+          filtered = smartData.map((data): DocumentHistoryRecord => ({
             id: data.id,
             ...data,
             type: data.type,
-            total: calculateTotal(data.income || data.items),
-            description: getDescriptionFromIncome(data.income || data.items) || data.notes,
-            documentNumber: data.documentNumber || data.number || data.id,
+            total: calculateTotal((data as DocumentHistoryRecord).income || data.items),
+            description: getDescriptionFromIncome((data as DocumentHistoryRecord).income || data.items) || (data as DocumentHistoryRecord).notes,
+            documentNumber: (data as DocumentHistoryRecord).documentNumber || (data as DocumentHistoryRecord).number || data.id,
           }));
           
           // Apply type filter
@@ -347,14 +386,7 @@ export default function DocumentHistory() {
         const end = new Date(dateFilter.endDate.getFullYear(), dateFilter.endDate.getMonth(), dateFilter.endDate.getDate(), 23, 59, 59).getTime();
         
         filtered = filtered.filter(doc => {
-          const getTime = (dateInput) => {
-            if (!dateInput) return 0;
-            if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-              return dateInput.toDate().getTime();
-            }
-            return new Date(dateInput).getTime();
-          };
-          const docDate = getTime(doc.createdAt);
+          const docDate = getDateLikeTime(doc.createdAt);
           return docDate >= start && docDate <= end;
         });
       }
@@ -363,14 +395,7 @@ export default function DocumentHistory() {
       if (dateFilter.startDate) {
         const start = new Date(dateFilter.startDate.getFullYear(), dateFilter.startDate.getMonth(), dateFilter.startDate.getDate()).getTime();
         filtered = filtered.filter(doc => {
-          const getTime = (dateInput) => {
-            if (!dateInput) return 0;
-            if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-              return dateInput.toDate().getTime();
-            }
-            return new Date(dateInput).getTime();
-          };
-          const docDate = getTime(doc.createdAt);
+          const docDate = getDateLikeTime(doc.createdAt);
           return docDate >= start;
         });
       }
@@ -378,14 +403,7 @@ export default function DocumentHistory() {
       if (dateFilter.endDate) {
         const end = new Date(dateFilter.endDate.getFullYear(), dateFilter.endDate.getMonth(), dateFilter.endDate.getDate(), 23, 59, 59).getTime();
         filtered = filtered.filter(doc => {
-          const getTime = (dateInput) => {
-            if (!dateInput) return 0;
-            if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-              return dateInput.toDate().getTime();
-            }
-            return new Date(dateInput).getTime();
-          };
-          const docDate = getTime(doc.createdAt);
+          const docDate = getDateLikeTime(doc.createdAt);
           return docDate <= end;
         });
       }
@@ -402,7 +420,7 @@ export default function DocumentHistory() {
     setFilteredDocuments(filtered);
   };
 
-  const resolveDocumentUrl = async (doc) => {
+  const resolveDocumentUrl = async (doc: DocumentHistoryRecord) => {
     const companyId = getCompanyId();
     const documentId = doc.documentId || doc.id;
     if (!doc.storagePath || !companyId || !documentId) {
@@ -412,7 +430,7 @@ export default function DocumentHistory() {
     return getDocumentDownloadUrl(companyId, documentId);
   };
 
-  const handlePreview = async (doc) => {
+  const handlePreview = async (doc: DocumentHistoryRecord) => {
     try {
       const url = await resolveDocumentUrl(doc);
       
@@ -425,14 +443,14 @@ export default function DocumentHistory() {
       }
     } catch (error) {
       console.error('Error previewing document:', error);
-      alert.error('Error', error.message);
+      alert.error('Error', error instanceof Error ? error.message : String(error));
     }
   };
 
   /**
    * View - Navigate to ViewDocument screen to show document data
    */
-  const handleView = (doc) => {
+  const handleView = (doc: DocumentHistoryRecord) => {
     router.push({
       pathname: '/ViewDocument',
       params: { 
@@ -444,7 +462,7 @@ export default function DocumentHistory() {
   /**
    * Download - Actually download the PDF file to device
    */
-  const handleDownload = async (doc) => {
+  const handleDownload = async (doc: DocumentHistoryRecord) => {
     try {
       setDownloadingDoc(doc.id);
       const url = await resolveDocumentUrl(doc);
@@ -473,7 +491,7 @@ export default function DocumentHistory() {
           // Android: Try to open with system viewer or show success
           try {
             await Linking.openURL(`file://${downloadResult.uri}`);
-          } catch (linkError) {
+          } catch (_linkError) {
             // If can't open directly, just show success message
             alert.success(t.downloadComplete, `${t.download}: ${filename}`);
           }
@@ -484,7 +502,7 @@ export default function DocumentHistory() {
       }
     } catch (error) {
       console.error('Error downloading document:', error);
-      alert.error(t.downloadError, error.message);
+      alert.error(t.downloadError, error instanceof Error ? error.message : String(error));
     } finally {
       setDownloadingDoc(null);
     }
@@ -493,7 +511,7 @@ export default function DocumentHistory() {
   /**
    * Share - Share the PDF via system share sheet (WhatsApp, Email, etc.)
    */
-  const handleShare = async (doc) => {
+  const handleShare = async (doc: DocumentHistoryRecord) => {
     try {
       setSharingDoc(doc.id);
       const url = await resolveDocumentUrl(doc);
@@ -522,7 +540,7 @@ export default function DocumentHistory() {
       }
     } catch (error) {
       console.error('Error sharing document:', error);
-      alert.error(t.shareError, error.message);
+      alert.error(t.shareError, error instanceof Error ? error.message : String(error));
     } finally {
       setSharingDoc(null);
     }
@@ -531,7 +549,7 @@ export default function DocumentHistory() {
   /**
    * Get document type name for filenames
    */
-  const getDocTypeName = (type) => {
+  const getDocTypeName = (type: DocumentTypeFilter) => {
     const numericType = typeof type === 'number' ? type : Number(type);
     switch (numericType) {
       case DOC_TYPE.TAX_INVOICE: return 'TaxInvoice';
@@ -544,7 +562,7 @@ export default function DocumentHistory() {
     }
   };
 
-  const handleDelete = async (document) => {
+  const handleDelete = async (document: DocumentHistoryRecord) => {
     try {
       // Get company name from cache
       const companyId = getCompanyId();
@@ -575,7 +593,7 @@ export default function DocumentHistory() {
                 alert.success(t.deleteSuccess || 'Success', t.deleteSuccess);
               } catch (error) {
                 console.error('Error deleting document:', error);
-                alert.error(t.deleteError || 'Error', error.message);
+                alert.error(t.deleteError || 'Error', error instanceof Error ? error.message : String(error));
               }
             }
           }
@@ -583,11 +601,11 @@ export default function DocumentHistory() {
       );
     } catch (error) {
       console.error('Error in handleDelete:', error);
-      alert.error('Error', error.message);
+      alert.error('Error', error instanceof Error ? error.message : String(error));
     }
   };
 
-  const getDocTypeIcon = (type) => {
+  const getDocTypeIcon = (type: DocumentTypeFilter) => {
     const numericType = typeof type === 'number' ? type : Number(type);
     switch (numericType) {
       case DOC_TYPE.TAX_INVOICE:
@@ -607,7 +625,7 @@ export default function DocumentHistory() {
     }
   };
 
-  const getDocTypeColor = (type) => {
+  const getDocTypeColor = (type: DocumentTypeFilter) => {
     const numericType = typeof type === 'number' ? type : Number(type);
     switch (numericType) {
       case DOC_TYPE.TAX_INVOICE:
@@ -627,31 +645,31 @@ export default function DocumentHistory() {
     }
   };
 
-  const formatDate = (dateInput) => {
+  const formatDate = (dateInput: DateLike | null | undefined) => {
     if (!dateInput) return 'N/A';
     
     // Handle Firestore Timestamp
-    if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-      const date = dateInput.toDate();
+    if (typeof (dateInput as { toDate?: () => Date }).toDate === 'function') {
+      const date = (dateInput as { toDate: () => Date }).toDate();
       return date.toLocaleDateString(language === 'he' ? 'he-IL' : 'en-US');
     }
     
     // Handle date string
-    const dateString = dateInput;
+    const dateString = String(dateInput);
     try {
       const date = new Date(dateString);
       if (isNaN(date.getTime())) return 'N/A';
       return date.toLocaleDateString(language === 'en' ? 'en-US' : language === 'he' ? 'he-IL' : 'ar-SA');
-    } catch (error) {
+    } catch (_error) {
       return 'N/A';
     }
   };
 
-  const formatAmount = (amount) => {
-    if (!amount || isNaN(amount)) return 'N/A';
+  const formatAmount = (amount: number | string | null | undefined) => {
+    if (amount == null || amount === '' || Number.isNaN(Number(amount))) return 'N/A';
     try {
-      return `₪${parseFloat(amount).toFixed(2)}`;
-    } catch (error) {
+      return `₪${Number.parseFloat(String(amount)).toFixed(2)}`;
+    } catch (_error) {
       return 'N/A';
     }
   };
@@ -661,6 +679,25 @@ export default function DocumentHistory() {
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />
         <AppText style={[styles.loadingText, { color: colors.textPrimary }]}>Loading documents...</AppText>
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
+        <MaterialCommunityIcons name="alert-circle-outline" size={42} color={colors.error} />
+        <AppText style={[styles.loadingText, { color: colors.textPrimary }]}>Failed to load documents</AppText>
+        <AppText style={[styles.errorText, { color: colors.textSecondary }]}>{loadError}</AppText>
+        <View style={styles.retryButtonWrap}>
+          <AppButton
+            title={language === 'he' ? 'נסה שוב' : language === 'ar' ? 'إعادة المحاولة' : 'Retry'}
+            onPress={() => {
+              setLoading(true);
+              void loadDocuments();
+            }}
+          />
+        </View>
       </View>
     );
   }
@@ -805,8 +842,7 @@ export default function DocumentHistory() {
                 {clientFilter || t.filterByClient}
               </AppText>
               {clientFilter.length > 0 && (
-                <TouchableOpacity onPress={(e) => {
-                  e.stopPropagation();
+                <TouchableOpacity onPress={() => {
                   setClientFilter('');
                 }}>
                   <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
@@ -819,7 +855,7 @@ export default function DocumentHistory() {
           {dateFilter.label && (
             <TouchableOpacity 
               style={styles.clearDatesButton}
-              onPress={() => setDateFilter({ type: 'pickMonth', startDate: null, endDate: null, label: '' })}
+              onPress={() => setDateFilter({ type: 'last7days', startDate: null, endDate: null, label: '' })}
             >
               <LinearGradient colors={gradients.redBox} style={styles.clearDatesGradient}>
                 <Ionicons name="close-circle-outline" size={18} color="white" />
@@ -1025,7 +1061,7 @@ export default function DocumentHistory() {
       <DateFilter
         visible={showDateFilter}
         onClose={() => setShowDateFilter(false)}
-        onFilterChange={(filter) => {
+        onFilterChange={(filter: DateFilterRange) => {
           setDateFilter(filter);
         }}
         currentFilter={dateFilter.type}
@@ -1077,6 +1113,16 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: spacing.md,
     fontSize: typography.body,
+  },
+  errorText: {
+    marginTop: spacing.sm,
+    fontSize: typography.small,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  retryButtonWrap: {
+    width: '72%',
+    marginTop: spacing.md,
   },
   header: {
     alignItems: 'center',

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useEffect } from 'react';
 import { View,
   TouchableOpacity,
@@ -28,11 +27,46 @@ import { useCache } from '../../contexts/CacheContext';
 import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
 import { fetchUserInventoryParts } from '../../utils/read-model';
+import type { Client, InventoryPart, Job, JobFileRef, JobItem } from '../../types';
 import {
   extractStoragePathFromJobFile,
   getImmediateJobFileUri,
   resolveJobFileUri,
 } from './job-file-utils';
+
+type FillJobMode = 'user' | 'worker';
+
+type FillJobPart = JobItem & {
+  id?: string | number;
+  usedQuantity?: number;
+};
+
+type EditableJob = Job & {
+  travelDistance?: number | string;
+  partsUsed?: FillJobPart[];
+  photos?: Array<string | JobFileRef>;
+  signature?: string | JobFileRef | null;
+};
+
+type FillJobFormData = {
+  title: string;
+  timeFrom: string;
+  timeTo: string;
+  location: string;
+  description: string;
+  cname: string;
+  cphone: string;
+  photos: Array<string | JobFileRef>;
+  signingPerson: string;
+  signature: string | JobFileRef | null;
+};
+
+type FillJobDraft = {
+  jobData?: Partial<FillJobFormData>;
+  selectedParts?: FillJobPart[];
+  travelDistance?: number | string;
+  timestamp?: number;
+};
 
 // Generate a temporary ID for file upload paths (not used as Firestore doc ID)
 function generateTempId() {
@@ -60,38 +94,39 @@ export default function FillJob() {
   const colors = getColors(isDarkMode);
 
   // Determine if we're in user mode or worker mode
-  const mode = params.mode || 'user'; // 'user' or 'worker'
-  const editingJob = safeJsonParse(params.job);
-  const existingDraft = safeJsonParse(params.draft);
+  const mode: FillJobMode = params.mode === 'worker' ? 'worker' : 'user';
+  const editingJob = safeJsonParse<EditableJob | null>(params.job, null);
+  const existingDraft = safeJsonParse<FillJobDraft | null>(params.draft, null);
+  const draftJobData = existingDraft?.jobData;
 
-  const [selectedClientObj, setSelectedClientObj] = useState(
-    editingJob?.cid ? { id: editingJob.cid, name: editingJob.cname || '', phone: editingJob.cphone || '' } : null
+  const [selectedClientObj, setSelectedClientObj] = useState<Client | null>(
+    editingJob?.cid ? { id: String(editingJob.cid), cname: editingJob.cname || '', cphone: editingJob.cphone || '' } : null
   );
 
-  const [jobData, setJobData] = useState({
-    title: editingJob?.title || existingDraft?.title || '',
-    timeFrom: editingJob?.timeFrom || existingDraft?.timeFrom || '',
-    timeTo: editingJob?.timeTo || existingDraft?.timeTo || '',
-    location: editingJob?.location || existingDraft?.location || '',
-    description: editingJob?.description || existingDraft?.description || '',
-    cname: editingJob?.cname || existingDraft?.cname || '',
-    cphone: editingJob?.cphone || existingDraft?.cphone || '',
-    photos: editingJob?.photos || existingDraft?.photos || [],
-    signingPerson: editingJob?.signingPerson || existingDraft?.signingPerson || '',
-    signature: editingJob?.signature || existingDraft?.signature || null,
+  const [jobData, setJobData] = useState<FillJobFormData>({
+    title: editingJob?.title || draftJobData?.title || '',
+    timeFrom: editingJob?.timeFrom || draftJobData?.timeFrom || '',
+    timeTo: editingJob?.timeTo || draftJobData?.timeTo || '',
+    location: editingJob?.location || draftJobData?.location || '',
+    description: editingJob?.description || draftJobData?.description || '',
+    cname: editingJob?.cname || draftJobData?.cname || '',
+    cphone: editingJob?.cphone || draftJobData?.cphone || '',
+    photos: editingJob?.photos || draftJobData?.photos || [],
+    signingPerson: editingJob?.signingPerson || draftJobData?.signingPerson || '',
+    signature: editingJob?.signature || draftJobData?.signature || null,
   });
 
   const [showSignature, setShowSignature] = useState(false);
   const [showTimeFromPicker, setShowTimeFromPicker] = useState(false);
   const [showTimeToPicker, setShowTimeToPicker] = useState(false);
   const [showPhotoPicker, setShowPhotoPicker] = useState(false);
-  const [inventory, setInventory] = useState([]);
-  const [selectedParts, setSelectedParts] = useState(editingJob?.partsUsed || existingDraft?.selectedParts || []);
+  const [inventory, setInventory] = useState<InventoryPart[]>([]);
+  const [selectedParts, setSelectedParts] = useState<FillJobPart[]>(editingJob?.partsUsed || existingDraft?.selectedParts || []);
   const [partsSearchText, setPartsSearchText] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [refreshedSignatureURL, setRefreshedSignatureURL] = useState(null);
+  const [refreshedSignatureURL, setRefreshedSignatureURL] = useState<string | null>(null);
   const [signatureLoading, setSignatureLoading] = useState(false);
-  const [resolvedPhotoPreviewUrls, setResolvedPhotoPreviewUrls] = useState([]);
+  const [resolvedPhotoPreviewUrls, setResolvedPhotoPreviewUrls] = useState<string[]>([]);
 
   // Travel distance state - manual input (km)
   const [travelDistance, setTravelDistance] = useState(
@@ -236,7 +271,7 @@ export default function FillJob() {
     modeMetric: 'الوضع',
   };
 
-  const refreshSignatureURL = async (signatureRef) => {
+  const refreshSignatureURL = async (signatureRef: string | JobFileRef | null) => {
     if (!signatureRef) {
       console.log('No signature URL to refresh');
       setRefreshedSignatureURL(null);
@@ -261,14 +296,14 @@ export default function FillJob() {
     }
   };
 
-  const refreshPhotoPreviewUrls = async (photos) => {
+  const refreshPhotoPreviewUrls = async (photos: Array<string | JobFileRef>) => {
     try {
       const companyId = getCompanyId();
       const currentJobId = editingJob?.id || null;
       const nextUrls = await Promise.all(
         (Array.isArray(photos) ? photos : []).map((photo) => resolveJobFileUri(photo, companyId, currentJobId)),
       );
-      setResolvedPhotoPreviewUrls(nextUrls.filter(Boolean));
+      setResolvedPhotoPreviewUrls(nextUrls.filter((value): value is string => Boolean(value)));
     } catch (error) {
       console.error('Error resolving photo preview URLs:', error);
       setResolvedPhotoPreviewUrls([]);
@@ -277,10 +312,12 @@ export default function FillJob() {
 
   useEffect(() => {
     loadInventory();
+    const partsSelectionCallback = (globalThis as typeof globalThis & { onPartsSelected?: unknown }).onPartsSelected;
     
     // Fetch clients if not already cached
-    if (cachedClients.length === 0) {
-      fetchClients();
+    const companyId = getCompanyId();
+    if (cachedClients.length === 0 && companyId) {
+      void fetchClients(companyId);
     }
     
     // Debug: Log signature data
@@ -291,9 +328,8 @@ export default function FillJob() {
     console.log('==============================');
     
     // Check if returning from parts selection
-    if (global.onPartsSelected && params.returnFromParts) {
+    if (partsSelectionCallback && params.returnFromParts) {
       // Parts already updated via global callback
-      delete params.returnFromParts;
     }
   }, []);
 
@@ -354,17 +390,17 @@ export default function FillJob() {
     }
   };
 
-  const handlePhotosSelected = (photos) => {
+  const handlePhotosSelected = (photos: Array<string | JobFileRef>) => {
     setJobData({ ...jobData, photos });
     setResolvedPhotoPreviewUrls(
       (Array.isArray(photos) ? photos : [])
         .map((photo) => getImmediateJobFileUri(photo))
-        .filter(Boolean),
+        .filter((value): value is string => Boolean(value)),
     );
     setShowPhotoPicker(false);
   };
 
-  const handleSignature = (signature) => {
+  const handleSignature = (signature: string | JobFileRef) => {
     setJobData({ ...jobData, signature });
     setShowSignature(false);
     
@@ -376,7 +412,7 @@ export default function FillJob() {
   };
 
   // Travel distance handler - manual input validation
-  const handleTravelDistanceChange = (text) => {
+  const handleTravelDistanceChange = (text: string) => {
     // Allow empty string or numbers with optional decimal point
     const cleanedText = text.replace(/[^0-9.]/g, '');
     
@@ -399,7 +435,7 @@ export default function FillJob() {
     }
   };
 
-  const uploadFileToStorage = async (fileRef, uid, jobId, fileName) => {
+  const uploadFileToStorage = async (fileRef: string | JobFileRef | null | undefined, uid: string, jobId: string, fileName: string) => {
     try {
       const existingStoragePath = extractStoragePathFromJobFile(fileRef);
       if (existingStoragePath) {
@@ -430,10 +466,10 @@ export default function FillJob() {
     }
   };
 
-  const uploadJobFiles = async (uid, jobId, photos, signature) => {
-    const photoRefs = [];
-    let signatureRef = null;
-    const uploadedStoragePaths = [];
+  const uploadJobFiles = async (uid: string, jobId: string, photos: Array<string | JobFileRef>, signature: string | JobFileRef | null) => {
+    const photoRefs: Array<{ storagePath: string; uploaded: boolean }> = [];
+    let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
+    const uploadedStoragePaths: string[] = [];
 
     // Upload photos
     for (let i = 0; i < photos.length; i++) {
@@ -455,7 +491,7 @@ export default function FillJob() {
     return { photoRefs, signatureRef, uploadedStoragePaths };
   };
 
-  const cleanupUploadedJobFiles = async (storagePaths) => {
+  const cleanupUploadedJobFiles = async (storagePaths: string[]) => {
     const uniquePaths = [...new Set((Array.isArray(storagePaths) ? storagePaths : []).filter(Boolean))];
     if (uniquePaths.length === 0) {
       return;
@@ -508,7 +544,7 @@ export default function FillJob() {
     return true;
   };
 
-  const decreaseInventoryParts = async (uid) => {
+  const decreaseInventoryParts = async (uid: string) => {
     try {
       if (!selectedParts || selectedParts.length === 0) {
         console.log('No parts to deduct from inventory');
@@ -532,8 +568,8 @@ export default function FillJob() {
       selectedParts.forEach(usedPart => {
         const partIndex = partsArray.findIndex(p => p.id === usedPart.id);
         if (partIndex !== -1) {
-          const currentQty = parseInt(partsArray[partIndex].quantity) || 0;
-          const usedQty = parseInt(usedPart.usedQuantity || usedPart.quantity) || 0;
+          const currentQty = Number(partsArray[partIndex].quantity) || 0;
+          const usedQty = Number(usedPart.usedQuantity ?? usedPart.quantity) || 0;
           const newQty = Math.max(0, currentQty - usedQty);
           
           partsArray[partIndex] = {
@@ -567,10 +603,13 @@ export default function FillJob() {
       language === 'he' ? 'אנא המתן בזמן שאנו שומרים את פרטי המשימה...' : 
       'يرجى الانتظار بينما نحفظ تفاصيل مهمتك...'
     );
-    let uploadedStoragePaths = [];
+    let uploadedStoragePaths: string[] = [];
     let jobPersisted = false;
     try {
       const user = auth.currentUser;
+      if (!user) {
+        throw new Error('User session not found');
+      }
       const uid = getUid() || user.uid;
       const jobId = editingJob?.id || generateTempId();
       const currentDate = new Date();
@@ -582,8 +621,8 @@ export default function FillJob() {
         throw new Error('User does not belong to a company');
       }
 
-      let photoRefs = [];
-      let signatureRef = null;
+      let photoRefs: Array<{ storagePath: string; uploaded: boolean }> = [];
+      let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
       if (mode !== 'user') {
         const uploadResult = await uploadJobFiles(
           uid,
@@ -601,7 +640,7 @@ export default function FillJob() {
       if (selectedClientObj && jobData.cname.trim()) {
         // Update existing client with any newly filled fields
         try {
-          const updates = {};
+          const updates: { name?: string; phone?: string } = {};
           if (jobData.cname.trim() && jobData.cname.trim() !== (selectedClientObj.name || '')) updates.name = jobData.cname.trim();
           if (jobData.cphone?.trim() && jobData.cphone.trim() !== (selectedClientObj.phone || '')) updates.phone = jobData.cphone.trim();
           if (Object.keys(updates).length > 0) {
@@ -614,7 +653,7 @@ export default function FillJob() {
       } else if (!selectedClientObj && jobData.cname.trim()) {
         // Save as new client
         try {
-          const clientToSave = { name: jobData.cname.trim() };
+          const clientToSave: { name: string; phone?: string } = { name: jobData.cname.trim() };
           if (jobData.cphone?.trim()) clientToSave.phone = jobData.cphone.trim();
           const savedClient = await addClient(clientToSave);
           if (savedClient) clientId = savedClient.id;
@@ -663,9 +702,12 @@ export default function FillJob() {
           photos: [],
           signature: null,
           idempotencyKey: `job_${Date.now()}_${jobId}`,
-        });
+        }) as { data?: { jobId?: string } };
 
-        const serverJobId = result.data?.jobId || result.jobId;
+        const serverJobId = result.data?.jobId;
+        if (!serverJobId) {
+          throw new Error('Job was created without a server job ID');
+        }
         const userUploadResult = await uploadJobFiles(
           uid,
           serverJobId,
@@ -686,7 +728,7 @@ export default function FillJob() {
         
         // Update local cache with the server-generated ID
         console.log('📦 FillJob: Adding to local cache...');
-        await addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: serverJobId }, false);
+        addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: serverJobId });
         
         console.log('✅ FillJob: Job saved successfully');
         
@@ -708,7 +750,7 @@ export default function FillJob() {
         
         // Update local cache and increment versions
         console.log('📦 FillJob: Updating job in local cache...');
-        await updateJob(jobId, jobToSave, true); // true = is company job (increments both worker and company cache)
+        updateJob(jobId, jobToSave);
         
         console.log('✅ FillJob: Cache updated successfully');
         // Note: Inventory is deducted when manager ACCEPTS the job in ManageJobs.js
@@ -716,7 +758,7 @@ export default function FillJob() {
 
       // Clear draft
       const draftKey = mode === 'user' ? 'userjobDraft' : `workerjobDraft_${jobId}`;
-      storage.delete(draftKey);
+      storage.remove(draftKey);
 
       alert.hideLoading();
       alert.success('Success', t.success);
@@ -1018,9 +1060,9 @@ export default function FillJob() {
                   // Clear the search box after adding
                   setPartsSearchText('');
                 }}
-                placeholder={t.searchParts || (language === 'en' ? 'Search parts to add...' : language === 'he' ? 'חפש חלקים להוספה...' : 'ابحث عن قطع لإضافتها...')}
+                placeholder={language === 'en' ? 'Search parts to add...' : language === 'he' ? 'חפש חלקים להוספה...' : 'ابحث عن قطع لإضافتها...'}
                 colors={colors}
-                style={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border, marginHorizontal: 0, marginBottom: 0 }]}
+                style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, marginHorizontal: 0, marginBottom: 0 }]}
               />
             </View>
 

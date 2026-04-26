@@ -4,7 +4,6 @@ import { CACHE_KEYS } from './mmkv-storage';
 import { callHttpFunction } from '../utils/httpFunctions';
 
 interface ClientActionsParams {
-  db: any;
   getCompanyId: () => string | null;
   clients: any[];
   saveToLocalCache: (key: string, value: unknown) => void;
@@ -13,7 +12,6 @@ interface ClientActionsParams {
 }
 
 export function useCacheClientActions({
-  db,
   getCompanyId,
   clients,
   saveToLocalCache,
@@ -61,7 +59,7 @@ export function useCacheClientActions({
       console.error('Error fetching clients:', error);
       return [];
     }
-  }, [db, getCompanyId, normalizeClient, saveToLocalCache, setClients]);
+  }, [getCompanyId, normalizeClient, saveToLocalCache, setClients]);
 
   const addClient = useCallback(async (clientData: any) => {
     const companyId = getCompanyId();

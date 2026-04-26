@@ -1,4 +1,18 @@
-# Stage 1: Install dependencies
+# Stage 1: Install dependencies and build
+FROM ghcr.io/puppeteer/puppeteer:24.2.1 AS build
+
+USER root
+WORKDIR /cloudrun-pdf
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# Stage 2: Production dependencies only
 FROM ghcr.io/puppeteer/puppeteer:24.2.1 AS deps
 
 USER root
@@ -7,7 +21,7 @@ WORKDIR /cloudrun-pdf
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
 # Stage 2: Production image
 FROM ghcr.io/puppeteer/puppeteer:24.2.1
@@ -19,11 +33,9 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 ENV HOME=/tmp
 
-# Copy dependencies from build stage (leverages Docker layer caching)
+# Copy dependencies from deps stage and compiled output from build stage
 COPY --from=deps /cloudrun-pdf/node_modules ./node_modules
-
-# Copy application code
-COPY . .
+COPY --from=build /cloudrun-pdf/dist ./dist
 
 # Change ownership of the working directory to pptruser
 RUN chown -R pptruser:pptruser /cloudrun-pdf
@@ -39,4 +51,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 USER pptruser
 
 # Start the server
-CMD ["node", "index.js"]
+CMD ["node", "dist/index.js"]

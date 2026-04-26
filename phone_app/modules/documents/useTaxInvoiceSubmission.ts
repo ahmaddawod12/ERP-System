@@ -1,11 +1,10 @@
-// @ts-nocheck
 import { useState } from 'react';
 import { Platform, Linking } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { middleEastFunctions, httpsCallable } from '../../firebase';
 import { useDocumentTask } from '../../hooks';
-import type { AlertContextValue } from '../../types';
+import type { AlertButton, AlertContextValue } from '../../types';
 
 interface InvoiceData {
   customerName: string;
@@ -53,6 +52,34 @@ interface PendingTaxInvoice {
   confirmationNumber: string;
 }
 
+interface BuiltInvoiceItem {
+  description: string;
+  quantity: number;
+  price: number;
+  partId?: string;
+}
+
+interface TaxApprovalResponseData {
+  success?: boolean;
+  approved?: boolean;
+  error?: string;
+  documentId?: string;
+  documentNumber?: string;
+  confirmationNumber?: string;
+  pdfTaskPublished?: boolean;
+  pdfTaskId?: string;
+}
+
+function getErrorCode(error: unknown): string | null {
+  return typeof error === 'object' && error !== null && 'code' in error && typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code: string }).code
+    : null;
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function useTaxInvoiceSubmission({
   companyId,
   invoiceData,
@@ -74,10 +101,10 @@ export function useTaxInvoiceSubmission({
 
   // Alert helpers
   const showValidationError = (title: string, message: string) => alert.error(title, message);
-  const showSuccessMessage = (title: string, message: string, buttons?: any[]) => alert.success(title, message, buttons);
+  const showSuccessMessage = (title: string, message: string, buttons?: AlertButton[]) => alert.success(title, message, buttons);
   const showErrorMessage = (title: string, message: string) => alert.error(title, message);
-  const showWarningMessage = (title: string, message: string, buttons?: any[]) => alert.warning(title, message, buttons);
-  const showInfoMessage = (title: string, message: string, buttons?: any[]) => alert.info(title, message, buttons);
+  const showWarningMessage = (title: string, message: string, buttons?: AlertButton[]) => alert.warning(title, message, buttons);
+  const showInfoMessage = (title: string, message: string, buttons?: AlertButton[]) => alert.info(title, message, buttons);
 
   // Document task hook for listening to async PDF generation via Pub/Sub
   const {
@@ -113,6 +140,10 @@ export function useTaxInvoiceSubmission({
               text: 'Open PDF',
               style: 'default',
               onPress: () => {
+                if (!url) {
+                  showErrorMessage('Error', 'Could not open PDF link');
+                  return;
+                }
                 Linking.openURL(url).catch(err => {
                   console.error('Error opening URL:', err);
                   showErrorMessage('Error', 'Could not open PDF link');
@@ -162,24 +193,24 @@ export function useTaxInvoiceSubmission({
 
   /** Build the items array from job parts and custom parts */
   const buildItems = () => {
-    const items = [];
+    const items: BuiltInvoiceItem[] = [];
     jobParts.forEach(part => {
-      if (part.price && parseFloat(part.price) > 0) {
+      if (part.price && Number(part.price) > 0) {
         items.push({
           description: part.name,
-          quantity: parseFloat(part.quantity) || 1,
-          price: parseFloat(part.price),
+          quantity: Number(part.quantity) || 1,
+          price: Number(part.price),
           ...(part.partId && { partId: part.partId }),
           ...(part.id && !part.partId && { partId: part.id }),
         });
       }
     });
     customParts.forEach(part => {
-      if (part.name.trim() && part.price && parseFloat(part.price) > 0) {
+      if (part.name.trim() && part.price && Number(part.price) > 0) {
         items.push({
           description: part.name,
-          quantity: parseFloat(part.quantity) || 1,
-          price: parseFloat(part.price),
+          quantity: Number(part.quantity) || 1,
+          price: Number(part.price),
           ...(part.partId && { partId: part.partId }),
         });
       }
@@ -242,12 +273,12 @@ export function useTaxInvoiceSubmission({
       setPreviewLoading(false);
       let errorMessage = 'Failed to preview tax invoice';
       
-      if (error.code === 'unauthenticated') {
+      if (getErrorCode(error) === 'unauthenticated') {
         errorMessage = 'Please login again to preview documents';
-      } else if (error.code === 'failed-precondition') {
+      } else if (getErrorCode(error) === 'failed-precondition') {
         errorMessage = 'Token expired. Please refresh the page.';
-      } else if (error.message) {
-        errorMessage = error.message;
+      } else {
+        errorMessage = getErrorMessage(error, errorMessage);
       }
       
       showErrorMessage('Error', errorMessage);
@@ -292,7 +323,7 @@ export function useTaxInvoiceSubmission({
       }
     } catch (error) {
       console.error('Error opening PDF:', error);
-      showErrorMessage('Error', 'Failed to open PDF: ' + (error.message || error));
+      showErrorMessage('Error', `Failed to open PDF: ${getErrorMessage(error, String(error))}`);
     }
   };
 
@@ -351,20 +382,20 @@ export function useTaxInvoiceSubmission({
       console.log('📋 Step 1: Submitting to Tax Authority...');
       const getApprovalFunction = httpsCallable(middleEastFunctions, 'getInvoiceApproval');
       
-      let approvalResult;
+      let approvalResult: { data: TaxApprovalResponseData };
       try {
-        approvalResult = await getApprovalFunction(documentData);
+        approvalResult = await getApprovalFunction(documentData) as { data: TaxApprovalResponseData };
         console.log('✅ Tax Authority response:', approvalResult.data);
       } catch (approvalError) {
         // Tax Authority rejected or error during approval
         console.error('❌ Tax Authority rejection:', approvalError);
         setPreviewLoading(false);
         
-        if (approvalError.code === 'failed-precondition') {
+        if (getErrorCode(approvalError) === 'failed-precondition') {
           // Tax Authority explicitly rejected the invoice
           showWarningMessage(
             'Tax Authority Rejected',
-            approvalError.message || 'Tax Authority did not approve the invoice.\n\nPlease check your invoice details and try again.',
+            getErrorMessage(approvalError, 'Tax Authority did not approve the invoice.\n\nPlease check your invoice details and try again.'),
             [
               {
                 text: 'OK',
@@ -387,37 +418,39 @@ export function useTaxInvoiceSubmission({
         return;
       }
 
+      const approvalData = approvalResult.data;
+
       // Tax Authority approved! PDF generation is now async via Pub/Sub
-      console.log('✅ Tax Authority approved! Document ID:', approvalResult.data.documentId);
-      console.log('📄 Confirmation Number:', approvalResult.data.confirmationNumber);
-      console.log('📄 PDF Task Published:', approvalResult.data.pdfTaskPublished);
-      console.log('📄 PDF Task ID:', approvalResult.data.pdfTaskId);
+      console.log('✅ Tax Authority approved! Document ID:', approvalData.documentId);
+      console.log('📄 Confirmation Number:', approvalData.confirmationNumber);
+      console.log('📄 PDF Task Published:', approvalData.pdfTaskPublished);
+      console.log('📄 PDF Task ID:', approvalData.pdfTaskId);
 
       // Check if PDF task was published successfully
-      if (approvalResult.data.pdfTaskPublished && approvalResult.data.pdfTaskId) {
+      if (approvalData.pdfTaskPublished && approvalData.pdfTaskId) {
         // Store pending invoice info for when PDF completes
         setPendingTaxInvoice({
-          documentId: approvalResult.data.documentId,
-          documentNumber: approvalResult.data.documentNumber || 'N/A',
-          confirmationNumber: approvalResult.data.confirmationNumber,
+          documentId: approvalData.documentId || 'Unknown',
+          documentNumber: approvalData.documentNumber || 'N/A',
+          confirmationNumber: approvalData.confirmationNumber || 'N/A',
         });
         
         // Start listening to the PDF generation task via Pub/Sub
-        console.log('📡 Starting to listen for PDF task:', approvalResult.data.pdfTaskId);
-        listenToTask(approvalResult.data.pdfTaskId);
+        console.log('📡 Starting to listen for PDF task:', approvalData.pdfTaskId);
+        listenToTask(approvalData.pdfTaskId);
         
         // Keep loading indicator while waiting for PDF
         // The useDocumentTask hook callbacks will handle completion/error
         showInfoMessage(
           'Tax Authority Approved!',
-          `Invoice approved with confirmation: ${approvalResult.data.confirmationNumber}\n\nGenerating PDF... Please wait.`,
+          `Invoice approved with confirmation: ${approvalData.confirmationNumber || 'N/A'}\n\nGenerating PDF... Please wait.`,
           [{ text: 'OK', style: 'default', onPress: () => {} }]
         );
       } else {
         // PDF task publishing failed but document was saved and approved
         setPreviewLoading(false);
         
-        const partialSuccessMessage = `Tax Invoice approved but PDF generation task could not be started.\n\nDocument ID: ${approvalResult.data.documentId}\n\n✅ Tax Authority Approved\nConfirmation: ${approvalResult.data.confirmationNumber}\n\n⚠️ PDF not scheduled\n\nYou can regenerate the PDF from Document History.`;
+        const partialSuccessMessage = `Tax Invoice approved but PDF generation task could not be started.\n\nDocument ID: ${approvalData.documentId || 'Unknown'}\n\n✅ Tax Authority Approved\nConfirmation: ${approvalData.confirmationNumber || 'N/A'}\n\n⚠️ PDF not scheduled\n\nYou can regenerate the PDF from Document History.`;
         
         showWarningMessage(
           'Partial Success',
@@ -441,15 +474,15 @@ export function useTaxInvoiceSubmission({
       let errorMessage = 'Failed to create tax invoice';
       let errorTitle = 'Error';
       
-      if (error.code === 'unauthenticated') {
+      if (getErrorCode(error) === 'unauthenticated') {
         errorMessage = 'Please login again to create documents';
-      } else if (error.code === 'permission-denied') {
+      } else if (getErrorCode(error) === 'permission-denied') {
         errorMessage = 'You do not have permission to create documents';
-      } else if (error.code === 'failed-precondition') {
+      } else if (getErrorCode(error) === 'failed-precondition') {
         errorTitle = 'Tax Authority Error';
-        errorMessage = error.message || 'Tax Authority rejected the submission';
-      } else if (error.message) {
-        errorMessage = error.message;
+        errorMessage = getErrorMessage(error, 'Tax Authority rejected the submission');
+      } else {
+        errorMessage = getErrorMessage(error, errorMessage);
       }
       
       showErrorMessage(errorTitle, errorMessage);

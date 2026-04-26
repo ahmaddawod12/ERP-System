@@ -1,57 +1,50 @@
-# Smart-Job ERP Full Setup Guide
+# Smart-Job ERP Setup Guide
 
-This is the single setup guide for a new Smart-Job ERP environment. It replaces the old split guides for Cloud Run archiving, Pub/Sub PDF generation, push notifications, and PDF email delivery.
+This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-The starting point is an empty Firebase/GCP project. The target end state is:
+It reflects the active April 2026 architecture:
 
-- Firebase Auth, Firestore, Storage, rules, indexes, TTL policies, and Cloud Functions are deployed.
-- Optional PostgreSQL persistence can be enabled for the SQL-first migration work under `packages/db`.
-- The Next.js website can register and onboard users.
-- The Expo mobile app can sign in existing users and receive push notifications.
-- Cloud Run PDF generation receives Pub/Sub tasks from Functions.
-- Optional Amazon SES email delivery works for generated documents.
-- Cloud Run archiving runs monthly and archives old finished jobs/documents.
-- First manager, solo, worker, and basic users can use the app.
+- Supabase Auth for website and mobile sign-in
+- Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
+- PostgreSQL as the primary company-scoped ERP persistence layer
+- Firestore and Cloud Storage for compatibility, rules, operations, and files
+- Cloud Run services for PDF generation and archiving
+- Supabase Edge Functions migration work in parallel
 
-## 1. Repository Roles
+## 1. Repository Components
 
 ```text
 ERP-System/
-|-- phone_app/           Expo + React Native mobile app. Login and app usage only.
-|-- website/             Next.js website. Registration, onboarding, dashboard, admin flows.
-|-- functions/           Firebase Cloud Functions. Protected mutations and backend trust boundary.
-|-- cloudrun-pdf/        Cloud Run service for PDF preview/generation and optional email delivery.
-|-- cloudrun-archiver/   Cloud Run Job for monthly Firestore-to-Storage archives.
-|-- packages/contracts/  Shared enums, path helpers, account/tier semantics.
-|-- packages/db/         Shared PostgreSQL schema, Drizzle config, migrations, and SQL access helpers.
-|-- firebase.json        Firebase deploy and emulator config.
-|-- firestore.rules      Firestore access policy.
-|-- storage.rules        Storage access policy.
-`-- firestore.indexes.json Firestore composite indexes and TTL field policies.
+|-- website/             Next.js website
+|-- phone_app/           Expo mobile app
+|-- supabase/functions/  Edge gateway and endpoint runtime in this repository
+|-- cloudrun-pdf/        PDF preview/generation service
+|-- cloudrun-archiver/   Archive batch job
+|-- packages/contracts/  Shared enums/constants/path helpers
+|-- packages/db/         PostgreSQL schema, migrations, access layer
+`-- supabase/            Backend gateway runtime and migration work area
 ```
-
-Core architecture rules to preserve:
-
-- Mobile business registration must not be reintroduced.
-- Canonical stored account types are only `solo` and `business`.
-- `uid` is identity. `companyId` is tenant scope.
-- Protected collections (`clients`, `jobs`, `documents`, `invites`, `workers`) are mutated through Cloud Functions, not direct client writes.
-- Company document/job/archive Storage reads are backend-controlled.
-- Job/document file records store canonical `storagePath`, not durable download URLs.
 
 ## 2. Prerequisites
 
-Install these locally:
+Install locally:
 
-- Node.js 22 LTS.
-- npm.
-- Firebase CLI: `npm install -g firebase-tools`.
-- Google Cloud CLI: https://cloud.google.com/sdk/docs/install.
-- Java 17+ for Firebase emulators.
-- Docker or Cloud Build access for Cloud Run images.
-- Expo/EAS CLI for mobile builds: `npm install -g eas-cli`.
-- Apple Developer account and Google Play access for production mobile builds.
-- AWS account only if you want SES email delivery from the PDF service.
+- Node.js 22
+- npm
+- Firebase CLI
+- Google Cloud CLI
+- Java 17 or newer for emulators
+- Docker or Cloud Build access for Cloud Run
+- EAS CLI for mobile builds
+- PostgreSQL access for SQL-backed development and deploys
+- Supabase project access for auth and migration testing
+- AWS access only if SES email delivery is used
+
+Suggested installs:
+
+```bash
+npm install -g firebase-tools eas-cli
+```
 
 Authenticate:
 
@@ -61,39 +54,17 @@ gcloud auth login
 gcloud auth application-default login
 ```
 
-Set local variables for commands in this guide:
+## 3. Cloud Project Setup
 
-```bash
-export PROJECT_ID="your-firebase-project-id"
-export REGION="us-central1"
-export ARTIFACT_REPO="smart-job"
-export PDF_SERVICE="pdf-service"
-export ARCHIVER_JOB="smart-job-archiver"
-export STORAGE_BUCKET="your-firebase-storage-bucket"
-```
+Create or configure the Firebase and Google Cloud project:
 
-On PowerShell:
-
-```powershell
-$env:PROJECT_ID = "your-firebase-project-id"
-$env:REGION = "us-central1"
-$env:ARTIFACT_REPO = "smart-job"
-$env:PDF_SERVICE = "pdf-service"
-$env:ARCHIVER_JOB = "smart-job-archiver"
-$env:STORAGE_BUCKET = "your-firebase-storage-bucket"
-```
-
-Use the Firebase Storage bucket name shown in Firebase Console. Newer projects often use `<project-id>.firebasestorage.app`; older projects may use `<project-id>.appspot.com`.
-
-## 3. Create The Firebase/GCP Project
-
-1. Create a Firebase project in Firebase Console.
-2. Upgrade to the Blaze plan. Cloud Functions, Cloud Run, Cloud Scheduler, Pub/Sub, Artifact Registry, and some Storage usage require billing.
-3. Add a Cloud Firestore database in production mode.
-4. Add Firebase Storage.
-5. Enable Authentication and add the Email/Password sign-in provider.
-6. Enable Cloud Messaging.
-7. In Google Cloud Console, enable these APIs:
+1. Create a Firebase project.
+2. Upgrade to Blaze.
+3. Enable Firestore.
+4. Enable Firebase Storage.
+5. Enable Cloud Messaging.
+6. Enable Authentication if you still need Firebase-native mobile or runtime services, but do not treat Firebase Auth as the primary client auth provider.
+7. Enable these Google Cloud APIs:
 
 ```bash
 gcloud services enable \
@@ -109,724 +80,266 @@ gcloud services enable \
   cloudfunctions.googleapis.com \
   eventarc.googleapis.com \
   secretmanager.googleapis.com \
-  iamcredentials.googleapis.com \
-  --project "$PROJECT_ID"
+  iamcredentials.googleapis.com
 ```
 
-Point the repo at the new project:
+Set local shell variables as needed:
 
 ```bash
-firebase use --add
-firebase use "$PROJECT_ID"
-gcloud config set project "$PROJECT_ID"
-gcloud config set run/region "$REGION"
+export PROJECT_ID="your-project-id"
+export REGION="us-central1"
+export STORAGE_BUCKET="your-storage-bucket"
+export ARTIFACT_REPO="smart-job"
+export PDF_SERVICE="pdf-service"
+export ARCHIVER_JOB="smart-job-archiver"
 ```
 
-Do not commit project-specific credentials or downloaded Firebase app config files.
+PowerShell:
+
+```powershell
+$env:PROJECT_ID = "your-project-id"
+$env:REGION = "us-central1"
+$env:STORAGE_BUCKET = "your-storage-bucket"
+$env:ARTIFACT_REPO = "smart-job"
+$env:PDF_SERVICE = "pdf-service"
+$env:ARCHIVER_JOB = "smart-job-archiver"
+```
 
 ## 4. Install Dependencies
 
-There is no root package manager workspace file today. Install each app/service separately:
+There is no root package-manager workspace. Install packages individually:
 
 ```bash
-cd packages/contracts
-npm install
-
-cd ../db
-npm install
-
-cd ../../functions
-npm install
-
-cd ../website
-npm install
-
-cd ../phone_app
-npm install
-
-cd ../cloudrun-pdf
-npm install
-
-cd ../cloudrun-archiver
-npm install
+npm --prefix packages/contracts install
+npm --prefix packages/db install
+npm --prefix website install
+npm --prefix phone_app install
+npm --prefix cloudrun-pdf install
+npm --prefix cloudrun-archiver install
 ```
 
-If you are enabling SQL persistence locally, apply the shared schema after installing the DB package:
+Apply SQL migrations for the target database:
 
 ```bash
-cd packages/db
-npm run db:migrate
+npm --prefix packages/db run db:migrate
 ```
 
-## 5. Firebase Web App Configuration
+## 5. Website Environment
 
-In Firebase Console:
-
-1. Add a Web app.
-2. Copy the Firebase Web SDK config.
-3. Create `website/.env.local` from `website/.env.local.example`.
-4. Fill:
+Create `website/.env.local` and configure:
 
 ```dotenv
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+ALLOW_FIREBASE_AUTH_FALLBACK=false
+
+SESSION_COOKIE_SECRET=
+WEBSITE_SESSION_SECRET=
+
+BACKEND_PROJECT_ID=
+BACKEND_EDGE_FUNCTIONS_BASE_URL=
+
 NEXT_PUBLIC_FIREBASE_API_KEY=
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=
 NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 NEXT_PUBLIC_FIREBASE_APP_ID=
-NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
-
-NEXT_PUBLIC_USE_FIREBASE_EMULATOR=false
-NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
 
 FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON=
 FIREBASE_ADMIN_PROJECT_ID=
 FIREBASE_ADMIN_CLIENT_EMAIL=
 FIREBASE_ADMIN_PRIVATE_KEY=
 
-FIREBASE_FUNCTIONS_REGION=us-central1
-FIREBASE_FUNCTIONS_BASE_URL=
-FIREBASE_FUNCTIONS_EMULATOR_ORIGIN=http://127.0.0.1:5001
-FIRESTORE_EMULATOR_HOST=
+NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
 CLOUDRUN_PDF_URL=
 ```
 
-Use either `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON` or the split Admin SDK values. For production hosting, set these variables in the hosting provider, not in git.
+Notes:
 
-`FIREBASE_FUNCTIONS_BASE_URL` is optional in production because the website can derive the standard Cloud Functions URL from project and region. Use it only for nonstandard routing or emulator/proxy setups.
+- Supabase variables are required for active web auth.
+- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment.
+- `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
+- If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
+- Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on active bearer/session flows.
+- Firebase web/admin vars are still required where Firebase services remain in use.
 
-## 6. Firebase Native App Configuration
+## 6. Mobile Environment And Native Files
 
-In Firebase Console:
+The mobile app still requires Firebase native app registration for the installed services it uses.
 
-1. Add an Android app.
-   - Package name: check `phone_app/app.json`; current package is `erpsystem.app`.
-   - Download `google-services.json`.
-   - Place it at `phone_app/google-services.json`.
-2. Add an iOS app.
-   - Bundle identifier: check `phone_app/app.json`; current bundle identifier is `erpsystem.app`.
-   - Download `GoogleService-Info.plist`.
-   - Place it at `phone_app/GoogleService-Info.plist`.
-3. Keep the Expo scheme as `erpsystem` unless you intentionally change deep-link handling.
+Place these files in `phone_app/`:
 
-Optional mobile environment variables:
+- `google-services.json`
+- `GoogleService-Info.plist`
+
+Configure mobile envs as needed:
 
 ```dotenv
-EXPO_PUBLIC_FUNCTIONS_REGION=us-central1
-EXPO_PUBLIC_FUNCTIONS_BASE_URL=
-EXPO_PUBLIC_FUNCTIONS_EMULATOR_ORIGIN=
+EXPO_PUBLIC_SUPABASE_URL=
+EXPO_PUBLIC_SUPABASE_ANON_KEY=
+
+EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=
 ```
 
-For normal production Firebase callable functions, leave `EXPO_PUBLIC_FUNCTIONS_BASE_URL` empty.
+Notes:
 
-## 7. Functions Environment
+- Registration and onboarding remain website-only.
+- If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
 
-Create `functions/.env` for local and Firebase deploy-time environment variables. Do not commit it.
+## 7. Supabase Edge Environment
+
+Create `supabase/.env` (or configure Supabase secrets) for local development and deployment configuration:
 
 ```dotenv
 CORS_ALLOWED_ORIGINS=http://localhost:3000,https://your-website.example
 
-SMART_JOB_PERSISTENCE_BACKEND=firestore
+SMART_JOB_PERSISTENCE_BACKEND=sql
 DATABASE_URL=
 DATABASE_SSL_MODE=disable
+DATABASE_SSL_REJECT_UNAUTHORIZED=true
+DATABASE_SSL_CA=
 DATABASE_MAX_CONNECTIONS=10
 DATABASE_CONNECT_TIMEOUT_MS=10000
 DATABASE_IDLE_TIMEOUT_MS=30000
+
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+ALLOW_FIREBASE_AUTH_FALLBACK=false
 
 TAX_AUTH_URL=
 TAX_TOKEN_URL=
 TAX_APPROVAL_URL=
 TAX_CLIENT_ID=
 TAX_CLIENT_SECRET=
-TAX_SCOPE=scope
+TAX_SCOPE=
 TAX_CALLBACK_URL=
 APP_SCHEME=erpsystem
 ```
 
-Notes:
+Rules:
 
-- `CORS_ALLOWED_ORIGINS` must include local development and every deployed website origin that calls HTTP Functions.
-- Leave `SMART_JOB_PERSISTENCE_BACKEND=firestore` unless you are actively validating the SQL migration path. Setting it to `sql` requires a working PostgreSQL database and applied migrations.
-- `DATABASE_URL` may also be provided as `SMART_JOB_DATABASE_URL`. The backend auto-selects SQL mode when a database URL is present unless the persistence backend is explicitly forced to `firestore`.
-- Tax variables are required only for the Tax Authority OAuth/invoice approval flow.
-- Cloud Functions use Node 22.
-- HTTP Functions intentionally do not rely on direct browser App Check for trusted website server-proxy flows. Preserve the bearer-token checks in code.
+- Set `SMART_JOB_PERSISTENCE_BACKEND=sql` explicitly in real environments.
+- Do not rely on implicit SQL enablement when database settings are present.
+- Keep CORS origins aligned with website domains and local dev origins.
+- Do not use `*` for CORS when sending credentials; use explicit origins in `CORS_ALLOWED_ORIGINS`.
+- Keep `CORS_ALLOWED_ORIGINS` non-empty in real environments. Empty origin lists are treated as fail-closed.
+- Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
+- Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
 
-Deploy rules, indexes, and Functions:
+## 8. SQL Setup
 
-```bash
-firebase deploy --only firestore:rules,firestore:indexes,storage
+`packages/db` is the canonical SQL schema and migration surface.
 
-cd functions
-npm test
-firebase deploy --only functions
-```
+Current migration tip:
+- Ensure migration `0009_document_task_generate_url.sql` is applied so read-model task responses expose generate URLs from `generate_url`.
 
-Firestore TTL policies are declared in `firestore.indexes.json` for:
+Minimum steps:
 
-- `notificationLog.expireAt`
-- `documentTasks.expireAt`
-- `rate_limits.expireAt`
-- `contact_requests.expireAt`
-- `taxAuthPending.expireAt`
-- `taxAuthCallbacks.expireAt`
-- `tax_invoice_idempotency.expireAt`
+1. Provision PostgreSQL.
+2. Set `DATABASE_URL` for backend services.
+3. Run migrations from `packages/db`.
+4. Verify backend services can connect before deploying Supabase Edge Functions or Cloud Run.
 
-After the first deploy, confirm the TTL policies are active in Google Cloud Console under Firestore TTL. TTL activation can take time.
+Do not add direct client SQL access for protected ERP operations.
 
-## 8. Artifact Registry
+## 9. Local Development
 
-Create one Docker repository for Cloud Run images:
+Common commands:
 
 ```bash
-gcloud artifacts repositories create "$ARTIFACT_REPO" \
-  --repository-format=docker \
-  --location="$REGION" \
-  --project="$PROJECT_ID"
+npm --prefix website run dev
+npm --prefix website run typecheck
+npm --prefix website run test
+
+npm --prefix phone_app run start
+npm --prefix phone_app run typecheck
+npm --prefix phone_app run test
 ```
 
-If the repository already exists, keep using it.
+If you use emulators, keep local website origins in `CORS_ALLOWED_ORIGINS` and point client envs to emulator origins explicitly.
 
-## 9. Pub/Sub PDF Generation
+## 10. Cloud Run PDF Service
 
-The document flow is:
+`cloudrun-pdf/` is responsible for preview and generate flows.
 
-1. Website/mobile calls `publishPreviewTask` or `publishGenerateTask`.
-2. Cloud Functions creates `documentTasks/{taskId}`.
-3. Cloud Functions publishes to Pub/Sub topic `document-preview` or `document-generate`.
-4. Pub/Sub pushes to Cloud Run PDF service endpoints `/preview` and `/generate`.
-5. Cloud Run verifies OIDC identity, resolves requester authority from Firestore, generates PDF, stores the PDF, and updates `documentTasks`.
-6. Functions trigger `onTaskCompleted` clears busy flags and completes client-visible task state.
+Required deployment concerns:
 
-Create topics:
+- OIDC verification for Pub/Sub push requests
+- optional shared `x-pubsub-token` hardening if configured
+- SQL access for task and document finalization in SQL mode
+- Cloud Storage write permissions
+- environment for tax and document generation as required by the service
 
-```bash
-gcloud pubsub topics create document-preview --project "$PROJECT_ID"
-gcloud pubsub topics create document-generate --project "$PROJECT_ID"
-```
+Preserve these invariants:
 
-Create service accounts:
-
-```bash
-gcloud iam service-accounts create pdf-service-run \
-  --display-name="Smart Job PDF Cloud Run runtime" \
-  --project "$PROJECT_ID"
-
-gcloud iam service-accounts create pubsub-pdf-push \
-  --display-name="Pub/Sub push identity for PDF service" \
-  --project "$PROJECT_ID"
-```
-
-Grant runtime access:
-
-```bash
-export PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
-export PDF_RUN_SA="pdf-service-run@$PROJECT_ID.iam.gserviceaccount.com"
-export PUBSUB_PUSH_SA="pubsub-pdf-push@$PROJECT_ID.iam.gserviceaccount.com"
-export FUNCTIONS_RUNTIME_SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$PDF_RUN_SA" \
-  --role="roles/datastore.user"
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$PDF_RUN_SA" \
-  --role="roles/storage.objectAdmin"
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$FUNCTIONS_RUNTIME_SA" \
-  --role="roles/pubsub.publisher"
-```
-
-Build and deploy the PDF service the first time:
-
-```bash
-cd cloudrun-pdf
-gcloud builds submit \
-  --tag "$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPO/$PDF_SERVICE:latest" \
-  --project "$PROJECT_ID"
-
-gcloud run deploy "$PDF_SERVICE" \
-  --image "$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPO/$PDF_SERVICE:latest" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --service-account "$PDF_RUN_SA" \
-  --memory 1Gi \
-  --cpu 1 \
-  --timeout 300 \
-  --concurrency 4 \
-  --no-allow-unauthenticated \
-  --set-env-vars "STORAGE_BUCKET=$STORAGE_BUCKET,PUBSUB_ALLOWED_SERVICE_ACCOUNTS=$PUBSUB_PUSH_SA"
-```
-
-Fetch the service URL and set it as the OIDC audience expected by the service:
-
-```bash
-export PDF_URL="$(gcloud run services describe "$PDF_SERVICE" --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')"
-
-gcloud run services update "$PDF_SERVICE" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --set-env-vars "CLOUD_RUN_SERVICE_URL=$PDF_URL,STORAGE_BUCKET=$STORAGE_BUCKET,PUBSUB_ALLOWED_SERVICE_ACCOUNTS=$PUBSUB_PUSH_SA"
-```
-
-Grant Pub/Sub push identity permission to invoke the private Cloud Run service:
-
-```bash
-gcloud run services add-iam-policy-binding "$PDF_SERVICE" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --member="serviceAccount:$PUBSUB_PUSH_SA" \
-  --role="roles/run.invoker"
-```
-
-Create push subscriptions:
-
-```bash
-gcloud pubsub subscriptions create document-preview-push \
-  --topic document-preview \
-  --push-endpoint "$PDF_URL/preview" \
-  --push-auth-service-account "$PUBSUB_PUSH_SA" \
-  --push-auth-token-audience "$PDF_URL" \
-  --ack-deadline 300 \
-  --message-retention-duration 10m \
-  --min-retry-delay 10s \
-  --max-retry-delay 600s \
-  --project "$PROJECT_ID"
-
-gcloud pubsub subscriptions create document-generate-push \
-  --topic document-generate \
-  --push-endpoint "$PDF_URL/generate" \
-  --push-auth-service-account "$PUBSUB_PUSH_SA" \
-  --push-auth-token-audience "$PDF_URL" \
-  --ack-deadline 300 \
-  --message-retention-duration 10m \
-  --min-retry-delay 10s \
-  --max-retry-delay 600s \
-  --project "$PROJECT_ID"
-```
-
-Important Pub/Sub auth note:
-
-- The service supports OIDC verification using `CLOUD_RUN_SERVICE_URL` and `PUBSUB_ALLOWED_SERVICE_ACCOUNTS`.
-- `PUBSUB_VERIFICATION_TOKEN` is optional and, if configured, requires an `x-pubsub-token` header in addition to OIDC.
-- Standard Pub/Sub push subscriptions do not add custom `x-pubsub-token` headers. For normal Pub/Sub push, leave `PUBSUB_VERIFICATION_TOKEN` unset and rely on private Cloud Run plus OIDC push auth.
-
-Useful PDF service variables:
-
-```dotenv
-STORAGE_BUCKET=your-firebase-storage-bucket
-CLOUD_RUN_SERVICE_URL=https://pdf-service-...a.run.app
-PUBSUB_ALLOWED_SERVICE_ACCOUNTS=pubsub-pdf-push@your-project.iam.gserviceaccount.com
-JSON_BODY_LIMIT=10mb
-DOCUMENT_TASK_PROCESSING_STALE_AFTER_MS=900000
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
-```
-
-## 10. Optional PDF Email Delivery With Amazon SES
-
-The PDF service sends email through Amazon SES when a generated document has a client email.
-
-In AWS SES:
-
-1. Verify a sender email or domain.
-2. Add DKIM records if verifying a domain.
-3. Start in SES sandbox for testing.
-4. Request production access before emailing real customers.
-5. Create an IAM user or role with the minimum SES send permissions you need.
-
-Set Cloud Run environment variables:
-
-```bash
-gcloud run services update "$PDF_SERVICE" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --set-env-vars "AWS_REGION=eu-west-1,AWS_ACCESS_KEY_ID=your-access-key,AWS_SECRET_ACCESS_KEY=your-secret"
-```
-
-Prefer Secret Manager for real production secrets:
-
-```bash
-printf "your-access-key" | gcloud secrets create aws-ses-access-key --data-file=- --project "$PROJECT_ID"
-printf "your-secret" | gcloud secrets create aws-ses-secret-key --data-file=- --project "$PROJECT_ID"
-
-gcloud secrets add-iam-policy-binding aws-ses-access-key \
-  --member="serviceAccount:$PDF_RUN_SA" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project "$PROJECT_ID"
-
-gcloud secrets add-iam-policy-binding aws-ses-secret-key \
-  --member="serviceAccount:$PDF_RUN_SA" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project "$PROJECT_ID"
-
-gcloud run services update "$PDF_SERVICE" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --set-env-vars "AWS_REGION=eu-west-1" \
-  --set-secrets "AWS_ACCESS_KEY_ID=aws-ses-access-key:latest,AWS_SECRET_ACCESS_KEY=aws-ses-secret-key:latest"
-```
-
-Email is best-effort. A PDF can still be generated successfully when email delivery fails; the generated document records email status fields.
+- create-only semantics for new generated PDFs and documents
+- orphan file cleanup when finalize fails
+- canonical `storagePath` persistence instead of durable URLs
 
 ## 11. Cloud Run Archiver
 
-The archiver is a Cloud Run Job. It archives finished jobs and documents older than six months into monthly JSON files:
-
-```text
-gs://<bucket>/companies/{companyId}/archives/{YYYY}-{M}-j.json
-gs://<bucket>/companies/{companyId}/archives/{YYYY}-{M}-d.json
-gs://<bucket>/companies/{companyId}/archives/manifest.json
-```
-
-It is idempotent through the manifest, uploads before deleting, verifies archive metadata/checksums, and deletes only the exact Firestore document IDs captured in the verified archive.
-
-Create the runtime service account:
-
-```bash
-gcloud iam service-accounts create archiver-run \
-  --display-name="Smart Job archiver runtime" \
-  --project "$PROJECT_ID"
-
-export ARCHIVER_RUN_SA="archiver-run@$PROJECT_ID.iam.gserviceaccount.com"
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$ARCHIVER_RUN_SA" \
-  --role="roles/datastore.user"
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$ARCHIVER_RUN_SA" \
-  --role="roles/storage.objectAdmin"
-```
-
-Build and deploy:
-
-```bash
-cd cloudrun-archiver
-gcloud builds submit \
-  --tag "$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPO/$ARCHIVER_JOB:latest" \
-  --project "$PROJECT_ID"
-
-gcloud run jobs create "$ARCHIVER_JOB" \
-  --image "$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPO/$ARCHIVER_JOB:latest" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --service-account "$ARCHIVER_RUN_SA" \
-  --memory 512Mi \
-  --cpu 1 \
-  --task-timeout 3600 \
-  --set-env-vars "ARCHIVE_BUCKET=$STORAGE_BUCKET"
-```
-
-If the job already exists:
-
-```bash
-gcloud run jobs update "$ARCHIVER_JOB" \
-  --image "$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPO/$ARCHIVER_JOB:latest" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --service-account "$ARCHIVER_RUN_SA" \
-  --set-env-vars "ARCHIVE_BUCKET=$STORAGE_BUCKET"
-```
-
-Run manually:
-
-```bash
-gcloud run jobs execute "$ARCHIVER_JOB" \
-  --region "$REGION" \
-  --project "$PROJECT_ID" \
-  --wait
-```
-
-Create a Scheduler identity:
-
-```bash
-gcloud iam service-accounts create scheduler-archiver \
-  --display-name="Scheduler identity for Smart Job archiver" \
-  --project "$PROJECT_ID"
-
-export SCHEDULER_SA="scheduler-archiver@$PROJECT_ID.iam.gserviceaccount.com"
-```
+`cloudrun-archiver/` is the monthly archive job.
 
-Grant Scheduler permission to run the job. Cloud Run Jobs execution uses the Run Admin API, so this service account needs permission to invoke the job endpoint. Use the narrowest custom role your organization supports; `roles/run.developer` is the practical managed-role baseline:
+Required deployment concerns:
 
-```bash
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$SCHEDULER_SA" \
-  --role="roles/run.developer"
-```
+- access to source data
+- Cloud Storage archive bucket access
+- scheduler or manual job trigger
+- checksum verification before delete
 
-Create the monthly Scheduler job:
+Preserve these invariants:
 
-```bash
-export RUN_JOB_URI="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$ARCHIVER_JOB:run"
-
-gcloud scheduler jobs create http smart-job-archiver-monthly \
-  --location "$REGION" \
-  --schedule "0 3 1 * *" \
-  --time-zone "UTC" \
-  --uri "$RUN_JOB_URI" \
-  --http-method POST \
-  --oauth-service-account-email "$SCHEDULER_SA" \
-  --project "$PROJECT_ID"
-```
+- archive manifests are idempotent
+- date filtering respects ISO-string date storage
+- deletion uses only the exact IDs captured in the verified archive
 
-Monitor:
+## 12. Supabase Migration Workspace
 
-```bash
-gcloud run jobs executions list --job "$ARCHIVER_JOB" --region "$REGION" --project "$PROJECT_ID"
-gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="smart-job-archiver"' --limit 50 --project "$PROJECT_ID"
-```
+The `supabase/` directory contains the in-repo backend runtime and migration hardening work.
 
-## 12. Push Notifications
+Use these docs when working there:
 
-The app uses Firebase Cloud Messaging and Notifee.
+- `SUPABASE-MIGRATION-GUIDE.md`
+- `supabase/README.md`
 
-Firebase Console:
+If you still operate legacy Firebase backend paths outside this repository, keep rollback paths available until your production rollout is fully complete.
 
-1. Enable Cloud Messaging.
-2. Confirm Android and iOS apps are registered.
-3. For iOS, upload an APNs authentication key:
-   - Apple Developer portal -> Certificates, Identifiers & Profiles -> Keys.
-   - Create a key with Apple Push Notifications service enabled.
-   - Download the `.p8` key once.
-   - Upload it in Firebase Console -> Project settings -> Cloud Messaging.
-   - Enter Team ID and Key ID.
+## 13. Deployment Order
 
-Mobile app:
+Recommended high-level order:
 
-1. Keep `phone_app/google-services.json` and `phone_app/GoogleService-Info.plist` in place locally/CI secrets.
-2. Build a development client or production build; Expo Go is not enough for native FCM/Notifee.
-3. Sign in on a physical device.
-4. Accept notification permission.
-5. Confirm the profile stores push-token data under `users/{uid}/data/profile`.
-
-Useful commands:
+1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
+2. Apply SQL migrations.
+3. Configure website and Supabase edge secrets and envs.
+4. Deploy `supabase/functions`.
+5. Deploy `cloudrun-pdf`.
+6. Deploy `cloudrun-archiver`.
+7. Configure website hosting.
+8. Build and release mobile apps.
+9. Validate website auth, mobile auth, backend operations, document generation, and archives.
 
-```bash
-cd phone_app
-npx expo start --dev-client
-eas build --platform android --profile development
-eas build --platform ios --profile development
-```
-
-Expected behavior:
+CI/CD evidence:
 
-- Token registration goes through backend profile functions.
-- Job notification triggers claim `notificationLog/{jobId}_{type}` idempotency docs before sending.
-- Token cleanup should call the backend clear-token flow during sign-out or token invalidation.
+- Use `.github/workflows/supabase-edge-deploy.yml` for manual Supabase Edge deployments.
+- Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
 
-## 13. Website Deployment
+## 14. Post-Setup Checks
 
-Local development:
+Verify:
 
-```bash
-cd website
-npm run dev
-```
-
-Production:
+- website login, registration, and onboarding
+- mobile sign-in and protected operation routing
+- backend SQL connectivity
+- document preview and generate flows
+- signed URL flows for documents and job files
+- push-token updates and notification paths
+- archive creation and retrieval
 
-1. Deploy `website/` to your hosting platform, such as Vercel.
-2. Set every environment variable from `website/.env.local.example`.
-3. Set Admin SDK credentials as environment variables, not files.
-4. Add the production domain to `CORS_ALLOWED_ORIGINS` in `functions/.env`, then redeploy Functions.
-5. Ensure the Firebase Auth authorized domains include your website domain.
+## 15. Canonical Documentation Rule
 
-Required website flows:
-
-- `/register` creates Firebase Auth credentials only.
-- `/onboarding` calls backend provisioning:
-  - manager/business -> `registerBusinessV1`
-  - solo/user -> `registerBusinessV1`
-  - basic workspace -> `registerBusinessV1` with `accountType: solo`, `role: basic`
-  - worker invite -> `/api/onboarding/join-company` -> `joinCompanyV1`
-
-Do not add registration/onboarding to the mobile app.
-
-## 14. Mobile Deployment
-
-Local development:
-
-```bash
-cd phone_app
-npx expo start --dev-client
-```
-
-Production builds:
-
-```bash
-cd phone_app
-eas build --platform android --profile production
-eas build --platform ios --profile production
-```
-
-Before release:
-
-- Confirm native Firebase files match the Firebase project.
-- Confirm bundle/package IDs in `phone_app/app.json`.
-- Confirm FCM works on physical Android and iOS devices.
-- Confirm function region/base URL envs are empty or correct.
-- Confirm signed document/job-file access works through backend functions.
-
-## 15. First Production Users
-
-Use the website for initial account creation.
-
-1. Visit the deployed website.
-2. Create a manager account at `/register`.
-3. Complete `/onboarding` as a business manager.
-4. Confirm Firestore has:
-
-```text
-users/{uid}/data/profile
-users/{uid}/data/cache
-users/{uid}/data/inventory
-companies/{companyId}/data/business_info
-companies/{companyId}/data/subscription
-companies/{companyId}/managers/{mid}
-companies/{companyId}/counters/{wnext|mnext|cnext|jnext}
-```
-
-5. Sign in to the mobile app with the same account.
-6. Create a client through the app or website.
-7. Create a job through the app or website.
-8. Generate a document preview.
-9. Generate and save a document.
-10. Confirm the document record stores `storagePath`.
-11. Confirm the PDF object exists under the company Storage path.
-12. Confirm direct client reads from company document/job/archive Storage paths are rejected by Storage rules.
-13. Create a worker invite from the manager account.
-14. Register a second user on the website and join by invite.
-15. Sign in as the worker on mobile and verify assigned jobs load.
-
-For solo/basic workspaces:
-
-1. Register a new user on the website.
-2. Choose Solo or Basic during onboarding.
-3. Confirm stored `accountType` is `solo`.
-4. Confirm role is `user` for Solo or `basic` for Basic.
-5. Confirm mobile login works after onboarding.
-
-## 16. Local Emulator Workflow
-
-Start emulators:
-
-```bash
-firebase emulators:start --only functions,firestore,storage
-```
-
-Website emulator env:
-
-```dotenv
-NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true
-NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
-FIREBASE_FUNCTIONS_EMULATOR_ORIGIN=http://127.0.0.1:5001
-```
-
-Functions and rules tests already use the demo project where appropriate:
-
-```bash
-cd functions
-npm test
-```
-
-## 17. Verification Checklist
-
-Run these before shipping a new environment or major change:
-
-```bash
-node scripts/check-no-ts-nocheck.mjs
-
-cd website
-npm test
-npm run typecheck
-npm run lint
-npm run build
-
-cd ../phone_app
-npm test
-npm run typecheck
-
-cd ../functions
-npm test
-
-cd ../cloudrun-pdf
-npm test
-
-cd ../cloudrun-archiver
-npm test
-```
-
-Production smoke tests:
-
-- Website register/login/onboarding.
-- Website dashboard route protection.
-- Mobile login.
-- Manager creates worker invite.
-- Worker joins company.
-- Client mutation through backend function.
-- Job create/update/delete through backend functions.
-- Job photo/signature upload stores `storagePath`.
-- Document preview task reaches `documentTasks/{taskId}` and completes.
-- Document generate task stores PDF and document metadata.
-- Signed document URL works and expires.
-- Signed job-file URL works and expires.
-- Direct protected Firestore writes are denied from a client.
-- Direct company Storage reads are denied from a client.
-- Push notification arrives on physical device.
-- Archiver manual run succeeds in an empty or low-data project.
-
-## 18. Troubleshooting
-
-PDF task stays `queued`:
-
-- Confirm Pub/Sub topics exist.
-- Confirm push subscriptions point to `$PDF_URL/preview` and `$PDF_URL/generate`.
-- Confirm the PDF service has `CLOUD_RUN_SERVICE_URL=$PDF_URL`.
-- Confirm `PUBSUB_ALLOWED_SERVICE_ACCOUNTS` exactly matches the push service account email.
-- Confirm the push service account has `roles/run.invoker` on the service.
-- Confirm `PUBSUB_VERIFICATION_TOKEN` is unset unless a proxy adds `x-pubsub-token`.
-
-PDF task fails with authorization errors:
-
-- Confirm the task payload has `uid` and `companyId`.
-- Confirm `users/{uid}/data/profile` exists and belongs to the company.
-- Confirm manager/worker role membership docs exist.
-
-Functions CORS fails:
-
-- Add the exact website origin to `CORS_ALLOWED_ORIGINS`.
-- Redeploy Functions.
-- Include protocol and no trailing slash, for example `https://app.example.com`.
-
-Website middleware redirects unexpectedly:
-
-- Confirm `/api/auth/session` can verify the Firebase ID token.
-- Confirm Admin SDK env vars are available in production.
-- Confirm `__session` is HttpOnly and Secure in production.
-
-Push notifications do not arrive:
-
-- Use a physical device and a dev/prod build, not Expo Go.
-- Confirm Android/iOS Firebase config files match the Firebase project.
-- Confirm APNs key is uploaded for iOS.
-- Confirm notification permission was granted.
-- Confirm push token exists under `users/{uid}/data/profile`.
-
-Archiver fails immediately:
-
-- Confirm `ARCHIVE_BUCKET` is set.
-- Confirm the archiver service account can read Firestore and write Storage.
-- Confirm `companies` collection exists. In an empty project, a no-company run exits successfully.
-
-## 19. Operational Notes
-
-- Keep `firestore.rules`, `storage.rules`, and `firestore.indexes.json` deployed together.
-- Treat `packages/contracts` as the shared source for enums and path helpers.
-- Keep Cloud Run runtime service accounts separate from Pub/Sub/Scheduler identities.
-- Prefer Secret Manager for production secrets.
-- Do not store durable Firebase Storage download URLs in Firestore records.
-- Use backend-issued signed URLs for company documents, job files, and archives.
-- Preserve idempotency docs and TTL fields when changing document, tax, notification, and rate-limit flows.
+If setup or deployment guidance changes, update this file instead of creating another setup-only markdown file.

@@ -213,6 +213,7 @@ export interface CloudFunctionResponse<T = unknown> {
 
 export interface HttpFunctionOptions {
   requireAuth?: boolean;
+  signal?: AbortSignal;
 }
 
 // ── Alert system ───────────────────────────────────────────────────────────

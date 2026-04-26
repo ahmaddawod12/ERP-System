@@ -1,39 +1,40 @@
-import { app, auth } from '../firebase';
+import { app, getSupabaseAuthTransportToken } from '../firebase';
 import type { HttpFunctionOptions } from '../types';
-
-const DEFAULT_REGION = 'us-central1';
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function getProjectId(): string {
-  const projectId = (app as { options?: { projectId?: string } })?.options?.projectId;
-  if (!projectId) {
-    throw new Error('Missing Firebase projectId in app configuration');
-  }
-  return projectId;
-}
-
-function getFunctionsBaseUrl(): string {
-  const explicitBase = process.env.EXPO_PUBLIC_FUNCTIONS_BASE_URL;
+function getEdgeBaseUrl(): string {
+  const explicitBase = process.env.EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL;
   if (explicitBase) {
     return trimTrailingSlash(explicitBase);
   }
 
-  const region = process.env.EXPO_PUBLIC_FUNCTIONS_REGION || DEFAULT_REGION;
-  const projectId = getProjectId();
-  const emulatorOrigin = process.env.EXPO_PUBLIC_FUNCTIONS_EMULATOR_ORIGIN;
-
-  if (__DEV__ && emulatorOrigin) {
-    return `${trimTrailingSlash(emulatorOrigin)}/${projectId}/${region}`;
+  const supabaseUrl = String(process.env.EXPO_PUBLIC_SUPABASE_URL || '').trim();
+  if (!supabaseUrl) {
+    throw new Error('Missing EXPO_PUBLIC_SUPABASE_URL for edge function calls');
   }
+  return `${trimTrailingSlash(supabaseUrl)}/functions/v1`;
+}
 
-  return `https://${region}-${projectId}.cloudfunctions.net`;
+function getEdgePath(functionName: string): string {
+  const mapping: Record<string, string> = {
+    readModelV1: 'read-model',
+    mutationGatewayV1: 'mutation-gateway',
+    mutationGatewayMeWest1V1: 'mutation-gateway-me-west1',
+    createInviteV1: 'invites/create',
+    joinCompanyV1: 'invites/join',
+    requestUpgradeV1: 'upgrades/request',
+    listUpgradeRequestsV1: 'upgrades/list',
+    moderateUpgradeRequestV1: 'upgrades/moderate',
+    contactRequestV1: 'contact/request',
+  };
+  return mapping[functionName] || functionName;
 }
 
 function getFunctionUrl(functionName: string): string {
-  return `${getFunctionsBaseUrl()}/${functionName}`;
+  return `${getEdgeBaseUrl()}/${getEdgePath(functionName)}`;
 }
 
 export async function callHttpFunction<T = unknown>(
@@ -41,16 +42,15 @@ export async function callHttpFunction<T = unknown>(
   body?: unknown,
   options: HttpFunctionOptions = {},
 ): Promise<T> {
-  const { requireAuth = true } = options;
+  const { requireAuth = true, signal } = options;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   if (requireAuth) {
-    const user = auth.currentUser;
-    if (!user) {
+    const supabaseToken = await getSupabaseAuthTransportToken(true);
+    if (!supabaseToken) {
       throw new Error('User must be authenticated');
     }
-    const token = await user.getIdToken();
-    headers.Authorization = `Bearer ${token}`;
+    headers.Authorization = `Bearer ${supabaseToken}`;
   }
 
   let response: Response;
@@ -59,6 +59,7 @@ export async function callHttpFunction<T = unknown>(
       method: 'POST',
       headers,
       body: JSON.stringify(body || {}),
+      signal,
     });
   } catch (error) {
     throw new Error('Failed to reach backend function');

@@ -717,6 +717,25 @@ async function acceptJob(input, options: any = {}) {
   });
 }
 
+// ─── Cursor helpers ──────────────────────────────────────────────────────────
+function encodeJobsCursor(dateValue: Date | string | null, createdAt: Date | string | null): string {
+  const d = dateValue instanceof Date ? dateValue.toISOString() : (dateValue ?? '');
+  const c = createdAt instanceof Date ? createdAt.toISOString() : (createdAt ?? '');
+  return Buffer.from(JSON.stringify({ d, c })).toString('base64');
+}
+
+function decodeJobsCursor(cursor: string): { dateValue: Date; createdAt: Date } | null {
+  try {
+    const raw = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+    const dateValue = new Date(raw.d);
+    const createdAt = new Date(raw.c);
+    if (Number.isNaN(dateValue.getTime()) || Number.isNaN(createdAt.getTime())) return null;
+    return { dateValue, createdAt };
+  } catch {
+    return null;
+  }
+}
+
 async function getJobRecordById(companyId, jobId, options: any = {}) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
@@ -732,23 +751,33 @@ async function getJobRecordById(companyId, jobId, options: any = {}) {
 async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
-  if (!company || !profile) return [];
+  if (!company || !profile) return { items: [], nextCursor: null };
 
   const normalizedRole = String(profile.role || '').trim().toLowerCase();
   if (normalizedRole === 'basic') {
-    return [];
+    return { items: [], nextCursor: null };
   }
 
   const shouldScopeToMembership = normalizedRole === 'worker' || (normalizedRole === 'user' && String(profile.accountType || '') !== 'solo');
   const scopedMembershipId = shouldScopeToMembership ? profile.membershipId || '' : '';
-  const rawLimit = Number(options.limit);
+  const rawLimit = Number(options.limit || options.pageSize);
+  // For paginated callers the default page is 50; for archive callers passing limit:10000 we honour that.
   const effectiveLimit = Number.isInteger(rawLimit) && rawLimit > 0
     ? Math.min(rawLimit, 10000)
-    : 200;
+    : 50;
   const requestedStatuses = normalizeStringList(options.status);
+  const dateFieldKey: 'updatedAt' | 'finishedAt' | 'dueAt' | 'createdAt' = (() => {
+    switch (String(options.dateField || '').trim()) {
+      case 'updatedAt': return 'updatedAt';
+      case 'finishedAt': return 'finishedAt';
+      case 'dueAt': return 'dueAt';
+      default: return 'createdAt';
+    }
+  })();
   const dateColumn = resolveJobDateColumn(options.dateField);
   const dateFrom = options.dateFrom ? asDate(options.dateFrom, null) : null;
   const dateTo = options.dateTo ? asDate(options.dateTo, null) : null;
+  const afterCursor = options.afterCursor ? decodeJobsCursor(String(options.afterCursor)) : null;
 
   return db.transaction(async (tx) => {
     const conditions = [
@@ -758,7 +787,12 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
       ...(requestedStatuses.length > 1 ? [inArray(jobs.status, requestedStatuses)] : []),
       ...(dateFrom ? [gte(dateColumn, dateFrom)] : []),
       ...(dateTo ? [lte(dateColumn, dateTo)] : []),
+      // Cursor condition: for descending (date, createdAt) order, next page has strictly older values.
+      ...(afterCursor ? [sql`(${dateColumn}, ${jobs.createdAt}) < (${afterCursor.dateValue}, ${afterCursor.createdAt})`] : []),
     ];
+
+    // Fetch one extra row to detect whether a next page exists.
+    const fetchLimit = effectiveLimit + 1;
 
     const jobRows = await tx
       .select({
@@ -795,13 +829,17 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
       .from(jobs)
       .where(and(...conditions))
       .orderBy(desc(dateColumn), desc(jobs.createdAt))
-      .limit(effectiveLimit);
+      .limit(fetchLimit);
 
-    if (jobRows.length === 0) {
-      return [];
+    // Detect if there is a next page.
+    const hasMore = jobRows.length > effectiveLimit;
+    const pageRows = hasMore ? jobRows.slice(0, effectiveLimit) : jobRows;
+
+    if (pageRows.length === 0) {
+      return { items: [], nextCursor: null };
     }
 
-    const jobIds = jobRows.map((row) => row.id);
+    const jobIds = pageRows.map((row) => row.id);
     const [attachmentRows, partUsageRows, membershipRows, clientRows] = await Promise.all([
       tx
         .select({ jobId: jobAttachments.jobId, storagePath: jobAttachments.storagePath, kind: jobAttachments.kind })
@@ -884,7 +922,7 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
       clientById.set(String(row.id), row);
     }
 
-    return jobRows.map((row) => mapJobRecord(
+    const items = pageRows.map((row) => mapJobRecord(
         row,
         attachmentsByJobId.get(String(row.id)) || [],
         partUsageByJobId.get(String(row.id)) || [],
@@ -892,8 +930,15 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
         membershipById.get(String(row.createdByMembershipId || '')) || null,
         clientById.get(String(row.clientId || '')) || null,
       ));
+
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor = hasMore
+      ? encodeJobsCursor(lastRow[dateFieldKey] ?? lastRow.createdAt, lastRow.createdAt)
+      : null;
+
+    return { items, nextCursor };
   });
 }
 
-export { acceptJob, createJob, deleteJob, getJobRecordById, listCompanyJobsDetailed, updateJob };
+export { acceptJob, createJob, deleteJob, encodeJobsCursor, getJobRecordById, listCompanyJobsDetailed, updateJob };
 

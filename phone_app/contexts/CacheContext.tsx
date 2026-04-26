@@ -26,7 +26,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { db, auth, storage as firebaseStorage, doc, setDoc, collection, getDocs, query, where, orderBy, limit, writeBatch, FieldValue, functions, httpsCallable } from '../firebase';
+import { auth, storage as firebaseStorage } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
 import { safeJsonParse } from '../utils/helpers';
@@ -36,6 +36,8 @@ import {
   fetchUserSyncState as _fetchUserSyncState,
   fetchDocumentById as _fetchDocumentById,
   fetchAllRecentJobs as _fetchAllRecentJobs,
+  fetchJobsPage as _fetchJobsPage,
+  fetchDocumentsPage as _fetchDocumentsPage,
 } from './cache-fetchers';
 import { useArchiveQuery } from '../hooks/useArchiveQuery';
 import { useCacheVersionActions } from './use-cache-version-actions';
@@ -117,6 +119,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const companyPollInFlightRef = useRef(false);
   const userPollIdleCountRef = useRef(0);
   const companyPollIdleCountRef = useRef(0);
+  const resumeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Get current user info from cache (canonical names)
   const getUid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.UID), []);
@@ -166,12 +169,28 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     }
   }, [getUid, getUserRole, getCompanyId]); // Will define setupCacheListeners below
 
+  /**
+   * Debounced version — prevents poll storms when the OS fires multiple
+   * active/inactive events in quick succession (e.g. incoming call overlay).
+   */
+  const resumeListenersDebounced = useCallback(() => {
+    if (resumeDebounceRef.current) return; // Already scheduled
+    resumeDebounceRef.current = setTimeout(() => {
+      resumeDebounceRef.current = null;
+      resumeListeners();
+    }, 350);
+  }, [resumeListeners]);
+
   // Android lifecycle: Pause listeners when app backgrounds, resume when active
   useAppStateListener({
     onActive: () => {
-      resumeListeners();
+      resumeListenersDebounced();
     },
     onBackground: () => {
+      if (resumeDebounceRef.current) {
+        clearTimeout(resumeDebounceRef.current);
+        resumeDebounceRef.current = null;
+      }
       pauseListeners();
     },
   });
@@ -362,6 +381,18 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const fetchAllRecentJobs = useCallback(
     (uid: string, companyId: string, role: string) =>
       _fetchAllRecentJobs(uid, companyId, role),
+    [],
+  );
+
+  const fetchJobsPage = useCallback(
+    (companyId: string, opts?: { pageSize?: number; afterCursor?: string; signal?: AbortSignal }) =>
+      _fetchJobsPage(companyId, opts),
+    [],
+  );
+
+  const fetchDocumentsPage = useCallback(
+    (companyId: string, opts?: { pageSize?: number; afterCursor?: string; signal?: AbortSignal }) =>
+      _fetchDocumentsPage(companyId, opts),
     [],
   );
 
@@ -559,16 +590,24 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             console.log(`Company jobs/documents changed: jobs ${localJobsVersion}->${remoteJobsVersion}, docs ${localDocsVersion}->${remoteDocsVersion}`);
 
             fetchPromises.push((async () => {
-              const { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
-              applyBootstrappedJobDocumentCache(role, jobsData, documentsData);
+              // Use paginated fetches to avoid pulling full collection on every version bump.
+              const shouldFetchJobs = role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion;
+              const shouldFetchDocs = role !== 'dev' && remoteDocsVersion !== localDocsVersion;
+
+              const [jobsResult, docsResult] = await Promise.all([
+                shouldFetchJobs ? fetchJobsPage(companyId, { pageSize: 50 }) : Promise.resolve({ items: [], nextCursor: null }),
+                shouldFetchDocs ? fetchDocumentsPage(companyId, { pageSize: 50 }) : Promise.resolve({ items: [], nextCursor: null }),
+              ]);
+
+              applyBootstrappedJobDocumentCache(
+                role,
+                shouldFetchJobs ? jobsResult.items : mmkvHelpers.getObject(CACHE_KEYS.COMPANY_JOBS) ?? [],
+                shouldFetchDocs ? docsResult.items : mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) ?? [],
+              );
               mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
               mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, new Date().toISOString());
-              if (role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion) {
-                versionUpdates.jobsVersion = remoteJobsVersion;
-              }
-              if (role !== 'dev' && remoteDocsVersion !== localDocsVersion) {
-                versionUpdates.documentsVersion = remoteDocsVersion;
-              }
+              if (shouldFetchJobs) versionUpdates.jobsVersion = remoteJobsVersion;
+              if (shouldFetchDocs) versionUpdates.documentsVersion = remoteDocsVersion;
             })());
           }
 
@@ -893,9 +932,11 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       // Fetch clients for all roles (shared company collection)
       if (companyId) {
         console.log('?? Fetching clients for initial cache...');
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        // @ts-ignore: fetchClients is declared later but called at runtime
-        await fetchClients(companyId);
+        const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+        if (Array.isArray(clientsData)) {
+          saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
+          setClients(clientsData);
+        }
       }
       
       // Fetch remote cache docs to get correct version numbers
@@ -934,8 +975,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  // @ts-ignore: fetchClients is declared after fetchAllFresh
   }, [applyBootstrappedJobDocumentCache, fetchCompanySyncState, fetchDataFromFirebase, fetchAllRecentJobs, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
 
   /**
@@ -996,7 +1035,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     updateClient,
     deleteClient,
   } = useCacheClientActions({
-    db,
     getCompanyId,
     clients,
     saveToLocalCache,
@@ -1019,112 +1057,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     // Pre-increment local documentsVersion (CF handles Firebase bump)
     preIncrementVersion('documentsVersion', true);
   }, [documents, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Add a new client using a Firestore transaction
-   * - Reads companies/{companyId} document for cid field
-   * - Increments cid in company doc
-   * - Creates companies/{companyId}/clients/{cid} with client data
-   * - Updates local cache
-   * 
-   * @param {Object} clientData - { name, phone, email, address, city, vatNumber }
-   * @returns {Object} - The created client with id
-   */
-  const legacyAddClient = useCallback(async (clientData: any) => {
-    const companyId = getCompanyId();
-    console.log('?? Adding client to company:', companyId);
-
-    if (!companyId) {
-      const error = new Error('Company name not found in cache');
-      console.error('?', error);
-      throw error;
-    }
-
-    try {
-      // Call addClientV1 CF â€” uses phone-app cid counter pattern on the server side
-      const addClientFn = httpsCallable(functions, 'addClientV1');
-      const result = await addClientFn({ companyId, ...clientData });
-      const newClient = (result.data as any).client;
-
-      if (!newClient) {
-        throw new Error('addClientV1 returned no client data');
-      }
-
-      // Update local cache immediately (optimistic)
-      const updatedClients = [...clients, newClient];
-      saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
-      setClients(updatedClients);
-
-      // Pre-increment local clientsVersion to match what the CF just wrote.
-      preIncrementVersion('clientsVersion', true);
-
-      console.log(`âœ… Client created with ID: ${newClient.id}`);
-      return newClient;
-    } catch (error) {
-      console.error('âŒ Error creating client:', error);
-      console.error('âŒ Error code:', (error as any).code);
-      console.error('âŒ Error message:', (error as Error).message);
-      throw error;
-    }
-  }, [getCompanyId, clients, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Update an existing client
-   */
-  const legacyUpdateClient = useCallback(async (clientId: string, updates: any) => {
-    const companyId = getCompanyId();
-    if (!companyId) throw new Error('Company name not found');
-
-    try {
-      // Use Cloud Function for validation and consistent cache bumping
-      const updateClientFn = httpsCallable(functions, 'updateClientV1');
-      await updateClientFn({ companyId, clientId, ...updates });
-
-      // Update local cache
-      const updatedClients = clients.map(c => 
-        c.id === clientId ? { ...c, ...updates, updatedAt: new Date().toISOString() } : c
-      );
-      saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
-      setClients(updatedClients); // Update state immediately
-
-      // Pre-increment local version to match the CF bump and prevent a redundant re-fetch
-      preIncrementVersion('clientsVersion', true);
-
-      console.log(`? Client ${clientId} updated`);
-    } catch (error) {
-      console.error('Error updating client:', error);
-      throw error;
-    }
-  }, [getCompanyId, clients, saveToLocalCache, preIncrementVersion]);
-
-  /**
-   * Delete a client via the deleteClientV1 Cloud Function.
-   * The CF handles the Firestore delete and increments the company cache version,
-   * so other devices (and the snapshot listener) are notified automatically.
-   */
-  const legacyDeleteClient = useCallback(async (clientId: string) => {
-    const companyId = getCompanyId();
-    if (!companyId) throw new Error('Company name not found');
-
-    try {
-      // CF deletes the Firestore doc and bumps companies/{companyId}/data/cache.clients
-      const deleteClientFn = httpsCallable(functions, 'deleteClientV1');
-      await deleteClientFn({ companyId, clientId });
-
-      // Update local client list immediately (optimistic)
-      const updatedClients = clients.filter(c => c.id !== clientId);
-      saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
-      setClients(updatedClients);
-
-      // Pre-increment local clientsVersion to match the CF bump.
-      preIncrementVersion('clientsVersion', true);
-
-      console.log(`âœ… Client ${clientId} deleted via CF`);
-    } catch (error) {
-      console.error('Error deleting client:', error);
-      throw error;
-    }
-  }, [getCompanyId, clients, saveToLocalCache, preIncrementVersion]);
 
   /**
    * Clear all cache (on logout)

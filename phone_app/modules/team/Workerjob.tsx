@@ -1,4 +1,3 @@
-// @ts-nocheck
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View,
   TouchableOpacity,
@@ -24,6 +23,31 @@ import { storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { fetchRecordById } from '../../utils/read-model';
+import type { DateLike, Job, JobItem } from '../../types';
+import type { DateFilterRange } from '../../components/DateFilter';
+
+type WorkerJobRecord = Job & {
+  workDescription?: string;
+  submittedAt?: DateLike;
+  dueDate?: string;
+  timestamp?: DateLike;
+  partsUsed?: JobItem[];
+};
+
+type PendingWorkerJob = {
+  companyId?: string;
+  jobId?: string;
+  jobData?: Partial<WorkerJobRecord>;
+};
+
+function getDateLikeTime(value: DateLike | null | undefined): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof (value as { toDate?: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  return new Date(String(value)).getTime();
+}
 
 export default function Workerjob() {
   const router = useRouter();
@@ -42,15 +66,15 @@ export default function Workerjob() {
   const colors = getColors(isDarkMode);
 
   // ─── State ──────────────────────────────────────────────────────
-  const [jobs, setJobs] = useState([]);
+  const [jobs, setJobs] = useState<WorkerJobRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const hasInitialLoadedRef = useRef(false);
   const [isOnline, setIsOnline] = useState(true);
   const [pendingJobCount, setPendingJobCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [selectedJobDetails, setSelectedJobDetails] = useState(null);
+  const [selectedJobDetails, setSelectedJobDetails] = useState<WorkerJobRecord | null>(null);
   const [showDateFilter, setShowDateFilter] = useState(false);
-  const [dateFilter, setDateFilter] = useState({
+  const [dateFilter, setDateFilter] = useState<DateFilterRange>({
     type: 'last7days',
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)),
     endDate: new Date(),
@@ -144,16 +168,16 @@ export default function Workerjob() {
 
   // ─── Helpers ────────────────────────────────────────────────────
 
-  const isJobNew = (job) => {
+  const isJobNew = (job: WorkerJobRecord) => {
     if (!job.timestamp && !job.createdAt) return false;
-    const jobDate = new Date(job.timestamp || job.createdAt);
-    const hoursDiff = (new Date() - jobDate) / (1000 * 60 * 60);
+    const jobDate = getDateLikeTime(job.timestamp || job.createdAt);
+    const hoursDiff = (Date.now() - jobDate) / (1000 * 60 * 60);
     return hoursDiff <= 24;
   };
 
-  const canEditJob = (job) => job.status !== 'finished';
+  const canEditJob = (job: WorkerJobRecord) => job.status !== 'finished';
 
-  const getStatusColor = (status) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return '#f59e0b';
       case 'waiting': return '#8b5cf6';
@@ -163,7 +187,7 @@ export default function Workerjob() {
     }
   };
 
-  const getStatusText = (status) => {
+  const getStatusText = (status: string) => {
     switch (status) {
       case 'pending': return t.pending;
       case 'waiting': return t.waiting;
@@ -173,41 +197,11 @@ export default function Workerjob() {
     }
   };
 
-  // â”€â”€â”€ Data Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  useEffect(() => {
-    const initializeData = async () => {
-      await loadJobs();
-      hasInitialLoadedRef.current = true;
-    };
-    initializeData();
-  }, [dateFilter]);
-
-  useEffect(() => {
-    if (!hasInitialLoadedRef.current) return;
-    loadJobs();
-  }, [cachedJobs]);
-
-  // Network state listener — sync pending offline jobs when back online
-  useEffect(() => {
-    let previousOnlineState = true;
-    const unsubscribe = NetInfo.addEventListener(state => {
-      const currentOnlineState = state.isConnected;
-      if (!previousOnlineState && currentOnlineState) {
-        syncPendingJobs();
-      }
-      previousOnlineState = currentOnlineState;
-      setIsOnline(currentOnlineState);
-    });
-    checkPendingJobCount();
-    return () => unsubscribe();
-  }, []);
-
   const checkPendingJobCount = async () => {
     try {
       const pending = storage.getString('pendingWorkerJobs');
       if (pending) {
-        setPendingJobCount((safeJsonParse(pending, [])).length);
+        setPendingJobCount((safeJsonParse<PendingWorkerJob[]>(pending, []) || []).length);
       }
     } catch (error) {
       console.error('Error checking pending jobs:', error);
@@ -223,17 +217,21 @@ export default function Workerjob() {
     try {
       const pending = storage.getString('pendingWorkerJobs');
       if (!pending) return;
-      const pendingArray = safeJsonParse(pending, []);
+      const pendingArray = safeJsonParse<PendingWorkerJob[]>(pending, []) || [];
       if (pendingArray.length === 0) return;
 
       setIsSyncing(true);
-      const failedJobs = [];
+      const failedJobs: PendingWorkerJob[] = [];
 
       for (const pendingJob of pendingArray) {
         try {
           const companyId = pendingJob.companyId || getCompanyId();
           const jobId = pendingJob.jobId;
-          const existingData = await fetchRecordById(companyId, jobId);
+          if (!companyId || !jobId) {
+            throw new Error('Missing companyId or jobId for pending worker job');
+          }
+
+          const existingData = await fetchRecordById(companyId, jobId) as Partial<WorkerJobRecord> | null;
 
           if (existingData) {
             const updatedJob = {
@@ -243,7 +241,7 @@ export default function Workerjob() {
               submittedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
             };
-            await updateJob(jobId, updatedJob, true);
+            updateJob(jobId, updatedJob);
             const updateJobFn = httpsCallable(functions, 'updateJobV1');
             await updateJobFn({ companyId, jobId, ...updatedJob });
           } else {
@@ -261,10 +259,10 @@ export default function Workerjob() {
         setPendingJobCount(failedJobs.length);
         alert.error(t.syncError || 'Some jobs failed to sync');
       } else {
-        storage.delete('pendingWorkerJobs');
+        storage.remove('pendingWorkerJobs');
         setPendingJobCount(0);
         alert.success(t.syncSuccess || 'All jobs synced successfully!');
-        loadJobs();
+        void loadJobs();
       }
     } catch (error) {
       console.error('Error syncing pending jobs:', error);
@@ -288,34 +286,34 @@ export default function Workerjob() {
         return;
       }
 
-      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const ninetyDaysAgoMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
 
       // Beyond 90 days — fetch from archive / Firestore
-      if (dateFilter.startDate < ninetyDaysAgo) {
-        const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs');
+      if (dateFilter.startDate.getTime() < ninetyDaysAgoMs) {
+        const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs') as WorkerJobRecord[];
         const filtered = olderJobs
-          .filter(job => job.wid === profile?.wid)
-          .sort((a, b) => new Date(b.finishedAt || b.createdAt) - new Date(a.finishedAt || a.createdAt));
+          .filter((job) => job.wid === profile?.wid)
+          .sort((a, b) => getDateLikeTime(b.finishedAt || b.createdAt) - getDateLikeTime(a.finishedAt || a.createdAt));
         setJobs(filtered);
         setLoading(false);
         return;
       }
 
       // Recent data — use cache
-      const allCachedJobs = cachedJobs || [];
+      const allCachedJobs = (cachedJobs || []) as WorkerJobRecord[];
       const pending = allCachedJobs.filter(job => {
         if (job.status !== 'pending' && job.status !== 'waiting') return false;
-        const d = new Date(job.createdAt);
-        return d >= dateFilter.startDate && d <= dateFilter.endDate;
+        const createdAtMs = getDateLikeTime(job.createdAt);
+        return createdAtMs >= dateFilter.startDate.getTime() && createdAtMs <= dateFilter.endDate.getTime();
       });
       const finished = allCachedJobs.filter(job => {
         if (job.status !== 'finished') return false;
-        const d = new Date(job.finishedAt);
-        return d >= dateFilter.startDate && d <= dateFilter.endDate;
+        const finishedAtMs = getDateLikeTime(job.finishedAt);
+        return finishedAtMs >= dateFilter.startDate.getTime() && finishedAtMs <= dateFilter.endDate.getTime();
       });
 
       const jobsList = [...pending, ...finished].sort(
-        (a, b) => new Date(b.finishedAt || b.createdAt) - new Date(a.finishedAt || a.createdAt)
+        (a, b) => getDateLikeTime(b.finishedAt || b.createdAt) - getDateLikeTime(a.finishedAt || a.createdAt)
       );
       setJobs(jobsList);
       setLoading(false);
@@ -323,11 +321,41 @@ export default function Workerjob() {
       if (auth.currentUser) console.error('Error loading jobs:', error);
       setLoading(false);
     }
-  }, [cachedJobs, dateFilter, getUid, getCompanyId, getDataForDateRange]);
+  }, [cachedJobs, dateFilter, getUid, getCompanyId, getDataForDateRange, profile?.wid]);
+
+  // ─── Data Loading ───────────────────────────────────────────────────
+
+  useEffect(() => {
+    const initializeData = async () => {
+      await loadJobs();
+      hasInitialLoadedRef.current = true;
+    };
+    void initializeData();
+  }, [dateFilter, loadJobs]);
+
+  useEffect(() => {
+    if (!hasInitialLoadedRef.current) return;
+    void loadJobs();
+  }, [cachedJobs, loadJobs]);
+
+  // Network state listener — sync pending offline jobs when back online
+  useEffect(() => {
+    let previousOnlineState = true;
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const currentOnlineState = Boolean(state.isConnected);
+      if (!previousOnlineState && currentOnlineState) {
+        void syncPendingJobs();
+      }
+      previousOnlineState = currentOnlineState;
+      setIsOnline(currentOnlineState);
+    });
+    void checkPendingJobCount();
+    return () => unsubscribe();
+  }, []);
 
   // ─── Actions ────────────────────────────────────────────────────
 
-  const handleMoveToWaiting = async (job) => {
+  const handleMoveToWaiting = async (job: WorkerJobRecord) => {
     try {
       const companyId = getCompanyId();
       if (!companyId) {
@@ -337,12 +365,12 @@ export default function Workerjob() {
 
       const updates = {
         status: 'waiting',
-        wname: profile.name || '',
+        wname: profile?.name || '',
       };
 
       const updateJobFn = httpsCallable(functions, 'updateJobV1');
       await updateJobFn({ companyId, jobId: job.id, ...updates });
-      await updateJob(job.id, updates, true);
+      updateJob(job.id, updates);
 
       alert.success('Success',
         language === 'en' ? 'Job moved to waiting'
@@ -355,10 +383,10 @@ export default function Workerjob() {
     }
   };
 
-  const handleFillDetails = async (job) => {
+  const handleFillDetails = async (job: WorkerJobRecord) => {
     // Clear any existing draft for this job to prevent loading old data
     try {
-      storage.delete(`workerjobDraft_${job.id}`);
+      storage.remove(`workerjobDraft_${job.id}`);
     } catch (error) {
       console.error('Error clearing draft:', error);
     }
@@ -389,7 +417,7 @@ export default function Workerjob() {
 
   // ─── Quick Actions (Waze, Phone, WhatsApp) ──────────────────────
 
-  const handleOpenWaze = (location) => {
+  const handleOpenWaze = (location: string | undefined) => {
     if (!location) {
       alert.warning(
         language === 'en' ? 'No Location' : language === 'he' ? 'אין מיקום' : 'لا يوجد موقع',
@@ -416,7 +444,7 @@ export default function Workerjob() {
       ));
   };
 
-  const handleCallClient = (phoneNumber) => {
+  const handleCallClient = (phoneNumber: string | undefined) => {
     if (!phoneNumber) {
       alert.warning(
         language === 'en' ? 'No Phone Number' : language === 'he' ? 'אין מספר טלפון' : 'لا يوجد رقم هاتف',
@@ -435,7 +463,7 @@ export default function Workerjob() {
       .catch(() => alert.error('Error', 'Failed to open dialer.'));
   };
 
-  const handleOpenWhatsApp = (phoneNumber) => {
+  const handleOpenWhatsApp = (phoneNumber: string | undefined) => {
     if (!phoneNumber) {
       alert.warning(
         language === 'en' ? 'No Phone Number' : language === 'he' ? 'אין מספר טלפון' : 'لا يوجد رقم هاتف',
@@ -702,7 +730,7 @@ export default function Workerjob() {
       <DateFilter
         visible={showDateFilter}
         onClose={() => setShowDateFilter(false)}
-        onFilterChange={(filter) => { setDateFilter(filter); setShowDateFilter(false); }}
+        onFilterChange={(filter: DateFilterRange) => { setDateFilter(filter); setShowDateFilter(false); }}
         currentFilter={dateFilter.type}
         isDarkMode={isDarkMode}
         language={language}

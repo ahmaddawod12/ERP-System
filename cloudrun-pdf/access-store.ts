@@ -1,5 +1,4 @@
-import { Pool, type QueryResult } from 'pg';
-import { getSqlConnectionString, isSqlPersistenceEnabledForCloudRun } from './persistence';
+import { isSharedSqlStoreEnabled, runSharedSqlQuery } from './sql-store';
 
 type UserProfileForCompany = {
   uid: string;
@@ -13,38 +12,8 @@ type UserProfileForCompany = {
   wid?: number;
 };
 
-type QueryablePool = Pool | null;
-
-let pool: QueryablePool = null;
-
 export function isSqlAccessStoreEnabled(): boolean {
-  return isSqlPersistenceEnabledForCloudRun();
-}
-
-function getPool(): QueryablePool {
-  if (!isSqlAccessStoreEnabled()) {
-    return null;
-  }
-  const connectionString = getSqlConnectionString();
-  if (!connectionString) {
-    throw new Error('SQL access store is enabled but no database connection string is configured');
-  }
-  if (!pool) {
-    pool = new Pool({
-      connectionString,
-      max: 5,
-      ssl: process.env.PGSSLMODE === 'disable' ? false : undefined,
-    });
-  }
-  return pool;
-}
-
-async function runQuery(queryText: string, values: unknown[]): Promise<QueryResult | null> {
-  const activePool = getPool();
-  if (!activePool) {
-    return null;
-  }
-  return activePool.query(queryText, values);
+  return isSharedSqlStoreEnabled();
 }
 
 function normalizeRole(value: unknown): string {
@@ -57,7 +26,7 @@ export async function getUserProfileForCompany(uid: string, companyId: string | 
     return null;
   }
 
-  const result = await runQuery(
+  const result = await runSharedSqlQuery(
     `
       SELECT
         u.id AS uid,

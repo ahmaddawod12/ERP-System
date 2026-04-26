@@ -1,4 +1,5 @@
 const {
+  check,
   bigint,
   boolean,
   index,
@@ -28,6 +29,7 @@ const counterKeyEnum = pgEnum('counter_key', [
   'member_no',
   'client_no',
   'job_no',
+  'part_no',
   'doc_10',
   'doc_200',
   'doc_210',
@@ -207,6 +209,12 @@ const jobs = pgTable('jobs', {
 }, (table) => ({
   jobNoPerCompanyUnique: uniqueIndex('jobs_company_job_no_unique').on(table.companyId, table.jobNo),
   jobIdempotencyUnique: uniqueIndex('jobs_company_idempotency_unique').on(table.companyId, table.idempotencyKey),
+  companyCreatedIdx: index('jobs_company_created_idx').on(table.companyId, table.createdAt),
+  companyAssigneeCreatedIdx: index('jobs_company_assignee_created_idx').on(table.companyId, table.assignedMembershipId, table.createdAt),
+  companyStatusCreatedIdx: index('jobs_company_status_created_idx').on(table.companyId, table.status, table.createdAt),
+  companyUpdatedCreatedIdx: index('jobs_company_updated_created_idx').on(table.companyId, table.updatedAt, table.createdAt),
+  companyFinishedCreatedIdx: index('jobs_company_finished_created_idx').on(table.companyId, table.finishedAt, table.createdAt),
+  companyDueCreatedIdx: index('jobs_company_due_created_idx').on(table.companyId, table.dueAt, table.createdAt),
   companyStatusUpdatedIdx: index('jobs_company_status_updated_idx').on(table.companyId, table.status, table.updatedAt),
   companyAssignedStatusUpdatedIdx: index('jobs_company_assignee_status_updated_idx').on(table.companyId, table.assignedMembershipId, table.status, table.updatedAt),
 }));
@@ -232,6 +240,7 @@ const jobPartUsages = pgTable('job_part_usages', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   jobIdx: index('job_part_usages_job_idx').on(table.jobId),
+  quantityNonNegative: check('job_part_usages_quantity_non_negative_check', sql`${table.quantity} >= 0`),
 }));
 
 const inventoryLocations = pgTable('inventory_locations', {
@@ -259,6 +268,7 @@ const inventoryParts = pgTable('inventory_parts', {
 }, (table) => ({
   companyPartNoUnique: uniqueIndex('inventory_parts_company_part_no_unique').on(table.companyId, table.partNo),
   companyActiveIdx: index('inventory_parts_company_active_idx').on(table.companyId, table.active),
+  lowThresholdNonNegative: check('inventory_parts_low_threshold_non_negative_check', sql`${table.lowThreshold} >= 0`),
 }));
 
 const inventoryBalances = pgTable('inventory_balances', {
@@ -268,6 +278,7 @@ const inventoryBalances = pgTable('inventory_balances', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   pk: primaryKey({ columns: [table.locationId, table.partId], name: 'inventory_balances_pk' }),
+  quantityOnHandNonNegative: check('inventory_balances_quantity_on_hand_non_negative_check', sql`${table.quantityOnHand} >= 0`),
 }));
 
 const inventoryMovements = pgTable('inventory_movements', {
@@ -287,6 +298,7 @@ const inventoryMovements = pgTable('inventory_movements', {
 }, (table) => ({
   companyIdempotencyUnique: uniqueIndex('inventory_movements_company_idempotency_unique').on(table.companyId, table.idempotencyKey),
   companyPartCreatedIdx: index('inventory_movements_company_part_created_idx').on(table.companyId, table.partId, table.createdAt),
+  quantityPositive: check('inventory_movements_quantity_positive_check', sql`${table.quantity} > 0`),
 }));
 
 const documents = pgTable('documents', {
@@ -324,6 +336,15 @@ const documents = pgTable('documents', {
   companyTypeNumberUnique: uniqueIndex('documents_company_type_number_unique').on(table.companyId, table.documentType, table.documentNumber),
   companyCodeUnique: uniqueIndex('documents_company_code_unique').on(table.companyId, table.documentCode),
   companyCreatedIdx: index('documents_company_created_idx').on(table.companyId, table.createdAt),
+  companyStatusCreatedIdx: index('documents_company_status_created_idx').on(table.companyId, table.generationStatus, table.createdAt),
+  companyTypeCreatedIdx: index('documents_company_type_created_idx').on(table.companyId, table.documentType, table.createdAt),
+  companyCreatorCreatedIdx: index('documents_company_creator_created_idx').on(table.companyId, table.createdByMembershipId, table.createdAt),
+  companyUpdatedCreatedIdx: index('documents_company_updated_created_idx').on(table.companyId, table.updatedAt, table.createdAt),
+  companyDocumentDateCreatedIdx: index('documents_company_document_date_created_idx').on(table.companyId, table.documentDate, table.createdAt),
+  totalBeforeVatNonNegative: check('documents_total_before_vat_non_negative_check', sql`${table.totalBeforeVat} >= 0`),
+  vatAmountNonNegative: check('documents_vat_amount_non_negative_check', sql`${table.vatAmount} >= 0`),
+  totalWithVatNonNegative: check('documents_total_with_vat_non_negative_check', sql`${table.totalWithVat} >= 0`),
+  totalConsistency: check('documents_total_consistency_check', sql`${table.totalBeforeVat} + ${table.vatAmount} = ${table.totalWithVat}`),
 }));
 
 const documentItems = pgTable('document_items', {
@@ -338,6 +359,9 @@ const documentItems = pgTable('document_items', {
   metadata: jsonb('metadata').notNull().default({}),
 }, (table) => ({
   lineNoPerDocumentUnique: uniqueIndex('document_items_document_line_no_unique').on(table.documentId, table.lineNo),
+  quantityPositive: check('document_items_quantity_positive_check', sql`${table.quantity} > 0`),
+  unitPriceNonNegative: check('document_items_unit_price_non_negative_check', sql`${table.unitPrice} >= 0`),
+  lineTotalNonNegative: check('document_items_line_total_non_negative_check', sql`${table.lineTotal} >= 0`),
 }));
 
 const documentJobLinks = pgTable('document_job_links', {
@@ -418,6 +442,7 @@ const documentTasks = pgTable('document_tasks', {
   status: documentGenerationStatusEnum('status').notNull().default('pending'),
   requestPayload: jsonb('request_payload').notNull().default({}),
   previewUrl: varchar('preview_url', { length: 2048 }),
+  generateUrl: varchar('generate_url', { length: 2048 }),
   storagePath: varchar('storage_path', { length: 1024 }),
   pdfSize: integer('pdf_size'),
   error: text('error'),
@@ -527,6 +552,68 @@ const rateLimitBuckets = pgTable('rate_limit_buckets', {
   expireAtIdx: index('rate_limit_buckets_expire_at_idx').on(table.expireAt),
 }));
 
+const upgradeRequests = pgTable('upgrade_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  uid: text('uid'),
+  email: varchar('email', { length: 320 }),
+  companyId: varchar('company_id', { length: 32 }),
+  role: varchar('role', { length: 32 }),
+  currentTier: varchar('current_tier', { length: 32 }).notNull(),
+  requestedTier: varchar('requested_tier', { length: 32 }).notNull(),
+  message: text('message').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  moderatedAt: timestamp('moderated_at', { withTimezone: true }),
+  moderatedByUid: text('moderated_by_uid'),
+  moderatedByName: varchar('moderated_by_name', { length: 200 }),
+  moderationNote: text('moderation_note'),
+  appliedAt: timestamp('applied_at', { withTimezone: true }),
+  appliedByUid: text('applied_by_uid'),
+}, (table) => ({
+  createdAtIdx: index('upgrade_requests_created_at_idx').on(table.createdAt),
+  statusIdx: index('upgrade_requests_status_idx').on(table.status, table.createdAt),
+}));
+
+const contactRequests = pgTable('contact_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 120 }).notNull(),
+  email: varchar('email', { length: 320 }).notNull(),
+  company: varchar('company', { length: 140 }).notNull(),
+  message: text('message').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('new'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  expireAt: timestamp('expire_at', { withTimezone: true }),
+}, (table) => ({
+  createdAtIdx: index('contact_requests_created_at_idx').on(table.createdAt),
+  expireAtIdx: index('contact_requests_expire_at_idx').on(table.expireAt),
+}));
+
+const auditLogs = pgTable('audit_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  action: varchar('action', { length: 80 }).notNull(),
+  performedBy: text('performed_by'),
+  documentId: varchar('document_id', { length: 128 }),
+  documentType: varchar('document_type', { length: 64 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  companyCreatedAtIdx: index('audit_logs_company_created_at_idx').on(table.companyId, table.createdAt),
+}));
+
+const orphanedUserCleanupMarkers = pgTable('orphaned_user_cleanup_markers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  uid: text('uid').notNull(),
+  email: varchar('email', { length: 320 }),
+  companyId: varchar('company_id', { length: 32 }),
+  reason: varchar('reason', { length: 64 }).notNull(),
+  cleanupError: text('cleanup_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  createdAtIdx: index('orphaned_user_cleanup_markers_created_at_idx').on(table.createdAt),
+}));
+
 const archiveRuns = pgTable('archive_runs', {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
@@ -543,4 +630,4 @@ const archiveRuns = pgTable('archive_runs', {
   companyArchiveTypeUnique: uniqueIndex('archive_runs_company_archive_type_unique').on(table.companyId, table.archiveKey, table.dataType),
 }));
 
-export { accountTypeEnum, appUsers, archiveRuns, clients, companies, companyCounters, companyInvites, companyMemberships, companyProfiles, companySyncState, companySubscriptions, documentItems, documentJobLinks, documentTasks, documents, inventoryBalances, inventoryLocations, inventoryMovements, inventoryParts, jobAttachments, jobPartUsages, jobs, notificationDeliveries, proposalUsage, rateLimitBuckets, supportConversations, supportMessages, systemCounters, taxAuthorityTokens, taxInvoiceIdempotency, taxInvoiceReservations, taxOauthCallbacks, taxOauthSessions };
+export { accountTypeEnum, appUsers, archiveRuns, auditLogs, clients, companies, companyCounters, companyInvites, companyMemberships, companyProfiles, companySyncState, companySubscriptions, contactRequests, documentItems, documentJobLinks, documentTasks, documents, inventoryBalances, inventoryLocations, inventoryMovements, inventoryParts, jobAttachments, jobPartUsages, jobs, notificationDeliveries, orphanedUserCleanupMarkers, proposalUsage, rateLimitBuckets, supportConversations, supportMessages, systemCounters, taxAuthorityTokens, taxInvoiceIdempotency, taxInvoiceReservations, taxOauthCallbacks, taxOauthSessions, upgradeRequests };

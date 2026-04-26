@@ -4,8 +4,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+function resolveProjectFile(...segments) {
+  const candidates = [
+    path.resolve(__dirname, '..', ...segments),
+    path.resolve(__dirname, '..', '..', ...segments),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to resolve project file: ${segments.join('/')}`);
+}
+
 function loadGetTargetMonth() {
-  const source = fs.readFileSync(path.resolve(__dirname, '../archive-month.ts'), 'utf8');
+  const source = fs.readFileSync(resolveProjectFile('archive-month.ts'), 'utf8');
   const executableSource = source
     .replace('export function getTargetMonth', 'function getTargetMonth')
     .replace(/\): \{[\s\S]*?\} \{/, ') {');
@@ -18,7 +33,7 @@ function loadGetTargetMonth() {
 }
 
 const getTargetMonth = loadGetTargetMonth();
-const source = fs.readFileSync(path.resolve(__dirname, '../index.ts'), 'utf8');
+const source = fs.readFileSync(resolveProjectFile('index.ts'), 'utf8');
 
 test('getTargetMonth handles same-year lookback', () => {
   const target = getTargetMonth(new Date('2026-07-15T12:00:00.000Z'));
@@ -38,6 +53,13 @@ test('getTargetMonth handles previous-year lookback', () => {
 
 test('archiver resumes deletion from manifest doc ids instead of re-querying date ranges', () => {
   assert.match(source, /status === 'uploaded_not_deleted' && Array\.isArray\(manifest\[finishedKey\]\.docIds\)/);
-  assert.match(source, /await deleteDocumentsByIds\(collectionPath, manifest\[finishedKey\]\.docIds\)/);
-  assert.match(source, /await deleteDocumentsByIds\(collectionPath, manifest\[documentsKey\]\.docIds\)/);
+  assert.match(source, /await deleteArchiveRecords\(companyId, 'finishedJobs', manifest\[finishedKey\]\.docIds\)/);
+  assert.match(source, /await deleteArchiveRecords\(companyId, 'documents', manifest\[documentsKey\]\.docIds\)/);
+});
+
+test('archiver uses SQL-backed archives without Firestore fallback branches', () => {
+  assert.match(source, /await listArchivedCompanyJobs\(companyId, queryOptions\)/);
+  assert.match(source, /await listArchivedCompanyDocuments\(companyId, queryOptions\)/);
+  assert.match(source, /companies = await listCompanyPublicIds\(\)/);
+  assert.doesNotMatch(source, /db\.collection\('companies'\)/);
 });

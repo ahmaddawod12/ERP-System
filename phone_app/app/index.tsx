@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { auth, onAuthStateChanged } from '../firebase';
-import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import type { SupabaseAuthUser } from '../firebase';
 import Login from '../app/Login';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -19,7 +19,7 @@ import {
 export default function App() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<FirebaseAuthTypes.User | null>(null);
+  const [user, setUser] = useState<SupabaseAuthUser | null>(null);
   const [firebaseInitialized, setFirebaseInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const { language } = useLanguageContext();

@@ -1,4 +1,5 @@
 export * from './access';
+export * from './archive';
 export * from './client';
 export * from './clients';
 export * from './company-counters';

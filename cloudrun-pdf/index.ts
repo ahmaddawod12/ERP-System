@@ -1,5 +1,5 @@
 import express from 'express';
-import admin from 'firebase-admin';
+import { Storage } from '@google-cloud/storage';
 import puppeteer from 'puppeteer';
 import { getEmailServiceInstance, getDocumentTitle } from './emailService';
 import generateDocumentHTML from './htmlTemplate';
@@ -100,12 +100,8 @@ if (!STORAGE_BUCKET) {
   throw new Error('STORAGE_BUCKET environment variable is required');
 }
 
-// Initialize Firebase Admin with explicit storage bucket.
-admin.initializeApp({
-  storageBucket: STORAGE_BUCKET
-});
-const db = admin.firestore();
-const storage = admin.storage();
+// Initialize storage client.
+const storage = new Storage();
 
 const app = express();
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
@@ -118,14 +114,25 @@ const GENERATED_TASK_URL_EXPIRATION = 15 * 60; // 15 minutes in seconds
 const GENERATED_EMAIL_URL_EXPIRATION = 24 * 60 * 60; // 24 hours in seconds
 const MAX_ITEMS_PER_DOCUMENT = 100;
 const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_CONCURRENT_TABS = 2; // Shared between preview and generate
-const TAB_WAIT_TIMEOUT = 10000; // 10 seconds
+const MAX_CONCURRENT_TABS = Math.max(1, Number(process.env.MAX_CONCURRENT_TABS || 2) || 2); // Shared between preview and generate
+const TAB_WAIT_TIMEOUT = Math.max(1_000, Number(process.env.TAB_WAIT_TIMEOUT_MS || 10000) || 10000);
+const MAX_TAB_WAITERS = Math.max(1, Number(process.env.MAX_TAB_WAITERS || 64) || 64);
 const PROCESSING_STALE_AFTER_MS = Number(process.env.DOCUMENT_TASK_PROCESSING_STALE_AFTER_MS || 15 * 60 * 1000);
 const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
 const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCOUNTS || '')
   .split(',')
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const CLOUD_RUN_SERVICE_URL = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+if (IS_PRODUCTION && !CLOUD_RUN_SERVICE_URL) {
+  throw new Error('CLOUD_RUN_SERVICE_URL must be set in production for Pub/Sub OIDC verification');
+}
+
+if (IS_PRODUCTION && PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
+  throw new Error('PUBSUB_ALLOWED_SERVICE_ACCOUNTS must include at least one allowed service account in production');
+}
 
 const MAX_LOGO_SIZE = 1 * 1024 * 1024; // 1MB max logo size
 
@@ -159,6 +166,24 @@ let browserGeneration = 0; // Track browser instance generation for disconnect s
 
 // Promise-based tab queue to replace busy-wait polling
 const tabWaiters = [];
+
+function buildRetryableError(code, message) {
+  const error: any = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function isTransientProcessingError(error) {
+  const code = String(error?.code || '').trim().toLowerCase();
+  if (code === 'tab_queue_full' || code === 'tab_wait_timeout') {
+    return true;
+  }
+  const message = String(error?.message || '');
+  return message.includes('retry') ||
+    message.includes('Protocol error') ||
+    message.includes('Navigation timeout') ||
+    message.includes('Timeout');
+}
 
 /**
  * Get or create shared browser instance.
@@ -209,12 +234,19 @@ async function acquireTab(taskId, taskType) {
     return browserGeneration;
   }
 
+  if (tabWaiters.length >= MAX_TAB_WAITERS) {
+    throw buildRetryableError(
+      'tab_queue_full',
+      `retry: browser tab queue full (${tabWaiters.length}/${MAX_TAB_WAITERS})`,
+    );
+  }
+
   // Queue a promise that will be resolved when a tab is released
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       const idx = tabWaiters.findIndex(w => w.taskId === taskId);
       if (idx !== -1) tabWaiters.splice(idx, 1);
-      reject(new Error(`Timeout waiting for available browser tab (${TAB_WAIT_TIMEOUT}ms)`));
+      reject(buildRetryableError('tab_wait_timeout', `retry: timeout waiting for available browser tab (${TAB_WAIT_TIMEOUT}ms)`));
     }, TAB_WAIT_TIMEOUT);
 
     tabWaiters.push({
@@ -255,7 +287,6 @@ function releaseTab(taskId, taskType) {
 // ============================================================================
 const {
   buildHtmlPayload,
-  buildStoredDocumentRecord,
 } = require('./document-payload');
 const {
   completeDocumentGeneration: completeSqlDocumentGeneration,
@@ -274,6 +305,30 @@ const {
   markTaskProcessing: markSqlTaskProcessing,
 } = require('./task-store');
 
+if (IS_PRODUCTION && !isSqlTaskStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires SQL task store in production');
+}
+
+if (IS_PRODUCTION && !isSqlDocumentStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires SQL document store in production');
+}
+
+if (IS_PRODUCTION && !isSqlAccessStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires SQL access store in production');
+}
+
+if (!isSqlTaskStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires SQL task store');
+}
+
+if (!isSqlDocumentStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires SQL document store');
+}
+
+if (!isSqlAccessStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires SQL access store');
+}
+
 /**
  * Request verification for Pub/Sub push endpoints.
  * P0-4: Two-factor auth model:
@@ -285,7 +340,7 @@ const {
  * service account that has roles/run.invoker.
  */
 async function verifyPubSubRequest(req, res, next) {
-  const expectedAudience = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
+  const expectedAudience = CLOUD_RUN_SERVICE_URL;
 
   let oidcVerified = false;
   // Factor 1: Check OIDC JWT if present (primary auth in production)
@@ -337,7 +392,10 @@ async function verifyPubSubRequest(req, res, next) {
 
   // Factor 2: Check shared token (required in addition to OIDC when configured)
   if (!PUBSUB_VERIFICATION_TOKEN) {
-    return oidcVerified ? next() : res.status(503).send('Service misconfigured');
+    if (!expectedAudience) {
+      console.warn('PUBSUB_VERIFICATION_TOKEN is unset and CLOUD_RUN_SERVICE_URL is not configured; allowing request in non-production mode');
+    }
+    return next();
   }
 
   // Only accept token from header (not query string) to reduce leakage risk
@@ -373,7 +431,7 @@ async function fetchCompanyLogo(companyId, taskId, taskType) {
   }
 
   try {
-    const bucket = storage.bucket();
+    const bucket = storage.bucket(STORAGE_BUCKET);
     const logoPath = `companies/${companyId}/logo.png`;
     const logoFile = bucket.file(logoPath);
     const [exists] = await logoFile.exists();
@@ -424,17 +482,13 @@ async function processPreviewTask(taskData) {
       throw new Error('Missing required task identity fields (uid and companyId)');
     }
 
-    if (isSqlTaskStoreEnabled()) {
-      const taskClaim = await claimSqlTaskProcessing(taskId, { staleAfterMs: PROCESSING_STALE_AFTER_MS });
-      if (!taskClaim.shouldProcess) {
-        console.log(`[preview:${taskId}] Skipping - ${taskClaim.reason}`);
-        return { success: true, taskId, skipped: true, reason: taskClaim.reason };
-      }
+    const taskClaim = await claimSqlTaskProcessing(taskId, { staleAfterMs: PROCESSING_STALE_AFTER_MS });
+    if (!taskClaim.shouldProcess) {
+      console.log(`[preview:${taskId}] Skipping - ${taskClaim.reason}`);
+      return { success: true, taskId, skipped: true, reason: taskClaim.reason };
     }
 
-    const requesterProfile = isSqlAccessStoreEnabled()
-      ? await getUserProfileForCompany(uid, companyId)
-      : await db.doc(`users/${uid}/data/profile`).get().then((snap) => (snap.exists ? snap.data() || {} : null));
+    const requesterProfile = await getUserProfileForCompany(uid, companyId);
     if (!requesterProfile) {
       throw new Error(`Requester profile not found for uid: ${uid}`);
     }
@@ -507,7 +561,7 @@ async function processPreviewTask(taskData) {
     const fileName = `${previewId}.pdf`;
     const filePath = `previews/${uid}/${fileName}`;
     
-    const bucket = storage.bucket();
+    const bucket = storage.bucket(STORAGE_BUCKET);
     const file = bucket.file(filePath);
     
     await file.save(pdfBuffer, {
@@ -531,19 +585,6 @@ async function processPreviewTask(taskData) {
     
     const totalTime = Date.now() - startTime;
     
-    // Update task status
-    if (!isSqlTaskStoreEnabled()) {
-      await db.collection('documentTasks').doc(taskId).update({
-        status: 'completed',
-        previewURL: downloadUrl,
-        storagePath: filePath,
-        pdfSize,
-        completedAt: admin.firestore.FieldValue.serverTimestamp(),
-        processingTimeMs: totalTime,
-        expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString()
-      });
-    }
-
     try {
       await markSqlTaskCompleted(taskId, {
         taskType: 'preview',
@@ -568,19 +609,6 @@ async function processPreviewTask(taskData) {
       releaseTab(taskId, 'preview');
     }
     
-    if (!isSqlTaskStoreEnabled()) {
-      try {
-        await db.collection('documentTasks').doc(taskId).update({
-          status: 'failed',
-          error: error.message,
-          completedAt: admin.firestore.FieldValue.serverTimestamp(),
-          processingTimeMs: Date.now() - startTime
-        });
-      } catch (updateError) {
-        console.error(`[preview:${taskId}] Failed to update task status:`, updateError.message);
-      }
-    }
-
     try {
       await markSqlTaskFailed(taskId, error.message);
     } catch (sqlTaskError) {
@@ -622,43 +650,7 @@ async function processGenerateTask(taskData) {
 
     // P0-5: Idempotency check before processing.
     // If task is already processing/completed, skip duplicate side effects.
-    const casResult = isSqlTaskStoreEnabled()
-      ? await claimSqlTaskProcessing(taskId, { staleAfterMs: PROCESSING_STALE_AFTER_MS })
-      : await (async () => {
-        const taskRef = db.collection('documentTasks').doc(taskId);
-        return db.runTransaction(async (tx) => {
-          const taskSnap = await tx.get(taskRef);
-          if (!taskSnap.exists) {
-            return { shouldProcess: false, reason: 'task_not_found' };
-          }
-
-          const taskState = taskSnap.data()?.status;
-          const processingStartedAt = taskSnap.data()?.processingStartedAt;
-          const processingStartedMillis = typeof processingStartedAt?.toMillis === 'function'
-            ? processingStartedAt.toMillis()
-            : Date.parse(String(processingStartedAt || ''));
-          if (taskState === 'completed' || taskState === 'failed') {
-            return { shouldProcess: false, reason: `already_${taskState}` };
-          }
-          if (taskState === 'processing') {
-            if (Number.isFinite(processingStartedMillis) && Date.now() - processingStartedMillis < PROCESSING_STALE_AFTER_MS) {
-              return { shouldProcess: false, reason: 'already_processing' };
-            }
-            console.warn(`[generate:${taskId}] Reclaiming stale processing task`, {
-              processingStartedAt: processingStartedAt || null,
-            });
-          }
-          if (taskState !== 'queued' && taskState !== 'pending') {
-            return { shouldProcess: false, reason: `invalid_state_${String(taskState || 'unknown')}` };
-          }
-
-          tx.update(taskRef, {
-            status: 'processing',
-            processingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
-          return { shouldProcess: true, reason: null };
-        });
-      })();
+    const casResult = await claimSqlTaskProcessing(taskId, { staleAfterMs: PROCESSING_STALE_AFTER_MS });
 
     if (!casResult.shouldProcess) {
       console.log(`[generate:${taskId}] Skipping - ${casResult.reason}`);
@@ -671,9 +663,7 @@ async function processGenerateTask(taskData) {
       console.warn(`[generate:${taskId}] Failed to mirror processing status to SQL`, { error: sqlTaskError.message });
     }
 
-    const requesterProfile = isSqlAccessStoreEnabled()
-      ? await getUserProfileForCompany(uid, companyId)
-      : await db.doc(`users/${uid}/data/profile`).get().then((snap) => (snap.exists ? snap.data() || {} : null));
+    const requesterProfile = await getUserProfileForCompany(uid, companyId);
     if (!requesterProfile) {
       throw new Error(`Requester profile not found for uid: ${uid}`);
     }
@@ -793,7 +783,7 @@ async function processGenerateTask(taskData) {
 
     // Upload to Storage (permanent)
     const fileName = `${normalizedDocumentId}.pdf`;
-    const bucket = storage.bucket();
+    const bucket = storage.bucket(STORAGE_BUCKET);
     const filePath = `companies/${companyId}/documents/${fileName}`;
     const file = bucket.file(filePath);
     
@@ -822,45 +812,13 @@ async function processGenerateTask(taskData) {
       expires: Date.now() + GENERATED_EMAIL_URL_EXPIRATION * 1000,
     });
     
-    if (isSqlDocumentStoreEnabled()) {
-      await completeSqlDocumentGeneration({
-        companyId,
-        documentId: documentDocId,
-        storagePath: filePath,
-      });
-      await bumpCompanyDocumentsVersion(companyId);
-      console.log(`[generate:${taskId}] Document finalized in SQL`, { documentType, documentNumber, userRole });
-    } else {
-      const cachePath = `companies/${companyId}/data/cache`;
-      console.log(`[generate:${taskId}] Using cache path: ${cachePath}`);
-      const documentRef = db.doc(`companies/${companyId}/documents/${documentDocId}`);
-
-      if (isNewDocument) {
-        await documentRef.create(buildStoredDocumentRecord({
-          documentType,
-          documentData,
-          uid,
-          createdAt: (new Date()).toISOString(),
-          totalBeforeVat,
-          vatAmount,
-          totalWithVat,
-          storagePath: filePath,
-          normalizedDocumentId,
-        }));
-        console.log(`[generate:${taskId}] Document saved (counter already incremented by CF)`, { documentType, documentNumber, userRole });
-      } else {
-        await documentRef.update({
-          downloadURL: admin.firestore.FieldValue.delete(),
-          storagePath: filePath,
-        });
-      }
-
-      await db.doc(cachePath).set({
-        documentsVersion: admin.firestore.FieldValue.increment(1),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-      console.log(`[generate:${taskId}] Updated document cache at ${cachePath}`);
-    }
+    await completeSqlDocumentGeneration({
+      companyId,
+      documentId: documentDocId,
+      storagePath: filePath,
+    });
+    await bumpCompanyDocumentsVersion(companyId);
+    console.log(`[generate:${taskId}] Document finalized in SQL`, { documentType, documentNumber, userRole });
     documentFinalized = true;
 
     // ========================================================================
@@ -910,25 +868,6 @@ async function processGenerateTask(taskData) {
     
     const totalTime = Date.now() - startTime;
     
-    // Update task status with email delivery info
-    // Ensure no undefined values are passed to Firestore
-    if (!isSqlTaskStoreEnabled()) {
-      await db.collection('documentTasks').doc(taskId).update({
-        status: 'completed',
-        documentId: normalizedDocumentId,
-        downloadURL: taskDownloadURL,
-        storagePath: filePath,
-        pdfSize,
-        completedAt: (new Date()).toISOString(),
-        processingTimeMs: totalTime,
-        isNewDocument,
-        emailSent: emailSent === true,
-        emailMessageId: emailMessageId || null,
-        emailError: emailError || null,
-        emailRecipient: client.email || null,
-      });
-    }
-
     try {
       await markSqlTaskCompleted(taskId, {
         taskType: 'generate',
@@ -967,20 +906,7 @@ async function processGenerateTask(taskData) {
       }
     }
     
-    if (!isSqlTaskStoreEnabled()) {
-      try {
-        await db.collection('documentTasks').doc(taskId).update({
-          status: 'failed',
-          error: error.message,
-          completedAt: (new Date()).toISOString(),
-          processingTimeMs: Date.now() - startTime
-        });
-      } catch (updateError) {
-        console.error(`[generate:${taskId}] Failed to update task status:`, updateError.message);
-      }
-    }
-
-    if (isSqlDocumentStoreEnabled() && companyId && finalizedDocumentCode) {
+    if (companyId && finalizedDocumentCode) {
       try {
         await failSqlDocumentGeneration({
           companyId,
@@ -1032,10 +958,7 @@ app.post('/preview', verifyPubSubRequest, async (req, res) => {
     console.error('Preview task error:', error.message);
     // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
     // Only transient errors (browser crash, timeout) should trigger retry via 500.
-    const isTransient = error.message?.includes('retry') ||
-      error.message?.includes('Protocol error') ||
-      error.message?.includes('Navigation timeout') ||
-      error.message?.includes('Timeout');
+    const isTransient = isTransientProcessingError(error);
     const status = isTransient ? 500 : 200;
     res.status(status).send(`Error: ${error.message}`);
   }
@@ -1067,10 +990,7 @@ app.post('/generate', verifyPubSubRequest, async (req, res) => {
     console.error('Generate task error:', error.message);
     // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
     // Only transient errors (browser crash, timeout) should trigger retry via 500.
-    const isTransient = error.message?.includes('retry') ||
-      error.message?.includes('Protocol error') ||
-      error.message?.includes('Navigation timeout') ||
-      error.message?.includes('Timeout');
+    const isTransient = isTransientProcessingError(error);
     const status = isTransient ? 500 : 200;
     res.status(status).send(`Error: ${error.message}`);
   }
@@ -1092,6 +1012,10 @@ app.get('/health', async (req, res) => {
     service: 'pdf-service',
     hasBrowser: !!browserInstance,
     browserConnected: browserOk,
+    activeTabs,
+    maxConcurrentTabs: MAX_CONCURRENT_TABS,
+    queuedWaiters: tabWaiters.length,
+    maxTabWaiters: MAX_TAB_WAITERS,
   });
 });
 
@@ -1103,4 +1027,5 @@ app.listen(PORT, () => {
   console.log(`PDF Service listening on port ${PORT}`);
   console.log(`Endpoints: POST /preview, POST /generate, GET /health`);
   console.log(`Max concurrent tabs: ${MAX_CONCURRENT_TABS} (shared between preview & generate)`);
+  console.log(`Tab wait timeout: ${TAB_WAIT_TIMEOUT}ms, max queued waiters: ${MAX_TAB_WAITERS}`);
 });

@@ -47,10 +47,13 @@ export default function WorkersClient() {
   const createInvite = async () => {
     if (!companyId) return;
     try {
-      const response = await fetch("/api/invites/create", {
+      const response = await fetch("/api/callable", {
         method: "POST",
         headers: await buildAuthedJsonHeaders(),
-        body: JSON.stringify({ companyId, targetRole: inviteRole }),
+        body: JSON.stringify({
+          operation: "createInviteV1",
+          payload: { companyId, targetRole: inviteRole },
+        }),
       });
       const payload = (await response.json()) as ClientApiResponse<{
         inviteId: string;

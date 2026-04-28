@@ -455,7 +455,7 @@ export default function SupportChat() {
           <TouchableOpacity onPress={toggleHistory} style={styles.historyBackButton}>
             <Ionicons name="arrow-back" size={24} color="white" />
             <AppText style={styles.historyBackText}>
-              {language === 'en' ? 'Back' : language === 'he' ? '×—×–×•×¨' : 'Ø±Ø¬ÙˆØ¹'}
+              {language === 'en' ? 'Back' : language === 'he' ? 'חזור' : 'رجوع'}
             </AppText>
           </TouchableOpacity>
           <AppText style={styles.historyHeaderTitle}>{t.history}</AppText>

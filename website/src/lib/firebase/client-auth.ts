@@ -7,9 +7,9 @@ export interface ClientAuthUser {
 
 type AuthChangeCallback = (user: ClientAuthUser | null) => void;
 
-const SUPABASE_ACCESS_TOKEN_KEY = "sj_supabase_access_token";
-const SUPABASE_EXPIRES_AT_KEY = "sj_supabase_expires_at";
 const SUPABASE_USER_KEY = "sj_supabase_user";
+let inMemoryAccessToken = "";
+let inMemoryExpiresAt = 0;
 let inMemoryRefreshToken = "";
 
 const supabaseListeners = new Set<AuthChangeCallback>();
@@ -26,7 +26,7 @@ function readSupabaseConfig() {
 function readSupabaseUser(): ClientAuthUser | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(SUPABASE_USER_KEY);
+    const raw = window.sessionStorage.getItem(SUPABASE_USER_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { id?: unknown; email?: unknown };
     const uid = String(parsed?.id ?? "").trim();
@@ -47,18 +47,18 @@ function writeSupabaseSession(payload: {
   user: { id: string; email: string | null };
 }) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(SUPABASE_ACCESS_TOKEN_KEY, payload.accessToken);
+  inMemoryAccessToken = payload.accessToken;
+  inMemoryExpiresAt = payload.expiresAt;
   inMemoryRefreshToken = payload.refreshToken;
-  window.localStorage.setItem(SUPABASE_EXPIRES_AT_KEY, String(payload.expiresAt));
-  window.localStorage.setItem(SUPABASE_USER_KEY, JSON.stringify(payload.user));
+  window.sessionStorage.setItem(SUPABASE_USER_KEY, JSON.stringify(payload.user));
 }
 
 function clearSupabaseSession() {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(SUPABASE_ACCESS_TOKEN_KEY);
+  inMemoryAccessToken = "";
+  inMemoryExpiresAt = 0;
   inMemoryRefreshToken = "";
-  window.localStorage.removeItem(SUPABASE_EXPIRES_AT_KEY);
-  window.localStorage.removeItem(SUPABASE_USER_KEY);
+  window.sessionStorage.removeItem(SUPABASE_USER_KEY);
 }
 
 function notifySupabaseListeners() {
@@ -71,9 +71,9 @@ function notifySupabaseListeners() {
 async function refreshSupabaseAccessTokenIfNeeded() {
   if (typeof window === "undefined") return null;
 
-  const accessToken = window.localStorage.getItem(SUPABASE_ACCESS_TOKEN_KEY) || "";
+  const accessToken = inMemoryAccessToken;
   const refreshToken = inMemoryRefreshToken;
-  const expiresAt = Number(window.localStorage.getItem(SUPABASE_EXPIRES_AT_KEY) || 0);
+  const expiresAt = inMemoryExpiresAt;
 
   if (!accessToken) {
     return null;
@@ -188,7 +188,7 @@ export async function signInWithConfiguredProvider(email: string, password: stri
 
 export async function signOutConfiguredProvider() {
   try {
-    const token = window.localStorage.getItem(SUPABASE_ACCESS_TOKEN_KEY) || "";
+    const token = inMemoryAccessToken;
     if (token) {
       const { baseUrl, anonKey } = readSupabaseConfig();
       await fetch(`${baseUrl}/auth/v1/logout`, {
@@ -214,11 +214,7 @@ export function subscribeConfiguredAuthState(callback: AuthChangeCallback): () =
   callback(readSupabaseUser());
 
   const storageListener = (event: StorageEvent) => {
-    if (
-      event.key === SUPABASE_ACCESS_TOKEN_KEY ||
-      event.key === SUPABASE_EXPIRES_AT_KEY ||
-      event.key === SUPABASE_USER_KEY
-    ) {
+    if (event.key === SUPABASE_USER_KEY) {
       callback(readSupabaseUser());
     }
   };
@@ -236,7 +232,7 @@ export async function getCurrentAccessToken(forceRefresh = true): Promise<string
     return refreshSupabaseAccessTokenIfNeeded();
   }
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(SUPABASE_ACCESS_TOKEN_KEY);
+  return inMemoryAccessToken || null;
 }
 
 export async function buildAuthedJsonHeaders() {

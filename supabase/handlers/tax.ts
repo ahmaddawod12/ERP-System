@@ -82,19 +82,24 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
   }
 
   let documentNumber = Number(documentRow.document_number || 0);
-  if (!Number.isInteger(documentNumber) || documentNumber <= 0) {
+  const needsNumbering = !Number.isInteger(documentNumber) || documentNumber <= 0;
+  if (needsNumbering) {
     documentNumber = await allocateNextCompanyCounter(companyId, "doc_305", ctx);
   }
   const documentCode = optionalTrimmedString(documentRow.document_code, 64) || `TAX${documentNumber}-${publicCompanyId.slice(0, 8)}`;
 
+  const updatePatch: Record<string, unknown> = {
+    tax_authority_status: "reserved",
+    updated_at: now,
+  };
+  if (needsNumbering) {
+    updatePatch.document_number = documentNumber;
+    updatePatch.document_code = documentCode;
+  }
+
   await supabase
     .from("documents")
-    .update({
-      document_number: documentNumber,
-      document_code: documentCode,
-      tax_authority_status: "reserved",
-      updated_at: now,
-    })
+    .update(updatePatch)
     .eq("company_id", companyId)
     .eq("id", documentId);
 

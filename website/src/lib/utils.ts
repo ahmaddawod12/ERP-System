@@ -36,7 +36,10 @@ export function generateCompanySlug(name: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  const suffix = Math.random().toString(36).slice(2, 7);
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(5);
+  globalThis.crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
   return `${normalized || "company"}-${suffix}`;
 }
 

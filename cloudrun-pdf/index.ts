@@ -851,7 +851,6 @@ async function processGenerateTask(taskData) {
         
         emailSent = emailResult.success;
         emailMessageId = emailResult.messageId;
-        emailError = emailResult.error;
         
         if (emailSent) {
           console.log(`[generate:${taskId}] Email sent successfully`, { messageId: emailMessageId });

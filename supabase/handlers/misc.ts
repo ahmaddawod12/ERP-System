@@ -166,6 +166,7 @@ export async function requestUpgradeV1(payload: any, ctx: EdgeFunctionContext): 
 
   const companyId = suppliedCompanyId || membershipCtx.publicCompanyId;
   let currentTier = suppliedCurrentTier;
+  let internalCompanyIdForInsert: string | null = membershipCtx.internalCompanyId;
   if (companyId) {
     const publicCompanyId = Number(companyId);
     if (Number.isFinite(publicCompanyId)) {
@@ -175,6 +176,7 @@ export async function requestUpgradeV1(payload: any, ctx: EdgeFunctionContext): 
         .eq("public_company_id", publicCompanyId)
         .single();
       if (company?.id) {
+        internalCompanyIdForInsert = String(company.id);
         const { data: subscription } = await supabase
           .from("company_subscriptions")
           .select("tier")
@@ -195,7 +197,7 @@ export async function requestUpgradeV1(payload: any, ctx: EdgeFunctionContext): 
     .insert({
       uid: ctx.auth.uid,
       email: user.email || ctx.auth.email || null,
-      company_id: companyId || null,
+      company_id: internalCompanyIdForInsert || null,
       role,
       current_tier: currentTier,
       requested_tier: requestedTier,
@@ -349,6 +351,7 @@ export async function moderateUpgradeRequestV1(payload: any, ctx: EdgeFunctionCo
 export async function contactRequestV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
   const name = requireNonEmptyString(payload?.name, "name", 2, 120);
   const email = validateEmail(requireNonEmptyString(payload?.email, "email", 5, 320)).toLowerCase();
+  const subject = requireNonEmptyString(payload?.subject, "subject", 2, 500);
   const company = requireNonEmptyString(payload?.company, "company", 2, 140);
   const message = requireNonEmptyString(payload?.message, "message", 8, 2000);
   const websiteHp = optionalTrimmedString(payload?.website || payload?.url || payload?.companyWebsite, 500);
@@ -365,6 +368,7 @@ export async function contactRequestV1(payload: any, ctx: EdgeFunctionContext): 
     .insert({
       name,
       email,
+      subject,
       company,
       message,
       status: "new",

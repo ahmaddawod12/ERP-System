@@ -236,7 +236,14 @@ Rules:
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration tip:
-- Ensure migration `0009_document_task_generate_url.sql` is applied so read-model task responses expose generate URLs from `generate_url`.
+- Ensure migration `0010_fixes.sql` is applied. This migration adds:
+  - `document_number` immutability trigger
+  - `document_tasks` and `support_conversations` RLS fixes
+  - `contact_requests.subject` column
+  - `upgrade_requests.company_id` → UUID
+  - `document_tasks` unique index on `(company_id, task_type, document_id)`
+  - `part_no` counter key
+  - `allocate_company_counter`, `allocate_system_counter`, and `increment_rate_limit_bucket` RPCs
 
 Minimum steps:
 

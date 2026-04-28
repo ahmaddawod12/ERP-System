@@ -380,27 +380,18 @@ function getDocumentTitle(documentType, documentNumber, language = 'he') {
 }
 
 /**
- * Get email service instance (always returns SES)
- * 
- * @returns {AmazonSESEmailService} SES email service instance
- */
-function getEmailService() {
-  return new AmazonSESEmailService();
-}
-
-/**
  * Singleton instance of email service
  */
-let emailServiceInstance = null;
+let emailServiceInstance: AmazonSESEmailService | null = null;
 
 /**
  * Get or create email service singleton instance
  * 
  * @returns {AmazonSESEmailService} Email service instance
  */
-function getEmailServiceInstance() {
+function getEmailServiceInstance(): AmazonSESEmailService {
   if (!emailServiceInstance) {
-    emailServiceInstance = getEmailService();
+    emailServiceInstance = new AmazonSESEmailService();
   }
   return emailServiceInstance;
 }
@@ -410,5 +401,5 @@ function getEmailServiceInstance() {
 // EXPORTS
 // ============================================================================
 
-export { AmazonSESEmailService, getEmailService, getEmailServiceInstance, getDocumentTitle };
+export { AmazonSESEmailService, getEmailServiceInstance, getDocumentTitle };
 

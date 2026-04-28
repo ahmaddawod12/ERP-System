@@ -13,11 +13,7 @@ export const getEnv = () => ({
   supabaseAnonKey: Deno.env.get("SUPABASE_ANON_KEY") || "",
   supabaseServiceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
 
-  // Firebase Auth (for token verification until full migration)
-  firebaseProjectId: Deno.env.get("FIREBASE_PROJECT_ID") || "",
-  firebaseApiKey: Deno.env.get("FIREBASE_API_KEY") || "",
-
-  // JWT Secret for Supabase (will replace Firebase)
+  // JWT Secret for Supabase
   jwtSecret: Deno.env.get("JWT_SECRET") || "",
 
   // SQL / Database
@@ -44,7 +40,6 @@ export const getEnv = () => ({
 
   // Feature Flags
   enableSqlPersistence: Deno.env.get("ENABLE_SQL_PERSISTENCE") === "true",
-  allowFirebaseAuthFallback: Deno.env.get("ALLOW_FIREBASE_AUTH_FALLBACK") === "true",
   logLevel: Deno.env.get("LOG_LEVEL") || "info",
 });
 
@@ -124,15 +119,6 @@ export async function verifySupabaseJwt(
   }
 }
 
-// ── Firebase Auth Token Verification (Temporary, until full migration) ─────
-export async function verifyFirebaseToken(
-  _token: string,
-  _projectId: string
-): Promise<{ uid: string; email?: string; [key: string]: any } | null> {
-  // Firebase token fallback is disabled by default in this migration stage.
-  return null;
-}
-
 // ── Unified Auth Verification ──────────────────────────────────────────────
 export async function verifyBearerAuth(
   token: string,
@@ -140,7 +126,6 @@ export async function verifyBearerAuth(
 ): Promise<{ uid: string; email?: string; claims: any } | null> {
   if (!token) return null;
 
-  // Try Supabase JWT first (new)
   const supabaseClaims = await verifySupabaseJwt(token, env.jwtSecret);
   if (supabaseClaims) {
     return {
@@ -148,18 +133,6 @@ export async function verifyBearerAuth(
       email: supabaseClaims.email,
       claims: supabaseClaims,
     };
-  }
-
-  // Fallback to Firebase (temporary during migration)
-  if (env.allowFirebaseAuthFallback && env.firebaseProjectId) {
-    const firebaseClaims = await verifyFirebaseToken(token, env.firebaseProjectId);
-    if (firebaseClaims) {
-      return {
-        uid: firebaseClaims.uid,
-        email: firebaseClaims.email,
-        claims: firebaseClaims,
-      };
-    }
   }
 
   return null;
@@ -510,43 +483,22 @@ export async function checkRateLimit(
   const bucketKey = await hashHex(`${rawKey}:${safeWindowMs}:${safeMaxRequests}:${bucket}`);
   const supabase = createSupabaseClient(ctx.env);
 
-  const { data: existingBucket } = await supabase
-    .from("rate_limit_buckets")
-    .select("hit_count")
-    .eq("bucket_key", bucketKey)
-    .maybeSingle();
-
-  if (!existingBucket) {
-    const { error: insertError } = await supabase.from("rate_limit_buckets").insert({
-      bucket_key: bucketKey,
-      hashed_key: hashedKey,
-      window_started_at: new Date(bucketStartMs).toISOString(),
-      hit_count: 1,
-      expire_at: new Date(expireAtMs).toISOString(),
-      updated_at: new Date(nowMs).toISOString(),
+  // Atomic upsert: INSERT … ON CONFLICT DO UPDATE, returns new hit_count
+  const { data: rpcData, error: rpcError } = await supabase
+    .rpc("increment_rate_limit_bucket", {
+      p_bucket_key: bucketKey,
+      p_hashed_key: hashedKey,
+      p_window_started_at: new Date(bucketStartMs).toISOString(),
+      p_expire_at: new Date(expireAtMs).toISOString(),
     });
-    if (insertError) {
-      ctx.logger.warn("Rate limit insert failed; allowing request", { key: rawKey, error: insertError.message });
-    }
+
+  if (rpcError) {
+    ctx.logger.warn("Rate limit RPC failed; allowing request", { key: rawKey, error: rpcError.message });
     return;
   }
 
-  const nextCount = Number(existingBucket.hit_count || 0) + 1;
-  const { error: updateError } = await supabase
-    .from("rate_limit_buckets")
-    .update({
-      hit_count: nextCount,
-      expire_at: new Date(expireAtMs).toISOString(),
-      updated_at: new Date(nowMs).toISOString(),
-    })
-    .eq("bucket_key", bucketKey);
-
-  if (updateError) {
-    ctx.logger.warn("Rate limit update failed; allowing request", { key: rawKey, error: updateError.message });
-    return;
-  }
-
-  if (nextCount > safeMaxRequests) {
+  const hitCount = Number(rpcData ?? 0);
+  if (hitCount > safeMaxRequests) {
     throw {
       code: "resource-exhausted",
       message: "Too many requests. Please try again later.",
@@ -681,59 +633,20 @@ export async function allocateNextCompanyCounter(
   const resolved = await resolveCompanyIdentifiers(companyId, ctx.env);
   const supabase = createSupabaseClient(ctx.env);
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const { data: existing, error: readError } = await supabase
-      .from("company_counters")
-      .select("next_value")
-      .eq("company_id", resolved.internalCompanyId)
-      .eq("counter_key", normalizedCounterKey)
-      .maybeSingle();
+  const { data, error } = await supabase.rpc("allocate_company_counter", {
+    p_company_id: resolved.internalCompanyId,
+    p_counter_key: normalizedCounterKey,
+  });
 
-    if (readError) {
-      throw {
-        code: "internal",
-        httpStatus: 500,
-        message: `Failed to read company counter: ${readError.message}`,
-      };
-    }
-
-    if (!existing) {
-      const { error: insertError } = await supabase
-        .from("company_counters")
-        .insert({
-          company_id: resolved.internalCompanyId,
-          counter_key: normalizedCounterKey,
-          next_value: 2,
-          updated_at: new Date().toISOString(),
-        });
-      if (!insertError) {
-        return 1;
-      }
-      continue;
-    }
-
-    const current = Math.max(1, Number(existing.next_value || 1) || 1);
-    const { data: updated, error: updateError } = await supabase
-      .from("company_counters")
-      .update({
-        next_value: current + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("company_id", resolved.internalCompanyId)
-      .eq("counter_key", normalizedCounterKey)
-      .eq("next_value", current)
-      .select("next_value");
-
-    if (!updateError && Array.isArray(updated) && updated.length > 0) {
-      return current;
-    }
+  if (error) {
+    throw {
+      code: "internal",
+      httpStatus: 500,
+      message: `Failed to allocate company counter ${normalizedCounterKey}: ${error.message}`,
+    };
   }
 
-  throw {
-    code: "unavailable",
-    httpStatus: 503,
-    message: `Failed to allocate company counter ${normalizedCounterKey}`,
-  };
+  return Number(data);
 }
 
 export async function allocateNextSystemCounter(
@@ -749,56 +662,20 @@ export async function allocateNextSystemCounter(
   const seed = Math.max(1, Number(startAt || 1) || 1);
   const supabase = createSupabaseClient(ctx.env);
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const { data: existing, error: readError } = await supabase
-      .from("system_counters")
-      .select("next_value")
-      .eq("counter_key", normalizedCounterKey)
-      .maybeSingle();
+  const { data, error } = await supabase.rpc("allocate_system_counter", {
+    p_counter_key: normalizedCounterKey,
+    p_start_at: seed,
+  });
 
-    if (readError) {
-      throw {
-        code: "internal",
-        httpStatus: 500,
-        message: `Failed to read system counter: ${readError.message}`,
-      };
-    }
-
-    if (!existing) {
-      const { error: insertError } = await supabase
-        .from("system_counters")
-        .insert({
-          counter_key: normalizedCounterKey,
-          next_value: seed + 1,
-          updated_at: new Date().toISOString(),
-        });
-      if (!insertError) {
-        return seed;
-      }
-      continue;
-    }
-
-    const current = Math.max(seed, Number(existing.next_value || seed) || seed);
-    const { data: updated, error: updateError } = await supabase
-      .from("system_counters")
-      .update({
-        next_value: current + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("counter_key", normalizedCounterKey)
-      .eq("next_value", current)
-      .select("next_value");
-
-    if (!updateError && Array.isArray(updated) && updated.length > 0) {
-      return current;
-    }
+  if (error) {
+    throw {
+      code: "internal",
+      httpStatus: 500,
+      message: `Failed to allocate system counter ${normalizedCounterKey}: ${error.message}`,
+    };
   }
 
-  throw {
-    code: "unavailable",
-    httpStatus: 503,
-    message: `Failed to allocate system counter ${normalizedCounterKey}`,
-  };
+  return Number(data);
 }
 
 // ── Supabase Client Helper ──────────────────────────────────────────────────

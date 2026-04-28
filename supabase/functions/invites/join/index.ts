@@ -7,6 +7,7 @@ import {
   buildSuccessResponse,
   parseJsonBody,
   requireNonEmptyString,
+  checkRateLimit,
 } from "../../../shared-edge-helpers.ts";
 import { joinCompanyV1 } from "../../../handlers/invites.ts";
 
@@ -57,6 +58,8 @@ async function handleJoinCompanyRequest(req: Request): Promise<Response> {
     const body = await parseJsonBody(req);
     const inviteCode = requireNonEmptyString(body?.inviteCode || "", "inviteCode", 4, 80);
 
+    await checkRateLimit(`join:${ctx.auth.uid}`, 10, 60_000, ctx);
+
     const response = await joinCompanyV1(
       {
         inviteCode,
@@ -68,12 +71,18 @@ async function handleJoinCompanyRequest(req: Request): Promise<Response> {
 
     return buildHttpResponse(200, buildSuccessResponse(response), ctx.corsHeaders);
   } catch (error) {
-    const ctx = await createEdgeFunctionContext(req, env);
-    ctx.logger.error("Join company request failed", {
-      error: error?.message || String(error),
-      correlationId: ctx.correlationId,
-    });
-    return handleHttpError(error, ctx.corsHeaders);
+    let corsHeaders: Record<string, string> = {};
+    try {
+      const errCtx = await createEdgeFunctionContext(req, env);
+      corsHeaders = errCtx.corsHeaders;
+      errCtx.logger.error("Join company request failed", {
+        error: error?.message || String(error),
+        correlationId: errCtx.correlationId,
+      });
+    } catch {
+      // createEdgeFunctionContext itself failed; proceed with empty corsHeaders
+    }
+    return handleHttpError(error, corsHeaders);
   }
 }
 

@@ -16,7 +16,10 @@ import {
 const ALLOWED_TARGET_ROLES = ["manager", "worker", "user", "basic"];
 
 function generateInviteCode(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
+  return Array.from(crypto.getRandomValues(new Uint8Array(10)))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
 }
 
 export async function createInviteV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {

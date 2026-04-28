@@ -160,7 +160,7 @@ async function getCompanyInventoryParts(internalCompanyId: string) {
     return { parts: [], nextId: 1, lastUpdated: new Date().toISOString() };
   }
 
-  const [{ data: parts, error: partsError }, { data: balances, error: balancesError }] = await Promise.all([
+  const [{ data: parts, error: partsError }, { data: balances, error: balancesError }, { data: counterRow }] = await Promise.all([
     supabase
       .from("inventory_parts")
       .select("id, part_no, name, active, low_threshold, created_at")
@@ -170,6 +170,12 @@ async function getCompanyInventoryParts(internalCompanyId: string) {
       .from("inventory_balances")
       .select("part_id, quantity_on_hand, updated_at")
       .eq("location_id", location.id),
+    supabase
+      .from("company_counters")
+      .select("next_value")
+      .eq("company_id", internalCompanyId)
+      .eq("counter_key", "part_no")
+      .maybeSingle(),
   ]);
 
   if (partsError || balancesError) {
@@ -194,9 +200,10 @@ async function getCompanyInventoryParts(internalCompanyId: string) {
   });
 
   const maxId = normalizedParts.reduce((acc, item) => Math.max(acc, Number(item.id || 0)), 0);
+  const nextId = counterRow ? Number(counterRow.next_value) : maxId + 1;
   return {
     parts: normalizedParts,
-    nextId: maxId + 1,
+    nextId,
     lastUpdated: new Date().toISOString(),
   };
 }
@@ -235,7 +242,7 @@ async function getUserInventoryParts(internalCompanyId: string, targetUid: strin
     return { parts: [], nextId: 1, lastUpdated: new Date().toISOString() };
   }
 
-  const [{ data: balances, error: balancesError }, { data: parts, error: partsError }] = await Promise.all([
+  const [{ data: balances, error: balancesError }, { data: parts, error: partsError }, { data: userCounterRow }] = await Promise.all([
     supabase
       .from("inventory_balances")
       .select("part_id, quantity_on_hand, updated_at")
@@ -244,6 +251,12 @@ async function getUserInventoryParts(internalCompanyId: string, targetUid: strin
       .from("inventory_parts")
       .select("id, part_no, name, low_threshold, created_at")
       .eq("company_id", internalCompanyId),
+    supabase
+      .from("company_counters")
+      .select("next_value")
+      .eq("company_id", internalCompanyId)
+      .eq("counter_key", "part_no")
+      .maybeSingle(),
   ]);
 
   if (balancesError || partsError) {
@@ -267,9 +280,10 @@ async function getUserInventoryParts(internalCompanyId: string, targetUid: strin
   });
 
   const maxId = normalizedParts.reduce((acc, item) => Math.max(acc, Number(item.id || 0)), 0);
+  const nextId = userCounterRow ? Number(userCounterRow.next_value) : maxId + 1;
   return {
     parts: normalizedParts,
-    nextId: maxId + 1,
+    nextId,
     lastUpdated: new Date().toISOString(),
   };
 }
@@ -299,11 +313,16 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   const supabase = createSupabaseClient(env);
 
   if (kind === "userSyncState") {
+    const { data: userRow } = await supabase
+      .from("app_users")
+      .select("updated_at")
+      .eq("id", uid)
+      .maybeSingle();
     return {
       profile: 0,
       inventory: 0,
       subscription: 0,
-      updatedAt: new Date().toISOString(),
+      updatedAt: userRow?.updated_at || new Date().toISOString(),
     };
   }
 
@@ -488,22 +507,15 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       .limit(pageSize + 1);
 
     if (cursor) {
-      query = query.lte("created_at", cursor.createdAt);
+      query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
     }
 
     const { data, error } = await query;
     if (error) {
       throw { code: "internal", httpStatus: 500, message: "Failed to load jobs" };
     }
-    const filteredData = cursor
-      ? (data || []).filter((job: any) => {
-          const createdAt = String(job.created_at || "");
-          const id = String(job.id || "");
-          return createdAt < cursor.createdAt || (createdAt === cursor.createdAt && id < cursor.id);
-        })
-      : (data || []);
-    const hasMore = filteredData.length > pageSize;
-    const items = filteredData.slice(0, pageSize).map((job: any) => ({
+    const hasMore = (data || []).length > pageSize;
+    const items = (data || []).slice(0, pageSize).map((job: any) => ({
       id: String(job.id),
       jobId: String(job.id),
       jobNo: Number(job.job_no || 0),
@@ -550,22 +562,15 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       .limit(pageSize + 1);
 
     if (cursor) {
-      query = query.lte("created_at", cursor.createdAt);
+      query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
     }
 
     const { data, error } = await query;
     if (error) {
       throw { code: "internal", httpStatus: 500, message: "Failed to load documents" };
     }
-    const filteredData = cursor
-      ? (data || []).filter((doc: any) => {
-          const createdAt = String(doc.created_at || "");
-          const id = String(doc.id || "");
-          return createdAt < cursor.createdAt || (createdAt === cursor.createdAt && id < cursor.id);
-        })
-      : (data || []);
-    const hasMore = filteredData.length > pageSize;
-    const items = filteredData.slice(0, pageSize).map((doc: any) => ({
+    const hasMore = (data || []).length > pageSize;
+    const items = (data || []).slice(0, pageSize).map((doc: any) => ({
       id: String(doc.id),
       type: doc.document_type,
       documentType: doc.document_type,
@@ -771,8 +776,14 @@ async function handleReadModelRequest(req: Request): Promise<Response> {
       ctx.corsHeaders,
     );
   } catch (error) {
-    const ctx = await createEdgeFunctionContext(req, env);
-    return handleHttpError(error, ctx.corsHeaders);
+    let corsHeaders: Record<string, string> = {};
+    try {
+      const errCtx = await createEdgeFunctionContext(req, env);
+      corsHeaders = errCtx.corsHeaders;
+    } catch {
+      // createEdgeFunctionContext itself failed; proceed with empty corsHeaders
+    }
+    return handleHttpError(error, corsHeaders);
   }
 }
 

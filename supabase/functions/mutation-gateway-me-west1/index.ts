@@ -105,13 +105,19 @@ async function handleMutationMeWest1Request(req: Request): Promise<Response> {
       ctx.corsHeaders
     );
   } catch (error) {
-    const ctx = await createEdgeFunctionContext(req, env);
-    ctx.logger.error("Tax mutation gateway request failed", {
-      error: error?.message || String(error),
-      region: "me-west1",
-      correlationId: ctx.correlationId
-    });
-    return handleHttpError(error, ctx.corsHeaders);
+    let corsHeaders: Record<string, string> = {};
+    try {
+      const errCtx = await createEdgeFunctionContext(req, env);
+      corsHeaders = errCtx.corsHeaders;
+      errCtx.logger.error("Tax mutation gateway request failed", {
+        error: error?.message || String(error),
+        region: "me-west1",
+        correlationId: errCtx.correlationId,
+      });
+    } catch {
+      // createEdgeFunctionContext itself failed; proceed with empty corsHeaders
+    }
+    return handleHttpError(error, corsHeaders);
   }
 }
 

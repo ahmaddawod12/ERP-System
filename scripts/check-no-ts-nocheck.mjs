@@ -4,8 +4,6 @@ import path from "node:path";
 const repoRoot = process.cwd();
 
 const protectedPaths = [
-  "functions/src",
-  "functions/tests",
   "packages/contracts",
   "website/src",
   "website/tests",

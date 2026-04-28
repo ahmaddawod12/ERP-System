@@ -1,28 +1,30 @@
+import { DOC_TYPE } from '@smart-job/contracts';
+
 export function getDocumentTranslations(language: string, documentType: number) {
   const documentNames: Record<string, Record<number, string>> = {
     en: {
-      305: 'Tax Invoice',
-      400: 'Receipt',
-      10: 'Price Proposal',
-      200: 'Delivery Note',
-      210: 'Return Certificate',
-      330: 'Refund',
+      [DOC_TYPE.TAX_INVOICE]: 'Tax Invoice',
+      [DOC_TYPE.RECEIPT]: 'Receipt',
+      [DOC_TYPE.PRICE_PROPOSAL]: 'Price Proposal',
+      [DOC_TYPE.DELIVERY_NOTE]: 'Delivery Note',
+      [DOC_TYPE.RETURN_CERTIFICATE]: 'Return Certificate',
+      [DOC_TYPE.REFUND]: 'Refund',
     },
     he: {
-      305: 'חשבונית מס',
-      400: 'קבלה',
-      10: 'הצעת מחיר',
-      200: 'תעודת משלוח',
-      210: 'תעודת החזרה',
-      330: 'החזר כספי',
+      [DOC_TYPE.TAX_INVOICE]: 'חשבונית מס',
+      [DOC_TYPE.RECEIPT]: 'קבלה',
+      [DOC_TYPE.PRICE_PROPOSAL]: 'הצעת מחיר',
+      [DOC_TYPE.DELIVERY_NOTE]: 'תעודת משלוח',
+      [DOC_TYPE.RETURN_CERTIFICATE]: 'תעודת החזרה',
+      [DOC_TYPE.REFUND]: 'החזר כספי',
     },
     ar: {
-      305: 'فاتورة ضريبية',
-      400: 'إيصال',
-      10: 'عرض السعر',
-      200: 'إشعار تسليم',
-      210: 'شهادة إرجاع',
-      330: 'استرداد',
+      [DOC_TYPE.TAX_INVOICE]: 'فاتورة ضريبية',
+      [DOC_TYPE.RECEIPT]: 'إيصال',
+      [DOC_TYPE.PRICE_PROPOSAL]: 'عرض السعر',
+      [DOC_TYPE.DELIVERY_NOTE]: 'إشعار تسليم',
+      [DOC_TYPE.RETURN_CERTIFICATE]: 'شهادة إرجاع',
+      [DOC_TYPE.REFUND]: 'استرداد',
     },
   };
 

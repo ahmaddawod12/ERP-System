@@ -1,6 +1,6 @@
 import sanitizeHtml from 'sanitize-html';
 
-﻿/**
+/**
  * HTML Template Generator Module
  * Generates professional HTML templates for PDF documents
  */
@@ -18,6 +18,19 @@ function sanitizeInput(input) {
     allowedAttributes: {},
     disallowedTagsMode: 'escape',
   });
+}
+
+/**
+ * Sanitize a URL to prevent XSS via javascript: or data: schemes.
+ * Only allows https://, http://, and root-relative (/) URLs.
+ */
+function sanitizeUrl(url: unknown): string {
+  if (typeof url !== 'string' || url.trim() === '') return '';
+  const trimmed = url.trim();
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  return '';
 }
 
 /**
@@ -599,7 +612,7 @@ function generateDocumentHTML(documentData) {
       <!-- Company Logo (Left side) -->
       <div class="company-logo-section">
         <div class="company-logo">
-          ${logoUrl ? `<img src="${logoUrl}" alt="לוגו החברה" />` : `
+          ${sanitizeUrl(logoUrl) ? `<img src="${sanitizeUrl(logoUrl)}" alt="לוגו החברה" />` : `
           <div class="company-logo-text">
             לוגו החברה<br>
             120x120

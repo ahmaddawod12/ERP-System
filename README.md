@@ -69,15 +69,43 @@ npm --prefix phone_app run test
 - Valid job statuses are `pending`, `waiting`, `finished`, and `denied`.
 - Keep `read-model` `kind` contracts synchronized across website, mobile, and backend handlers.
 
-## Recent Hardening (April 26, 2026)
+## Recent Hardening (April 26–27, 2026)
 
-- Supabase mutation handlers now normalize incoming `companyId` to internal company UUID before SQL queries.
-- Tax invoice numbering and company inventory part numbering are allocated through SQL-backed counters.
-- Read-model cursor pagination for jobs/documents uses a stable composite cursor (`createdAt`, `id`) to avoid duplicate/skip edge cases.
-- Website protected-route session validation now uses a short-lived in-memory revocation-check cache to reduce per-request overhead.
-- Website auth transport no longer persists Supabase refresh tokens in `localStorage`.
-- Supabase Edge CORS handling now fails closed when request origins are not explicitly allowlisted.
-- Invite redemption now consumes invite state atomically before membership finalization to avoid multi-join races.
-- Document task URLs are now split by task type: `preview_url` for preview and `generate_url` for generated PDFs.
-- `updateBusinessInfoV1` now rejects `vat_number` mutations after onboarding.
-- `fetchArchiveMonthV1` is fail-explicit (`unavailable`) until Supabase Edge archive retrieval is fully implemented.
+### Backend / SQL (migration `0010_fixes.sql`)
+- Supabase mutation handlers normalize incoming `companyId` to internal company UUID before SQL queries.
+- SQL counter RPCs (`allocate_company_counter`, `allocate_system_counter`) cover all sequential IDs: `public_company_id`, `member_no`, `client_no`, `job_no`, tax invoice numbers (`doc_305`), and inventory part numbers (`part_no`).
+- SQL rate-limit RPC (`increment_rate_limit_bucket`) replaces Firestore-backed rate limiting; join-company flow now enforces a per-user limit.
+- `document_number` immutability trigger blocks updates once a non-zero number is assigned (allows 0 → real, blocks real → different real).
+- `document_tasks` RLS policy fixed to reference the correct column (`user_id`).
+- `support_conversations` RLS policy fixed to allow access for records with no company scope.
+- `contact_requests` now stores a dedicated `subject VARCHAR(500)` column.
+- `upgrade_requests.company_id` migrated from `VARCHAR(32)` to `UUID`; handlers store the internal company UUID.
+- `document_tasks` unique index changed from `(company_id, task_type, document_type)` to `(company_id, task_type, document_id)` to allow two concurrent tasks of the same doc type.
+
+### Supabase Edge Functions
+- Read-model cursor pagination for jobs/documents uses composite cursor `(created_at, id)` via PostgREST `.or()` — no in-memory filtering.
+- `userSyncState` kind now returns `app_users.updated_at` instead of hardcoded zeros.
+- Inventory part listing attaches the next sequential part ID from the SQL counter.
+- Invite redemption consumes invite state atomically before membership finalization (prevents multi-join races).
+- `contact/request` passes `subject` as a dedicated field; `company` defaults to `"General"` when absent.
+- Double-fault catch in all three gateways (`mutation-gateway`, `mutation-gateway-me-west1`, `read-model`) now resolves with a safe CORS-aware error response instead of an unhandled rejection.
+
+### Website
+- Auth transport no longer persists Supabase access token or refresh token in `localStorage`; access token and expiry are kept in-memory and only non-sensitive user info (`uid`, `email`) is written to `sessionStorage`.
+- `UserProfile.wid` / `mid` type narrowed from `string | number` to `number | null` to match SQL-allocated integer membership IDs.
+- `generateCompanySlug` now uses `crypto.getRandomValues` instead of `Math.random()` for the randomized suffix.
+- Document task URLs split by task type: `preview_url` → `previewURL`, `generate_url` → `downloadURL`. `updateBusinessInfoV1` rejects `vat_number` mutations after onboarding.
+
+### Mobile (`phone_app`)
+- Tax invoice `idempotencyKey` suffix now uses `crypto.randomUUID()` instead of `Math.random()`.
+- `document-copy.ts` replaced all hardcoded numeric doc-type keys with `[DOC_TYPE.*]` computed properties from `@smart-job/contracts`.
+- `SupportChat.tsx` back-button label fixed (was mojibake `×—×–×•×¨` / `Ø±Ø¬ÙˆØ¹`; now correct UTF-8 `חזור` / `رجوع`).
+
+### `cloudrun-pdf`
+- `buildStoredDocumentRecord` no longer writes forbidden field names (`clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `createdBy`) to stored document records.
+- `htmlTemplate.ts` now sanitizes `logoUrl` through `sanitizeUrl()` which rejects `javascript:` and `data:` schemes before insertion into the `<img src>` attribute.
+- Email service is now a true singleton; the non-singleton `getEmailService()` export has been removed.
+
+### CI / Scripts
+- `check-no-ts-nocheck.mjs` stale `functions/src` / `functions/tests` paths replaced with the correct protected path set from `AGENTS.md`.
+- `check-perf-budget.mjs` scan path corrected from `functions/src` to `supabase/functions`.

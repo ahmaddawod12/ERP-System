@@ -116,7 +116,8 @@ async function handleContactRequestRequest(req: Request): Promise<Response> {
       {
         name,
         email,
-        company: body?.company || body?.subject || "General",
+        subject,
+        company: body?.company || "General",
         message,
       },
       ctx,
@@ -141,13 +142,18 @@ async function handleContactRequestRequest(req: Request): Promise<Response> {
       ctx.corsHeaders
     );
   } catch (error) {
-    const ctx = await createEdgeFunctionContext(req, env);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    ctx.logger.error("Contact request failed", {
-      error: errorMessage,
-      correlationId: ctx.correlationId
-    });
-    return handleHttpError(error, ctx.corsHeaders);
+    let corsHeaders: Record<string, string> = {};
+    try {
+      const errCtx = await createEdgeFunctionContext(req, env);
+      corsHeaders = errCtx.corsHeaders;
+      errCtx.logger.error("Contact request failed", {
+        error: error instanceof Error ? error.message : String(error),
+        correlationId: errCtx.correlationId,
+      });
+    } catch {
+      // createEdgeFunctionContext itself failed; proceed with empty corsHeaders
+    }
+    return handleHttpError(error, corsHeaders);
   }
 }
 

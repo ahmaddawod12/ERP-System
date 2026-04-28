@@ -17,7 +17,7 @@ test("worker job access requires a worker membership id", () => {
   assert.equal(canListCompanyJobs("manager", null), true);
   assert.deepEqual(buildListJobsOptions("worker", { wid: 7, name: "Worker", email: "worker@example.com" }), { role: "worker", wid: "7" });
   assert.deepEqual(buildListJobsOptions("user", { wid: 7, name: "User", email: "user@example.com" }), { role: "user", wid: "7" });
-  assert.deepEqual(buildListJobsOptions("worker", { wid: "   ", name: "Worker", email: "worker@example.com" }), { role: "worker" });
+  assert.deepEqual(buildListJobsOptions("worker", { wid: null, name: "Worker", email: "worker@example.com" }), { role: "worker" });
   assert.equal(roleUsesScopedJobAccess("worker"), true);
   assert.equal(roleUsesScopedJobAccess("user"), true);
   assert.equal(roleUsesScopedJobAccess("manager"), false);

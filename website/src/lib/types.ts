@@ -36,8 +36,8 @@ export interface UserProfile {
   email: string;
   role: Role;
   companyId: string | null;
-  wid?: string | number;
-  mid?: string | number;
+  wid?: number | null;
+  mid?: number | null;
   name: string;
   phoneNumber: string;
   accountType: AccountType;

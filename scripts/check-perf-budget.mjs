@@ -66,7 +66,7 @@ function walkFiles(dir, ext, results = []) {
 const callerDirs = [
   join(ROOT, 'website', 'src'),
   join(ROOT, 'phone_app'),
-  join(ROOT, 'functions', 'src'),
+  join(ROOT, 'supabase', 'functions'),
 ];
 
 for (const dir of callerDirs) {

@@ -278,6 +278,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
         const result = await callServerCallable<
           {
             success: boolean;
+            status?: string;
             documentId?: string;
             documentNumber?: number;
             pdfTaskId?: string;
@@ -293,6 +294,8 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
           // Listen for the PDF generation task
           if (result.pdfTaskId) {
             listenToTask(result.pdfTaskId, "generate");
+          } else {
+            setIsLoading(false);
           }
           return result;
         }

@@ -11,7 +11,7 @@ The system is hybrid today:
 - PostgreSQL is the primary source of truth for company-scoped ERP entities.
 - Firestore remains for selected compatibility reads, operational records, rules-enforced read surfaces, and a few legacy mirrors.
 - Cloud Storage is the file layer for documents, attachments, and archives.
-- Supabase Edge Functions are being built as the next runtime, but are not yet the production boundary.
+- Supabase Edge Functions are the active in-repo backend runtime under hardening, even if rollout may still be staged by environment.
 
 ## Runtime Topology
 
@@ -101,6 +101,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 ### Document generation
 
 - Gateway handlers publish preview/generate work.
+- Edge handlers enrich preview/generate payloads with company data, create SQL draft document rows for generate flows, and dispatch trusted work to `cloudrun-pdf`.
 - `cloudrun-pdf` validates requester identity, renders PDF output, stores files, and finalizes task/document state.
 - New generated artifacts must keep create-only semantics and orphan cleanup on finalize failure.
 

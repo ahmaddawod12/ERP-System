@@ -274,7 +274,8 @@ export async function updateCacheV1(payload: any, ctx: EdgeFunctionContext): Pro
     .maybeSingle();
 
   const now = new Date().toISOString();
-  const nextVersion = Number(syncState?.[versionField] || 0) + 1;
+  const versionState = (syncState || {}) as Record<string, unknown>;
+  const nextVersion = Number(versionState[versionField] || 0) + 1;
   const patch: Record<string, unknown> = {
     [versionField]: nextVersion,
     updated_at: now,

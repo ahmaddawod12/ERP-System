@@ -963,7 +963,7 @@ export default function CreateDocument() {
         language: language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en',
         date: formData.documentDate,
         notes: formData.notes || '',
-        idempotencyKey: `tax_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
+      idempotencyKey: `tax_${Date.now()}_${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`,
       };
 
       // Call getInvoiceApproval to submit to Tax Authority
@@ -973,8 +973,10 @@ export default function CreateDocument() {
       const approvalResult = await getApprovalFunction(documentData) as {
         data: {
           success?: boolean;
+          status?: string;
           error?: string;
           documentId?: string;
+          documentNumber?: string | number;
           pdfTaskId?: string;
           confirmationNumber?: string;
         };
@@ -985,7 +987,7 @@ export default function CreateDocument() {
         throw new Error(approvalResult.data.error || 'Tax Authority did not approve the invoice');
       }
 
-      const { documentId, pdfTaskId, confirmationNumber } = approvalResult.data;
+      const { documentId, documentNumber, pdfTaskId, confirmationNumber } = approvalResult.data;
 
       // Listen to PDF generation task
       if (pdfTaskId) {
@@ -1002,7 +1004,7 @@ export default function CreateDocument() {
         setTimeout(() => {
           showSuccessMessage(
             t.successTitle,
-            `Tax invoice approved!\nDocument ID: ${documentId}\nConfirmation: ${confirmationNumber || 'N/A'}`,
+            `Tax invoice approved!\nDocument ID: ${documentId}\nInvoice #: ${documentNumber || 'N/A'}\nConfirmation: ${confirmationNumber || 'Pending callback'}`,
             [
               {
                 text: t.done,

@@ -121,7 +121,7 @@ async function bumpWorkersVersion(companyId: string, ctx: EdgeFunctionContext): 
     .maybeSingle();
 
   if (!state) {
-    await supabase.from("company_sync_state").insert({
+    const { error: insertError } = await supabase.from("company_sync_state").insert({
       company_id: companyId,
       jobs_version: 0,
       documents_version: 0,
@@ -130,13 +130,19 @@ async function bumpWorkersVersion(companyId: string, ctx: EdgeFunctionContext): 
       company_inventory_version: 0,
       updated_at: now,
     });
+    if (insertError) {
+      throw { code: "internal", message: "Failed to initialize workers sync state", httpStatus: 500 };
+    }
     return;
   }
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("company_sync_state")
     .update({ workers_version: Number(state.workers_version || 0) + 1, updated_at: now })
     .eq("company_id", companyId);
+  if (updateError) {
+    throw { code: "internal", message: "Failed to bump workers sync state", httpStatus: 500 };
+  }
 }
 
 async function nextMemberNo(companyId: string, ctx: EdgeFunctionContext): Promise<number> {
@@ -176,7 +182,7 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
     }
 
     // Ensure app user exists/upserted.
-    await supabase
+    const { error: upsertUserError } = await supabase
       .from("app_users")
       .upsert({
         id: workerUid,
@@ -185,6 +191,9 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
         phone_number: phoneNumber,
         updated_at: now,
       }, { onConflict: "id" });
+    if (upsertUserError) {
+      throw { code: "internal", message: "Failed to upsert worker profile", httpStatus: 500 };
+    }
 
     const { data: existingMembership } = await supabase
       .from("company_memberships")
@@ -278,7 +287,10 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
   const appUserPatch: Record<string, unknown> = { updated_at: now };
   if (name !== undefined) appUserPatch.display_name = name || null;
   if (phoneNumber !== undefined) appUserPatch.phone_number = phoneNumber || null;
-  await supabase.from("app_users").update(appUserPatch).eq("id", workerUid);
+  const { error: appUserUpdateError } = await supabase.from("app_users").update(appUserPatch).eq("id", workerUid);
+  if (appUserUpdateError) {
+    throw { code: "internal", message: "Failed to update worker profile", httpStatus: 500 };
+  }
 
   await bumpWorkersVersion(companyId, ctx);
   return { success: true, message: "Worker account updated successfully" };
@@ -341,16 +353,19 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
 
   // Ensure app user profile exists.
   const fallbackEmail = validateEmail(requireNonEmptyString(ctx.auth.email || payload?.business_email || payload?.email, "email", 5, 320)).toLowerCase();
-  await supabase
+  const { error: upsertSelfError } = await supabase
     .from("app_users")
     .upsert({
       id: ctx.auth.uid,
       email: fallbackEmail,
       display_name: name || null,
       phone_number: phoneNumber,
-      system_role: role === "dev" ? "dev" : null,
+      system_role: null,
       updated_at: now,
     }, { onConflict: "id" });
+  if (upsertSelfError) {
+    throw { code: "internal", message: "Failed to upsert account profile", httpStatus: 500 };
+  }
 
   // Allocate the next public company id atomically.
   const publicCompanyId = await allocateNextSystemCounter(
@@ -379,7 +394,7 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
     }
     companyIdInternal = company.id;
 
-    await supabase.from("company_profiles").insert({
+    const { error: companyProfileError } = await supabase.from("company_profiles").insert({
       company_id: company.id,
       he_name: heName || null,
       en_name: enName,
@@ -397,16 +412,22 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
       registered_by_user_id: ctx.auth.uid,
       last_updated_at: now,
     });
+    if (companyProfileError) {
+      throw { code: "internal", message: "Failed to create company profile", httpStatus: 500 };
+    }
 
-    await supabase.from("company_subscriptions").insert({
+    const { error: subscriptionError } = await supabase.from("company_subscriptions").insert({
       company_id: company.id,
       tier,
       status: "active",
       enabled_modules: enabledModules,
       updated_at: now,
     });
+    if (subscriptionError) {
+      throw { code: "internal", message: "Failed to create company subscription", httpStatus: 500 };
+    }
 
-    await supabase.from("company_sync_state").insert({
+    const { error: syncStateError } = await supabase.from("company_sync_state").insert({
       company_id: company.id,
       jobs_version: 0,
       documents_version: 0,
@@ -415,9 +436,12 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
       company_inventory_version: 0,
       updated_at: now,
     });
+    if (syncStateError) {
+      throw { code: "internal", message: "Failed to initialize company sync state", httpStatus: 500 };
+    }
 
     const memberNo = await nextMemberNo(company.id, ctx);
-    await supabase.from("company_memberships").insert({
+    const { error: membershipError } = await supabase.from("company_memberships").insert({
       company_id: company.id,
       user_id: ctx.auth.uid,
       member_no: memberNo,
@@ -429,6 +453,9 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
       created_at: now,
       updated_at: now,
     });
+    if (membershipError) {
+      throw { code: "internal", message: "Failed to create owner membership", httpStatus: 500 };
+    }
 
     return {
       success: true,
@@ -438,7 +465,7 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
     };
   } catch (error) {
     if (companyIdInternal) {
-      await supabase.from("companies").delete().eq("id", companyIdInternal);
+      await supabase.from("companies").delete().eq("id", companyIdInternal).throwOnError();
     }
     throw error;
   }

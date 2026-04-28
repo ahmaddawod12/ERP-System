@@ -44,6 +44,8 @@ Install dependencies per package:
 ```bash
 npm --prefix packages/contracts install
 npm --prefix packages/db install
+npm --prefix packages/contracts run build
+npm --prefix packages/db run build
 npm --prefix website install
 npm --prefix phone_app install
 npm --prefix cloudrun-pdf install
@@ -57,6 +59,7 @@ npm --prefix website run typecheck
 npm --prefix phone_app run typecheck
 npm --prefix website run test
 npm --prefix phone_app run test
+deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
 ```
 
 ## Core Rules
@@ -89,6 +92,8 @@ npm --prefix phone_app run test
 - Invite redemption consumes invite state atomically before membership finalization (prevents multi-join races).
 - `contact/request` passes `subject` as a dedicated field; `company` defaults to `"General"` when absent.
 - Double-fault catch in all three gateways (`mutation-gateway`, `mutation-gateway-me-west1`, `read-model`) now resolves with a safe CORS-aware error response instead of an unhandled rejection.
+- Preview and generate requests now create SQL-backed `document_tasks`, enrich company/document payloads server-side, and dispatch trusted work to `cloudrun-pdf` directly from the edge runtime.
+- Tax invoice approval now creates the draft SQL document and reuses the same async generate-task pipeline instead of requiring a pre-existing client document draft.
 
 ### Website
 - Auth transport no longer persists Supabase access token or refresh token in `localStorage`; access token and expiry are kept in-memory and only non-sensitive user info (`uid`, `email`) is written to `sessionStorage`.
@@ -109,3 +114,4 @@ npm --prefix phone_app run test
 ### CI / Scripts
 - `check-no-ts-nocheck.mjs` stale `functions/src` / `functions/tests` paths replaced with the correct protected path set from `AGENTS.md`.
 - `check-perf-budget.mjs` scan path corrected from `functions/src` to `supabase/functions`.
+- CI now enforces the documented shared-package build order by making app/service jobs depend on `packages_contracts` and `packages_db` as needed.

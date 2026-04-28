@@ -158,7 +158,7 @@ async function handleTaxCallbackRequest(req: Request): Promise<Response> {
       };
     }
 
-    const body = await req.json().catch(() => null) as Record<string, unknown> | null;
+    const body = await req.json().catch(() => null) as { message?: { data?: unknown } } | null;
     const messageData = body?.message?.data;
     if (!messageData || typeof messageData !== "string") {
       throw {
@@ -347,7 +347,7 @@ async function handleTaxCallbackRequest(req: Request): Promise<Response> {
   } catch (error) {
     const corsHeaders = getCorsHeaders(req.headers.get("origin"), env.corsAllowedOrigins);
     logger.error("Tax callback failed", {
-      error: error?.message || String(error),
+      error: error instanceof Error ? error.message : String(error),
       correlationId
     });
     return handleHttpError(error, corsHeaders);

@@ -199,7 +199,7 @@ async function getCompanyInventoryParts(internalCompanyId: string) {
     };
   });
 
-  const maxId = normalizedParts.reduce((acc, item) => Math.max(acc, Number(item.id || 0)), 0);
+  const maxId = normalizedParts.reduce((acc: number, item: { id: number }) => Math.max(acc, Number(item.id || 0)), 0);
   const nextId = counterRow ? Number(counterRow.next_value) : maxId + 1;
   return {
     parts: normalizedParts,
@@ -279,7 +279,7 @@ async function getUserInventoryParts(internalCompanyId: string, targetUid: strin
     };
   });
 
-  const maxId = normalizedParts.reduce((acc, item) => Math.max(acc, Number(item.id || 0)), 0);
+  const maxId = normalizedParts.reduce((acc: number, item: { id: number }) => Math.max(acc, Number(item.id || 0)), 0);
   const nextId = userCounterRow ? Number(userCounterRow.next_value) : maxId + 1;
   return {
     parts: normalizedParts,
@@ -300,7 +300,7 @@ function parseCursor(cursorRaw: unknown): { createdAt: string; id: string } | nu
   return { createdAt, id };
 }
 
-async function buildReadModelResponse(body: Record<string, unknown>, uid: string) {
+async function buildReadModelResponse(body: Record<string, unknown>, uid: string): Promise<any> {
   const kind = optionalTrimmedString(body.kind, 64);
   if (!kind || !READ_MODEL_KINDS.has(kind)) {
     throw {
@@ -435,7 +435,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       taskType: task.task_type,
       previewURL: task.preview_url || null,
       downloadURL: task.generate_url || null,
-      documentId: task.document_id || null,
+      documentId: task.request_payload?.publicDocumentId || task.request_payload?.documentId || null,
       pdfSize: task.pdf_size || null,
       storagePath: task.storage_path || null,
       error: task.error || null,
@@ -571,7 +571,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     }
     const hasMore = (data || []).length > pageSize;
     const items = (data || []).slice(0, pageSize).map((doc: any) => ({
-      id: String(doc.id),
+      id: String(doc.document_code || doc.id),
       type: doc.document_type,
       documentType: doc.document_type,
       documentNumber: doc.document_number,
@@ -593,7 +593,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     }));
 
     const nextCursor = hasMore && items.length > 0
-      ? makeCursor(items[items.length - 1].createdAt, items[items.length - 1].id)
+      ? makeCursor((data || [])[pageSize - 1]?.created_at, (data || [])[pageSize - 1]?.id)
       : null;
 
     return { items, nextCursor };

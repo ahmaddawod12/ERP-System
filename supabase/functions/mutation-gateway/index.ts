@@ -170,7 +170,7 @@ async function handleMutationRequest(req: Request): Promise<Response> {
       const errCtx = await createEdgeFunctionContext(req, env);
       corsHeaders = errCtx.corsHeaders;
       errCtx.logger.error("Mutation gateway request failed", {
-        error: error?.message || String(error),
+        error: error instanceof Error ? error.message : String(error),
         correlationId: errCtx.correlationId,
       });
     } catch {

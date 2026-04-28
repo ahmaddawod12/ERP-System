@@ -142,7 +142,7 @@ async function handleCreateInviteRequest(req: Request): Promise<Response> {
   } catch (error) {
     const ctx = await createEdgeFunctionContext(req, env);
     ctx.logger.error("Create invite request failed", {
-      error: error?.message || String(error),
+      error: error instanceof Error ? error.message : String(error),
       correlationId: ctx.correlationId
     });
     return handleHttpError(error, ctx.corsHeaders);

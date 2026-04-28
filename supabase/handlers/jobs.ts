@@ -176,18 +176,24 @@ async function bumpJobsVersion(companyId: string, ctx: EdgeFunctionContext): Pro
     .maybeSingle();
 
   if (!state) {
-    await supabase.from("company_sync_state").insert({
+    const { error: insertError } = await supabase.from("company_sync_state").insert({
       company_id: companyId,
       jobs_version: 1,
       updated_at: now,
     });
+    if (insertError) {
+      throw { code: "internal", message: "Failed to initialize jobs sync state", httpStatus: 500 };
+    }
     return;
   }
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("company_sync_state")
     .update({ jobs_version: Number(state.jobs_version || 0) + 1, updated_at: now })
     .eq("company_id", companyId);
+  if (updateError) {
+    throw { code: "internal", message: "Failed to bump jobs sync state", httpStatus: 500 };
+  }
 }
 
 async function mapJobRecordForResponse(job: any, ctx: EdgeFunctionContext): Promise<any> {
@@ -325,7 +331,14 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     }));
     const { error: partsError } = await supabase.from("job_part_usages").insert(partRows);
     if (partsError) {
-      await supabase.from("jobs").delete().eq("id", inserted.id).eq("company_id", companyId);
+      const { error: rollbackError } = await supabase.from("jobs").delete().eq("id", inserted.id).eq("company_id", companyId);
+      if (rollbackError) {
+        ctx.logger.error("Failed to roll back job after parts insert failure", {
+          jobId: inserted.id,
+          companyId,
+          rollbackError: rollbackError.message,
+        });
+      }
       throw { code: "internal", message: "Failed to save job parts", httpStatus: 500 };
     }
   }
@@ -424,7 +437,10 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
       .select("inventory_part_id, part_name_snapshot, quantity, created_at")
       .eq("job_id", jobId);
 
-    await supabase.from("job_part_usages").delete().eq("job_id", jobId);
+    const { error: deletePartsError } = await supabase.from("job_part_usages").delete().eq("job_id", jobId);
+    if (deletePartsError) {
+      throw { code: "internal", message: "Failed to reset job parts", httpStatus: 500 };
+    }
     if (parts.length > 0) {
       const rows = parts.map((part) => ({
         job_id: jobId,
@@ -436,7 +452,7 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
       const { error: partsError } = await supabase.from("job_part_usages").insert(rows);
       if (partsError) {
         if (Array.isArray(existingParts) && existingParts.length > 0) {
-          await supabase.from("job_part_usages").insert(
+          const { error: restoreError } = await supabase.from("job_part_usages").insert(
             existingParts.map((part: any) => ({
               job_id: jobId,
               inventory_part_id: part.inventory_part_id || null,
@@ -445,6 +461,13 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
               created_at: part.created_at || new Date().toISOString(),
             })),
           );
+          if (restoreError) {
+            ctx.logger.error("Failed to restore job parts after update failure", {
+              jobId,
+              companyId,
+              restoreError: restoreError.message,
+            });
+          }
         }
         throw { code: "internal", message: "Failed to update job parts", httpStatus: 500 };
       }

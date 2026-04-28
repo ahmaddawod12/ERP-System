@@ -7,6 +7,7 @@
 - Uses Supabase access tokens for backend transport.
 - Calls backend gateway endpoints for protected operations.
 - Keeps registration and business onboarding on the website.
+- Tracks preview/generate work through backend `document_tasks` polling.
 
 ## Architecture Rules
 
@@ -16,6 +17,7 @@
 - Use `useAlert()` instead of `Alert.alert()`.
 - Use MMKV helpers in `contexts/mmkv-storage.ts`.
 - Keep protected writes backend-only.
+- Treat tax invoice approval as an async backend flow that creates the draft document and schedules PDF generation.
 
 ## Core Structure
 

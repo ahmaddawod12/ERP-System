@@ -3,6 +3,8 @@
  * Phase: 2 | Status: Implemented (partial)
  */
 import {
+  allocateNextCompanyCounter,
+  dispatchCloudRunPdfTask,
   EdgeFunctionContext,
   createSupabaseClient,
   optionalTrimmedString,
@@ -10,6 +12,15 @@ import {
   resolveCompanyIdentifiers,
   validateCompanyId,
 } from "../shared-edge-helpers.ts";
+
+const DOC_SUFFIX: Record<number, string> = {
+  10: "PP",
+  200: "DN",
+  210: "RC",
+  305: "TI",
+  330: "RD",
+  400: "RT",
+};
 
 async function requireDocumentAccess(
   companyId: string,
@@ -77,18 +88,26 @@ async function createOrReuseDocumentTask(
   userId: string,
   taskType: "preview" | "generate",
   documentType: number,
+  documentId: string | null,
   requestPayload: Record<string, unknown>,
   ctx: EdgeFunctionContext,
 ): Promise<{ id: string; status: string; task_key: string }> {
   const supabase = createSupabaseClient(ctx.env);
-  const { data: activeTask } = await supabase
+  let activeTaskQuery = supabase
     .from("document_tasks")
     .select("id, status, task_key")
     .eq("company_id", companyId)
     .eq("task_type", taskType)
     .eq("document_type", documentType)
-    .in("status", ["pending", "queued", "processing"])
-    .maybeSingle();
+    .in("status", ["pending", "queued", "processing"]);
+
+  if (documentId) {
+    activeTaskQuery = activeTaskQuery.eq("document_id", documentId);
+  } else {
+    activeTaskQuery = activeTaskQuery.is("document_id", null);
+  }
+
+  const { data: activeTask } = await activeTaskQuery.maybeSingle();
 
   if (activeTask?.id) {
     return activeTask;
@@ -104,6 +123,7 @@ async function createOrReuseDocumentTask(
       task_key: taskKey,
       company_id: companyId,
       user_id: userId,
+      document_id: documentId,
       task_type: taskType,
       document_type: documentType,
       status: "pending",
@@ -120,6 +140,119 @@ async function createOrReuseDocumentTask(
   return insertedTask;
 }
 
+async function loadCompanyDocumentContext(companyId: string, membershipId: string, ctx: EdgeFunctionContext) {
+  const supabase = createSupabaseClient(ctx.env);
+  const [{ data: companyProfile, error: companyProfileError }, { data: membership, error: membershipError }] = await Promise.all([
+    supabase
+      .from("company_profiles")
+      .select("he_name, en_name, business_email, business_phone, address, city, vat_number")
+      .eq("company_id", companyId)
+      .maybeSingle(),
+    supabase
+      .from("company_memberships")
+      .select("member_no, display_name")
+      .eq("id", membershipId)
+      .maybeSingle(),
+  ]);
+
+  if (companyProfileError) {
+    throw { code: "internal", message: "Failed to load company profile", httpStatus: 500 };
+  }
+  if (membershipError) {
+    throw { code: "internal", message: "Failed to load membership profile", httpStatus: 500 };
+  }
+
+  return {
+    company: {
+      name: companyProfile?.he_name || companyProfile?.en_name || "",
+      nameHe: companyProfile?.he_name || "",
+      nameEn: companyProfile?.en_name || "",
+      email: companyProfile?.business_email || "",
+      phone: companyProfile?.business_phone || "",
+      address: [companyProfile?.address, companyProfile?.city].filter(Boolean).join(" ").trim(),
+      vatNumber: companyProfile?.vat_number || "",
+    },
+    creator: {
+      wid: membership?.member_no ? String(membership.member_no) : null,
+      name: membership?.display_name || null,
+    },
+  };
+}
+
+function normalizeDocumentDataPayload(
+  rawDocumentData: unknown,
+  companyPayload: Record<string, unknown>,
+): Record<string, unknown> {
+  const documentData = rawDocumentData && typeof rawDocumentData === "object" && !Array.isArray(rawDocumentData)
+    ? { ...(rawDocumentData as Record<string, unknown>) }
+    : {};
+  return {
+    ...documentData,
+    company: companyPayload,
+  };
+}
+
+function buildPublicDocumentId(documentType: number, documentNumber: number, publicCompanyId: string) {
+  const suffix = DOC_SUFFIX[documentType];
+  if (!suffix) {
+    throw { code: "invalid-argument", message: "Unsupported documentType", httpStatus: 400 };
+  }
+  return `${suffix}${documentNumber}-${publicCompanyId}`;
+}
+
+async function createDraftDocumentRecord(
+  companyId: string,
+  publicCompanyId: string,
+  membershipId: string,
+  documentType: number,
+  documentData: Record<string, unknown>,
+  ctx: EdgeFunctionContext,
+): Promise<{ internalDocumentId: string; publicDocumentId: string; documentNumber: number }> {
+  const documentNumber = await allocateNextCompanyCounter(companyId, `doc_${documentType}`, ctx);
+  const publicDocumentId = buildPublicDocumentId(documentType, documentNumber, publicCompanyId);
+  const client = documentData.client && typeof documentData.client === "object" ? documentData.client as Record<string, unknown> : {};
+  const now = new Date().toISOString();
+  const payloadDate = optionalTrimmedString(documentData.date, 64);
+  const supabase = createSupabaseClient(ctx.env);
+
+  const { data: insertedDocument, error: insertError } = await supabase
+    .from("documents")
+    .insert({
+      company_id: companyId,
+      document_type: documentType,
+      document_number: documentNumber,
+      document_code: publicDocumentId,
+      generation_status: "pending",
+      tax_authority_status: documentType === 305 ? "reserved" : "none",
+      created_by_membership_id: membershipId,
+      language: optionalTrimmedString(documentData.language, 8) || "he",
+      document_date: payloadDate ? new Date(payloadDate).toISOString() : null,
+      notes: optionalTrimmedString(documentData.notes, 4000) || null,
+      total_before_vat: Number(documentData.totalBeforeVat || 0),
+      vat_amount: Number(documentData.vatAmount || 0),
+      total_with_vat: Number(documentData.totalWithVat || 0),
+      client_name_snapshot: optionalTrimmedString(client.name, 240) || null,
+      client_phone_snapshot: optionalTrimmedString(client.phone, 40) || null,
+      client_city_snapshot: optionalTrimmedString(client.city, 120) || null,
+      client_vat_snapshot: optionalTrimmedString(client.clientVatNumber ?? client.customerVatNumber ?? client.vatNumber, 32) || null,
+      payload: documentData,
+      created_at: now,
+      updated_at: now,
+    })
+    .select("id")
+    .single();
+
+  if (insertError || !insertedDocument?.id) {
+    throw { code: "internal", message: "Failed to create document draft", httpStatus: 500 };
+  }
+
+  return {
+    internalDocumentId: String(insertedDocument.id),
+    publicDocumentId,
+    documentNumber,
+  };
+}
+
 export async function publishPreviewTask(payload: any, ctx: EdgeFunctionContext): Promise<any> {
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
@@ -131,24 +264,35 @@ export async function publishPreviewTask(payload: any, ctx: EdgeFunctionContext)
     throw { code: "invalid-argument", message: "documentType must be a positive integer", httpStatus: 400 };
   }
 
-  const requestPayload = {
-    companyId,
+  const companyContext = await loadCompanyDocumentContext(companyId, membership.id, ctx);
+  const documentData = normalizeDocumentDataPayload(payload?.documentData ?? payload?.data, companyContext.company);
+  const requestPayload: Record<string, unknown> = {
+    companyId: resolvedCompany.publicCompanyId,
     documentType,
     language: optionalTrimmedString(payload?.language, 8) || "he",
-    data: payload?.data ?? null,
+    documentData,
   };
   const task = await createOrReuseDocumentTask(
     companyId,
     ctx.auth?.uid || membership.id,
     "preview",
     documentType,
+    null,
     requestPayload,
     ctx,
   );
 
+  await dispatchCloudRunPdfTask("/preview", {
+    taskId: task.task_key,
+    documentType,
+    documentData,
+    uid: ctx.auth?.uid || membership.id,
+    companyId: resolvedCompany.publicCompanyId,
+  }, ctx.env);
+
   return {
     success: true,
-    taskId: task.id,
+    taskId: task.task_key,
     taskKey: task.task_key,
     status: task.status,
   };
@@ -165,27 +309,84 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
     throw { code: "invalid-argument", message: "documentType must be a positive integer", httpStatus: 400 };
   }
 
-  const requestPayload = {
-    companyId,
+  const companyContext = await loadCompanyDocumentContext(companyId, membership.id, ctx);
+  const documentData = normalizeDocumentDataPayload(payload?.documentData ?? payload?.data, companyContext.company);
+  const requestPayload: Record<string, unknown> = {
+    companyId: resolvedCompany.publicCompanyId,
     documentType,
     language: optionalTrimmedString(payload?.language, 8) || "he",
-    data: payload?.data ?? null,
+    documentData,
     idempotencyKey: optionalTrimmedString(payload?.idempotencyKey, 256) || null,
   };
+  const requestedDocumentId = optionalTrimmedString(payload?.documentId, 128);
+  let documentId: string | null = null;
+  let publicDocumentId = requestedDocumentId || null;
+  let documentNumber: number | null = null;
+
+  if (requestedDocumentId) {
+    const { data: documentRow, error: documentError } = await createSupabaseClient(ctx.env)
+      .from("documents")
+      .select("id, document_number, document_code")
+      .eq("company_id", companyId)
+      .eq("document_code", requestedDocumentId)
+      .maybeSingle();
+
+    if (documentError) {
+      throw { code: "internal", message: "Failed to resolve document task target", httpStatus: 500 };
+    }
+    documentId = documentRow?.id ? String(documentRow.id) : null;
+    publicDocumentId = documentRow?.document_code ? String(documentRow.document_code) : requestedDocumentId;
+    documentNumber = Number(documentRow?.document_number || 0) || null;
+    if (!documentId) {
+      throw { code: "not-found", message: "Document not found", httpStatus: 404 };
+    }
+  } else {
+    const createdDocument = await createDraftDocumentRecord(
+      companyId,
+      resolvedCompany.publicCompanyId,
+      membership.id,
+      documentType,
+      documentData,
+      ctx,
+    );
+    documentId = createdDocument.internalDocumentId;
+    publicDocumentId = createdDocument.publicDocumentId;
+    documentNumber = createdDocument.documentNumber;
+  }
+
+  requestPayload.documentId = publicDocumentId;
+  requestPayload.publicDocumentId = publicDocumentId;
+
   const task = await createOrReuseDocumentTask(
     companyId,
     ctx.auth?.uid || membership.id,
     "generate",
     documentType,
+    documentId,
     requestPayload,
     ctx,
   );
 
+  await dispatchCloudRunPdfTask("/generate", {
+    taskId: task.task_key,
+    documentType,
+    documentData: {
+      ...documentData,
+      documentNumber: documentNumber || undefined,
+    },
+    uid: ctx.auth?.uid || membership.id,
+    companyId: resolvedCompany.publicCompanyId,
+    documentId: publicDocumentId,
+    documentNumber: documentNumber || undefined,
+    confirmationNumber: optionalTrimmedString(documentData["taxAuthorityConfirmationNumber"], 128) || undefined,
+  }, ctx.env);
+
   return {
     success: true,
-    taskId: task.id,
+    taskId: task.task_key,
     taskKey: task.task_key,
     status: task.status,
+    documentId: publicDocumentId,
   };
 }
 

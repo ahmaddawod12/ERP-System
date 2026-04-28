@@ -29,6 +29,8 @@ import {
 } from '../contexts/job-membership';
 import { fetchCompanyDocuments, fetchCompanyJobs } from '../utils/read-model';
 
+const ARCHIVE_READ_LIMIT = 10_000;
+
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
 function buildJobMembershipConstraints(wid: string | number | null): any[] {
@@ -181,7 +183,7 @@ export function useArchiveQuery({
         if (dataType === 'finishedJobs') {
           const jobsData = filterJobsByMembership(
             await fetchCompanyJobs(companyId, {
-              limit: 10000,
+              limit: ARCHIVE_READ_LIMIT,
               status: 'finished',
               dateField: 'finishedAt',
               dateFrom: new Date(monthStartMs).toISOString(),
@@ -193,7 +195,7 @@ export function useArchiveQuery({
           return [...cachedPart, ...jobsData];
         } else {
           const documentsData = await fetchCompanyDocuments(companyId, {
-            limit: 10000,
+            limit: ARCHIVE_READ_LIMIT,
             dateField: 'createdAt',
             dateFrom: new Date(monthStartMs).toISOString(),
             dateTo: new Date(cacheStartMs - 1).toISOString(),
@@ -218,7 +220,7 @@ export function useArchiveQuery({
       if (dataType === 'finishedJobs') {
         backendData = filterJobsByMembership(
           await fetchCompanyJobs(companyId, {
-            limit: 10000,
+            limit: ARCHIVE_READ_LIMIT,
             status: 'finished',
             dateField: 'finishedAt',
             dateFrom: new Date(monthStartMs).toISOString(),
@@ -229,7 +231,7 @@ export function useArchiveQuery({
         );
       } else {
         backendData = await fetchCompanyDocuments(companyId, {
-          limit: 10000,
+          limit: ARCHIVE_READ_LIMIT,
           dateField: 'createdAt',
           dateFrom: new Date(monthStartMs).toISOString(),
           dateTo: new Date(monthEndMs).toISOString(),
@@ -313,7 +315,7 @@ export function useArchiveQuery({
       if (dataType === 'finishedJobs') {
         backendData = filterJobsByMembership(
           await fetchCompanyJobs(companyId, {
-            limit: 10000,
+            limit: ARCHIVE_READ_LIMIT,
             status: 'finished',
             dateField: 'finishedAt',
             dateFrom: new Date(startMs).toISOString(),
@@ -324,7 +326,7 @@ export function useArchiveQuery({
         );
       } else if (dataType === 'documents') {
         backendData = await fetchCompanyDocuments(companyId, {
-          limit: 10000,
+          limit: ARCHIVE_READ_LIMIT,
           dateField: 'createdAt',
           dateFrom: new Date(startMs).toISOString(),
           dateTo: new Date(cacheStartMs - 1).toISOString(),
@@ -332,7 +334,7 @@ export function useArchiveQuery({
       } else if (dataType === 'pendingJobs') {
         backendData = filterJobsByMembership(
           await fetchCompanyJobs(companyId, {
-            limit: 10000,
+            limit: ARCHIVE_READ_LIMIT,
             status: ['pending', 'waiting'],
             dateField: 'createdAt',
             dateFrom: new Date(startMs).toISOString(),

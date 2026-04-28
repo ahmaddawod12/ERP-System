@@ -112,6 +112,8 @@ There is no root package-manager workspace. Install packages individually:
 ```bash
 npm --prefix packages/contracts install
 npm --prefix packages/db install
+npm --prefix packages/contracts run build
+npm --prefix packages/db run build
 npm --prefix website install
 npm --prefix phone_app install
 npm --prefix cloudrun-pdf install
@@ -210,6 +212,10 @@ SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ALLOW_FIREBASE_AUTH_FALLBACK=false
+GCP_SERVICE_ACCOUNT_EMAIL=
+GCP_SERVICE_ACCOUNT_PRIVATE_KEY=
+PUBSUB_VERIFICATION_TOKEN=
+CLOUD_RUN_PDF_SERVICE_URL=
 
 TAX_AUTH_URL=
 TAX_TOKEN_URL=
@@ -230,6 +236,9 @@ Rules:
 - Keep `CORS_ALLOWED_ORIGINS` non-empty in real environments. Empty origin lists are treated as fail-closed.
 - Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
 - Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
+- `GCP_SERVICE_ACCOUNT_EMAIL` / `GCP_SERVICE_ACCOUNT_PRIVATE_KEY` allow edge handlers to mint OIDC tokens for trusted `cloudrun-pdf` dispatch.
+- `PUBSUB_VERIFICATION_TOKEN` should match the shared verification token expected by `cloudrun-pdf` when that hardening layer is enabled.
+- `CLOUD_RUN_PDF_SERVICE_URL` is required for preview/generate task dispatch from the edge runtime.
 
 ## 8. SQL Setup
 
@@ -281,6 +290,7 @@ Required deployment concerns:
 - SQL access for task and document finalization in SQL mode
 - Cloud Storage write permissions
 - environment for tax and document generation as required by the service
+- trusted invocations from `supabase/functions/` for preview/generate task dispatch
 
 Preserve these invariants:
 
@@ -343,6 +353,7 @@ Verify:
 - mobile sign-in and protected operation routing
 - backend SQL connectivity
 - document preview and generate flows
+- tax invoice approval creates a draft SQL document and schedules the async generate task
 - signed URL flows for documents and job files
 - push-token updates and notification paths
 - archive creation and retrieval

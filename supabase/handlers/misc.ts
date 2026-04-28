@@ -295,30 +295,22 @@ export async function moderateUpgradeRequestV1(payload: any, ctx: EdgeFunctionCo
   const requestedTier = normalizeTier(requestData.requested_tier);
   let approvedCurrentTier: string | null = null;
   if (status === "approved" && requestedTier && requestData.company_id) {
-    const companyPublicId = Number(requestData.company_id);
-    if (Number.isFinite(companyPublicId)) {
-      const { data: company } = await supabase
-        .from("companies")
-        .select("id")
-        .eq("public_company_id", companyPublicId)
-        .single();
+    const internalCompanyId = String(requestData.company_id).trim();
+    if (internalCompanyId) {
+      const { error: subscriptionError } = await supabase
+        .from("company_subscriptions")
+        .update({
+          tier: requestedTier,
+          status: "active",
+          enabled_modules: enabledModulesForTier(requestedTier),
+          updated_at: now,
+        })
+        .eq("company_id", internalCompanyId);
 
-      if (company?.id) {
-        const { error: subscriptionError } = await supabase
-          .from("company_subscriptions")
-          .update({
-            tier: requestedTier,
-            status: "active",
-            enabled_modules: enabledModulesForTier(requestedTier),
-            updated_at: now,
-          })
-          .eq("company_id", company.id);
-
-        if (subscriptionError) {
-          throw { code: "internal", message: "Failed to apply approved tier", httpStatus: 500 };
-        }
-        approvedCurrentTier = requestedTier;
+      if (subscriptionError) {
+        throw { code: "internal", message: "Failed to apply approved tier", httpStatus: 500 };
       }
+      approvedCurrentTier = requestedTier;
     }
   }
 

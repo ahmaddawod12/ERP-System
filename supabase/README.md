@@ -35,8 +35,11 @@ Supported `kind` values:
 
 ## Local Development
 
+Run these from the repository root:
+
 ```bash
 supabase start
+deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
 supabase functions serve mutation-gateway --env-file supabase/.env
 supabase functions serve mutation-gateway-me-west1 --env-file supabase/.env
 supabase functions serve read-model --env-file supabase/.env
@@ -77,6 +80,13 @@ Required in local or deployed environments:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `DATABASE_URL`
 - `CORS_ALLOWED_ORIGINS`
+- `CLOUD_RUN_PDF_SERVICE_URL`
+
+Required for trusted edge-to-Cloud-Run document dispatch:
+
+- `GCP_SERVICE_ACCOUNT_EMAIL`
+- `GCP_SERVICE_ACCOUNT_PRIVATE_KEY`
+- `PUBSUB_VERIFICATION_TOKEN` when `cloudrun-pdf` shared-token verification is enabled
 
 Domain-specific vars such as tax credentials and callback URLs should match `SETUP.md`.
 

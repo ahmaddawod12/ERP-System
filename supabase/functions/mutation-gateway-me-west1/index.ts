@@ -110,7 +110,7 @@ async function handleMutationMeWest1Request(req: Request): Promise<Response> {
       const errCtx = await createEdgeFunctionContext(req, env);
       corsHeaders = errCtx.corsHeaders;
       errCtx.logger.error("Tax mutation gateway request failed", {
-        error: error?.message || String(error),
+        error: error instanceof Error ? error.message : String(error),
         region: "me-west1",
         correlationId: errCtx.correlationId,
       });

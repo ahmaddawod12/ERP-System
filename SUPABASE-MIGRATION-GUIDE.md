@@ -26,6 +26,7 @@ This document defines the migration approach from legacy Firebase-backed runtime
 - Keep invite redemption race-safe with atomic invite-consume semantics.
 - Normalize incoming/public `companyId` values to internal company UUIDs in handler write paths.
 - Preserve stable cursor pagination semantics for timestamp-sorted read-model collections.
+- Keep preview, generate, and tax invoice document flows on one SQL-backed draft-document plus `document_tasks` pipeline.
 
 ## Active Entry Surfaces
 
@@ -40,7 +41,8 @@ This document defines the migration approach from legacy Firebase-backed runtime
 3. Validate auth, company scope checks, and input limits.
 4. Verify SQL read/write parity against current behavior.
 5. Validate side effects (documents, tax, notifications) behind idempotency guards.
-6. Run tests and rollout incrementally.
+6. Verify edge-to-Cloud-Run dispatch configuration (`CLOUD_RUN_PDF_SERVICE_URL`, OIDC credentials, shared token if enabled).
+7. Run tests and rollout incrementally.
 
 ## Readiness Checklist
 

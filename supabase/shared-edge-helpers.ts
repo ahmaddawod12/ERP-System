@@ -24,9 +24,11 @@ export const getEnv = () => ({
   cloudRunArchiverService: Deno.env.get("CLOUD_RUN_ARCHIVER_SERVICE_URL") || "",
 
   // Tax Authority
-  taxOAuthClientId: Deno.env.get("TAX_OAUTH_CLIENT_ID") || "",
-  taxOAuthClientSecret: Deno.env.get("TAX_OAUTH_CLIENT_SECRET") || "",
-  taxAuthorityApiUrl: Deno.env.get("TAX_AUTHORITY_API_URL") || "",
+  taxOAuthClientId: Deno.env.get("TAX_CLIENT_ID") || Deno.env.get("TAX_OAUTH_CLIENT_ID") || "",
+  taxOAuthClientSecret: Deno.env.get("TAX_CLIENT_SECRET") || Deno.env.get("TAX_OAUTH_CLIENT_SECRET") || "",
+  taxAuthorityApiUrl: Deno.env.get("TAX_AUTH_URL") || Deno.env.get("TAX_AUTHORITY_API_URL") || "",
+  taxTokenUrl: Deno.env.get("TAX_TOKEN_URL") || "",
+  taxApprovalUrl: Deno.env.get("TAX_APPROVAL_URL") || "",
 
   // Notifications
   pubSubProjectId: Deno.env.get("GCP_PROJECT_ID") || "",
@@ -39,7 +41,11 @@ export const getEnv = () => ({
     .filter(Boolean),
 
   // Feature Flags
-  enableSqlPersistence: Deno.env.get("ENABLE_SQL_PERSISTENCE") === "true",
+  enableSqlPersistence: (
+    String(Deno.env.get("SMART_JOB_PERSISTENCE_BACKEND") || Deno.env.get("PERSISTENCE_BACKEND") || "")
+      .trim()
+      .toLowerCase() === "sql"
+  ) || Deno.env.get("ENABLE_SQL_PERSISTENCE") === "true",
   logLevel: Deno.env.get("LOG_LEVEL") || "info",
 });
 
@@ -681,6 +687,129 @@ export async function allocateNextSystemCounter(
 // ── Supabase Client Helper ──────────────────────────────────────────────────
 export function createSupabaseClient(env: ReturnType<typeof getEnv>) {
   return createClient(env.supabaseUrl, env.supabaseServiceRoleKey);
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function signGoogleServiceAccountJwt(
+  serviceAccountEmail: string,
+  privateKeyPem: string,
+  audience: string,
+): Promise<string> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const expiresAt = issuedAt + 60 * 10;
+
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iss: serviceAccountEmail,
+    sub: serviceAccountEmail,
+    aud: audience,
+    iat: issuedAt,
+    exp: expiresAt,
+  };
+
+  const encoder = new TextEncoder();
+  const encodedHeader = btoa(JSON.stringify(header)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const encodedPayload = btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const keyData = privateKeyPem
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s+/g, "");
+  const keyBytes = new Uint8Array(decodeBase64Url(keyData));
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    keyBytes.buffer,
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      hash: "SHA-256",
+    },
+    false,
+    ["sign"],
+  );
+
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, encoder.encode(signingInput));
+  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+  return `${signingInput}.${encodedSignature}`;
+}
+
+async function createCloudRunOidcToken(audience: string): Promise<string | null> {
+  const serviceAccountEmail = String(
+    Deno.env.get("GCP_SERVICE_ACCOUNT_EMAIL") || Deno.env.get("GOOGLE_CLIENT_EMAIL") || "",
+  ).trim();
+  const privateKey = String(
+    Deno.env.get("GCP_SERVICE_ACCOUNT_PRIVATE_KEY") || Deno.env.get("GOOGLE_PRIVATE_KEY") || "",
+  ).replace(/\\n/g, "\n").trim();
+
+  if (!serviceAccountEmail || !privateKey || !audience) {
+    return null;
+  }
+
+  return signGoogleServiceAccountJwt(serviceAccountEmail, privateKey, audience);
+}
+
+export async function dispatchCloudRunPdfTask(
+  path: "/preview" | "/generate",
+  payload: Record<string, unknown>,
+  env: ReturnType<typeof getEnv>,
+): Promise<void> {
+  const serviceBaseUrl = trimTrailingSlash(String(env.cloudRunPdfService || "").trim());
+  if (!serviceBaseUrl) {
+    throw {
+      code: "unavailable",
+      httpStatus: 503,
+      message: "CLOUD_RUN_PDF_SERVICE_URL is not configured",
+    };
+  }
+
+  const targetUrl = `${serviceBaseUrl}${path}`;
+  const oidcToken = await createCloudRunOidcToken(serviceBaseUrl);
+  const sharedToken = String(Deno.env.get("PUBSUB_VERIFICATION_TOKEN") || "").trim();
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (oidcToken) {
+    headers.set("Authorization", `Bearer ${oidcToken}`);
+  }
+  if (sharedToken) {
+    headers.set("x-pubsub-token", sharedToken);
+  }
+
+  const body = {
+    message: {
+      data: btoa(JSON.stringify(payload)),
+    },
+  };
+
+  const response = await fetch(targetUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw {
+      code: "unavailable",
+      httpStatus: 503,
+      message: `Failed to dispatch PDF task (${response.status})`,
+    };
+  }
 }
 
 // ── PII Redaction ───────────────────────────────────────────────────────────

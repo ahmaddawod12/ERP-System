@@ -21,6 +21,7 @@ The `supabase/functions/` package is the active trust boundary in this workspace
 - protected mutations and read-model endpoints
 - rate limiting and idempotency
 - document task orchestration
+- dispatching trusted preview/generate work to `cloudrun-pdf`
 - signed URL issuance
 - tax authority flows
 - push/email side-effect coordination
@@ -122,6 +123,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
 - Keep document task result URLs semantically split by task type (`preview_url` vs `generate_url`) to avoid response-contract drift.
 - Keep invite redemption race-safe by consuming invite state atomically before membership finalization.
+- Keep preview/generate/tax document flows on the same SQL-backed draft-document plus `document_tasks` pipeline.
 
 ## Runtime Note
 

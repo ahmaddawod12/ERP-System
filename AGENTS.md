@@ -209,8 +209,13 @@ Must consume invite state atomically before finalizing membership (prevents mult
 
 ### supabase/ (Deno)
 - Type-check with `deno check`, not `tsc`
+- Keep `deno.json` import mappings in sync with any npm packages used by edge code
 - Node 22 native `fetch()` is available — do not add `node-fetch` or polyfills
 - `--no-verify-jwt` must never appear in shared or production configs
+
+### Documentation upkeep
+- If any code behavior, runtime contract, environment requirement, workflow, or architecture changes, review the affected `.md` files in the same task and update them when needed.
+- Prefer updating existing markdown files over creating new ones.
 
 ### cloudrun-pdf
 - Puppeteer 24; Docker base `ghcr.io/puppeteer/puppeteer:24.2.1`

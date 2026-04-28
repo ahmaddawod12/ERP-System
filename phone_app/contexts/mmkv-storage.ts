@@ -6,6 +6,7 @@
  */
 
 import type { DateLike, MmkvHelpers } from '../types';
+import { safeJsonParse } from '../utils/helpers';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
 import { createMMKV } from 'react-native-mmkv';
@@ -118,7 +119,7 @@ export const mmkvHelpers: MmkvHelpers = {
   getObject: <T = unknown>(key: string): T | null => {
     try {
       const str = storage.getString(scopedKey(key));
-      return str ? (JSON.parse(str) as T) : null;
+      return safeJsonParse<T>(str);
     } catch (e) {
       console.error(`MMKV getObject error for ${key}:`, e);
       return null;

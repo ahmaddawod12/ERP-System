@@ -76,7 +76,7 @@ async function handleJoinCompanyRequest(req: Request): Promise<Response> {
       const errCtx = await createEdgeFunctionContext(req, env);
       corsHeaders = errCtx.corsHeaders;
       errCtx.logger.error("Join company request failed", {
-        error: error?.message || String(error),
+        error: error instanceof Error ? error.message : String(error),
         correlationId: errCtx.correlationId,
       });
     } catch {

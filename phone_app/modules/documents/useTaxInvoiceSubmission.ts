@@ -61,12 +61,11 @@ interface BuiltInvoiceItem {
 
 interface TaxApprovalResponseData {
   success?: boolean;
-  approved?: boolean;
+  status?: string;
   error?: string;
   documentId?: string;
   documentNumber?: string;
   confirmationNumber?: string;
-  pdfTaskPublished?: boolean;
   pdfTaskId?: string;
 }
 
@@ -411,10 +410,9 @@ export function useTaxInvoiceSubmission({
         return;
       }
 
-      // Verify approval (should always be true if we get here)
-      if (!approvalResult.data.success || !approvalResult.data.approved) {
+      if (!approvalResult.data.success) {
         setPreviewLoading(false);
-        showErrorMessage('Error', 'Unexpected response from Tax Authority. Please try again.');
+        showErrorMessage('Error', approvalResult.data.error || 'Unexpected response from Tax Authority. Please try again.');
         return;
       }
 
@@ -423,16 +421,15 @@ export function useTaxInvoiceSubmission({
       // Tax Authority approved! PDF generation is now async via Pub/Sub
       console.log('✅ Tax Authority approved! Document ID:', approvalData.documentId);
       console.log('📄 Confirmation Number:', approvalData.confirmationNumber);
-      console.log('📄 PDF Task Published:', approvalData.pdfTaskPublished);
       console.log('📄 PDF Task ID:', approvalData.pdfTaskId);
 
       // Check if PDF task was published successfully
-      if (approvalData.pdfTaskPublished && approvalData.pdfTaskId) {
+      if (approvalData.pdfTaskId) {
         // Store pending invoice info for when PDF completes
         setPendingTaxInvoice({
           documentId: approvalData.documentId || 'Unknown',
           documentNumber: approvalData.documentNumber || 'N/A',
-          confirmationNumber: approvalData.confirmationNumber || 'N/A',
+          confirmationNumber: approvalData.confirmationNumber || 'Pending callback',
         });
         
         // Start listening to the PDF generation task via Pub/Sub
@@ -443,14 +440,14 @@ export function useTaxInvoiceSubmission({
         // The useDocumentTask hook callbacks will handle completion/error
         showInfoMessage(
           'Tax Authority Approved!',
-          `Invoice approved with confirmation: ${approvalData.confirmationNumber || 'N/A'}\n\nGenerating PDF... Please wait.`,
+          `Invoice approved with confirmation: ${approvalData.confirmationNumber || 'Pending callback'}\n\nGenerating PDF... Please wait.`,
           [{ text: 'OK', style: 'default', onPress: () => {} }]
         );
       } else {
         // PDF task publishing failed but document was saved and approved
         setPreviewLoading(false);
         
-        const partialSuccessMessage = `Tax Invoice approved but PDF generation task could not be started.\n\nDocument ID: ${approvalData.documentId || 'Unknown'}\n\n✅ Tax Authority Approved\nConfirmation: ${approvalData.confirmationNumber || 'N/A'}\n\n⚠️ PDF not scheduled\n\nYou can regenerate the PDF from Document History.`;
+        const partialSuccessMessage = `Tax Invoice approved but PDF generation task could not be started.\n\nDocument ID: ${approvalData.documentId || 'Unknown'}\n\n✅ Tax Authority Approved\nConfirmation: ${approvalData.confirmationNumber || 'Pending callback'}\n\n⚠️ PDF not scheduled\n\nYou can regenerate the PDF from Document History.`;
         
         showWarningMessage(
           'Partial Success',

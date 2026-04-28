@@ -70,10 +70,7 @@ type FillJobDraft = {
 
 // Generate a temporary ID for file upload paths (not used as Firestore doc ID)
 function generateTempId() {
-  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-  let id = '';
-  for (let i = 0; i < 8; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 8);
 }
 
 

@@ -23,6 +23,8 @@ This means backend migration code is live in `supabase/`. Treat `supabase/functi
 
 Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notifications, or email. Update `SETUP.md` instead.
 
+- When code changes affect runtime behavior, contracts, setup, architecture, CI, or workflows, review the affected `.md` files and update them in the same task.
+
 ## Core Domain Rules
 
 ### Identity

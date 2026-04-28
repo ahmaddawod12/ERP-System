@@ -10,6 +10,7 @@
 - Revalidates session users server-side before accepting a session cookie.
 - Proxies protected operations to backend gateways instead of writing directly to protected data stores.
 - Uses short-lived browser auth transport state and avoids persisting refresh tokens in `localStorage`.
+- Polls SQL-backed `document_tasks` through `/api/read-model` for preview/generate progress.
 
 ## Key Responsibilities
 
@@ -17,6 +18,7 @@
 - `/login`, `/register`, `/forgot-password`, `/onboarding`
 - Protected app routes under `/app/*`
 - API proxy routes (`/api/callable`, `/api/read-model`, `/api/contact/request`)
+- Tax invoice creation delegates to backend draft-document reservation and async PDF scheduling.
 
 ## Required Patterns
 

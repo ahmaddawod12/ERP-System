@@ -318,7 +318,7 @@ export default function DocumentsClient() {
           language: docData.language as string,
           date: docData.date as string,
           notes: docData.notes as string,
-          idempotencyKey: `tax_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`,
+          idempotencyKey: `tax_${Date.now()}_${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`,
         });
         if (result.confirmationNumber) {
           setConfirmationNumber(result.confirmationNumber);

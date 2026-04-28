@@ -18,8 +18,9 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { storage } from '../../contexts/mmkv-storage';
+import { scopedKey, storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
+import { uploadJobFilesForStorage } from '../shared/job-file-utils';
 import type { DateLike, Job, JobItem } from '../../types';
 import type { DateFilterRange } from '../../components/DateFilter';
 
@@ -36,8 +37,17 @@ type UserJobDraft = {
 
 type PendingJobRecord = {
   uid?: string;
+  localJobId?: string;
   jobData?: Partial<UserJobRecord>;
 };
+
+function getUserPendingJobsStorageKey() {
+  return scopedKey('pendingJobs');
+}
+
+function getUserJobDraftStorageKey() {
+  return scopedKey('userjobDraft');
+}
 
 function getDateLikeTime(value: DateLike | null | undefined): number {
   if (!value) return 0;
@@ -250,7 +260,7 @@ export default function Userjob() {
 
   const checkPendingJobCount = async () => {
     try {
-      const pending = storage.getString('pendingJobs');
+      const pending = storage.getString(getUserPendingJobsStorageKey());
       if (pending) setPendingJobCount((safeJsonParse<PendingJobRecord[]>(pending, []) || []).length);
     } catch (error) {
       console.log('Error checking pending jobs:', error);
@@ -262,7 +272,7 @@ export default function Userjob() {
    */
   const checkForDraft = async () => {
     try {
-      const draft = storage.getString('userjobDraft');
+      const draft = storage.getString(getUserJobDraftStorageKey());
       if (draft) {
         const parsed = safeJsonParse<UserJobDraft | null>(draft, null);
         if (parsed?.jobData && (parsed.jobData.title || parsed.jobData.description ||
@@ -275,7 +285,7 @@ export default function Userjob() {
                 text: t.discardDraft,
                 style: 'destructive',
                 onPress: async () => {
-                  storage.remove('userjobDraft');
+                  storage.remove(getUserJobDraftStorageKey());
                 },
               },
               {
@@ -287,7 +297,7 @@ export default function Userjob() {
                 text: t.continueWithDraft,
                 style: 'default',
                 onPress: async () => {
-                  storage.remove('userjobDraft');
+                  storage.remove(getUserJobDraftStorageKey());
                   // Navigate to FillJob with the draft data
                   router.push({
                     pathname: '/FillJob',
@@ -312,7 +322,7 @@ export default function Userjob() {
    */
   const syncPendingJobs = async () => {
     try {
-      const pending = storage.getString('pendingJobs');
+      const pending = storage.getString(getUserPendingJobsStorageKey());
       if (!pending) return;
       const pendingArray = safeJsonParse<PendingJobRecord[]>(pending, []) || [];
       if (pendingArray.length === 0) return;
@@ -323,8 +333,10 @@ export default function Userjob() {
       for (const pendingJob of pendingArray) {
         try {
           const companyId = getCompanyId();
+          const user = auth.currentUser;
 
           if (!companyId) throw new Error('No companyId');
+          if (!user?.uid) throw new Error('No user session');
 
           const jobPayload = {
             ...(pendingJob.jobData || {}),
@@ -343,14 +355,37 @@ export default function Userjob() {
             throw new Error('Job was created without a server job ID');
           }
 
+          const uploadResult = await uploadJobFilesForStorage(
+            user.uid,
+            serverJobId,
+            Array.isArray(jobPayload.photos) ? jobPayload.photos as Array<string | { storagePath?: string; uri?: string }> : [],
+            (jobPayload.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
+          );
+          if (uploadResult.photoRefs.length > 0 || uploadResult.signatureRef) {
+            const updateJobFn = httpsCallable(functions, 'updateJobV1');
+            const normalizedSignature = uploadResult.signatureRef ?? undefined;
+            await updateJobFn({
+              companyId,
+              jobId: serverJobId,
+              photos: uploadResult.photoRefs,
+              signature: normalizedSignature,
+            });
+            jobPayload.photos = uploadResult.photoRefs;
+            jobPayload.signature = normalizedSignature;
+          }
+
           const jobToSave = {
             id: serverJobId,
             ...jobPayload,
+            signature: uploadResult.signatureRef ?? undefined,
             status: 'finished',
             finishedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
 
+          if (pendingJob.localJobId) {
+            removeJob(String(pendingJob.localJobId));
+          }
           addJob(jobToSave);
         } catch (error) {
           console.error('Error syncing job:', error);
@@ -359,11 +394,11 @@ export default function Userjob() {
       }
 
       if (failedJobs.length > 0) {
-        storage.set('pendingJobs', JSON.stringify(failedJobs));
+        storage.set(getUserPendingJobsStorageKey(), JSON.stringify(failedJobs));
         setPendingJobCount(failedJobs.length);
         alert.error(t.syncError);
       } else {
-        storage.remove('pendingJobs');
+        storage.remove(getUserPendingJobsStorageKey());
         setPendingJobCount(0);
         alert.success(
           language === 'en' ? 'Sync Complete' : language === 'he' ? 'סנכרון הושלם' : 'اكتمل التزامن',
@@ -511,7 +546,7 @@ export default function Userjob() {
       return;
     }
 
-  storage.remove('userjobDraft');
+  storage.remove(getUserJobDraftStorageKey());
 
     router.push({
       pathname: '/FillJob',

@@ -13,6 +13,7 @@ export interface WebsiteSessionPayload {
   role?: string | null;
   companyId?: string | null;
   authTime?: number | null;
+  accessToken?: string | null;
 }
 
 function getSessionSecret(): Uint8Array {
@@ -41,11 +42,13 @@ export async function createSessionCookieValue(payload: WebsiteSessionPayload): 
     role: payload.role || undefined,
     companyId: payload.companyId || undefined,
     authTime: Number.isFinite(payload.authTime) ? payload.authTime : undefined,
+    accessToken: payload.accessToken || undefined,
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(SESSION_ISSUER)
     .setAudience(SESSION_AUDIENCE)
     .setSubject(normalizedUid)
+    .setJti(crypto.randomUUID())
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE_SECONDS}s`)
     .sign(getSessionSecret());
@@ -72,10 +75,11 @@ export async function verifySessionCookieValue(token: string): Promise<WebsiteSe
     return {
       uid,
       provider: "supabase",
-      email: typeof payload.email === "string" ? payload.email : null,
-      role: typeof payload.role === "string" ? payload.role : null,
-      companyId: typeof payload.companyId === "string" ? payload.companyId : null,
-      authTime: Number.isFinite(payload.authTime) ? Number(payload.authTime) : null,
+      ...(typeof payload.email === "string" ? { email: payload.email } : {}),
+      ...(typeof payload.role === "string" ? { role: payload.role } : {}),
+      ...(typeof payload.companyId === "string" ? { companyId: payload.companyId } : {}),
+      ...(Number.isFinite(payload.authTime) ? { authTime: Number(payload.authTime) } : {}),
+      ...(typeof payload.accessToken === "string" ? { accessToken: payload.accessToken } : {}),
     };
   } catch {
     return null;

@@ -12,6 +12,51 @@ const { resolveCompanyByPublicId } = require('./membership');
 
 const ARCHIVE_QUERY_LIMIT = 10000;
 
+function resolveArchivePageSize(options: any = {}) {
+  const rawPageSize = Number(options.pageSize || options.limit);
+  return Number.isInteger(rawPageSize) && rawPageSize > 0
+    ? Math.min(rawPageSize, ARCHIVE_QUERY_LIMIT)
+    : Math.min(1000, ARCHIVE_QUERY_LIMIT);
+}
+
+function buildArchivePageOptions(options: any = {}) {
+  const { pageSize, limit, ...rest } = options;
+  return {
+    ...rest,
+    limit: resolveArchivePageSize(options),
+  };
+}
+
+async function listAllArchivedRecords(loadPage, companyId, options: any = {}) {
+  const records = [];
+  const seenCursors = new Set();
+  let afterCursor = options.afterCursor ? String(options.afterCursor) : null;
+  const pageOptions = { ...options };
+  delete pageOptions.afterCursor;
+
+  while (true) {
+    const page = await loadPage(companyId, {
+      ...pageOptions,
+      ...(afterCursor ? { afterCursor } : {}),
+    });
+    const pageItems = Array.isArray(page?.items) ? page.items : [];
+    records.push(...pageItems);
+
+    if (!page?.nextCursor) {
+      return records;
+    }
+
+    if (seenCursors.has(page.nextCursor)) {
+      const error = new Error(`Archive cursor loop detected for company ${companyId}`);
+      (error as any).code = 'failed-precondition';
+      throw error;
+    }
+
+    seenCursors.add(page.nextCursor);
+    afterCursor = page.nextCursor;
+  }
+}
+
 function normalizePublicIds(values, coerce) {
   if (!Array.isArray(values)) {
     return [];
@@ -43,36 +88,20 @@ async function listCompanyPublicIds(options: any = {}) {
     .sort((left, right) => Number(left) - Number(right));
 }
 
+async function listArchivedCompanyJobsPage(companyId, options: any = {}) {
+  return listCompanyJobsDetailed(companyId, { role: 'manager' }, buildArchivePageOptions(options));
+}
+
 async function listArchivedCompanyJobs(companyId, options: any = {}) {
-  const result = await listCompanyJobsDetailed(companyId, { role: 'manager' }, {
-    ...options,
-    limit: ARCHIVE_QUERY_LIMIT,
-  });
-  const records = result.items;
+  return listAllArchivedRecords(listArchivedCompanyJobsPage, companyId, options);
+}
 
-  if (records.length >= ARCHIVE_QUERY_LIMIT) {
-    const error = new Error(`Archive query limit reached for jobs in company ${companyId}`);
-    (error as any).code = 'resource-exhausted';
-    throw error;
-  }
-
-  return records;
+async function listArchivedCompanyDocumentsPage(companyId, options: any = {}) {
+  return listCompanyDocumentsDetailed(companyId, buildArchivePageOptions(options));
 }
 
 async function listArchivedCompanyDocuments(companyId, options: any = {}) {
-  const result = await listCompanyDocumentsDetailed(companyId, {
-    ...options,
-    limit: ARCHIVE_QUERY_LIMIT,
-  });
-  const records = result.items;
-
-  if (records.length >= ARCHIVE_QUERY_LIMIT) {
-    const error = new Error(`Archive query limit reached for documents in company ${companyId}`);
-    (error as any).code = 'resource-exhausted';
-    throw error;
-  }
-
-  return records;
+  return listAllArchivedRecords(listArchivedCompanyDocumentsPage, companyId, options);
 }
 
 async function deleteArchivedJobsByIds(companyId, jobIds, options: any = {}) {
@@ -134,6 +163,8 @@ export {
   deleteArchivedDocumentsByIds,
   deleteArchivedJobsByIds,
   listArchivedCompanyDocuments,
+  listArchivedCompanyDocumentsPage,
   listArchivedCompanyJobs,
+  listArchivedCompanyJobsPage,
   listCompanyPublicIds,
 };

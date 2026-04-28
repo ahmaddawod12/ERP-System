@@ -396,6 +396,39 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const fetchAllCursorPages = useCallback(
+    async (
+      fetchPage: (companyId: string, opts?: { pageSize?: number; afterCursor?: string; signal?: AbortSignal }) => Promise<{ items: any[]; nextCursor: string | null }>,
+      companyId: string,
+      pageSize = 200,
+    ) => {
+      const allItems: any[] = [];
+      const seenCursors = new Set<string>();
+      let nextCursor: string | null = null;
+
+      do {
+        const page = await fetchPage(companyId, { pageSize, afterCursor: nextCursor || undefined });
+        if (Array.isArray(page.items) && page.items.length > 0) {
+          allItems.push(...page.items);
+        }
+
+        const candidateCursor = typeof page.nextCursor === 'string' && page.nextCursor.trim()
+          ? page.nextCursor.trim()
+          : null;
+        if (!candidateCursor || seenCursors.has(candidateCursor)) {
+          nextCursor = null;
+          continue;
+        }
+
+        seenCursors.add(candidateCursor);
+        nextCursor = candidateCursor;
+      } while (nextCursor);
+
+      return allItems;
+    },
+    [],
+  );
+
   const fetchCompanySyncState = useCallback(
     (companyId: string) => _fetchCompanySyncState(companyId),
     [],
@@ -594,15 +627,15 @@ export function CacheProvider({ children }: { children: ReactNode }) {
               const shouldFetchJobs = role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion;
               const shouldFetchDocs = role !== 'dev' && remoteDocsVersion !== localDocsVersion;
 
-              const [jobsResult, docsResult] = await Promise.all([
-                shouldFetchJobs ? fetchJobsPage(companyId, { pageSize: 50 }) : Promise.resolve({ items: [], nextCursor: null }),
-                shouldFetchDocs ? fetchDocumentsPage(companyId, { pageSize: 50 }) : Promise.resolve({ items: [], nextCursor: null }),
+              const [jobsItems, docsItems] = await Promise.all([
+                shouldFetchJobs ? fetchAllCursorPages(fetchJobsPage, companyId, 200) : Promise.resolve([]),
+                shouldFetchDocs ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200) : Promise.resolve([]),
               ]);
 
               applyBootstrappedJobDocumentCache(
                 role,
-                shouldFetchJobs ? jobsResult.items : mmkvHelpers.getObject(CACHE_KEYS.COMPANY_JOBS) ?? [],
-                shouldFetchDocs ? docsResult.items : mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) ?? [],
+                shouldFetchJobs ? jobsItems : mmkvHelpers.getObject(CACHE_KEYS.COMPANY_JOBS) ?? [],
+                shouldFetchDocs ? docsItems : mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) ?? [],
               );
               mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
               mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, new Date().toISOString());
@@ -701,7 +734,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     listenersActiveRef.current = true;
     
     console.log(`Cache listeners set up for ${role}`);
-  }, [applyBootstrappedJobDocumentCache, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, saveToLocalCache]);
+  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, saveToLocalCache]);
 
   /**
    * Initialize cache for a user (called on login/app start)
@@ -924,7 +957,20 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch all recent jobs from Firebase
       console.log('Fetching all recent jobs for initial cache...');
-      const { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
+      let { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
+      if (companyId) {
+        const [allJobsData, allDocumentsData] = await Promise.all([
+          role !== 'basic' && role !== 'dev' ? fetchAllCursorPages(fetchJobsPage, companyId, 200) : Promise.resolve([]),
+          role !== 'dev' ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200) : Promise.resolve([]),
+        ]);
+
+        if (allJobsData.length > 0 || (role !== 'basic' && role !== 'dev')) {
+          jobsData = allJobsData;
+        }
+        if (allDocumentsData.length > 0 || role !== 'dev') {
+          documentsData = allDocumentsData;
+        }
+      }
       
       // Save fetched jobs to local cache (unified jobs collection)
       applyBootstrappedJobDocumentCache(role, jobsData, documentsData);
@@ -975,7 +1021,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
     }
-  }, [applyBootstrappedJobDocumentCache, fetchCompanySyncState, fetchDataFromFirebase, fetchAllRecentJobs, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
+  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchCompanySyncState, fetchDataFromFirebase, fetchAllRecentJobs, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
 
   /**
    * Pre-increment a summary version field locally.

@@ -11,8 +11,20 @@ const SUPABASE_USER_KEY = "sj_supabase_user";
 let inMemoryAccessToken = "";
 let inMemoryExpiresAt = 0;
 let inMemoryRefreshToken = "";
+let inMemorySessionSyncedToken = "";
 
 const supabaseListeners = new Set<AuthChangeCallback>();
+
+function hasInMemoryAuthTransport() {
+  return Boolean(inMemoryAccessToken || inMemoryRefreshToken);
+}
+
+function readTransportBackedSupabaseUser(): ClientAuthUser | null {
+  if (!hasInMemoryAuthTransport()) {
+    return null;
+  }
+  return readSupabaseUser();
+}
 
 function readSupabaseConfig() {
   const baseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/+$/, "");
@@ -58,11 +70,12 @@ function clearSupabaseSession() {
   inMemoryAccessToken = "";
   inMemoryExpiresAt = 0;
   inMemoryRefreshToken = "";
+  inMemorySessionSyncedToken = "";
   window.sessionStorage.removeItem(SUPABASE_USER_KEY);
 }
 
 function notifySupabaseListeners() {
-  const user = readSupabaseUser();
+  const user = readTransportBackedSupabaseUser();
   for (const listener of supabaseListeners) {
     listener(user);
   }
@@ -206,12 +219,12 @@ export async function signOutConfiguredProvider() {
 }
 
 export function getCurrentAuthUser(): ClientAuthUser | null {
-  return readSupabaseUser();
+  return readTransportBackedSupabaseUser();
 }
 
 export function subscribeConfiguredAuthState(callback: AuthChangeCallback): () => void {
   supabaseListeners.add(callback);
-  callback(readSupabaseUser());
+  callback(readTransportBackedSupabaseUser());
 
   const storageListener = (event: StorageEvent) => {
     if (event.key === SUPABASE_USER_KEY) {
@@ -233,6 +246,22 @@ export async function getCurrentAccessToken(forceRefresh = true): Promise<string
   }
   if (typeof window === "undefined") return null;
   return inMemoryAccessToken || null;
+}
+
+export function getCurrentAuthUserSnapshot(): ClientAuthUser | null {
+  return readSupabaseUser();
+}
+
+export function hasClientAuthSession(): boolean {
+  return hasInMemoryAuthTransport();
+}
+
+export function markSessionTokenSynced(token: string | null) {
+  inMemorySessionSyncedToken = String(token || "").trim();
+}
+
+export function isSessionTokenSynced(token: string | null) {
+  return Boolean(token) && inMemorySessionSyncedToken === String(token).trim();
 }
 
 export async function buildAuthedJsonHeaders() {

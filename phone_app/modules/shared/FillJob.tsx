@@ -18,20 +18,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { auth, storage as fbStorage, functions, httpsCallable } from '../../firebase';
+import NetInfo from '@react-native-community/netinfo';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../theme';
 import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput, ScreenHeroCard } from '../../components';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { storage } from '../../contexts/mmkv-storage';
+import { scopedKey, storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
 import { fetchUserInventoryParts } from '../../utils/read-model';
 import type { Client, InventoryPart, Job, JobFileRef, JobItem } from '../../types';
 import {
+  cleanupUploadedJobFiles,
   extractStoragePathFromJobFile,
   getImmediateJobFileUri,
   resolveJobFileUri,
+  uploadJobFilesForStorage,
 } from './job-file-utils';
 
 type FillJobMode = 'user' | 'worker';
@@ -67,6 +70,34 @@ type FillJobDraft = {
   travelDistance?: number | string;
   timestamp?: number;
 };
+
+type PendingUserJobRecord = {
+  uid?: string;
+  localJobId?: string;
+  jobData?: Record<string, unknown>;
+};
+
+type PendingWorkerJobRecord = {
+  companyId?: string;
+  jobId?: string;
+  jobData?: Record<string, unknown>;
+};
+
+function getFillJobDraftStorageKey(mode: FillJobMode, jobId?: string | null) {
+  if (mode === 'user') {
+    return scopedKey('userjobDraft');
+  }
+  const normalizedJobId = String(jobId || '').trim();
+  return scopedKey(normalizedJobId ? `workerjobDraft_${normalizedJobId}` : 'workerjobDraft_new');
+}
+
+function getPendingUserJobsStorageKey() {
+  return scopedKey('pendingJobs');
+}
+
+function getPendingWorkerJobsStorageKey() {
+  return scopedKey('pendingWorkerJobs');
+}
 
 // Generate a temporary ID for file upload paths (not used as Firestore doc ID)
 function generateTempId() {
@@ -432,76 +463,25 @@ export default function FillJob() {
     }
   };
 
-  const uploadFileToStorage = async (fileRef: string | JobFileRef | null | undefined, uid: string, jobId: string, fileName: string) => {
-    try {
-      const existingStoragePath = extractStoragePathFromJobFile(fileRef);
-      if (existingStoragePath) {
-        return { storagePath: existingStoragePath, uploaded: false };
-      }
-
-      const localUri = getImmediateJobFileUri(fileRef);
-      if (!localUri) {
-        throw new Error('Job file must be a local URI or canonical storage reference');
-      }
-
-      const storagePath = `${uid}/jobs/${jobId}/${fileName}`;
-      const storageRef = fbStorage().ref(storagePath);
-      const response = await fetch(localUri);
-      const blob = await response.blob();
-
-      try {
-        await storageRef.put(blob);
-        console.log('Upload complete:', storagePath);
-        return { storagePath, uploaded: true };
-      } catch (error) {
-        console.error('Upload error:', error);
-        throw error;
-      }
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      throw error;
-    }
-  };
-
-  const uploadJobFiles = async (uid: string, jobId: string, photos: Array<string | JobFileRef>, signature: string | JobFileRef | null) => {
-    const photoRefs: Array<{ storagePath: string; uploaded: boolean }> = [];
-    let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
-    const uploadedStoragePaths: string[] = [];
-
-    // Upload photos
-    for (let i = 0; i < photos.length; i++) {
-      const photoRef = await uploadFileToStorage(photos[i], uid, jobId, `photo_${i + 1}.jpg`);
-      photoRefs.push(photoRef);
-      if (photoRef?.uploaded && photoRef.storagePath) {
-        uploadedStoragePaths.push(photoRef.storagePath);
-      }
-    }
-
-    // Upload signature
-    if (signature) {
-      signatureRef = await uploadFileToStorage(signature, uid, jobId, 'signature.png');
-      if (signatureRef?.uploaded && signatureRef.storagePath) {
-        uploadedStoragePaths.push(signatureRef.storagePath);
-      }
-    }
-
-    return { photoRefs, signatureRef, uploadedStoragePaths };
-  };
-
-  const cleanupUploadedJobFiles = async (storagePaths: string[]) => {
-    const uniquePaths = [...new Set((Array.isArray(storagePaths) ? storagePaths : []).filter(Boolean))];
-    if (uniquePaths.length === 0) {
+  const enqueuePendingJob = async (
+    modeToQueue: FillJobMode,
+    companyId: string,
+    uid: string,
+    jobId: string,
+    jobPayload: Record<string, unknown>,
+  ) => {
+    if (modeToQueue === 'user') {
+      const pendingKey = getPendingUserJobsStorageKey();
+      const existing = safeJsonParse<PendingUserJobRecord[]>(storage.getString(pendingKey), []) || [];
+      storage.set(pendingKey, JSON.stringify([...existing, { uid, localJobId: jobId, jobData: jobPayload }]));
+      addJob({ ...jobPayload, id: jobId, status: 'finished' });
       return;
     }
 
-    await Promise.all(uniquePaths.map(async (storagePath) => {
-      try {
-        await fbStorage().ref(storagePath).delete();
-        console.log('🧹 Removed orphaned upload:', storagePath);
-      } catch (cleanupError) {
-        console.warn('Failed to remove orphaned upload:', storagePath, cleanupError);
-      }
-    }));
+    const pendingKey = getPendingWorkerJobsStorageKey();
+    const existing = safeJsonParse<PendingWorkerJobRecord[]>(storage.getString(pendingKey), []) || [];
+    storage.set(pendingKey, JSON.stringify([...existing, { companyId, jobId, jobData: jobPayload }]));
+    updateJob(jobId, jobPayload);
   };
 
   const validateForm = () => {
@@ -610,6 +590,8 @@ export default function FillJob() {
       const uid = getUid() || user.uid;
       const jobId = editingJob?.id || generateTempId();
       const currentDate = new Date();
+      const networkState = await NetInfo.fetch();
+      const isOnline = Boolean(networkState.isConnected && networkState.isInternetReachable !== false);
 
       // Get user profile from cache
       const companyId = getCompanyId();
@@ -620,8 +602,8 @@ export default function FillJob() {
 
       let photoRefs: Array<{ storagePath: string; uploaded: boolean }> = [];
       let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
-      if (mode !== 'user') {
-        const uploadResult = await uploadJobFiles(
+      if (isOnline && mode !== 'user') {
+        const uploadResult = await uploadJobFilesForStorage(
           uid,
           jobId,
           jobData.photos,
@@ -686,6 +668,38 @@ export default function FillJob() {
         })),
       };
 
+      if (!isOnline) {
+        const offlinePayload = mode === 'user'
+          ? {
+              ...jobToSave,
+              photos: jobData.photos,
+              signature: jobData.signature,
+              idempotencyKey: `job_${Date.now()}_${jobId}`,
+            }
+          : {
+              ...jobToSave,
+              photos: jobData.photos,
+              signature: jobData.signature,
+            };
+
+        await enqueuePendingJob(mode, companyId, uid, jobId, offlinePayload);
+        const draftKey = getFillJobDraftStorageKey(mode, jobId);
+        storage.remove(draftKey);
+        alert.hideLoading();
+        alert.success(
+          language === 'en' ? 'Saved Offline' : language === 'he' ? 'נשמר במצב לא מקוון' : 'تم الحفظ دون اتصال',
+          language === 'en'
+            ? 'Job saved locally and will sync when you are back online.'
+            : language === 'he'
+            ? 'המשימה נשמרה מקומית ותסונכרן כשתחזור לחיבור.'
+            : 'تم حفظ المهمة محلياً وستتم مزامنتها عند عودة الاتصال.'
+        );
+        setTimeout(() => {
+          router.back();
+        }, 500);
+        return;
+      }
+
       // Save to appropriate location
       if (mode === 'user') {
         console.log('💾 FillJob: Creating user finished job via Cloud Function...');
@@ -705,7 +719,7 @@ export default function FillJob() {
         if (!serverJobId) {
           throw new Error('Job was created without a server job ID');
         }
-        const userUploadResult = await uploadJobFiles(
+        const userUploadResult = await uploadJobFilesForStorage(
           uid,
           serverJobId,
           jobData.photos,
@@ -754,7 +768,7 @@ export default function FillJob() {
       }
 
       // Clear draft
-      const draftKey = mode === 'user' ? 'userjobDraft' : `workerjobDraft_${jobId}`;
+      const draftKey = getFillJobDraftStorageKey(mode, jobId);
       storage.remove(draftKey);
 
       alert.hideLoading();
@@ -778,7 +792,7 @@ export default function FillJob() {
 
   const handleSaveDraft = async () => {
     try {
-      const draftKey = mode === 'user' ? 'userjobDraft' : `workerjobDraft_${editingJob?.id}`;
+      const draftKey = getFillJobDraftStorageKey(mode, editingJob?.id ? String(editingJob.id) : null);
       const draftData = {
         jobData,
         selectedParts,

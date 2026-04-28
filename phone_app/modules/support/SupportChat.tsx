@@ -24,7 +24,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { storage } from '../../contexts/mmkv-storage';
+import { scopedKey, storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
 import { auth } from '../../firebase';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -71,6 +71,7 @@ export default function SupportChat() {
   const [openConversations, setOpenConversations] = useState([]);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [templateAnswers, setTemplateAnswers] = useState({});
+  const hiddenConversationsKey = scopedKey('hiddenConversations');
   
   const flatListRef = useRef(null);
 
@@ -93,7 +94,7 @@ export default function SupportChat() {
       const allOpenConversations = await listSupportConversations('open');
       
       // Load hidden conversations from local storage
-      const hiddenStr = storage.getString('hiddenConversations');
+      const hiddenStr = storage.getString(hiddenConversationsKey);
       const hiddenIds = safeJsonParse(hiddenStr, []);
       setHiddenConversations(hiddenIds);
       
@@ -323,7 +324,7 @@ export default function SupportChat() {
               // Add to hidden list (local only)
               const newHidden = [...hiddenConversations, convId];
               setHiddenConversations(newHidden);
-              storage.set('hiddenConversations', JSON.stringify(newHidden));
+               storage.set(hiddenConversationsKey, JSON.stringify(newHidden));
               
               // Remove from closed conversations list
               setClosedConversations(prev => prev.filter(c => c.id !== convId));

@@ -195,7 +195,7 @@ CREATE POLICY proposal_usage_company_read_policy
     EXISTS (
       SELECT 1
       FROM documents d
-      WHERE d.id = proposal_usage.proposal_id
+      WHERE d.id = proposal_usage.proposal_document_id
         AND app_has_company_access(d.company_id)
     )
   );
@@ -210,13 +210,13 @@ DROP POLICY IF EXISTS document_tasks_company_read_policy ON document_tasks;
 CREATE POLICY document_tasks_company_read_policy
   ON document_tasks
   FOR SELECT
-  USING (app_has_company_access(company_id) OR created_by_user_id = app_auth_uid());
+  USING (app_has_company_access(company_id) OR user_id = app_auth_uid());
 
 DROP POLICY IF EXISTS support_conversations_company_read_policy ON support_conversations;
 CREATE POLICY support_conversations_company_read_policy
   ON support_conversations
   FOR SELECT
-  USING (app_has_company_access(company_id));
+  USING (company_id IS NULL OR app_has_company_access(company_id));
 
 DROP POLICY IF EXISTS support_messages_company_read_policy ON support_messages;
 CREATE POLICY support_messages_company_read_policy

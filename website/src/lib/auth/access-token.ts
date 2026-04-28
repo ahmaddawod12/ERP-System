@@ -12,6 +12,7 @@ export interface VerifiedAccessToken {
   email: string | null;
   role: string | null;
   companyId: string | null;
+  accessToken?: string | null;
 }
 
 export interface SupabaseUserRecord {
@@ -115,6 +116,7 @@ async function verifySupabaseToken(token: string): Promise<VerifiedAccessToken> 
     email: typeof user?.email === "string" ? user.email : null,
     role: roleFromClaims || roleFromAppMetadata || roleFromUserMetadata,
     companyId: companyFromClaims || companyFromUserMetadata,
+    accessToken: token,
   };
 }
 

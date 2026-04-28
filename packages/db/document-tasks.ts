@@ -15,9 +15,28 @@ function asTrimmedTaskId(value) {
   return String(value || '').trim();
 }
 
+function buildDocumentTaskLockKey(input) {
+  const explicitLockKey = String(input?.lockKey || '').trim();
+  if (explicitLockKey) {
+    return explicitLockKey;
+  }
+
+  const taskType = String(input?.taskType || '').trim();
+  const documentId = String(input?.documentId || '').trim();
+  if (documentId) {
+    return `document:${documentId}`;
+  }
+
+  if (taskType === 'preview') {
+    return `preview:${Number(input?.documentType || 0)}`;
+  }
+
+  return `task:${taskType}:${Number(input?.documentType || 0)}`;
+}
+
 function isActiveTaskConstraintError(error) {
   const constraintName = String(error?.constraint || error?.constraint_name || '').trim();
-  return error?.code === '23505' && constraintName === 'document_tasks_active_company_type_unique';
+  return error?.code === '23505' && constraintName === 'document_tasks_active_company_lock_unique';
 }
 
 function createActiveTaskConflictError(input) {
@@ -72,6 +91,7 @@ async function createDocumentTask(input, options: any = {}) {
 
       await tx.insert(documentTasks).values({
         taskKey: asTrimmedTaskId(input.taskId),
+        lockKey: buildDocumentTaskLockKey(input),
         companyId: company.id,
         userId: String(input.uid || '').trim(),
         documentId: null,

@@ -10,8 +10,12 @@ import {
 } from "react";
 import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";
 import {
+  getCurrentAuthUserSnapshot,
   getCurrentAccessToken,
   getCurrentAuthUser,
+  hasClientAuthSession,
+  isSessionTokenSynced,
+  markSessionTokenSynced,
   signOutConfiguredProvider,
   subscribeConfiguredAuthState,
   type ClientAuthUser,
@@ -70,6 +74,10 @@ async function loadUserProfile() {
 async function syncAuthSession(token: string | null) {
   if (!token) {
     await fetch("/api/auth/session", { method: "DELETE", credentials: "include" }).catch(() => {});
+    markSessionTokenSynced(null);
+    return;
+  }
+  if (isSessionTokenSynced(token)) {
     return;
   }
   await fetch("/api/auth/session", {
@@ -78,6 +86,26 @@ async function syncAuthSession(token: string | null) {
     credentials: "include",
     body: JSON.stringify({ token }),
   }).catch(() => {});
+  markSessionTokenSynced(token);
+}
+
+async function loadSessionUser(): Promise<ClientAuthUser | null> {
+  const response = await fetch("/api/auth/session", {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    session?: { uid?: unknown; email?: unknown };
+  } | null;
+  if (!response.ok || !payload?.ok || !payload.session?.uid) {
+    return null;
+  }
+  return {
+    uid: String(payload.session.uid),
+    email: typeof payload.session.email === "string" ? payload.session.email : null,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -87,7 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refreshUserData = useCallback(async () => {
-    if (!getCurrentAuthUser()) {
+    if (!getCurrentAuthUserSnapshot()) {
       setProfile(null);
       setSubscription(null);
       return;
@@ -103,6 +131,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    void (async () => {
+      if (hasClientAuthSession()) {
+        return;
+      }
+      const sessionUser = await loadSessionUser().catch(() => null);
+      if (!sessionUser) {
+        setLoading(false);
+        return;
+      }
+      setUser(sessionUser);
+      try {
+        const result = await loadUserProfile();
+        setProfile(result.profile);
+        setSubscription(result.subscription);
+      } catch {
+        setProfile(null);
+        setSubscription(null);
+      } finally {
+        setLoading(false);
+      }
+    })();
+
     return subscribeConfiguredAuthState(async (nextUser) => {
       try {
         setLoading(true);
@@ -119,6 +169,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSubscription(null);
           }
         } else {
+          if (!hasClientAuthSession()) {
+            const sessionUser = await loadSessionUser().catch(() => null);
+            if (sessionUser) {
+              setUser(sessionUser);
+              try {
+                const result = await loadUserProfile();
+                setProfile(result.profile);
+                setSubscription(result.subscription);
+              } catch {
+                setProfile(null);
+                setSubscription(null);
+              }
+              return;
+            }
+          }
           await syncAuthSession(null);
           setProfile(null);
           setSubscription(null);

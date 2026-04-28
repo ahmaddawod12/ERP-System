@@ -1,37 +1,40 @@
-# Stage 1: Build
+# Stage 1: Build shared packages and archiver
 FROM node:22-slim AS build
 
-WORKDIR /cloudrun-archiver
+WORKDIR /workspace
 
-COPY package*.json ./
-RUN npm ci
+COPY packages/contracts ./packages/contracts
+COPY packages/db ./packages/db
+COPY cloudrun-archiver ./cloudrun-archiver
 
-COPY . .
-RUN npm run build
+RUN npm --prefix packages/contracts ci
+RUN npm --prefix packages/contracts run build
+RUN npm --prefix packages/db ci
+RUN npm --prefix packages/db run build
+RUN npm --prefix cloudrun-archiver ci
+RUN npm --prefix cloudrun-archiver run build
 
 # Stage 2: Production dependencies only
 FROM node:22-slim AS deps
 
-WORKDIR /cloudrun-archiver
+WORKDIR /workspace
 
-COPY package*.json ./
-RUN npm ci --omit=dev
+COPY --from=build /workspace/packages/contracts ./packages/contracts
+COPY --from=build /workspace/packages/db ./packages/db
+COPY --from=build /workspace/cloudrun-archiver/package*.json ./cloudrun-archiver/
 
-# Stage 2: Production image
+RUN npm --prefix cloudrun-archiver ci --omit=dev
+
+# Stage 3: Production image
 FROM node:22-slim
 
 WORKDIR /cloudrun-archiver
 
 ENV HOME=/tmp
 
-# Copy dependencies from build stage
-COPY --from=deps /cloudrun-archiver/node_modules ./node_modules
+COPY --from=deps /workspace/cloudrun-archiver/node_modules ./node_modules
+COPY --from=build /workspace/cloudrun-archiver/dist ./dist
 
-# Copy production deps and compiled source
-COPY --from=build /cloudrun-archiver/dist ./dist
-
-# Run as non-root user for security
 USER node
 
-# Cloud Run Jobs use CMD, not ENTRYPOINT
 CMD ["node", "dist/index.js"]

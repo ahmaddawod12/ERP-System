@@ -108,18 +108,22 @@ jobs:
     needs:
       - packages_contracts
       - packages_db
-    defaults:
-      run:
-        working-directory: cloudrun-archiver
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: cloudrun-archiver/package-lock.json
-      - run: npm ci
-      - run: npm test
+          cache-dependency-path: |
+            cloudrun-archiver/package-lock.json
+            packages/contracts/package-lock.json
+            packages/db/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/db ci
+      - run: npm --prefix packages/db run build
+      - run: npm --prefix cloudrun-archiver ci
+      - run: npm --prefix cloudrun-archiver test
 
   supabase_edge:
     runs-on: ubuntu-latest
@@ -149,4 +153,4 @@ jobs:
       - name: Build PDF service image
         run: docker build -t smart-job-cloudrun-pdf:ci ./cloudrun-pdf
       - name: Build archiver image
-        run: docker build -t smart-job-cloudrun-archiver:ci ./cloudrun-archiver
+        run: docker build -f cloudrun-archiver/Dockerfile -t smart-job-cloudrun-archiver:ci .

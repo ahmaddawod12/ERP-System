@@ -1,10 +1,14 @@
 import { Storage } from '@google-cloud/storage';
 import { createHash } from 'crypto';
+import { createWriteStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   deleteArchivedDocumentsByIds,
   deleteArchivedJobsByIds,
-  listArchivedCompanyDocuments,
-  listArchivedCompanyJobs,
+  listArchivedCompanyDocumentsPage,
+  listArchivedCompanyJobsPage,
   listCompanyPublicIds,
 } from '@smart-job/db';
 import { getTargetMonth } from './archive-month';
@@ -198,29 +202,167 @@ async function saveManifest(companyId, manifest) {
  * @param {Array} documents - The documents to archive
  * @returns {string} - Storage path of the uploaded file
  */
-async function uploadArchive(companyId, archiveKey, documents) {
-  const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
-  const file = bucket.file(storagePath);
+async function writeChunk(stream, chunk) {
+  if (stream.write(chunk)) {
+    return;
+  }
 
-  const jsonContent = JSON.stringify(documents, null, 0); // Compact JSON for storage efficiency
-  const checksum = createHash('sha256').update(jsonContent).digest('hex');
+  await new Promise<void>((resolve, reject) => {
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      stream.off('drain', onDrain);
+      stream.off('error', onError);
+    };
 
-  await file.save(jsonContent, {
-    contentType: 'application/json',
-    metadata: {
-      cacheControl: 'no-cache',
-      metadata: {
-        docCount: String(documents.length),
-        archiveKey: archiveKey,
-        companyId: companyId,
-        archivedAt: new Date().toISOString(),
-        sha256: checksum,
-      },
-    },
+    stream.once('drain', onDrain);
+    stream.once('error', onError);
   });
+}
 
-  console.log(`📦 Uploaded ${storagePath} (${documents.length} docs, ${(jsonContent.length / 1024).toFixed(1)} KB)`);
-  return storagePath;
+async function finishStream(stream) {
+  await new Promise<void>((resolve, reject) => {
+    stream.on('error', reject);
+    stream.end(() => resolve());
+  });
+}
+
+async function hashStoredArchive(file) {
+  const digest = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const stream = file.createReadStream();
+    stream.on('data', (chunk) => digest.update(chunk));
+    stream.on('end', () => resolve());
+    stream.on('error', reject);
+  });
+  return digest.digest('hex');
+}
+
+function buildArchiveQueryOptions(target, afterCursor = null) {
+  return {
+    dateFrom: target.startDate.toISOString(),
+    dateTo: target.endDate.toISOString(),
+    pageSize: QUERY_PAGE_SIZE,
+    ...(afterCursor ? { afterCursor } : {}),
+  };
+}
+
+async function loadArchivePage(companyId, target, kind, afterCursor = null) {
+  const queryOptions = kind === 'finishedJobs'
+    ? {
+      ...buildArchiveQueryOptions(target, afterCursor),
+      status: 'finished',
+      dateField: 'finishedAt',
+    }
+    : {
+      ...buildArchiveQueryOptions(target, afterCursor),
+      dateField: 'createdAt',
+    };
+
+  return kind === 'finishedJobs'
+    ? await listArchivedCompanyJobsPage(companyId, queryOptions)
+    : await listArchivedCompanyDocumentsPage(companyId, queryOptions);
+}
+
+async function writeArchivePayload(tempFilePath, companyId, archiveKey, target, kind) {
+  const stream = createWriteStream(tempFilePath, { encoding: 'utf8' });
+  const checksum = createHash('sha256');
+  const docIds = [];
+  let docCount = 0;
+  let pageCount = 0;
+  let firstRecord = true;
+  let afterCursor = null;
+  const seenCursors = new Set();
+
+  const writeJsonChunk = async (chunk) => {
+    checksum.update(chunk);
+    await writeChunk(stream, chunk);
+  };
+
+  try {
+    await writeJsonChunk('[');
+
+    while (true) {
+      const page = await loadArchivePage(companyId, target, kind, afterCursor);
+      const records = Array.isArray(page?.items) ? page.items : [];
+      pageCount += 1;
+
+      for (const record of records) {
+        const serialized = JSON.stringify(record);
+        await writeJsonChunk(firstRecord ? serialized : `,${serialized}`);
+        firstRecord = false;
+        docCount += 1;
+        docIds.push(record.id);
+      }
+
+      if (!page?.nextCursor) {
+        break;
+      }
+
+      if (seenCursors.has(page.nextCursor)) {
+        throw new Error(`Archive cursor loop detected for ${companyId}/${archiveKey}`);
+      }
+
+      seenCursors.add(page.nextCursor);
+      afterCursor = page.nextCursor;
+    }
+
+    await writeJsonChunk(']');
+    await finishStream(stream);
+
+    return {
+      archivedAt: new Date().toISOString(),
+      checksum: checksum.digest('hex'),
+      docCount,
+      docIds,
+      pageCount,
+    };
+  } catch (error) {
+    stream.destroy(error as Error);
+    throw error;
+  }
+}
+
+async function uploadArchive(companyId, archiveKey, target, kind) {
+  const storagePath = `companies/${companyId}/archives/${archiveKey}.json`;
+  const tempDir = await mkdtemp(join(tmpdir(), 'smart-job-archive-'));
+  const tempFilePath = join(tempDir, `${archiveKey}.json`);
+
+  try {
+    const payload = await writeArchivePayload(tempFilePath, companyId, archiveKey, target, kind);
+    if (payload.docCount === 0) {
+      return null;
+    }
+
+    await bucket.upload(tempFilePath, {
+      destination: storagePath,
+      metadata: {
+        contentType: 'application/json',
+        cacheControl: 'no-cache',
+        metadata: {
+          docCount: String(payload.docCount),
+          archiveKey,
+          companyId,
+          archivedAt: payload.archivedAt,
+          sha256: payload.checksum,
+        },
+      },
+    });
+
+    console.log(`📦 Uploaded ${storagePath} (${payload.docCount} docs across ${payload.pageCount} pages)`);
+    return {
+      ...payload,
+      storagePath,
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -235,50 +377,24 @@ async function verifyArchive(companyId, archiveKey, expectedCount) {
     throw new Error(`Archive verification failed: ${storagePath} does not exist`);
   }
 
-  // Download and verify doc count + integrity
-  const [content] = await file.download();
-  const contentStr = content.toString('utf8');
-  const parsed = JSON.parse(contentStr);
-
-  if (parsed.length !== expectedCount) {
+  const [metadata] = await file.getMetadata();
+  const storedDocCount = Number(metadata?.metadata?.docCount || 0);
+  if (storedDocCount !== expectedCount) {
     throw new Error(
-      `Archive verification failed: ${storagePath} has ${parsed.length} docs, expected ${expectedCount}`
+      `Archive verification failed: ${storagePath} metadata has ${storedDocCount} docs, expected ${expectedCount}`
     );
   }
 
-  // Verify SHA-256 checksum if stored in metadata
-  const [metadata] = await file.getMetadata();
   const storedChecksum = metadata?.metadata?.sha256;
   if (storedChecksum) {
-    const actualChecksum = createHash('sha256').update(contentStr).digest('hex');
+    const actualChecksum = await hashStoredArchive(file);
     if (actualChecksum !== storedChecksum) {
       throw new Error(`Archive integrity check failed: ${storagePath} checksum mismatch`);
     }
   }
 
-  console.log(`✅ Archive verified: ${storagePath} (${parsed.length} docs)`);
+  console.log(`✅ Archive verified: ${storagePath} (${storedDocCount} docs)`);
   return true;
-}
-
-async function listArchiveRecords(companyId, target, kind) {
-  const queryOptions = kind === 'finishedJobs'
-    ? {
-      status: 'finished',
-      dateField: 'finishedAt',
-      dateFrom: target.startDate.toISOString(),
-      dateTo: target.endDate.toISOString(),
-      limit: QUERY_PAGE_SIZE,
-    }
-    : {
-      dateField: 'createdAt',
-      dateFrom: target.startDate.toISOString(),
-      dateTo: target.endDate.toISOString(),
-      limit: QUERY_PAGE_SIZE,
-    };
-
-  return kind === 'finishedJobs'
-    ? await listArchivedCompanyJobs(companyId, queryOptions)
-    : await listArchivedCompanyDocuments(companyId, queryOptions);
 }
 
 async function deleteArchiveRecords(companyId, kind, recordIds) {
@@ -321,43 +437,35 @@ async function processCompany(companyId, target) {
       };
       manifestUpdated = true;
     } else {
-    const docs = await listArchiveRecords(companyId, target, 'finishedJobs');
+      const archive = await uploadArchive(companyId, finishedKey, target, 'finishedJobs');
 
-    if (docs.length === 0) {
-      console.log(`📭 No finished jobs found for ${year}-${month}`);
-      // Record in manifest so we don't re-query next run
-      manifest[finishedKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
-      manifestUpdated = true;
-    } else {
-      console.log(`📊 Found ${docs.length} finished jobs for ${year}-${month}`);
+      if (!archive) {
+        console.log(`📭 No finished jobs found for ${year}-${month}`);
+        manifest[finishedKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
+        manifestUpdated = true;
+      } else {
+        console.log(`📊 Found ${archive.docCount} finished jobs for ${year}-${month}`);
 
-      // Step 1: Upload to Storage
-      await uploadArchive(companyId, finishedKey, docs);
+        await verifyArchive(companyId, finishedKey, archive.docCount);
+        manifest[finishedKey] = {
+          archivedAt: archive.archivedAt,
+          docCount: archive.docCount,
+          status: 'uploaded_not_deleted',
+          docIds: archive.docIds,
+        };
+        await saveManifest(companyId, manifest);
 
-      // Step 2: Verify upload
-      await verifyArchive(companyId, finishedKey, docs.length);
-      manifest[finishedKey] = {
-        archivedAt: new Date().toISOString(),
-        docCount: docs.length,
-        status: 'uploaded_not_deleted',
-        docIds: docs.map((doc) => doc.id),
-      };
-      await saveManifest(companyId, manifest);
+        const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', archive.docIds);
+        console.log(`✅ Archived and deleted ${deleted} finished jobs for ${year}-${month}`);
 
-      // Step 3: Delete from Firestore (only after verified upload)
-      const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', docs.map((doc) => doc.id));
-      console.log(`✅ Archived and deleted ${deleted} finished jobs for ${year}-${month}`);
-
-
-      // Step 4: Update manifest
-      manifest[finishedKey] = {
-        archivedAt: new Date().toISOString(),
-        docCount: docs.length,
-        deletedCount: deleted,
-        status: 'deleted',
-      };
-      manifestUpdated = true;
-    }
+        manifest[finishedKey] = {
+          archivedAt: archive.archivedAt,
+          docCount: archive.docCount,
+          deletedCount: deleted,
+          status: 'deleted',
+        };
+        manifestUpdated = true;
+      }
     }
   }
 
@@ -377,41 +485,35 @@ async function processCompany(companyId, target) {
       };
       manifestUpdated = true;
     } else {
-    const docs = await listArchiveRecords(companyId, target, 'documents');
+      const archive = await uploadArchive(companyId, documentsKey, target, 'documents');
 
-    if (docs.length === 0) {
-      console.log(`📭 No documents found for ${year}-${month}`);
-      manifest[documentsKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
-      manifestUpdated = true;
-    } else {
-      console.log(`📊 Found ${docs.length} documents for ${year}-${month}`);
+      if (!archive) {
+        console.log(`📭 No documents found for ${year}-${month}`);
+        manifest[documentsKey] = { archivedAt: new Date().toISOString(), docCount: 0, empty: true };
+        manifestUpdated = true;
+      } else {
+        console.log(`📊 Found ${archive.docCount} documents for ${year}-${month}`);
 
-      // Step 1: Upload to Storage
-      await uploadArchive(companyId, documentsKey, docs);
+        await verifyArchive(companyId, documentsKey, archive.docCount);
+        manifest[documentsKey] = {
+          archivedAt: archive.archivedAt,
+          docCount: archive.docCount,
+          status: 'uploaded_not_deleted',
+          docIds: archive.docIds,
+        };
+        await saveManifest(companyId, manifest);
 
-      // Step 2: Verify upload
-      await verifyArchive(companyId, documentsKey, docs.length);
-      manifest[documentsKey] = {
-        archivedAt: new Date().toISOString(),
-        docCount: docs.length,
-        status: 'uploaded_not_deleted',
-        docIds: docs.map((doc) => doc.id),
-      };
-      await saveManifest(companyId, manifest);
+        const deleted = await deleteArchiveRecords(companyId, 'documents', archive.docIds);
+        console.log(`✅ Archived and deleted ${deleted} documents for ${year}-${month}`);
 
-      // Step 3: Delete from Firestore
-      const deleted = await deleteArchiveRecords(companyId, 'documents', docs.map((doc) => doc.id));
-      console.log(`✅ Archived and deleted ${deleted} documents for ${year}-${month}`);
-
-      // Step 4: Update manifest
-      manifest[documentsKey] = {
-        archivedAt: new Date().toISOString(),
-        docCount: docs.length,
-        deletedCount: deleted,
-        status: 'deleted',
-      };
-      manifestUpdated = true;
-    }
+        manifest[documentsKey] = {
+          archivedAt: archive.archivedAt,
+          docCount: archive.docCount,
+          deletedCount: deleted,
+          status: 'deleted',
+        };
+        manifestUpdated = true;
+      }
     }
   }
 

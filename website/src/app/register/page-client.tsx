@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useAppToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { signInWithConfiguredProvider } from "@/lib/firebase/client-auth";
 
 const schema = z
   .object({
@@ -86,6 +87,8 @@ export default function RegisterClient() {
       if (!response.ok) {
         throw new Error(String(payload.error_description || payload.msg || "Registration failed"));
       }
+
+      await signInWithConfiguredProvider(values.email, values.password);
 
       toast({
         title: "Account created",

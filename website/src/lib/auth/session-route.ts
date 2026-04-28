@@ -39,6 +39,7 @@ function normalizeSessionPayload(decodedToken: VerifiedAccessToken): WebsiteSess
     role: typeof decodedToken.role === "string" ? decodedToken.role : null,
     companyId: typeof decodedToken.companyId === "string" ? decodedToken.companyId : null,
     authTime: Number.isFinite(decodedToken.authTime) ? Number(decodedToken.authTime) : null,
+    accessToken: typeof decodedToken.accessToken === "string" ? decodedToken.accessToken : null,
   };
 }
 
@@ -150,8 +151,9 @@ export async function handleReadSession(
     session: {
       uid: sessionPayload.uid,
       provider: sessionPayload.provider,
-      role: sessionPayload.role,
-      companyId: sessionPayload.companyId,
+      ...(typeof sessionPayload.role === "string" ? { role: sessionPayload.role } : {}),
+      ...(typeof sessionPayload.companyId === "string" ? { companyId: sessionPayload.companyId } : {}),
+      ...(typeof sessionPayload.email === "string" ? { email: sessionPayload.email } : {}),
     },
   });
 }

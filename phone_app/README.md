@@ -8,6 +8,7 @@
 - Calls backend gateway endpoints for protected operations.
 - Keeps registration and business onboarding on the website.
 - Tracks preview/generate work through backend `document_tasks` polling.
+- Treats public sequential job IDs and member numbers as the client-facing job contract.
 
 ## Architecture Rules
 
@@ -16,6 +17,9 @@
 - Prefer shared components in `components/`.
 - Use `useAlert()` instead of `Alert.alert()`.
 - Use MMKV helpers in `contexts/mmkv-storage.ts`.
+- Scope MMKV draft, pending-job, and support UI state by active `uid` / `companyId`; avoid raw global keys.
+- Cache refresh logic must drain paginated jobs/documents read-model pages completely.
+- Offline queued solo jobs should be replaced by the server-created public job after sync succeeds; do not leave temp local duplicates behind.
 - Keep protected writes backend-only.
 - Treat tax invoice approval as an async backend flow that creates the draft document and schedules PDF generation.
 

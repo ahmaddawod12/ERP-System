@@ -34,6 +34,9 @@ function loadGetTargetMonth() {
 
 const getTargetMonth = loadGetTargetMonth();
 const source = fs.readFileSync(resolveProjectFile('index.ts'), 'utf8');
+const archiveDbSource = fs.readFileSync(resolveProjectFile('..', 'packages', 'db', 'archive.ts'), 'utf8');
+const dockerfileSource = fs.readFileSync(resolveProjectFile('Dockerfile'), 'utf8');
+const ciSource = fs.readFileSync(resolveProjectFile('..', '.github', 'workflows', 'ci.yml'), 'utf8');
 
 test('getTargetMonth handles same-year lookback', () => {
   const target = getTargetMonth(new Date('2026-07-15T12:00:00.000Z'));
@@ -58,8 +61,32 @@ test('archiver resumes deletion from manifest doc ids instead of re-querying dat
 });
 
 test('archiver uses SQL-backed archives without Firestore fallback branches', () => {
-  assert.match(source, /await listArchivedCompanyJobs\(companyId, queryOptions\)/);
-  assert.match(source, /await listArchivedCompanyDocuments\(companyId, queryOptions\)/);
+  assert.match(source, /await listArchivedCompanyJobsPage\(companyId, queryOptions\)/);
+  assert.match(source, /await listArchivedCompanyDocumentsPage\(companyId, queryOptions\)/);
   assert.match(source, /companies = await listCompanyPublicIds\(\)/);
   assert.doesNotMatch(source, /db\.collection\('companies'\)/);
+});
+
+test('archive DB helpers drain paginated job and document cursors', () => {
+  assert.match(archiveDbSource, /async function listArchivedCompanyJobsPage/);
+  assert.match(archiveDbSource, /async function listArchivedCompanyDocumentsPage/);
+  assert.match(archiveDbSource, /while \(true\)/);
+  assert.match(archiveDbSource, /afterCursor = page\.nextCursor/);
+  assert.doesNotMatch(archiveDbSource, /Archive query limit reached/);
+});
+
+test('archiver streams archives to disk and verifies stored checksums before delete', () => {
+  assert.match(source, /createWriteStream/);
+  assert.match(source, /bucket\.upload\(tempFilePath/);
+  assert.match(source, /file\.createReadStream\(\)/);
+  assert.match(source, /docIds\.push\(record\.id\)/);
+});
+
+test('archiver Docker and CI build shared packages from repo root context', () => {
+  assert.match(dockerfileSource, /COPY packages\/contracts/);
+  assert.match(dockerfileSource, /npm --prefix packages\/contracts run build/);
+  assert.match(dockerfileSource, /npm --prefix packages\/db run build/);
+  assert.match(dockerfileSource, /npm --prefix cloudrun-archiver ci --omit=dev/);
+  assert.match(ciSource, /npm --prefix packages\/contracts run build/);
+  assert.match(ciSource, /docker build -f cloudrun-archiver\/Dockerfile -t smart-job-cloudrun-archiver:ci \./);
 });

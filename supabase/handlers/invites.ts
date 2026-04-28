@@ -3,7 +3,6 @@
  * Phase: 2 | Status: Implemented
  */
 import {
-  allocateNextCompanyCounter,
   EdgeFunctionContext,
   createSupabaseClient,
   optionalTrimmedString,
@@ -110,132 +109,58 @@ export async function joinCompanyV1(payload: any, ctx: EdgeFunctionContext): Pro
   }
 
   const inviteCode = requireNonEmptyString(payload?.inviteCode, "inviteCode", 4, 80).toUpperCase();
-  const displayNameInput = optionalTrimmedString(payload?.displayName, 200);
+  const displayNameInput = optionalTrimmedString(payload?.displayName ?? payload?.name, 200);
   const phoneNumberInput = optionalTrimmedString(payload?.phoneNumber, 40);
+  const emailInputRaw = optionalTrimmedString(payload?.email ?? ctx.auth?.email, 320);
+  const emailInput = emailInputRaw ? validateEmail(emailInputRaw) : null;
 
   const supabase = createSupabaseClient(ctx.env);
 
-  const { data: invite, error: inviteError } = await supabase
-    .from("company_invites")
-    .select("id, company_id, target_role, status, invited_email, expires_at")
-    .eq("code", inviteCode)
-    .single();
+  const { data, error } = await supabase.rpc("redeem_company_invite", {
+    p_invite_code: inviteCode,
+    p_uid: ctx.auth.uid,
+    p_display_name: displayNameInput || null,
+    p_phone_number: phoneNumberInput || null,
+    p_email: emailInput || null,
+  });
 
-  if (inviteError || !invite) {
-    throw { code: "not-found", message: "Invite not found", httpStatus: 404 };
-  }
-
-  if (invite.status !== "active") {
-    throw { code: "permission-denied", message: "Invite is not active", httpStatus: 403 };
-  }
-
-  if (new Date(invite.expires_at).getTime() <= Date.now()) {
-    throw { code: "permission-denied", message: "Invite has expired", httpStatus: 403 };
-  }
-
-  const { data: existingMembership } = await supabase
-    .from("company_memberships")
-    .select("id")
-    .eq("company_id", invite.company_id)
-    .eq("user_id", ctx.auth.uid)
-    .maybeSingle();
-
-  if (existingMembership) {
-    throw { code: "already-exists", message: "User already belongs to this company", httpStatus: 409 };
-  }
-
-  const { data: user, error: userError } = await supabase
-    .from("app_users")
-    .select("id, display_name, phone_number, email")
-    .eq("id", ctx.auth.uid)
-    .single();
-
-  if (userError || !user) {
-    throw { code: "not-found", message: "User profile not found", httpStatus: 404 };
-  }
-
-  if (invite.invited_email && user.email && invite.invited_email.toLowerCase() !== user.email.toLowerCase()) {
-    throw { code: "permission-denied", message: "Invite is restricted to a different email", httpStatus: 403 };
-  }
-
-  const consumedAt = new Date().toISOString();
-  const { data: consumedInvite, error: consumeError } = await supabase
-    .from("company_invites")
-    .update({
-      status: "used",
-      used_by_user_id: ctx.auth.uid,
-      used_at: consumedAt,
-    })
-    .eq("id", invite.id)
-    .eq("status", "active")
-    .select("id, company_id")
-    .maybeSingle();
-
-  if (consumeError) {
-    throw { code: "internal", message: "Failed to consume invite", httpStatus: 500 };
-  }
-  if (!consumedInvite?.id) {
-    throw { code: "permission-denied", message: "Invite is no longer active", httpStatus: 403 };
-  }
-
-  const memberNo = await allocateNextCompanyCounter(invite.company_id, "member_no", ctx);
-  const joinedAt = new Date().toISOString();
-  const displayName = displayNameInput || user.display_name || "";
-  const phoneNumber = phoneNumberInput || user.phone_number || null;
-
-  const { data: membership, error: insertMembershipError } = await supabase
-    .from("company_memberships")
-    .insert({
-      company_id: invite.company_id,
-      user_id: ctx.auth.uid,
-      member_no: memberNo,
-      role: invite.target_role,
-      status: "active",
-      display_name: displayName || null,
-      phone_number: phoneNumber,
-      joined_at: joinedAt,
-      created_at: joinedAt,
-      updated_at: joinedAt,
-    })
-    .select("id, company_id, role, display_name, status, joined_at")
-    .single();
-
-  if (insertMembershipError || !membership) {
-    await supabase
-      .from("company_invites")
-      .update({
-        status: "active",
-        used_by_user_id: null,
-        used_at: null,
-      })
-      .eq("id", invite.id)
-      .eq("used_by_user_id", ctx.auth.uid);
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("invite_not_found")) {
+      throw { code: "not-found", message: "Invite not found", httpStatus: 404 };
+    }
+    if (message.includes("invite_expired")) {
+      throw { code: "permission-denied", message: "Invite has expired", httpStatus: 403 };
+    }
+    if (message.includes("invite_email_mismatch")) {
+      throw { code: "permission-denied", message: "Invite is restricted to a different email", httpStatus: 403 };
+    }
+    if (message.includes("invite_inactive")) {
+      throw { code: "permission-denied", message: "Invite is not active", httpStatus: 403 };
+    }
+    if (message.includes("user_already_in_company")) {
+      throw { code: "already-exists", message: "User already belongs to this company", httpStatus: 409 };
+    }
+    if (message.includes("user_already_in_other_company")) {
+      throw { code: "already-exists", message: "User already belongs to another company", httpStatus: 409 };
+    }
+    if (message.includes("invite_role_invalid")) {
+      throw { code: "failed-precondition", message: "Invite target role is invalid", httpStatus: 400 };
+    }
     throw { code: "internal", message: "Failed to join company", httpStatus: 500 };
   }
 
-  if (displayNameInput || phoneNumberInput) {
-    await supabase
-      .from("app_users")
-      .update({
-        display_name: displayNameInput ?? user.display_name,
-        phone_number: phoneNumberInput ?? user.phone_number,
-        updated_at: joinedAt,
-      })
-      .eq("id", ctx.auth.uid);
+  const membership = Array.isArray(data) ? data[0] : data;
+  if (!membership?.membership_id || !membership?.public_company_id) {
+    throw { code: "internal", message: "Failed to join company", httpStatus: 500 };
   }
 
-  const { data: company } = await supabase
-    .from("companies")
-    .select("public_company_id")
-    .eq("id", membership.company_id)
-    .maybeSingle();
-
   return {
-    companyId: company?.public_company_id ? String(company.public_company_id) : String(membership.company_id),
-    membershipId: membership.id,
-    role: membership.role,
-    displayName: membership.display_name || displayName || "",
-    status: membership.status,
-    joinedAt: membership.joined_at,
+    companyId: String(membership.public_company_id),
+    membershipId: String(membership.membership_id),
+    role: String(membership.role),
+    displayName: optionalTrimmedString(membership.display_name, 200) || displayNameInput || "",
+    status: "active",
+    joinedAt: String(membership.joined_at),
   };
 }

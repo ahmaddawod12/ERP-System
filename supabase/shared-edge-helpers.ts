@@ -570,6 +570,58 @@ export async function checkIdempotency(
   return null;
 }
 
+export async function claimIdempotency(
+  idempotencyKey: string | undefined,
+  uid: string,
+  operationName: string,
+  ctx: EdgeFunctionContext,
+  scope?: {
+    companyId?: string;
+    expireAt?: string;
+  }
+): Promise<{ status: "acquired" | "approved" | "in_progress"; result: any | null }> {
+  const normalizedKey = String(idempotencyKey || "").trim();
+  if (!normalizedKey) {
+    return { status: "acquired", result: null };
+  }
+
+  const companyIdRaw = String(scope?.companyId || "").trim();
+  if (!companyIdRaw) {
+    return { status: "acquired", result: null };
+  }
+
+  const company = await resolveCompanyIdentifiers(companyIdRaw, ctx.env);
+  const supabase = createSupabaseClient(ctx.env);
+  const idempotencyHash = await sha256Hex(`${operationName}:${company.internalCompanyId}:${normalizedKey}`);
+  const expireAt = scope?.expireAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase.rpc("claim_tax_invoice_idempotency", {
+    p_company_id: company.internalCompanyId,
+    p_user_id: uid,
+    p_idempotency_hash: idempotencyHash,
+    p_request_hash: idempotencyHash,
+    p_expire_at: expireAt,
+  });
+
+  if (error) {
+    throw {
+      code: "internal",
+      httpStatus: 500,
+      message: `Failed to claim idempotency state: ${error.message}`,
+    };
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const status = String(row?.claim_status || "").trim().toLowerCase();
+  if (status === "approved") {
+    return { status: "approved", result: row?.result_payload || { success: true, replayed: true } };
+  }
+  if (status === "in_progress") {
+    return { status: "in_progress", result: null };
+  }
+  return { status: "acquired", result: null };
+}
+
 export async function recordIdempotencyResult(
   idempotencyKey: string,
   uid: string,

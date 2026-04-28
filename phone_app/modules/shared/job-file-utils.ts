@@ -1,4 +1,4 @@
-import { functions, httpsCallable } from '../../firebase';
+import { functions, httpsCallable, storage as fbStorage } from '../../firebase';
 
 export interface JobFileRef {
   storagePath?: string;
@@ -127,4 +127,76 @@ export async function resolveJobFileUri(
   }
 
   return getJobFileDownloadUrl(companyId, jobId, storagePath);
+}
+
+export async function uploadFileToJobStorage(
+  fileRef: string | JobFileRef | null | undefined,
+  uid: string,
+  jobId: string,
+  fileName: string,
+): Promise<{ storagePath: string; uploaded: boolean }> {
+  const existingStoragePath = extractStoragePathFromJobFile(fileRef);
+  if (existingStoragePath) {
+    return { storagePath: existingStoragePath, uploaded: false };
+  }
+
+  const localUri = getImmediateJobFileUri(fileRef);
+  if (!localUri) {
+    throw new Error('Job file must be a local URI or canonical storage reference');
+  }
+
+  const storagePath = `${uid}/jobs/${jobId}/${fileName}`;
+  const storageRef = fbStorage().ref(storagePath);
+  const response = await fetch(localUri);
+  const blob = await response.blob();
+  await storageRef.put(blob);
+
+  return { storagePath, uploaded: true };
+}
+
+export async function uploadJobFilesForStorage(
+  uid: string,
+  jobId: string,
+  photos: Array<string | JobFileRef>,
+  signature: string | JobFileRef | null,
+): Promise<{
+  photoRefs: Array<{ storagePath: string; uploaded: boolean }>;
+  signatureRef: { storagePath: string; uploaded: boolean } | null;
+  uploadedStoragePaths: string[];
+}> {
+  const photoRefs: Array<{ storagePath: string; uploaded: boolean }> = [];
+  let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
+  const uploadedStoragePaths: string[] = [];
+
+  for (let i = 0; i < photos.length; i++) {
+    const photoRef = await uploadFileToJobStorage(photos[i], uid, jobId, `photo_${i + 1}.jpg`);
+    photoRefs.push(photoRef);
+    if (photoRef.uploaded && photoRef.storagePath) {
+      uploadedStoragePaths.push(photoRef.storagePath);
+    }
+  }
+
+  if (signature) {
+    signatureRef = await uploadFileToJobStorage(signature, uid, jobId, 'signature.png');
+    if (signatureRef.uploaded && signatureRef.storagePath) {
+      uploadedStoragePaths.push(signatureRef.storagePath);
+    }
+  }
+
+  return { photoRefs, signatureRef, uploadedStoragePaths };
+}
+
+export async function cleanupUploadedJobFiles(storagePaths: string[]) {
+  const uniquePaths = [...new Set((Array.isArray(storagePaths) ? storagePaths : []).filter(Boolean))];
+  if (uniquePaths.length === 0) {
+    return;
+  }
+
+  await Promise.all(uniquePaths.map(async (storagePath) => {
+    try {
+      await fbStorage().ref(storagePath).delete();
+    } catch (cleanupError) {
+      console.warn('Failed to remove orphaned upload:', storagePath, cleanupError);
+    }
+  }));
 }

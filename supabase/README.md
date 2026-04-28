@@ -20,6 +20,13 @@ This directory is where backend runtime work happens in this repository.
 
 `functions/read-model/` is kind-based and must stay aligned with website/mobile requests.
 
+Job-specific contract notes:
+
+- `jobs` and `recordById` return public sequential job IDs and public member numbers (`wid`, `mid`) at the client boundary.
+- Job part usage payloads must also expose public inventory part numbers, not internal inventory UUIDs.
+- `createJobV1` / `updateJobV1` must preserve job meta and attachment fields used by website/mobile, including `timeFrom`, `timeTo`, `travelDistance`, `signingPerson`, `photos`, `signature`, and `partsUsed`.
+- Handlers may still accept legacy UUID job identifiers internally during transition, but should normalize back to the public sequential job ID in responses.
+
 Supported `kind` values:
 
 - `bootstrap`
@@ -64,6 +71,7 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 - Keep operation contracts stable.
 - Keep role and company checks explicit.
 - Normalize incoming/public `companyId` values to internal company UUIDs before SQL filters.
+- Normalize public job identifiers to internal rows inside handlers, but do not expose internal job or membership UUIDs back to clients.
 - Use canonical field names and enums from `@smart-job/contracts`.
 - Treat `packages/db` as the SQL source of truth.
 - Preserve backend-only write boundaries.

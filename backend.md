@@ -28,6 +28,7 @@ The `supabase/functions/` package is the active trust boundary in this workspace
 - compatibility writes to Firestore where still required
 
 Read-model calls are kind-based and must preserve compatibility with website/mobile `kind` payload contracts.
+Job contracts must expose public sequential IDs and full attachment/meta fields at that boundary, while resolving internal UUID rows only inside handlers.
 
 Important active entry surfaces include:
 
@@ -51,8 +52,9 @@ This service owns PDF preview and generation. It:
 This batch job owns monthly archive creation and verified deletion. It:
 
 - snapshots eligible finished jobs and documents
+- drains paginated SQL reads for the full target month
 - writes archive payloads to Cloud Storage
-- verifies integrity before deletion
+- verifies integrity by checksum before deletion
 - deletes only the exact IDs captured in the verified archive
 
 ### packages/db/
@@ -100,7 +102,8 @@ Firestore remains active for:
 
 ### Website
 
-The website uses API proxy routes and session cookies, then calls backend edge function endpoints.
+The website uses API proxy routes and signed HttpOnly `__session` cookies, then calls backend edge function endpoints.
+Those server routes may authenticate backend calls from the verified session cookie even when no browser `Authorization` header is present yet.
 
 ### Mobile
 
@@ -119,7 +122,9 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Do not weaken idempotency, deduplication, or create-only semantics in document flows.
 - Allocate sequential identifiers through SQL counters; avoid `MAX + 1` allocation in concurrent mutation paths.
 - Normalize external/public `companyId` inputs to internal company UUIDs before SQL filters in handlers.
+- Normalize public job identifiers to internal rows inside handlers, but return public sequential job/member IDs back to website/mobile callers.
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
+- When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
 - Keep document task result URLs semantically split by task type (`preview_url` vs `generate_url`) to avoid response-contract drift.
 - Keep invite redemption race-safe by consuming invite state atomically before membership finalization.

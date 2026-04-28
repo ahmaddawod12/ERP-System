@@ -25,7 +25,9 @@ This document defines the migration approach from legacy Firebase-backed runtime
 - Allocate sequential identifiers through SQL counters, not `MAX + 1` reads.
 - Keep invite redemption race-safe with atomic invite-consume semantics.
 - Normalize incoming/public `companyId` values to internal company UUIDs in handler write paths.
+- Keep public job identifiers sequential at the API boundary and resolve legacy/internal UUID job rows only inside handlers.
 - Preserve stable cursor pagination semantics for timestamp-sorted read-model collections.
+- If a payload exposes public IDs, keep cursor tokens pinned to the underlying ordered SQL columns to avoid skip/repeat regressions.
 - Keep preview, generate, and tax invoice document flows on one SQL-backed draft-document plus `document_tasks` pipeline.
 
 ## Active Entry Surfaces

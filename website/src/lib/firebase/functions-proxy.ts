@@ -74,16 +74,19 @@ export async function proxyToHttpFunction(
   options?: { requireAuth?: boolean; region?: string },
 ) {
   void options?.region;
+  let authResult: Awaited<ReturnType<typeof resolveRequestAuth>> | null = null;
   const requireAuth = options?.requireAuth !== false;
   if (requireAuth) {
     // P1-3: Verify auth server-side before proxying (defense-in-depth)
-    await resolveRequestAuth(request);
+    authResult = await resolveRequestAuth(request);
   }
 
   const headers = new Headers({ "Content-Type": "application/json" });
   const authorization = request.headers.get("authorization");
   if (authorization) {
     headers.set("Authorization", authorization);
+  } else if (authResult?.token?.accessToken) {
+    headers.set("Authorization", `Bearer ${authResult.token.accessToken}`);
   }
 
   let response: Response;

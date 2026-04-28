@@ -19,10 +19,11 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useCache } from '../../contexts/CacheContext';
-import { storage } from '../../contexts/mmkv-storage';
+import { scopedKey, storage } from '../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../utils/helpers';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { fetchRecordById } from '../../utils/read-model';
+import { uploadJobFilesForStorage } from '../shared/job-file-utils';
 import type { DateLike, Job, JobItem } from '../../types';
 import type { DateFilterRange } from '../../components/DateFilter';
 
@@ -39,6 +40,15 @@ type PendingWorkerJob = {
   jobId?: string;
   jobData?: Partial<WorkerJobRecord>;
 };
+
+function getWorkerPendingJobsStorageKey() {
+  return scopedKey('pendingWorkerJobs');
+}
+
+function getWorkerDraftStorageKey(jobId: string | null | undefined) {
+  const normalizedJobId = String(jobId || '').trim();
+  return scopedKey(normalizedJobId ? `workerjobDraft_${normalizedJobId}` : 'workerjobDraft_new');
+}
 
 function getDateLikeTime(value: DateLike | null | undefined): number {
   if (!value) return 0;
@@ -199,7 +209,7 @@ export default function Workerjob() {
 
   const checkPendingJobCount = async () => {
     try {
-      const pending = storage.getString('pendingWorkerJobs');
+      const pending = storage.getString(getWorkerPendingJobsStorageKey());
       if (pending) {
         setPendingJobCount((safeJsonParse<PendingWorkerJob[]>(pending, []) || []).length);
       }
@@ -215,7 +225,7 @@ export default function Workerjob() {
    */
   const syncPendingJobs = async () => {
     try {
-      const pending = storage.getString('pendingWorkerJobs');
+      const pending = storage.getString(getWorkerPendingJobsStorageKey());
       if (!pending) return;
       const pendingArray = safeJsonParse<PendingWorkerJob[]>(pending, []) || [];
       if (pendingArray.length === 0) return;
@@ -227,16 +237,30 @@ export default function Workerjob() {
         try {
           const companyId = pendingJob.companyId || getCompanyId();
           const jobId = pendingJob.jobId;
+          const user = auth.currentUser;
           if (!companyId || !jobId) {
             throw new Error('Missing companyId or jobId for pending worker job');
+          }
+          if (!user?.uid) {
+            throw new Error('Missing user session for pending worker job');
           }
 
           const existingData = await fetchRecordById(companyId, jobId) as Partial<WorkerJobRecord> | null;
 
           if (existingData) {
+            const uploadResult = await uploadJobFilesForStorage(
+              user.uid,
+              jobId,
+              Array.isArray(pendingJob.jobData?.photos)
+                ? pendingJob.jobData.photos as Array<string | { storagePath?: string; uri?: string }>
+                : [],
+              (pendingJob.jobData?.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
+            );
             const updatedJob = {
               ...existingData,
               ...pendingJob.jobData,
+              photos: uploadResult.photoRefs.length > 0 ? uploadResult.photoRefs : pendingJob.jobData?.photos,
+              signature: uploadResult.signatureRef ?? pendingJob.jobData?.signature,
               status: 'waiting',
               submittedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -255,11 +279,11 @@ export default function Workerjob() {
       }
 
       if (failedJobs.length > 0) {
-        storage.set('pendingWorkerJobs', JSON.stringify(failedJobs));
+        storage.set(getWorkerPendingJobsStorageKey(), JSON.stringify(failedJobs));
         setPendingJobCount(failedJobs.length);
         alert.error(t.syncError || 'Some jobs failed to sync');
       } else {
-        storage.remove('pendingWorkerJobs');
+        storage.remove(getWorkerPendingJobsStorageKey());
         setPendingJobCount(0);
         alert.success(t.syncSuccess || 'All jobs synced successfully!');
         void loadJobs();
@@ -386,7 +410,7 @@ export default function Workerjob() {
   const handleFillDetails = async (job: WorkerJobRecord) => {
     // Clear any existing draft for this job to prevent loading old data
     try {
-      storage.remove(`workerjobDraft_${job.id}`);
+      storage.remove(getWorkerDraftStorageKey(job.id));
     } catch (error) {
       console.error('Error clearing draft:', error);
     }

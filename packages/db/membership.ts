@@ -220,7 +220,7 @@ async function joinCompanyWithInvite(input, options: any = {}) {
     }
 
     const resolvedRole = String(invite.target_role || input.requestedRole || 'worker').trim().toLowerCase();
-    if (!['worker', 'user', 'basic'].includes(resolvedRole)) {
+    if (!['manager', 'worker', 'user', 'basic'].includes(resolvedRole)) {
       const error = new Error('Invite target role is invalid');
       (error as any).code = 'failed-precondition';
       throw error;

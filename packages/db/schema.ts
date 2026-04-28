@@ -434,6 +434,7 @@ const taxInvoiceIdempotency = pgTable('tax_invoice_idempotency', {
 const documentTasks = pgTable('document_tasks', {
   id: uuid('id').primaryKey().defaultRandom(),
   taskKey: varchar('task_key', { length: 160 }).notNull(),
+  lockKey: varchar('lock_key', { length: 220 }).notNull(),
   companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
   userId: text('user_id').notNull().references(() => appUsers.id, { onDelete: 'cascade' }),
   documentId: uuid('document_id').references(() => documents.id, { onDelete: 'set null' }),
@@ -452,8 +453,8 @@ const documentTasks = pgTable('document_tasks', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   taskKeyUnique: uniqueIndex('document_tasks_task_key_unique').on(table.taskKey),
-  activeCompanyTypeUnique: uniqueIndex('document_tasks_active_company_type_unique')
-    .on(table.companyId, table.taskType, table.documentType)
+  activeCompanyLockUnique: uniqueIndex('document_tasks_active_company_lock_unique')
+    .on(table.companyId, table.taskType, table.lockKey)
     .where(sql`${table.status} in ('pending', 'queued', 'processing')`),
   userStatusIdx: index('document_tasks_user_status_idx').on(table.userId, table.status, table.createdAt),
 }));
@@ -556,7 +557,7 @@ const upgradeRequests = pgTable('upgrade_requests', {
   id: uuid('id').primaryKey().defaultRandom(),
   uid: text('uid'),
   email: varchar('email', { length: 320 }),
-  companyId: varchar('company_id', { length: 32 }),
+  companyId: uuid('company_id'),
   role: varchar('role', { length: 32 }),
   currentTier: varchar('current_tier', { length: 32 }).notNull(),
   requestedTier: varchar('requested_tier', { length: 32 }).notNull(),
@@ -580,6 +581,7 @@ const contactRequests = pgTable('contact_requests', {
   name: varchar('name', { length: 120 }).notNull(),
   email: varchar('email', { length: 320 }).notNull(),
   company: varchar('company', { length: 140 }).notNull(),
+  subject: varchar('subject', { length: 500 }),
   message: text('message').notNull(),
   status: varchar('status', { length: 32 }).notNull().default('new'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

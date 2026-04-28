@@ -163,10 +163,10 @@ CLOUDRUN_PDF_URL=
 Notes:
 
 - Supabase variables are required for active web auth.
-- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment.
+- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment; it signs the website `__session` payload, which now includes the current Supabase access token for server-side proxy auth.
 - `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
 - If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
-- Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on active bearer/session flows.
+- Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on the signed cookie-backed session plus in-memory auth transport state.
 - Firebase web/admin vars are still required where Firebase services remain in use.
 
 ## 6. Mobile Environment And Native Files
@@ -245,12 +245,13 @@ Rules:
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration tip:
-- Ensure migration `0010_fixes.sql` is applied. This migration adds:
-  - `document_number` immutability trigger
-  - `document_tasks` and `support_conversations` RLS fixes
+- Ensure the runtime hardening migrations are applied, including `0008_supabase_auth_rls.sql` and `0011_runtime_hardening.sql`. These changes include:
+  - corrected `document_tasks` / `support_conversations` RLS references
   - `contact_requests.subject` column
   - `upgrade_requests.company_id` → UUID
-  - `document_tasks` unique index on `(company_id, task_type, document_id)`
+  - `document_tasks.lock_key` plus active uniqueness on `(company_id, task_type, lock_key)`
+  - `redeem_company_invite(...)` atomic invite redemption RPC
+  - `claim_tax_invoice_idempotency(...)` atomic tax idempotency claim RPC
   - `part_no` counter key
   - `allocate_company_counter`, `allocate_system_counter`, and `increment_rate_limit_bucket` RPCs
 
@@ -308,10 +309,13 @@ Required deployment concerns:
 - Cloud Storage archive bucket access
 - scheduler or manual job trigger
 - checksum verification before delete
+- image builds must use repo-root Docker context because `cloudrun-archiver` depends on local `packages/db` and `packages/contracts`
 
 Preserve these invariants:
 
 - archive manifests are idempotent
+- month exports must drain every read-model page instead of relying on a single large query
+- archive payloads should be streamed to disk/storage instead of loading a full month into memory
 - date filtering respects ISO-string date storage
 - deletion uses only the exact IDs captured in the verified archive
 

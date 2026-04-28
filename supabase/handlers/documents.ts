@@ -93,19 +93,14 @@ async function createOrReuseDocumentTask(
   ctx: EdgeFunctionContext,
 ): Promise<{ id: string; status: string; task_key: string }> {
   const supabase = createSupabaseClient(ctx.env);
+  const lockKey = buildDocumentTaskLockKey(taskType, documentType, documentId);
   let activeTaskQuery = supabase
     .from("document_tasks")
     .select("id, status, task_key")
     .eq("company_id", companyId)
     .eq("task_type", taskType)
-    .eq("document_type", documentType)
+    .eq("lock_key", lockKey)
     .in("status", ["pending", "queued", "processing"]);
-
-  if (documentId) {
-    activeTaskQuery = activeTaskQuery.eq("document_id", documentId);
-  } else {
-    activeTaskQuery = activeTaskQuery.is("document_id", null);
-  }
 
   const { data: activeTask } = await activeTaskQuery.maybeSingle();
 
@@ -121,6 +116,7 @@ async function createOrReuseDocumentTask(
     .from("document_tasks")
     .insert({
       task_key: taskKey,
+      lock_key: lockKey,
       company_id: companyId,
       user_id: userId,
       document_id: documentId,
@@ -133,6 +129,21 @@ async function createOrReuseDocumentTask(
     })
     .select("id, status, task_key")
     .single();
+
+  if (insertError && isActiveDocumentTaskConflict(insertError)) {
+    const { data: concurrentTask } = await supabase
+      .from("document_tasks")
+      .select("id, status, task_key")
+      .eq("company_id", companyId)
+      .eq("task_type", taskType)
+      .eq("lock_key", lockKey)
+      .in("status", ["pending", "queued", "processing"])
+      .maybeSingle();
+
+    if (concurrentTask?.id) {
+      return concurrentTask;
+    }
+  }
 
   if (insertError || !insertedTask) {
     throw { code: "internal", message: `Failed to queue ${taskType} task`, httpStatus: 500 };
@@ -198,6 +209,68 @@ function buildPublicDocumentId(documentType: number, documentNumber: number, pub
     throw { code: "invalid-argument", message: "Unsupported documentType", httpStatus: 400 };
   }
   return `${suffix}${documentNumber}-${publicCompanyId}`;
+}
+
+function buildDocumentTaskLockKey(
+  taskType: "preview" | "generate",
+  documentType: number,
+  documentId: string | null,
+): string {
+  const normalizedDocumentId = String(documentId || "").trim();
+  if (normalizedDocumentId) {
+    return `document:${normalizedDocumentId}`;
+  }
+  if (taskType === "preview") {
+    return `preview:${documentType}`;
+  }
+  return `task:${taskType}:${documentType}`;
+}
+
+function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isActiveDocumentTaskConflict(error: any): boolean {
+  const constraint = String(error?.constraint || error?.details || error?.message || "");
+  return String(error?.code || "") === "23505" && constraint.includes("document_tasks_active_company_lock_unique");
+}
+
+async function resolveCompanyDocument<T extends Record<string, unknown>>(
+  companyId: string,
+  documentIdentifier: string,
+  fields: string,
+  ctx: EdgeFunctionContext,
+): Promise<T | null> {
+  const supabase = createSupabaseClient(ctx.env);
+  const normalizedIdentifier = String(documentIdentifier || "").trim();
+
+  const { data: byCode, error: byCodeError } = await supabase
+    .from("documents")
+    .select(fields)
+    .eq("company_id", companyId)
+    .eq("document_code", normalizedIdentifier)
+    .maybeSingle();
+  if (byCodeError) {
+    throw { code: "internal", message: "Failed to load document", httpStatus: 500 };
+  }
+  if (byCode) {
+    return byCode as unknown as T;
+  }
+
+  if (!isUuidLike(normalizedIdentifier)) {
+    return null;
+  }
+
+  const { data: byId, error: byIdError } = await supabase
+    .from("documents")
+    .select(fields)
+    .eq("company_id", companyId)
+    .eq("id", normalizedIdentifier)
+    .maybeSingle();
+  if (byIdError) {
+    throw { code: "internal", message: "Failed to load document", httpStatus: 500 };
+  }
+  return (byId as T | null) ?? null;
 }
 
 async function createDraftDocumentRecord(
@@ -324,16 +397,16 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
   let documentNumber: number | null = null;
 
   if (requestedDocumentId) {
-    const { data: documentRow, error: documentError } = await createSupabaseClient(ctx.env)
-      .from("documents")
-      .select("id, document_number, document_code")
-      .eq("company_id", companyId)
-      .eq("document_code", requestedDocumentId)
-      .maybeSingle();
-
-    if (documentError) {
-      throw { code: "internal", message: "Failed to resolve document task target", httpStatus: 500 };
-    }
+    const documentRow = await resolveCompanyDocument<{
+      id?: string;
+      document_number?: number;
+      document_code?: string;
+    }>(
+      companyId,
+      requestedDocumentId,
+      "id, document_number, document_code",
+      ctx,
+    );
     documentId = documentRow?.id ? String(documentRow.id) : null;
     publicDocumentId = documentRow?.document_code ? String(documentRow.document_code) : requestedDocumentId;
     documentNumber = Number(documentRow?.document_number || 0) || null;
@@ -398,14 +471,18 @@ export async function deleteDocumentV1(payload: any, ctx: EdgeFunctionContext): 
   await requireDocumentAccess(companyId, ctx);
 
   const supabase = createSupabaseClient(ctx.env);
-  const { data: existingDocument, error: loadError } = await supabase
-    .from("documents")
-    .select("id, storage_path")
-    .eq("company_id", companyId)
-    .eq("id", documentId)
-    .single();
+  const existingDocument = await resolveCompanyDocument<{
+    id?: string;
+    document_code?: string;
+    storage_path?: string;
+  }>(
+    companyId,
+    documentId,
+    "id, document_code, storage_path",
+    ctx,
+  );
 
-  if (loadError || !existingDocument) {
+  if (!existingDocument) {
     throw { code: "not-found", message: "Document not found", httpStatus: 404 };
   }
 
@@ -413,14 +490,17 @@ export async function deleteDocumentV1(payload: any, ctx: EdgeFunctionContext): 
     .from("documents")
     .delete()
     .eq("company_id", companyId)
-    .eq("id", documentId);
+    .eq("id", String(existingDocument.id));
 
   if (deleteError) {
     throw { code: "internal", message: "Failed to delete document", httpStatus: 500 };
   }
 
   await bumpDocumentsVersion(companyId, ctx);
-  return { success: true, documentId: existingDocument.id };
+  return {
+    success: true,
+    documentId: optionalTrimmedString(existingDocument.document_code, 128) || String(existingDocument.id),
+  };
 }
 
 export async function createDocumentDownloadUrlV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
@@ -431,14 +511,18 @@ export async function createDocumentDownloadUrlV1(payload: any, ctx: EdgeFunctio
   await requireDocumentAccess(companyId, ctx);
 
   const supabase = createSupabaseClient(ctx.env);
-  const { data: documentRow, error: loadError } = await supabase
-    .from("documents")
-    .select("id, storage_path")
-    .eq("company_id", companyId)
-    .eq("id", documentId)
-    .single();
+  const documentRow = await resolveCompanyDocument<{
+    id?: string;
+    document_code?: string;
+    storage_path?: string;
+  }>(
+    companyId,
+    documentId,
+    "id, document_code, storage_path",
+    ctx,
+  );
 
-  if (loadError || !documentRow) {
+  if (!documentRow) {
     throw { code: "not-found", message: "Document not found", httpStatus: 404 };
   }
 
@@ -465,7 +549,7 @@ export async function createDocumentDownloadUrlV1(payload: any, ctx: EdgeFunctio
 
   return {
     success: true,
-    documentId: documentRow.id,
+    documentId: optionalTrimmedString(documentRow.document_code, 128) || String(documentRow.id),
     downloadURL: signed.signedUrl,
     expiresAt: new Date(Date.now() + expirySeconds * 1000).toISOString(),
   };

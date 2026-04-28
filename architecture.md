@@ -32,6 +32,8 @@ website/mobile
 - `companyId` is the canonical tenant scope key.
 - Company-scoped access is validated server-side, not inferred from client payloads.
 - Backend handlers must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes.
+- Public job API boundaries use sequential `job_no` values; internal SQL UUIDs are resolved only inside backend handlers.
+- Read-model job cursors remain based on the internal stable tuple `(created_at, jobs.id)` even when item payloads expose public sequential job IDs.
 
 ### SQL-owned runtime data
 
@@ -81,7 +83,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 ### Website
 
 - Public pages and auth pages run in Next.js.
-- Server routes verify Supabase tokens and issue HttpOnly sessions.
+- Server routes verify Supabase tokens and issue signed HttpOnly `__session` cookies.
+- Signed website sessions carry the current access token so server proxies can authenticate backend calls even when the browser has not yet rehydrated client auth state.
 - Protected web actions go through API proxy routes, then into backend functions.
 - Website read-model calls are kind-based and must remain contract-compatible with backend `read-model` kinds.
 
@@ -90,6 +93,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - The Expo app stores Supabase transport tokens in MMKV-backed auth helpers.
 - Protected operations go through backend HTTP/gateway helpers.
 - Mobile read-model calls are kind-based and share the same backend contract as website.
+- Mobile MMKV cache/draft/outbox keys must stay scoped by active `uid` / `companyId`.
+- Mobile cache refresh must drain paginated jobs/documents reads fully instead of assuming page one is complete.
 - Mobile does not own business registration.
 
 ### Backend mutations and reads
@@ -108,6 +113,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 ### Archiving
 
 - `cloudrun-archiver` batches old finished jobs/documents into month archives.
+- Archive export must drain paginated SQL reads; it cannot assume one page contains a full month.
+- Archive payload generation should stream JSON to disk/storage rather than holding the full month in memory.
 - Archive deletion must use the exact verified document ID list, not a rerun query.
 
 ## Canonical Rules
@@ -129,6 +136,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 
 - Valid statuses are `pending`, `waiting`, `finished`, `denied`.
 - Use short canonical job fields: `wid`, `wname`, `mid`, `mname`, `cid`, `cname`, `cphone`.
+- Job APIs should expose public sequential IDs (`id`, `jobId`, `wid`, `mid`) at the client boundary, not internal membership/job UUIDs.
+- Job part usage payloads should expose public inventory part numbers, not internal inventory UUIDs.
 - Job attachments persist canonical refs such as `{ storagePath, kind }`.
 
 ### Documents

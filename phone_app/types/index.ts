@@ -125,9 +125,6 @@ export interface Job {
   createdAt?: DateLike;
   updatedAt?: DateLike;
   finishedAt?: DateLike;
-  /** @deprecated use wid */ workerId?: string;
-  /** @deprecated use wname */ workerName?: string;
-  /** @deprecated use wname */ MName?: string;
   /** Solo-job extra fields */
   signingPerson?: string;
   customer?: string;

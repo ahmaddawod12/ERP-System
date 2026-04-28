@@ -235,8 +235,8 @@ export default function DevInbox() {
           style: 'destructive',
           onPress: async () => {
             try {
-              clearCache();
               await signOut(auth);
+              clearCache();
               router.replace('/');
             } catch (error) {
               console.error('Error signing out:', error);

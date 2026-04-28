@@ -83,7 +83,7 @@ async function bumpDocumentsVersion(companyId: string, ctx: EdgeFunctionContext)
     .eq("company_id", companyId);
 }
 
-async function createOrReuseDocumentTask(
+export async function createOrReuseDocumentTask(
   companyId: string,
   userId: string,
   taskType: "preview" | "generate",
@@ -203,7 +203,7 @@ function normalizeDocumentDataPayload(
   };
 }
 
-function buildPublicDocumentId(documentType: number, documentNumber: number, publicCompanyId: string) {
+export function buildPublicDocumentId(documentType: number, documentNumber: number, publicCompanyId: string) {
   const suffix = DOC_SUFFIX[documentType];
   if (!suffix) {
     throw { code: "invalid-argument", message: "Unsupported documentType", httpStatus: 400 };

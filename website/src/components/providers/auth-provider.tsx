@@ -14,6 +14,7 @@ import {
   getCurrentAccessToken,
   getCurrentAuthUser,
   hasClientAuthSession,
+  isLogoutInProgress,
   isSessionTokenSynced,
   markSessionTokenSynced,
   signOutConfiguredProvider,
@@ -90,6 +91,9 @@ async function syncAuthSession(token: string | null) {
 }
 
 async function loadSessionUser(): Promise<ClientAuthUser | null> {
+  if (isLogoutInProgress()) {
+    return null;
+  }
   const response = await fetch("/api/auth/session", {
     method: "GET",
     credentials: "include",
@@ -132,6 +136,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void (async () => {
+      if (isLogoutInProgress()) {
+        setLoading(false);
+        return;
+      }
       if (hasClientAuthSession()) {
         return;
       }
@@ -169,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSubscription(null);
           }
         } else {
-          if (!hasClientAuthSession()) {
+          if (!hasClientAuthSession() && !isLogoutInProgress()) {
             const sessionUser = await loadSessionUser().catch(() => null);
             if (sessionUser) {
               setUser(sessionUser);
@@ -201,6 +209,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    setLoading(true);
+    setUser(null);
+    setProfile(null);
+    setSubscription(null);
+    await syncAuthSession(null);
     await signOutConfiguredProvider();
   }, []);
 

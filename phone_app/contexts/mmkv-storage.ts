@@ -16,6 +16,11 @@ export const storage = createMMKV({
   id: 'smart-job-cache'
 });
 
+export const authStorage = createMMKV({
+  id: 'smart-job-auth',
+  encryptionKey: 'smart-job-auth-v1',
+});
+
 console.log('🗄 MMKV initialized successfully');
 
 /** For backwards compatibility */

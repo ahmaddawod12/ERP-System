@@ -117,6 +117,32 @@ async function ensureMemberLocation(
   return String(insertedLocation.id);
 }
 
+async function requireCompanyLocationRecord(
+  supabase: ReturnType<typeof createSupabaseClient>,
+  companyId: string,
+  locationId: string,
+): Promise<{ id: string; location_type: string; membership_id: string | null }> {
+  const { data: location, error } = await supabase
+    .from("inventory_locations")
+    .select("id, location_type, membership_id")
+    .eq("company_id", companyId)
+    .eq("id", locationId)
+    .maybeSingle();
+
+  if (error) {
+    throw { code: "internal", message: "Failed to load inventory location", httpStatus: 500 };
+  }
+  if (!location?.id) {
+    throw { code: "not-found", message: "Inventory location not found", httpStatus: 404 };
+  }
+
+  return {
+    id: String(location.id),
+    location_type: String(location.location_type || ""),
+    membership_id: location.membership_id ? String(location.membership_id) : null,
+  };
+}
+
 async function getBalanceQuantity(
   supabase: ReturnType<typeof createSupabaseClient>,
   locationId: string,
@@ -228,7 +254,7 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
 
   const { data: membership, error: membershipError } = await supabase
     .from("company_memberships")
-    .select("id")
+    .select("id, role")
     .eq("company_id", companyId)
     .eq("user_id", ctx.auth.uid)
     .eq("status", "active")
@@ -237,6 +263,15 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
   if (membershipError || !membership) {
     throw { code: "permission-denied", message: "Not allowed for this company", httpStatus: 403 };
   }
+
+  const requesterRole = String(membership.role || "").toLowerCase();
+  const requesterIsManager = requesterRole === "manager";
+
+  const requireManagerInventoryAccess = (message = "Manager role required for company inventory changes") => {
+    if (!requesterIsManager) {
+      throw { code: "permission-denied", message, httpStatus: 403 };
+    }
+  };
 
   const { data: companyLocation, error: locationError } = await supabase
     .from("inventory_locations")
@@ -308,15 +343,23 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
   if (action) {
     let targetMembershipId: string | null = null;
     let targetLocationId: string | null = null;
-    if (scope === "user") {
+    const requiresTargetUser = scope === "user" || action === "pickParts";
+    if (requiresTargetUser) {
       if (!targetUid) {
-        throw { code: "invalid-argument", message: "targetUid is required for user inventory actions", httpStatus: 400 };
+        throw { code: "invalid-argument", message: "targetUid is required for this inventory action", httpStatus: 400 };
+      }
+      if (targetUid !== ctx.auth.uid) {
+        requireManagerInventoryAccess("Manager role required to manage another member inventory");
       }
       targetMembershipId = await resolveTargetMembershipId(supabase, companyId, targetUid);
       if (!targetMembershipId) {
         throw { code: "not-found", message: "Target membership not found", httpStatus: 404 };
       }
       targetLocationId = await ensureMemberLocation(supabase, companyId, targetMembershipId, `Member ${targetMembershipId}`);
+    }
+
+    if (scope === "company" || action === "pickParts") {
+      requireManagerInventoryAccess();
     }
 
     const resolveScopedPart = async () => {
@@ -663,6 +706,8 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
 
   const normalizedPayload = { parts: partsInput, movements: movementsInput };
 
+  requireManagerInventoryAccess();
+
   const updatedParts: any[] = [];
 
   for (const part of normalizedPayload.parts) {
@@ -770,6 +815,13 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
 
     if (!fromLocationId && !toLocationId) {
       throw { code: "invalid-argument", message: "Movement must include fromLocationId or toLocationId", httpStatus: 400 };
+    }
+
+    if (fromLocationId) {
+      await requireCompanyLocationRecord(supabase, companyId, fromLocationId);
+    }
+    if (toLocationId) {
+      await requireCompanyLocationRecord(supabase, companyId, toLocationId);
     }
 
     if (fromLocationId) {

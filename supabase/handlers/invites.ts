@@ -116,6 +116,21 @@ export async function joinCompanyV1(payload: any, ctx: EdgeFunctionContext): Pro
 
   const supabase = createSupabaseClient(ctx.env);
 
+  const { data: inviteRow, error: inviteLookupError } = await supabase
+    .from("company_invites")
+    .select("invited_email")
+    .eq("code", inviteCode)
+    .maybeSingle();
+
+  if (inviteLookupError) {
+    throw { code: "internal", message: "Failed to load invite", httpStatus: 500 };
+  }
+
+  const invitedEmail = optionalTrimmedString(inviteRow?.invited_email, 254);
+  if (invitedEmail && !emailInput) {
+    throw { code: "permission-denied", message: "Invite requires an authenticated email", httpStatus: 403 };
+  }
+
   const { data, error } = await supabase.rpc("redeem_company_invite", {
     p_invite_code: inviteCode,
     p_uid: ctx.auth.uid,

@@ -163,7 +163,8 @@ CLOUDRUN_PDF_URL=
 Notes:
 
 - Supabase variables are required for active web auth.
-- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment; it signs the website `__session` payload, which now includes the current Supabase access token for server-side proxy auth.
+- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment; it signs the website `__session` metadata payload.
+- Website server proxy auth uses two HttpOnly cookies: signed metadata in `__session`, bearer transport in `__session_access`.
 - `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
 - If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
 - Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on the signed cookie-backed session plus in-memory auth transport state.
@@ -191,6 +192,7 @@ Notes:
 
 - Registration and onboarding remain website-only.
 - If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
+- Mobile Supabase transport tokens are stored in a dedicated encrypted MMKV instance, separate from the general cache MMKV store.
 
 ## 7. Supabase Edge Environment
 
@@ -298,6 +300,7 @@ Preserve these invariants:
 - create-only semantics for new generated PDFs and documents
 - orphan file cleanup when finalize fails
 - canonical `storagePath` persistence instead of durable URLs
+- tax invoice finalization must also refuse to overwrite an existing SQL `storage_path`
 
 ## 11. Cloud Run Archiver
 
@@ -318,6 +321,7 @@ Preserve these invariants:
 - archive payloads should be streamed to disk/storage instead of loading a full month into memory
 - date filtering respects ISO-string date storage
 - deletion uses only the exact IDs captured in the verified archive
+- manifests must remain resumable when deletion counts are partial instead of being marked fully deleted
 
 ## 12. Supabase Migration Workspace
 

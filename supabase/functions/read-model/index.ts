@@ -372,8 +372,7 @@ async function getCompanyInventoryParts(internalCompanyId: string) {
     };
   });
 
-  const maxId = normalizedParts.reduce((acc: number, item: { id: number }) => Math.max(acc, Number(item.id || 0)), 0);
-  const nextId = counterRow ? Number(counterRow.next_value) : maxId + 1;
+  const nextId = counterRow ? Number(counterRow.next_value) : 1;
   return {
     parts: normalizedParts,
     nextId,
@@ -452,8 +451,7 @@ async function getUserInventoryParts(internalCompanyId: string, targetUid: strin
     };
   });
 
-  const maxId = normalizedParts.reduce((acc: number, item: { id: number }) => Math.max(acc, Number(item.id || 0)), 0);
-  const nextId = userCounterRow ? Number(userCounterRow.next_value) : maxId + 1;
+  const nextId = userCounterRow ? Number(userCounterRow.next_value) : 1;
   return {
     parts: normalizedParts,
     nextId,

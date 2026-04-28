@@ -85,8 +85,8 @@ export async function proxyToHttpFunction(
   const authorization = request.headers.get("authorization");
   if (authorization) {
     headers.set("Authorization", authorization);
-  } else if (authResult?.token?.accessToken) {
-    headers.set("Authorization", `Bearer ${authResult.token.accessToken}`);
+  } else if (requireAuth) {
+    throw new ApiRouteError(401, "unauthorized", "Missing bearer token for protected proxy request");
   }
 
   let response: Response;

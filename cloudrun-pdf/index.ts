@@ -779,7 +779,7 @@ async function processGenerateTask(taskData) {
     
     const pdfSize = pdfBuffer.length;
     
-    const isNewDocument = documentType !== 305;
+    const enforceCreateOnlyStorage = documentType === 305;
 
     // Upload to Storage (permanent)
     const fileName = `${normalizedDocumentId}.pdf`;
@@ -798,7 +798,7 @@ async function processGenerateTask(taskData) {
           pdfSize: pdfSize.toString(),
         }
       },
-      ...(isNewDocument ? { preconditionOpts: { ifGenerationMatch: 0 } } : {}),
+      ...(enforceCreateOnlyStorage ? { preconditionOpts: { ifGenerationMatch: 0 } } : {}),
     });
     savedGeneratedFile = file;
     const [taskDownloadURL] = await file.getSignedUrl({
@@ -816,6 +816,7 @@ async function processGenerateTask(taskData) {
       companyId,
       documentId: documentDocId,
       storagePath: filePath,
+      documentType,
     });
     await bumpCompanyDocumentsVersion(companyId);
     console.log(`[generate:${taskId}] Document finalized in SQL`, { documentType, documentNumber, userRole });

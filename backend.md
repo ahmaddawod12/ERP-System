@@ -103,7 +103,7 @@ Firestore remains active for:
 ### Website
 
 The website uses API proxy routes and signed HttpOnly `__session` cookies, then calls backend edge function endpoints.
-Those server routes may authenticate backend calls from the verified session cookie even when no browser `Authorization` header is present yet.
+Those server routes authenticate backend calls from a verified split-cookie session: signed metadata in `__session`, current bearer token in HttpOnly `__session_access`.
 
 ### Mobile
 
@@ -129,6 +129,11 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep document task result URLs semantically split by task type (`preview_url` vs `generate_url`) to avoid response-contract drift.
 - Keep invite redemption race-safe by consuming invite state atomically before membership finalization.
 - Keep preview/generate/tax document flows on the same SQL-backed draft-document plus `document_tasks` pipeline.
+- Require manager authorization for company inventory mutations and for cross-member inventory mutations.
+- Validate inventory location ownership against the resolved internal company UUID before applying movement updates.
+- Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
+- Keep tax invoice PDF finalization create-only once `storage_path` is already set.
+- Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.
 
 ## Runtime Note
 

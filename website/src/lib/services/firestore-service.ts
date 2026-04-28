@@ -155,7 +155,7 @@ export async function createJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt">,
 ) {
-  const result = await callServerCallable<{ success: boolean; jobId: string; jid: number }>("createJobV1", {
+  const result = await callServerCallable<{ success: boolean; jobId: string; jobNo: number }>("createJobV1", {
     companyId,
     type: "pending",
     ...payload,
@@ -167,7 +167,7 @@ export async function createFinishedJob(
   companyId: string,
   payload: Omit<JobRecord, "id" | "createdAt" | "updatedAt" | "status">,
 ) {
-  const result = await callServerCallable<{ success: boolean; jobId: string; jid: number }>("createJobV1", {
+  const result = await callServerCallable<{ success: boolean; jobId: string; jobNo: number }>("createJobV1", {
     companyId,
     type: "finished",
     ...payload,

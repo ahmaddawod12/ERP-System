@@ -1,20 +1,4 @@
-export const DOC_TYPE = Object.freeze({
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400,
-});
-
-export const DOC_SUFFIX = Object.freeze({
-  [DOC_TYPE.TAX_INVOICE]: "TI",
-  [DOC_TYPE.PRICE_PROPOSAL]: "PP",
-  [DOC_TYPE.REFUND]: "RD",
-  [DOC_TYPE.RETURN_CERTIFICATE]: "RC",
-  [DOC_TYPE.DELIVERY_NOTE]: "DN",
-  [DOC_TYPE.RECEIPT]: "RT",
-});
+import { DOC_SUFFIX, DOC_TYPE, VAT_RATE, type DocTypeCode } from "@smart-job/contracts";
 
 const DOC_LABELS = Object.freeze({
   [DOC_TYPE.PRICE_PROPOSAL]: "Price Proposal",
@@ -25,8 +9,6 @@ const DOC_LABELS = Object.freeze({
   [DOC_TYPE.RECEIPT]: "Receipt",
 });
 
-export const VAT_RATE = 0.18;
-
 const DOCUMENT_TYPE_ORDER = [
   DOC_TYPE.PRICE_PROPOSAL,
   DOC_TYPE.DELIVERY_NOTE,
@@ -36,7 +18,7 @@ const DOCUMENT_TYPE_ORDER = [
   DOC_TYPE.RECEIPT,
 ] as const;
 
-export type DocumentTypeCode = (typeof DOCUMENT_TYPE_ORDER)[number];
+export type DocumentTypeCode = DocTypeCode;
 
 export function getDocumentTypeLabel(code: number) {
   return DOC_LABELS[code as DocumentTypeCode] ?? `Type ${code}`;

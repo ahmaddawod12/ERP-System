@@ -12,6 +12,7 @@ let inMemoryAccessToken = "";
 let inMemoryExpiresAt = 0;
 let inMemoryRefreshToken = "";
 let inMemorySessionSyncedToken = "";
+let logoutInProgress = false;
 
 const supabaseListeners = new Set<AuthChangeCallback>();
 
@@ -200,6 +201,7 @@ export async function signInWithConfiguredProvider(email: string, password: stri
 }
 
 export async function signOutConfiguredProvider() {
+  logoutInProgress = true;
   try {
     const token = inMemoryAccessToken;
     if (token) {
@@ -210,11 +212,12 @@ export async function signOutConfiguredProvider() {
           Authorization: `Bearer ${token}`,
           apikey: anonKey,
         },
-      }).catch(() => {});
+        }).catch(() => {});
     }
   } finally {
     clearSupabaseSession();
     notifySupabaseListeners();
+    logoutInProgress = false;
   }
 }
 
@@ -254,6 +257,10 @@ export function getCurrentAuthUserSnapshot(): ClientAuthUser | null {
 
 export function hasClientAuthSession(): boolean {
   return hasInMemoryAuthTransport();
+}
+
+export function isLogoutInProgress(): boolean {
+  return logoutInProgress;
 }
 
 export function markSessionTokenSynced(token: string | null) {

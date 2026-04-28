@@ -41,7 +41,7 @@ import {
   getAPNSToken,
   AuthorizationStatus,
 } from '@react-native-firebase/messaging';
-import { storage as mmkvStorage } from './contexts/mmkv-storage';
+import { authStorage, storage as mmkvStorage } from './contexts/mmkv-storage';
 
 // Get the default app instance (modular API)
 export const app = getApp();
@@ -145,9 +145,9 @@ function saveSupabaseSession(payload: SupabaseSessionPayload) {
     throw new Error('Supabase session payload is invalid');
   }
 
-  mmkvStorage.set(SUPABASE_ACCESS_TOKEN_KEY, accessToken);
-  mmkvStorage.set(SUPABASE_REFRESH_TOKEN_KEY, refreshToken);
-  mmkvStorage.set(SUPABASE_EXPIRES_AT_KEY, String(expiresAt));
+  authStorage.set(SUPABASE_ACCESS_TOKEN_KEY, accessToken);
+  authStorage.set(SUPABASE_REFRESH_TOKEN_KEY, refreshToken);
+  authStorage.set(SUPABASE_EXPIRES_AT_KEY, String(expiresAt));
   setAuthCurrentUser(uid, email);
 }
 
@@ -171,7 +171,7 @@ export async function signInSupabaseAuthTransport(email: string, password: strin
 }
 
 export async function getSupabaseAuthTransportToken(forceRefresh = true): Promise<string | null> {
-  const accessToken = String(mmkvStorage.getString(SUPABASE_ACCESS_TOKEN_KEY) || '').trim();
+  const accessToken = String(authStorage.getString(SUPABASE_ACCESS_TOKEN_KEY) || '').trim();
   if (!accessToken) {
     return null;
   }
@@ -180,13 +180,13 @@ export async function getSupabaseAuthTransportToken(forceRefresh = true): Promis
     return accessToken;
   }
 
-  const expiresAt = Number(mmkvStorage.getString(SUPABASE_EXPIRES_AT_KEY) || 0);
+  const expiresAt = Number(authStorage.getString(SUPABASE_EXPIRES_AT_KEY) || 0);
   const now = Math.floor(Date.now() / 1000);
   if (Number.isFinite(expiresAt) && expiresAt > now + 30) {
     return accessToken;
   }
 
-  const refreshToken = String(mmkvStorage.getString(SUPABASE_REFRESH_TOKEN_KEY) || '').trim();
+  const refreshToken = String(authStorage.getString(SUPABASE_REFRESH_TOKEN_KEY) || '').trim();
   if (!refreshToken) {
     return null;
   }
@@ -212,9 +212,9 @@ export async function getSupabaseAuthTransportToken(forceRefresh = true): Promis
 }
 
 export async function clearSupabaseAuthTransportSession(): Promise<void> {
-  mmkvStorage.remove(SUPABASE_ACCESS_TOKEN_KEY);
-  mmkvStorage.remove(SUPABASE_REFRESH_TOKEN_KEY);
-  mmkvStorage.remove(SUPABASE_EXPIRES_AT_KEY);
+  authStorage.remove(SUPABASE_ACCESS_TOKEN_KEY);
+  authStorage.remove(SUPABASE_REFRESH_TOKEN_KEY);
+  authStorage.remove(SUPABASE_EXPIRES_AT_KEY);
   clearAuthCurrentUser();
 }
 

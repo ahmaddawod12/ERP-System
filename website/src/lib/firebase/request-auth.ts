@@ -1,7 +1,11 @@
 import type { VerifiedAccessToken } from "@/lib/auth/access-token";
 import { parseBearerToken, verifyAccessToken } from "@/lib/auth/access-token";
 import { extractCookieValue } from "@/lib/auth/session-middleware";
-import { SESSION_COOKIE, verifySessionCookieValue } from "@/lib/auth/session-token";
+import {
+  SESSION_ACCESS_TOKEN_COOKIE,
+  SESSION_COOKIE,
+  verifySessionCookieValue,
+} from "@/lib/auth/session-token";
 import { ApiRouteError } from "@/lib/api/errors";
 
 export interface RequestAuthResult {
@@ -29,8 +33,9 @@ export async function resolveRequestAuth(
   const sessionCookie = extractCookieValue(request.headers.get("cookie"), SESSION_COOKIE);
   if (sessionCookie) {
     const sessionPayload = await verifySessionCookieValue(sessionCookie);
-    if (sessionPayload?.uid && sessionPayload.accessToken) {
-      const verifiedToken = await verifyAccessToken(sessionPayload.accessToken);
+    const sessionAccessToken = extractCookieValue(request.headers.get("cookie"), SESSION_ACCESS_TOKEN_COOKIE);
+    if (sessionPayload?.uid && sessionAccessToken) {
+      const verifiedToken = await verifyAccessToken(sessionAccessToken);
       return {
         uid: verifiedToken.uid,
         token: verifiedToken,

@@ -60,6 +60,12 @@ test('archiver resumes deletion from manifest doc ids instead of re-querying dat
   assert.match(source, /await deleteArchiveRecords\(companyId, 'documents', manifest\[documentsKey\]\.docIds\)/);
 });
 
+test('archiver only marks manifests deleted after exact deletion counts match', () => {
+  assert.match(source, /deletedCount !== expectedCount/);
+  assert.match(source, /status: 'uploaded_not_deleted'/);
+  assert.match(source, /status: 'deleted'/);
+});
+
 test('archiver uses SQL-backed archives without Firestore fallback branches', () => {
   assert.match(source, /await listArchivedCompanyJobsPage\(companyId, queryOptions\)/);
   assert.match(source, /await listArchivedCompanyDocumentsPage\(companyId, queryOptions\)/);

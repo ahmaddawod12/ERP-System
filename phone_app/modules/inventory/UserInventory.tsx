@@ -238,11 +238,11 @@ export default function UserInventory() {
       });
 
       const createdId = Number(response?.data?.partId);
-      const partId = Number.isFinite(createdId)
-        ? createdId
-        : (inventory.length > 0 ? Math.max(...inventory.map((p) => Number(p.id) || 0)) + 1 : 1);
+      if (!Number.isFinite(createdId)) {
+        throw new Error('Inventory part number was not returned by the backend');
+      }
       const createdPart = {
-        id: partId,
+        id: createdId,
         name: newPart.name.trim(),
         quantity,
         lowThreshold,

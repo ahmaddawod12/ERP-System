@@ -92,10 +92,9 @@ export default function Settings() {
               } catch (tokenErr) {
                 console.warn('Failed to clear push token on logout:', tokenErr);
               }
-              // Clear cache on logout
-              clearCache();
-              // Firebase Web SDK modular auth signOut
+              // Clear auth transport before cache teardown so stale session state cannot linger.
               await signOut(auth);
+              clearCache();
               
               // Navigate to login
               router.replace('/');

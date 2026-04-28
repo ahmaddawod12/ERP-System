@@ -84,7 +84,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 
 - Public pages and auth pages run in Next.js.
 - Server routes verify Supabase tokens and issue signed HttpOnly `__session` cookies.
-- Signed website sessions carry the current access token so server proxies can authenticate backend calls even when the browser has not yet rehydrated client auth state.
+- Website server proxy auth uses a split-cookie transport: `__session` stores signed session metadata and a separate HttpOnly `__session_access` cookie stores the current bearer token for server-side Edge proxy calls.
 - Protected web actions go through API proxy routes, then into backend functions.
 - Website read-model calls are kind-based and must remain contract-compatible with backend `read-model` kinds.
 
@@ -109,6 +109,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Edge handlers enrich preview/generate payloads with company data, create SQL draft document rows for generate flows, and dispatch trusted work to `cloudrun-pdf`.
 - `cloudrun-pdf` validates requester identity, renders PDF output, stores files, and finalizes task/document state.
 - New generated artifacts must keep create-only semantics and orphan cleanup on finalize failure.
+- Tax invoice generate flows must not overwrite an existing finalized PDF or existing SQL `storage_path`.
 
 ### Archiving
 
@@ -116,6 +117,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Archive export must drain paginated SQL reads; it cannot assume one page contains a full month.
 - Archive payload generation should stream JSON to disk/storage rather than holding the full month in memory.
 - Archive deletion must use the exact verified document ID list, not a rerun query.
+- Archive manifests must stay in `uploaded_not_deleted` state when deletion counts are partial.
 
 ## Canonical Rules
 

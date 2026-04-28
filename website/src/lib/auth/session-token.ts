@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 
 export const SESSION_COOKIE = "__session";
+export const SESSION_ACCESS_TOKEN_COOKIE = "__session_access";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60;
 
 const SESSION_ISSUER = "smart-job-website";
@@ -13,7 +14,6 @@ export interface WebsiteSessionPayload {
   role?: string | null;
   companyId?: string | null;
   authTime?: number | null;
-  accessToken?: string | null;
 }
 
 function getSessionSecret(): Uint8Array {
@@ -42,7 +42,6 @@ export async function createSessionCookieValue(payload: WebsiteSessionPayload): 
     role: payload.role || undefined,
     companyId: payload.companyId || undefined,
     authTime: Number.isFinite(payload.authTime) ? payload.authTime : undefined,
-    accessToken: payload.accessToken || undefined,
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(SESSION_ISSUER)
@@ -79,7 +78,6 @@ export async function verifySessionCookieValue(token: string): Promise<WebsiteSe
       ...(typeof payload.role === "string" ? { role: payload.role } : {}),
       ...(typeof payload.companyId === "string" ? { companyId: payload.companyId } : {}),
       ...(Number.isFinite(payload.authTime) ? { authTime: Number(payload.authTime) } : {}),
-      ...(typeof payload.accessToken === "string" ? { accessToken: payload.accessToken } : {}),
     };
   } catch {
     return null;

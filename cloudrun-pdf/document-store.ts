@@ -4,6 +4,7 @@ type DocumentGenerationInput = {
   companyId: string | number;
   documentId: string;
   storagePath: string;
+  documentType?: number | null;
 };
 
 type DocumentGenerationFailureInput = {
@@ -16,9 +17,10 @@ export function isSqlDocumentStoreEnabled(): boolean {
   return isSharedSqlStoreEnabled();
 }
 
-export async function completeDocumentGeneration({ companyId, documentId, storagePath }: DocumentGenerationInput): Promise<void> {
+export async function completeDocumentGeneration({ companyId, documentId, storagePath, documentType }: DocumentGenerationInput): Promise<void> {
   if (!isSqlDocumentStoreEnabled()) return;
 
+  const normalizedDocumentType = Number(documentType || 0) || null;
   const result = await runSharedSqlQuery(
     `
       UPDATE documents AS d
@@ -29,8 +31,10 @@ export async function completeDocumentGeneration({ companyId, documentId, storag
       WHERE d.company_id = c.id
         AND c.public_company_id = $1
         AND d.document_code = $2
+        AND ($4::integer IS NULL OR d.document_type = $4)
+        AND ($4::integer IS DISTINCT FROM 305 OR d.storage_path IS NULL)
     `,
-    [Number(companyId), String(documentId || '').trim(), String(storagePath || '').trim()],
+    [Number(companyId), String(documentId || '').trim(), String(storagePath || '').trim(), normalizedDocumentType],
   );
 
   if (!result || result.rowCount < 1) {

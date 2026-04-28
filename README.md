@@ -106,7 +106,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `UserProfile.wid` / `mid` type narrowed from `string | number` to `number | null` to match SQL-allocated integer membership IDs.
 - `generateCompanySlug` now uses `crypto.getRandomValues` instead of `Math.random()` for the randomized suffix.
 - Document task URLs split by task type: `preview_url` → `previewURL`, `generate_url` → `downloadURL`. `updateBusinessInfoV1` rejects `vat_number` mutations after onboarding.
-- The signed `__session` cookie now carries the current access token so `/api/callable` and `/api/read-model` can authenticate server-side even before browser auth state hydrates.
+- Website server proxy auth now uses split HttpOnly cookies: signed session metadata in `__session`, current bearer token in `__session_access`.
 - Registration now signs the user in before redirecting into onboarding, which keeps the cookie-backed session continuous across the handoff.
 
 ### Mobile (`phone_app`)
@@ -115,16 +115,19 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `SupportChat.tsx` back-button label fixed (was mojibake `×—×–×•×¨` / `Ø±Ø¬ÙˆØ¹`; now correct UTF-8 `חזור` / `رجوع`).
 - Jobs/documents cache bootstrap and version refresh now drain all paginated read-model pages instead of stopping after the first page.
 - MMKV draft, pending-job, and support hide-state keys are now scoped by active `uid` / `companyId` instead of sharing global device-wide keys.
+- Supabase auth transport tokens now live in a dedicated encrypted MMKV store, separate from the general cache MMKV instance.
 - Offline solo-job sync now replaces the locally queued temp job with the server-created public job after replay succeeds.
 
 ### `cloudrun-pdf`
 - `buildStoredDocumentRecord` no longer writes forbidden field names (`clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `createdBy`) to stored document records.
 - `htmlTemplate.ts` now sanitizes `logoUrl` through `sanitizeUrl()` which rejects `javascript:` and `data:` schemes before insertion into the `<img src>` attribute.
 - Email service is now a true singleton; the non-singleton `getEmailService()` export has been removed.
+- Tax invoice PDF finalization now stays create-only in both Storage and SQL document finalization.
 
 ### `cloudrun-archiver`
 - Monthly archives now drain paginated SQL reads and stream JSON payloads through temporary disk files before upload, which removes the old single-page and whole-month-in-memory failure mode.
 - Archive verification now checks stored metadata and re-hashes the uploaded object via stream before deletion.
+- Archive manifests now remain resumable when delete counts are partial instead of being marked fully deleted early.
 - The archiver Docker image now builds from repo-root context so local `file:` dependencies on `packages/db` and `packages/contracts` resolve in the documented build order.
 
 ### CI / Scripts

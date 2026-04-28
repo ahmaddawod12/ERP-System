@@ -5,12 +5,12 @@
 ## Runtime Role
 
 - Uses Supabase Auth for sign-in flows.
-- Exchanges bearer tokens for HttpOnly `__session` cookies.
+- Exchanges bearer tokens for HttpOnly session cookies.
 - Protects `/app/*` through middleware.
 - Revalidates session users server-side before accepting a session cookie.
 - Proxies protected operations to backend gateways instead of writing directly to protected data stores.
 - Uses short-lived browser auth transport state and avoids persisting refresh tokens in `localStorage`.
-- The signed `__session` cookie carries the current access token so `/api/callable` and `/api/read-model` can authenticate backend requests even before client auth rehydrates.
+- The website uses split HttpOnly cookies: signed metadata in `__session`, current bearer token in `__session_access` for `/api/callable` and `/api/read-model` proxy auth before client auth rehydrates.
 - Polls SQL-backed `document_tasks` through `/api/read-model` for preview/generate progress.
 
 ## Key Responsibilities

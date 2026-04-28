@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+const documentStoreSource = fs.readFileSync(path.resolve(__dirname, '../document-store.js'), 'utf8');
 
 function assertOrder(firstNeedle, secondNeedle, message) {
   const first = source.indexOf(firstNeedle);
@@ -18,9 +19,11 @@ test('generate tasks reclaim stale processing records instead of getting stuck f
   assert.match(source, /claimSqlTaskProcessing\(/);
 });
 
-test('new generated PDFs use create-only storage and SQL finalization', () => {
+test('tax invoice PDFs use create-only storage and guarded SQL finalization', () => {
   assert.match(source, /preconditionOpts:\s*\{\s*ifGenerationMatch:\s*0\s*\}/);
   assert.match(source, /completeSqlDocumentGeneration/);
+  assert.match(source, /documentType,\s*\n\s*}\);|documentType\s*\}/);
+  assert.match(documentStoreSource, /d\.storage_path IS NULL/);
   assert.match(source, /bumpCompanyDocumentsVersion/);
 });
 

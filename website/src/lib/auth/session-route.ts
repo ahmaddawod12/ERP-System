@@ -4,6 +4,7 @@ import { extractCookieValue } from "./session-middleware.ts";
 import {
   createSessionCookieValue,
   SESSION_COOKIE,
+  SESSION_ACCESS_TOKEN_COOKIE,
   SESSION_MAX_AGE_SECONDS,
   verifySessionCookieValue,
   type WebsiteSessionPayload,
@@ -29,6 +30,13 @@ function clearSessionCookie(response: NextResponse) {
     path: "/",
     maxAge: 0,
   });
+  response.cookies.set(SESSION_ACCESS_TOKEN_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 function normalizeSessionPayload(decodedToken: VerifiedAccessToken): WebsiteSessionPayload {
@@ -39,7 +47,6 @@ function normalizeSessionPayload(decodedToken: VerifiedAccessToken): WebsiteSess
     role: typeof decodedToken.role === "string" ? decodedToken.role : null,
     companyId: typeof decodedToken.companyId === "string" ? decodedToken.companyId : null,
     authTime: Number.isFinite(decodedToken.authTime) ? Number(decodedToken.authTime) : null,
-    accessToken: typeof decodedToken.accessToken === "string" ? decodedToken.accessToken : null,
   };
 }
 
@@ -110,6 +117,13 @@ export async function handleCreateSession(
 
     const response = NextResponse.json({ ok: true });
     response.cookies.set(SESSION_COOKIE, sessionCookieValue, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE_SECONDS,
+    });
+    response.cookies.set(SESSION_ACCESS_TOKEN_COOKIE, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",

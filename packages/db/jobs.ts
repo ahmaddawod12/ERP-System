@@ -718,19 +718,19 @@ async function acceptJob(input, options: any = {}) {
 }
 
 // ─── Cursor helpers ──────────────────────────────────────────────────────────
-function encodeJobsCursor(dateValue: Date | string | null, createdAt: Date | string | null): string {
+function encodeJobsCursor(dateValue: Date | string | null, rowId: string | null): string {
   const d = dateValue instanceof Date ? dateValue.toISOString() : (dateValue ?? '');
-  const c = createdAt instanceof Date ? createdAt.toISOString() : (createdAt ?? '');
-  return Buffer.from(JSON.stringify({ d, c })).toString('base64');
+  const i = rowId ?? '';
+  return Buffer.from(JSON.stringify({ d, i })).toString('base64');
 }
 
-function decodeJobsCursor(cursor: string): { dateValue: Date; createdAt: Date } | null {
+function decodeJobsCursor(cursor: string): { dateValue: Date; id: string } | null {
   try {
     const raw = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
     const dateValue = new Date(raw.d);
-    const createdAt = new Date(raw.c);
-    if (Number.isNaN(dateValue.getTime()) || Number.isNaN(createdAt.getTime())) return null;
-    return { dateValue, createdAt };
+    const id = String(raw.i || '').trim();
+    if (Number.isNaN(dateValue.getTime()) || !id) return null;
+    return { dateValue, id };
   } catch {
     return null;
   }
@@ -787,8 +787,8 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
       ...(requestedStatuses.length > 1 ? [inArray(jobs.status, requestedStatuses)] : []),
       ...(dateFrom ? [gte(dateColumn, dateFrom)] : []),
       ...(dateTo ? [lte(dateColumn, dateTo)] : []),
-      // Cursor condition: for descending (date, createdAt) order, next page has strictly older values.
-      ...(afterCursor ? [sql`(${dateColumn}, ${jobs.createdAt}) < (${afterCursor.dateValue}, ${afterCursor.createdAt})`] : []),
+      // Stable composite cursor: for descending (date, id) order, next page has strictly older tuples.
+      ...(afterCursor ? [sql`(${dateColumn}, ${jobs.id}) < (${afterCursor.dateValue}, ${afterCursor.id})`] : []),
     ];
 
     // Fetch one extra row to detect whether a next page exists.
@@ -828,7 +828,7 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
       })
       .from(jobs)
       .where(and(...conditions))
-      .orderBy(desc(dateColumn), desc(jobs.createdAt))
+      .orderBy(desc(dateColumn), desc(jobs.id))
       .limit(fetchLimit);
 
     // Detect if there is a next page.
@@ -933,7 +933,7 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
 
     const lastRow = pageRows[pageRows.length - 1];
     const nextCursor = hasMore
-      ? encodeJobsCursor(lastRow[dateFieldKey] ?? lastRow.createdAt, lastRow.createdAt)
+      ? encodeJobsCursor(lastRow[dateFieldKey] ?? lastRow.createdAt, String(lastRow.id))
       : null;
 
     return { items, nextCursor };

@@ -10,6 +10,7 @@ import {
   optionalTrimmedString,
   requireNonEmptyString,
   resolveCompanyIdentifiers,
+  signGoogleServiceAccountJwt,
   validateCompanyId,
 } from "../shared-edge-helpers.ts";
 
@@ -91,9 +92,9 @@ export async function createOrReuseDocumentTask(
   documentId: string | null,
   requestPayload: Record<string, unknown>,
   ctx: EdgeFunctionContext,
-): Promise<{ id: string; status: string; task_key: string }> {
+): Promise<{ id: string; status: string; task_key: string; isNew: boolean }> {
   const supabase = createSupabaseClient(ctx.env);
-  const lockKey = buildDocumentTaskLockKey(taskType, documentType, documentId);
+  const lockKey = await buildDocumentTaskLockKey(taskType, documentType, documentId, requestPayload);
   let activeTaskQuery = supabase
     .from("document_tasks")
     .select("id, status, task_key")
@@ -105,7 +106,7 @@ export async function createOrReuseDocumentTask(
   const { data: activeTask } = await activeTaskQuery.maybeSingle();
 
   if (activeTask?.id) {
-    return activeTask;
+    return { ...activeTask, isNew: false };
   }
 
   const now = Date.now();
@@ -141,14 +142,102 @@ export async function createOrReuseDocumentTask(
       .maybeSingle();
 
     if (concurrentTask?.id) {
-      return concurrentTask;
+      return { ...concurrentTask, isNew: false };
     }
   }
 
   if (insertError || !insertedTask) {
     throw { code: "internal", message: `Failed to queue ${taskType} task`, httpStatus: 500 };
   }
-  return insertedTask;
+  return { ...insertedTask, isNew: true };
+}
+
+function normalizeStoragePath(value: unknown): string | null {
+  const normalized = optionalTrimmedString(value, 1024)?.replace(/^\/+/, "") || null;
+  if (!normalized || normalized.includes("..") || normalized.includes("?")) {
+    return null;
+  }
+  return normalized;
+}
+
+async function createServiceAccountAccessToken(scopes: string[]): Promise<string | null> {
+  const serviceAccountEmail = String(
+    Deno.env.get("GCP_SERVICE_ACCOUNT_EMAIL") || Deno.env.get("GOOGLE_CLIENT_EMAIL") || "",
+  ).trim();
+  const privateKey = String(
+    Deno.env.get("GCP_SERVICE_ACCOUNT_PRIVATE_KEY") || Deno.env.get("GOOGLE_PRIVATE_KEY") || "",
+  ).replace(/\\n/g, "\n").trim();
+
+  if (!serviceAccountEmail || !privateKey || scopes.length === 0) {
+    return null;
+  }
+
+  const assertion = await signGoogleServiceAccountJwt(
+    serviceAccountEmail,
+    privateKey,
+    "https://oauth2.googleapis.com/token",
+    { scope: scopes.join(" ") },
+  );
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }),
+  });
+  if (!response.ok) {
+    throw {
+      code: "unavailable",
+      httpStatus: 503,
+      message: `Failed to mint GCP access token (${response.status})`,
+    };
+  }
+
+  const payload = await response.json().catch(() => null) as { access_token?: unknown } | null;
+  const accessToken = String(payload?.access_token || "").trim();
+  return accessToken || null;
+}
+
+async function readArchiveJson(companyId: string, archiveKey: string): Promise<unknown[] | null> {
+  const archiveBucket = String(Deno.env.get("ARCHIVE_BUCKET") || "").trim();
+  if (!archiveBucket) {
+    throw {
+      code: "unavailable",
+      httpStatus: 503,
+      message: "ARCHIVE_BUCKET is not configured",
+    };
+  }
+
+  const accessToken = await createServiceAccountAccessToken(["https://www.googleapis.com/auth/devstorage.read_only"]);
+  if (!accessToken) {
+    throw {
+      code: "unavailable",
+      httpStatus: 503,
+      message: "Archive retrieval credentials are not configured",
+    };
+  }
+
+  const objectPath = `companies/${companyId}/archives/${archiveKey}.json`;
+  const encodedObject = encodeURIComponent(objectPath);
+  const response = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(archiveBucket)}/o/${encodedObject}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw {
+      code: "unavailable",
+      httpStatus: 503,
+      message: `Archive month retrieval failed (${response.status})`,
+    };
+  }
+
+  const payload = await response.json().catch(() => null);
+  return Array.isArray(payload) ? payload : null;
 }
 
 async function loadCompanyDocumentContext(companyId: string, membershipId: string, ctx: EdgeFunctionContext) {
@@ -211,19 +300,42 @@ export function buildPublicDocumentId(documentType: number, documentNumber: numb
   return `${suffix}${documentNumber}-${publicCompanyId}`;
 }
 
-function buildDocumentTaskLockKey(
+function normalizeTaskLockPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeTaskLockPayload(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, nestedValue]) => nestedValue !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => [key, normalizeTaskLockPayload(nestedValue)]),
+  );
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function buildDocumentTaskLockKey(
   taskType: "preview" | "generate",
   documentType: number,
   documentId: string | null,
-): string {
+  requestPayload: Record<string, unknown>,
+): Promise<string> {
   const normalizedDocumentId = String(documentId || "").trim();
   if (normalizedDocumentId) {
     return `document:${normalizedDocumentId}`;
   }
-  if (taskType === "preview") {
-    return `preview:${documentType}`;
-  }
-  return `task:${taskType}:${documentType}`;
+
+  const normalizedPayload = JSON.stringify(normalizeTaskLockPayload(requestPayload));
+  const payloadHash = await sha256Hex(`${taskType}:${documentType}:${normalizedPayload}`);
+  return `${taskType}:${documentType}:${payloadHash}`;
 }
 
 function isUuidLike(value: string): boolean {
@@ -355,13 +467,15 @@ export async function publishPreviewTask(payload: any, ctx: EdgeFunctionContext)
     ctx,
   );
 
-  await dispatchCloudRunPdfTask("/preview", {
-    taskId: task.task_key,
-    documentType,
-    documentData,
-    uid: ctx.auth?.uid || membership.id,
-    companyId: resolvedCompany.publicCompanyId,
-  }, ctx.env);
+  if (task.isNew) {
+    await dispatchCloudRunPdfTask("/preview", {
+      taskId: task.task_key,
+      documentType,
+      documentData,
+      uid: ctx.auth?.uid || membership.id,
+      companyId: resolvedCompany.publicCompanyId,
+    }, ctx.env);
+  }
 
   return {
     success: true,
@@ -440,19 +554,21 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
     ctx,
   );
 
-  await dispatchCloudRunPdfTask("/generate", {
-    taskId: task.task_key,
-    documentType,
-    documentData: {
-      ...documentData,
+  if (task.isNew) {
+    await dispatchCloudRunPdfTask("/generate", {
+      taskId: task.task_key,
+      documentType,
+      documentData: {
+        ...documentData,
+        documentNumber: documentNumber || undefined,
+      },
+      uid: ctx.auth?.uid || membership.id,
+      companyId: resolvedCompany.publicCompanyId,
+      documentId: publicDocumentId,
       documentNumber: documentNumber || undefined,
-    },
-    uid: ctx.auth?.uid || membership.id,
-    companyId: resolvedCompany.publicCompanyId,
-    documentId: publicDocumentId,
-    documentNumber: documentNumber || undefined,
-    confirmationNumber: optionalTrimmedString(documentData["taxAuthorityConfirmationNumber"], 128) || undefined,
-  }, ctx.env);
+      confirmationNumber: optionalTrimmedString(documentData["taxAuthorityConfirmationNumber"], 128) || undefined,
+    }, ctx.env);
+  }
 
   return {
     success: true,
@@ -531,7 +647,10 @@ export async function createDocumentDownloadUrlV1(payload: any, ctx: EdgeFunctio
     throw { code: "failed-precondition", message: "Document file is not available", httpStatus: 400 };
   }
 
-  const normalizedStoragePath = storagePath.replace(/^\/+/, "");
+  const normalizedStoragePath = normalizeStoragePath(storagePath);
+  if (!normalizedStoragePath) {
+    throw { code: "failed-precondition", message: "Document storage path is invalid", httpStatus: 400 };
+  }
   const expectedPrefix = `companies/${resolvedCompany.publicCompanyId}/documents/`;
   if (!normalizedStoragePath.startsWith(expectedPrefix)) {
     throw { code: "failed-precondition", message: "Document storage path is invalid", httpStatus: 400 };
@@ -575,10 +694,13 @@ export async function fetchArchiveMonthV1(payload: any, ctx: EdgeFunctionContext
     throw { code: "invalid-argument", message: "dataType must be documents or finishedJobs", httpStatus: 400 };
   }
 
-  throw {
-    code: "unavailable",
-    message: "Archive month retrieval is not yet implemented in Supabase Edge runtime",
-    httpStatus: 503,
-    details: { year, month, dataType },
+  const archiveKey = `${year}-${month}-${dataType === "finishedJobs" ? "j" : "d"}`;
+  const items = await readArchiveJson(resolvedCompany.publicCompanyId, archiveKey);
+  return {
+    success: true,
+    year,
+    month,
+    dataType,
+    items: items || [],
   };
 }

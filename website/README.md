@@ -20,6 +20,7 @@
 - Protected app routes under `/app/*`
 - API proxy routes (`/api/callable`, `/api/read-model`, `/api/contact/request`)
 - Tax invoice creation delegates to backend draft-document reservation and async PDF scheduling.
+- Website document and job-file access rely on backend-issued short-lived URLs; protected storage paths are not read directly by the browser.
 - Registration signs the user in immediately before redirecting into onboarding so the cookie-backed session survives the handoff.
 
 ## Required Patterns

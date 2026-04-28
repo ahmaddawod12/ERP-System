@@ -186,6 +186,7 @@ EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_ANON_KEY=
 
 EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=
+EXPO_PUBLIC_MMKV_AUTH_KEY=   # optional explicit auth-store encryption key override
 ```
 
 Notes:
@@ -193,6 +194,7 @@ Notes:
 - Registration and onboarding remain website-only.
 - If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
 - Mobile Supabase transport tokens are stored in a dedicated encrypted MMKV instance, separate from the general cache MMKV store.
+- If `EXPO_PUBLIC_MMKV_AUTH_KEY` is unset, the app derives an auth-store key from app/device runtime metadata instead of using a hardcoded source literal or persisting the key inside the general MMKV cache.
 
 ## 7. Supabase Edge Environment
 
@@ -218,6 +220,7 @@ GCP_SERVICE_ACCOUNT_EMAIL=
 GCP_SERVICE_ACCOUNT_PRIVATE_KEY=
 PUBSUB_VERIFICATION_TOKEN=
 CLOUD_RUN_PDF_SERVICE_URL=
+ARCHIVE_BUCKET=
 
 TAX_AUTH_URL=
 TAX_TOKEN_URL=
@@ -239,8 +242,10 @@ Rules:
 - Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
 - Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
 - `GCP_SERVICE_ACCOUNT_EMAIL` / `GCP_SERVICE_ACCOUNT_PRIVATE_KEY` allow edge handlers to mint OIDC tokens for trusted `cloudrun-pdf` dispatch.
+- The same service account credentials are used by `fetchArchiveMonthV1` to read archive objects from `ARCHIVE_BUCKET` through backend-controlled bucket/path access.
 - `PUBSUB_VERIFICATION_TOKEN` should match the shared verification token expected by `cloudrun-pdf` when that hardening layer is enabled.
 - `CLOUD_RUN_PDF_SERVICE_URL` is required for preview/generate task dispatch from the edge runtime.
+- `ARCHIVE_BUCKET` is required if mobile or other clients need archived month retrieval through `fetchArchiveMonthV1`.
 
 ## 8. SQL Setup
 

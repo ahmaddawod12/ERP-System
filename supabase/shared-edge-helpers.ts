@@ -41,11 +41,10 @@ export const getEnv = () => ({
     .filter(Boolean),
 
   // Feature Flags
-  enableSqlPersistence: (
+  enableSqlPersistence:
     String(Deno.env.get("SMART_JOB_PERSISTENCE_BACKEND") || Deno.env.get("PERSISTENCE_BACKEND") || "")
       .trim()
-      .toLowerCase() === "sql"
-  ) || Deno.env.get("ENABLE_SQL_PERSISTENCE") === "true",
+      .toLowerCase() === "sql",
   logLevel: Deno.env.get("LOG_LEVEL") || "info",
 });
 
@@ -756,10 +755,11 @@ function decodeBase64Url(value: string): Uint8Array {
   return bytes;
 }
 
-async function signGoogleServiceAccountJwt(
+export async function signGoogleServiceAccountJwt(
   serviceAccountEmail: string,
   privateKeyPem: string,
   audience: string,
+  additionalClaims: Record<string, unknown> = {},
 ): Promise<string> {
   const issuedAt = Math.floor(Date.now() / 1000);
   const expiresAt = issuedAt + 60 * 10;
@@ -771,6 +771,7 @@ async function signGoogleServiceAccountJwt(
     aud: audience,
     iat: issuedAt,
     exp: expiresAt,
+    ...additionalClaims,
   };
 
   const encoder = new TextEncoder();

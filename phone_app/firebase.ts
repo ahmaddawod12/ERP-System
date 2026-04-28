@@ -345,8 +345,6 @@ export {
   orderBy,
   limit,
   onSnapshot,
-  writeBatch,
-  runTransaction,
   increment,
   serverTimestamp,
 };

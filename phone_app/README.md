@@ -18,6 +18,7 @@
 - Use `useAlert()` instead of `Alert.alert()`.
 - Use MMKV helpers in `contexts/mmkv-storage.ts`.
 - Scope MMKV draft, pending-job, and support UI state by active `uid` / `companyId`; avoid raw global keys.
+- Archived month retrieval uses backend `fetchArchiveMonthV1`; the app does not read protected archive objects directly.
 - Cache refresh logic must drain paginated jobs/documents read-model pages completely.
 - Offline queued solo jobs should be replaced by the server-created public job after sync succeeds; do not leave temp local duplicates behind.
 - Keep protected writes backend-only.
@@ -42,6 +43,7 @@ firebase.ts     Auth wrappers and gateway helpers
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 - `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` (optional)
+- `EXPO_PUBLIC_MMKV_AUTH_KEY` (optional explicit auth-store encryption key override)
 
 If edge base URL is unset, the app defaults to `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
 

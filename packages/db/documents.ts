@@ -116,19 +116,19 @@ function resolveDocumentDateColumnName(dateField: string): string {
 }
 
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
-function encodeDocumentsCursor(dateValue: Date | string | null, createdAt: Date | string | null): string {
+function encodeDocumentsCursor(dateValue: Date | string | null, rowId: string | null): string {
   const d = dateValue instanceof Date ? dateValue.toISOString() : (dateValue ?? '');
-  const c = createdAt instanceof Date ? createdAt.toISOString() : (createdAt ?? '');
-  return Buffer.from(JSON.stringify({ d, c })).toString('base64');
+  const i = rowId ?? '';
+  return Buffer.from(JSON.stringify({ d, i })).toString('base64');
 }
 
-function decodeDocumentsCursor(cursor: string): { dateValue: Date; createdAt: Date } | null {
+function decodeDocumentsCursor(cursor: string): { dateValue: Date; id: string } | null {
   try {
     const raw = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
     const dateValue = new Date(raw.d);
-    const createdAt = new Date(raw.c);
-    if (Number.isNaN(dateValue.getTime()) || Number.isNaN(createdAt.getTime())) return null;
-    return { dateValue, createdAt };
+    const id = String(raw.i || '').trim();
+    if (Number.isNaN(dateValue.getTime()) || !id) return null;
+    return { dateValue, id };
   } catch {
     return null;
   }
@@ -293,7 +293,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   const dateColumn = resolveDocumentDateColumnSql(options.dateField);
   const dateColumnName = resolveDocumentDateColumnName(options.dateField);
   const cursorFilter = afterCursor
-    ? sql` AND (${sql.raw(dateColumnName)}, d.created_at) < (${afterCursor.dateValue}, ${afterCursor.createdAt})`
+    ? sql` AND (${sql.raw(dateColumnName)}, d.id) < (${afterCursor.dateValue}, ${afterCursor.id})`
     : sql``;
 
   // Optional filter by a specific document code (used by getDocumentRecordById for targeted lookups).
@@ -358,7 +358,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       ${dateToFilter}
       ${statusFilter}
       ${cursorFilter}
-    ORDER BY ${dateColumn} DESC, d.created_at DESC
+    ORDER BY ${dateColumn} DESC, d.id DESC
     LIMIT ${sql.raw(String(effectiveLimit + 1))}
   `);
 
@@ -459,7 +459,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
     }
   })();
   const nextCursor = hasMore
-    ? encodeDocumentsCursor(cursorDateValue, lastRow.created_at)
+    ? encodeDocumentsCursor(cursorDateValue, String(lastRow.id))
     : null;
 
   return { items: mappedRows, nextCursor };

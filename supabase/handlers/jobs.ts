@@ -51,6 +51,46 @@ function normalizeAttachmentRef(value: unknown): JobAttachmentRef | null {
   return { storagePath };
 }
 
+function validateJobAttachmentStoragePath(
+  storagePath: string,
+  companyPublicId: string,
+  uid: string | null | undefined,
+  publicJobId: string,
+): string {
+  const normalized = storagePath.replace(/^\/+/, "").trim();
+  if (!normalized || normalized.includes("..") || normalized.includes("?")) {
+    throw { code: "invalid-argument", message: "Job attachment storagePath is invalid", httpStatus: 400 };
+  }
+
+  const validPrefixes = [
+    `companies/${companyPublicId}/jobs/${publicJobId}/`,
+    ...(uid ? [`${uid}/jobs/${publicJobId}/`] : []),
+  ];
+  if (!validPrefixes.some((prefix) => normalized.startsWith(prefix))) {
+    throw { code: "invalid-argument", message: "Job attachment storagePath does not match the requested job", httpStatus: 400 };
+  }
+
+  return normalized;
+}
+
+function validateJobAttachmentsForWrite(
+  attachments: NormalizedJobAttachmentPayload,
+  companyPublicId: string,
+  uid: string | null | undefined,
+  publicJobId: string,
+): NormalizedJobAttachmentPayload {
+  const normalizedPhotos = attachments.photos?.map((photo) => ({
+    storagePath: validateJobAttachmentStoragePath(photo.storagePath, companyPublicId, uid, publicJobId),
+  }));
+  const normalizedSignature = attachments.signature
+    ? { storagePath: validateJobAttachmentStoragePath(attachments.signature.storagePath, companyPublicId, uid, publicJobId) }
+    : attachments.signature ?? undefined;
+  return {
+    ...(normalizedPhotos !== undefined ? { photos: normalizedPhotos } : {}),
+    ...(Object.prototype.hasOwnProperty.call(attachments, "signature") ? { signature: normalizedSignature ?? null } : {}),
+  };
+}
+
 function normalizeAttachmentPayload(payload: any): NormalizedJobAttachmentPayload {
   const photos = Array.isArray(payload?.photos)
     ? payload.photos.map(normalizeAttachmentRef).filter((value: JobAttachmentRef | null): value is JobAttachmentRef => Boolean(value))
@@ -468,6 +508,12 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   }
 
   const nextJobNo = await allocateNextCompanyCounter(companyId, "job_no", ctx);
+  const validatedAttachments = validateJobAttachmentsForWrite(
+    attachments,
+    resolvedCompany.publicCompanyId,
+    ctx.auth?.uid || null,
+    String(nextJobNo),
+  );
   const { data: inserted, error: insertError } = await supabase
     .from("jobs")
     .insert({
@@ -530,18 +576,18 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     }
   }
 
-  if (attachments.photos !== undefined || attachments.signature !== undefined) {
+  if (validatedAttachments.photos !== undefined || validatedAttachments.signature !== undefined) {
     const attachmentRows = [
-      ...(attachments.photos || []).map((photo) => ({
+      ...(validatedAttachments.photos || []).map((photo) => ({
         job_id: inserted.id,
         storage_path: photo.storagePath,
         kind: "photo",
         uploaded_by_user_id: ctx.auth?.uid || null,
         created_at: now,
       })),
-      ...(attachments.signature?.storagePath ? [{
+      ...(validatedAttachments.signature?.storagePath ? [{
         job_id: inserted.id,
-        storage_path: attachments.signature.storagePath,
+        storage_path: validatedAttachments.signature.storagePath,
         kind: "signature",
         uploaded_by_user_id: ctx.auth?.uid || null,
         created_at: now,
@@ -694,21 +740,27 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
 
   if (Object.prototype.hasOwnProperty.call(payload || {}, "photos") || Object.prototype.hasOwnProperty.call(payload || {}, "signature")) {
     const attachments = normalizeAttachmentPayload(payload);
+    const validatedAttachments = validateJobAttachmentsForWrite(
+      attachments,
+      resolvedCompany.publicCompanyId,
+      ctx.auth?.uid || null,
+      String(existingJob.job_no || requestedJobId),
+    );
     const { error: deleteAttachmentsError } = await supabase.from("job_attachments").delete().eq("job_id", jobId);
     if (deleteAttachmentsError) {
       throw { code: "internal", message: "Failed to reset job attachments", httpStatus: 500 };
     }
     const attachmentRows = [
-      ...(attachments.photos || []).map((photo) => ({
+      ...(validatedAttachments.photos || []).map((photo) => ({
         job_id: jobId,
         storage_path: photo.storagePath,
         kind: "photo",
         uploaded_by_user_id: ctx.auth?.uid || null,
         created_at: new Date().toISOString(),
       })),
-      ...(attachments.signature?.storagePath ? [{
+      ...(validatedAttachments.signature?.storagePath ? [{
         job_id: jobId,
-        storage_path: attachments.signature.storagePath,
+        storage_path: validatedAttachments.signature.storagePath,
         kind: "signature",
         uploaded_by_user_id: ctx.auth?.uid || null,
         created_at: new Date().toISOString(),
@@ -816,18 +868,26 @@ export async function createJobFileDownloadUrlV1(payload: any, ctx: EdgeFunction
   }
 
   const normalizedPublicJobId = String(job.job_no || requestedJobId);
-  const validPrefixes = [
-    `companies/${resolvedCompany.publicCompanyId}/jobs/${normalizedPublicJobId}/`,
-    `${ctx.auth?.uid || ""}/jobs/${normalizedPublicJobId}/`,
-  ].filter(Boolean);
-  if (!validPrefixes.some((prefix) => storagePath.startsWith(prefix))) {
+  const normalizedStoragePath = validateJobAttachmentStoragePath(
+    storagePath,
+    resolvedCompany.publicCompanyId,
+    ctx.auth?.uid || null,
+    normalizedPublicJobId,
+  );
+  const { data: attachment } = await supabase
+    .from("job_attachments")
+    .select("id")
+    .eq("job_id", String(job.id))
+    .eq("storage_path", normalizedStoragePath)
+    .maybeSingle();
+  if (!attachment?.id) {
     throw { code: "invalid-argument", message: "storagePath does not match the requested job", httpStatus: 400 };
   }
 
   const bucket = Deno.env.get("JOB_FILES_BUCKET") || "companies";
   const expirySeconds = Math.min(60 * 60, Math.max(60, Number(payload?.expirySeconds || 900) || 900));
 
-  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(storagePath, expirySeconds);
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(normalizedStoragePath, expirySeconds);
   if (error || !data?.signedUrl) {
     throw { code: "unavailable", message: "Job file download URL is unavailable", httpStatus: 503 };
   }

@@ -95,6 +95,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Mobile read-model calls are kind-based and share the same backend contract as website.
 - Mobile MMKV cache/draft/outbox keys must stay scoped by active `uid` / `companyId`.
 - Mobile cache refresh must drain paginated jobs/documents reads fully instead of assuming page one is complete.
+- Archived month reads go through backend `fetchArchiveMonthV1`; clients do not read protected archive objects directly.
 - Mobile does not own business registration.
 
 ### Backend mutations and reads
@@ -118,6 +119,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Archive payload generation should stream JSON to disk/storage rather than holding the full month in memory.
 - Archive deletion must use the exact verified document ID list, not a rerun query.
 - Archive manifests must stay in `uploaded_not_deleted` state when deletion counts are partial.
+- Archive retrieval stays backend-controlled; callers provide `(companyId, year, month, dataType)` and receive JSON payloads from the edge runtime.
 
 ## Canonical Rules
 

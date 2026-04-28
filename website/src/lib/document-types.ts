@@ -19,6 +19,7 @@ const DOCUMENT_TYPE_ORDER = [
 ] as const;
 
 export type DocumentTypeCode = DocTypeCode;
+export { DOC_TYPE, VAT_RATE };
 
 export function getDocumentTypeLabel(code: number) {
   return DOC_LABELS[code as DocumentTypeCode] ?? `Type ${code}`;

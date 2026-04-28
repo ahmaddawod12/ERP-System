@@ -54,6 +54,44 @@ async function requireTaxManagerOrDev(
   };
 }
 
+async function findExistingReservedTaxInvoice(
+  companyId: string,
+  idempotencyKey: string,
+  ctx: EdgeFunctionContext,
+): Promise<{
+  internalDocumentId: string;
+  publicDocumentId: string;
+  documentNumber: number;
+  taskKey: string | null;
+} | null> {
+  const supabase = createSupabaseClient(ctx.env);
+  const { data, error } = await supabase
+    .from("tax_invoice_reservations")
+    .select("document_id, document_number, status_payload, documents!inner(document_code)")
+    .eq("company_id", companyId)
+    .eq("status", "reserved")
+    .contains("status_payload", { idempotencyKey })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const documentRow = Array.isArray(data?.documents) ? data.documents[0] : data?.documents;
+
+  if (error || !data?.document_id || !documentRow?.document_code) {
+    return null;
+  }
+
+  const taskKey = typeof data.status_payload?.taskKey === "string"
+    ? String(data.status_payload.taskKey).trim() || null
+    : null;
+  return {
+    internalDocumentId: String(data.document_id),
+    publicDocumentId: String(documentRow.document_code),
+    documentNumber: Number(data.document_number || 0),
+    taskKey,
+  };
+}
+
 export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext): Promise<any> {
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
@@ -103,8 +141,12 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
     const vatAmount = Math.round(totalBeforeVat * 0.18 * 100) / 100;
     const totalWithVat = Math.round((totalBeforeVat + vatAmount) * 100) / 100;
 
-    const documentNumber = await allocateNextCompanyCounter(companyId, `doc_${TAX_INVOICE_TYPE}`, ctx);
-    const publicDocumentId = buildPublicDocumentId(TAX_INVOICE_TYPE, documentNumber, publicCompanyId);
+    const existingReservation = await findExistingReservedTaxInvoice(companyId, idempotencyKey, ctx);
+
+    const documentNumber = existingReservation?.documentNumber
+      || await allocateNextCompanyCounter(companyId, `doc_${TAX_INVOICE_TYPE}`, ctx);
+    const publicDocumentId = existingReservation?.publicDocumentId
+      || buildPublicDocumentId(TAX_INVOICE_TYPE, documentNumber, publicCompanyId);
 
     const documentPayload = {
       type: TAX_INVOICE_TYPE,
@@ -120,36 +162,40 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
       totalWithVat,
     };
 
-    const documentDate = optionalTrimmedString(documentPayload.date, 64);
-    const { data: insertedDocument, error: documentInsertError } = await supabase
-      .from("documents")
-      .insert({
-        company_id: companyId,
-        document_type: TAX_INVOICE_TYPE,
-        document_number: documentNumber,
-        document_code: publicDocumentId,
-        generation_status: "pending",
-        tax_authority_status: "reserved",
-        created_by_membership_id: taxAccess.membershipId,
-        language: documentPayload.language,
-        document_date: documentDate ? new Date(documentDate).toISOString() : null,
-        notes: documentPayload.notes,
-        total_before_vat: totalBeforeVat,
-        vat_amount: vatAmount,
-        total_with_vat: totalWithVat,
-        client_name_snapshot: optionalTrimmedString(client.name, 240) || null,
-        client_phone_snapshot: optionalTrimmedString(client.phone, 40) || null,
-        client_city_snapshot: optionalTrimmedString(client.city, 120) || null,
-        client_vat_snapshot: optionalTrimmedString(client.clientVatNumber ?? client.customerVatNumber ?? client.vatNumber, 32) || null,
-        payload: documentPayload,
-        created_at: now,
-        updated_at: now,
-      })
-      .select("id")
-      .single();
+    let internalDocumentId = existingReservation?.internalDocumentId || null;
+    if (!internalDocumentId) {
+      const documentDate = optionalTrimmedString(documentPayload.date, 64);
+      const { data: insertedDocument, error: documentInsertError } = await supabase
+        .from("documents")
+        .insert({
+          company_id: companyId,
+          document_type: TAX_INVOICE_TYPE,
+          document_number: documentNumber,
+          document_code: publicDocumentId,
+          generation_status: "pending",
+          tax_authority_status: "reserved",
+          created_by_membership_id: taxAccess.membershipId,
+          language: documentPayload.language,
+          document_date: documentDate ? new Date(documentDate).toISOString() : null,
+          notes: documentPayload.notes,
+          total_before_vat: totalBeforeVat,
+          vat_amount: vatAmount,
+          total_with_vat: totalWithVat,
+          client_name_snapshot: optionalTrimmedString(client.name, 240) || null,
+          client_phone_snapshot: optionalTrimmedString(client.phone, 40) || null,
+          client_city_snapshot: optionalTrimmedString(client.city, 120) || null,
+          client_vat_snapshot: optionalTrimmedString(client.clientVatNumber ?? client.customerVatNumber ?? client.vatNumber, 32) || null,
+          payload: documentPayload,
+          created_at: now,
+          updated_at: now,
+        })
+        .select("id")
+        .single();
 
-    if (documentInsertError || !insertedDocument?.id) {
-      throw { code: "internal", message: "Failed to create tax invoice document", httpStatus: 500 };
+      if (documentInsertError || !insertedDocument?.id) {
+        throw { code: "internal", message: "Failed to create tax invoice document", httpStatus: 500 };
+      }
+      internalDocumentId = String(insertedDocument.id);
     }
 
     const reservationPayload = {
@@ -160,19 +206,21 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
       documentId: publicDocumentId,
     };
 
-    const { error: reservationError } = await supabase.from("tax_invoice_reservations").insert({
-      company_id: companyId,
-      document_id: insertedDocument.id,
-      document_number: documentNumber,
-      status: "reserved",
-      reserved_by_user_id: ctx.auth?.uid || null,
-      client_name_snapshot: optionalTrimmedString(client.name, 240) || null,
-      status_payload: reservationPayload,
-      created_at: now,
-      updated_at: now,
-    });
-    if (reservationError) {
-      throw { code: "internal", message: "Failed to create tax reservation", httpStatus: 500 };
+    if (!existingReservation) {
+      const { error: reservationError } = await supabase.from("tax_invoice_reservations").insert({
+        company_id: companyId,
+        document_id: internalDocumentId,
+        document_number: documentNumber,
+        status: "reserved",
+        reserved_by_user_id: ctx.auth?.uid || null,
+        client_name_snapshot: optionalTrimmedString(client.name, 240) || null,
+        status_payload: reservationPayload,
+        created_at: now,
+        updated_at: now,
+      });
+      if (reservationError) {
+        throw { code: "internal", message: "Failed to create tax reservation", httpStatus: 500 };
+      }
     }
 
     const task = await createOrReuseDocumentTask(
@@ -180,7 +228,7 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
       ctx.auth?.uid || taxAccess.membershipId,
       "generate",
       TAX_INVOICE_TYPE,
-      String(insertedDocument.id),
+      internalDocumentId,
       {
         companyId: publicCompanyId,
         documentType: TAX_INVOICE_TYPE,
@@ -193,19 +241,34 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
       ctx,
     );
 
-    await dispatchCloudRunPdfTask("/generate", {
-      taskId: task.task_key,
-      documentType: TAX_INVOICE_TYPE,
-      documentData: {
-        ...documentPayload,
+    await supabase
+      .from("tax_invoice_reservations")
+      .update({
+        status_payload: {
+          ...reservationPayload,
+          taskKey: task.task_key,
+        },
+        updated_at: now,
+      })
+      .eq("company_id", companyId)
+      .eq("document_id", internalDocumentId)
+      .eq("status", "reserved");
+
+    if (task.isNew) {
+      await dispatchCloudRunPdfTask("/generate", {
+        taskId: task.task_key,
+        documentType: TAX_INVOICE_TYPE,
+        documentData: {
+          ...documentPayload,
+          documentNumber,
+        },
+        uid: ctx.auth?.uid || taxAccess.membershipId,
+        companyId: publicCompanyId,
+        documentId: publicDocumentId,
         documentNumber,
-      },
-      uid: ctx.auth?.uid || taxAccess.membershipId,
-      companyId: publicCompanyId,
-      documentId: publicDocumentId,
-      documentNumber,
-      confirmationNumber: undefined,
-    }, ctx.env);
+        confirmationNumber: undefined,
+      }, ctx.env);
+    }
 
     const resultPayload = {
       success: true,

@@ -14,6 +14,8 @@ test('mobile firebase barrel does not export generic firestore mutation helpers'
   assert.doesNotMatch(source, /export \{[\s\S]*\bsetDoc\b/);
   assert.doesNotMatch(source, /export \{[\s\S]*\bupdateDoc\b/);
   assert.doesNotMatch(source, /export \{[\s\S]*\bdeleteDoc\b/);
+  assert.doesNotMatch(source, /export \{[\s\S]*\bwriteBatch\b/);
+  assert.doesNotMatch(source, /export \{[\s\S]*\brunTransaction\b/);
 });
 
 test('mobile modules do not import direct firestore SDK writes', () => {
@@ -33,7 +35,7 @@ test('mobile modules do not import direct firestore SDK writes', () => {
   const workerJobFirebaseImport = workerJob.split('\n').find((line) => line.includes("from '../../firebase'")) || '';
 
   assert.doesNotMatch(cacheContextFirebaseImport, /\bsetDoc\b/);
-  assert.doesNotMatch(userJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b/);
-  assert.doesNotMatch(documentHistoryFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b/);
-  assert.doesNotMatch(workerJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b/);
+  assert.doesNotMatch(userJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
+  assert.doesNotMatch(documentHistoryFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
+  assert.doesNotMatch(workerJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
 });

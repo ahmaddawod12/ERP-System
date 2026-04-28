@@ -6,10 +6,35 @@
  */
 
 import type { DateLike, MmkvHelpers } from '../types';
+import Constants from 'expo-constants';
+import * as Device from 'expo-device';
 import { safeJsonParse } from '../utils/helpers';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
 import { createMMKV } from 'react-native-mmkv';
+
+function getAuthStorageEncryptionKey(): string {
+  const envOverride = String(process.env.EXPO_PUBLIC_MMKV_AUTH_KEY || '').trim();
+  if (envOverride) {
+    return envOverride;
+  }
+
+  const packageId = String(
+    Constants.expoConfig?.android?.package
+      || Constants.expoConfig?.ios?.bundleIdentifier
+      || Constants.expoConfig?.slug
+      || 'smart-job-mobile',
+  ).trim();
+  const runtimeFingerprint = [
+    packageId,
+    String(Device.brand || '').trim(),
+    String(Device.manufacturer || '').trim(),
+    String(Device.modelId || '').trim(),
+    String(Device.osBuildId || Device.osInternalBuildId || '').trim(),
+  ].filter(Boolean);
+
+  return runtimeFingerprint.join(':');
+}
 
 // ─── MMKV instance ─────────────────────────────────────────────────────────
 export const storage = createMMKV({
@@ -18,7 +43,7 @@ export const storage = createMMKV({
 
 export const authStorage = createMMKV({
   id: 'smart-job-auth',
-  encryptionKey: 'smart-job-auth-v1',
+  encryptionKey: getAuthStorageEncryptionKey(),
 });
 
 console.log('🗄 MMKV initialized successfully');

@@ -23,6 +23,7 @@ The `supabase/functions/` package is the active trust boundary in this workspace
 - document task orchestration
 - dispatching trusted preview/generate work to `cloudrun-pdf`
 - signed URL issuance
+- archive retrieval
 - tax authority flows
 - push/email side-effect coordination
 - compatibility writes to Firestore where still required
@@ -126,6 +127,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
 - When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
+- Keep job file signed URLs bound to persisted attachment rows, not caller-selected prefixes.
 - Keep document task result URLs semantically split by task type (`preview_url` vs `generate_url`) to avoid response-contract drift.
 - Keep invite redemption race-safe by consuming invite state atomically before membership finalization.
 - Keep preview/generate/tax document flows on the same SQL-backed draft-document plus `document_tasks` pipeline.
@@ -134,6 +136,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
 - Keep tax invoice PDF finalization create-only once `storage_path` is already set.
 - Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.
+- Keep archived month reads behind backend handlers with fixed bucket/path derivation.
 
 ## Runtime Note
 

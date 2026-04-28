@@ -2,7 +2,7 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (April 28, 2026)
+## Runtime Snapshot (April 29, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
@@ -97,9 +97,12 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Double-fault catch in all three gateways (`mutation-gateway`, `mutation-gateway-me-west1`, `read-model`) now resolves with a safe CORS-aware error response instead of an unhandled rejection.
 - Preview and generate requests now create SQL-backed `document_tasks`, enrich company/document payloads server-side, and dispatch trusted work to `cloudrun-pdf` directly from the edge runtime.
 - Tax invoice approval now creates the draft SQL document and reuses the same async generate-task pipeline instead of requiring a pre-existing client document draft.
+- Duplicate preview/generate/tax dispatches are now suppressed when an active SQL `document_tasks` row already exists for the same lock key.
+- `fetchArchiveMonthV1` now retrieves archived month JSON through the backend trust boundary using server-controlled bucket/path access.
 - Job mutations and read-model responses now preserve worker/mobile job fields such as `timeFrom`, `timeTo`, `travelDistance`, `signingPerson`, `photos`, `signature`, and `partsUsed`.
 - Job reads and writes now return public sequential job/member IDs at the API boundary while still accepting legacy UUID job identifiers internally during transition.
 - Job pagination cursors still use the stable internal `(created_at, id)` tuple even though the payload exposes public sequential job IDs.
+- Job file signed URL issuance now requires an exact `job_attachments.storage_path` match for the resolved job before a short-lived URL is minted.
 
 ### Website
 - Auth transport no longer persists Supabase access token or refresh token in `localStorage`; access token and expiry are kept in-memory and only non-sensitive user info (`uid`, `email`) is written to `sessionStorage`.
@@ -116,6 +119,8 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Jobs/documents cache bootstrap and version refresh now drain all paginated read-model pages instead of stopping after the first page.
 - MMKV draft, pending-job, and support hide-state keys are now scoped by active `uid` / `companyId` instead of sharing global device-wide keys.
 - Supabase auth transport tokens now live in a dedicated encrypted MMKV store, separate from the general cache MMKV instance.
+- The mobile Firebase barrel no longer exports `writeBatch` or `runTransaction`, which keeps protected Firestore writes out of shared client helpers.
+- The mobile auth MMKV encryption key is now derived from app/device runtime metadata or supplied explicitly through `EXPO_PUBLIC_MMKV_AUTH_KEY` instead of being hardcoded in source or persisted in the general MMKV cache.
 - Offline solo-job sync now replaces the locally queued temp job with the server-created public job after replay succeeds.
 
 ### `cloudrun-pdf`

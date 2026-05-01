@@ -81,12 +81,15 @@ async function syncAuthSession(token: string | null) {
   if (isSessionTokenSynced(token)) {
     return;
   }
-  await fetch("/api/auth/session", {
+  const response = await fetch("/api/auth/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ token }),
-  }).catch(() => {});
+  }).catch(() => null);
+  if (!response?.ok) {
+    throw new Error("Failed to sync authenticated session");
+  }
   markSessionTokenSynced(token);
 }
 

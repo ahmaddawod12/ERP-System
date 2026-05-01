@@ -74,6 +74,7 @@ type FillJobDraft = {
 type PendingUserJobRecord = {
   uid?: string;
   localJobId?: string;
+  attachmentUploadId?: string;
   jobData?: Record<string, unknown>;
 };
 
@@ -604,7 +605,7 @@ export default function FillJob() {
       let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
       if (isOnline && mode !== 'user') {
         const uploadResult = await uploadJobFilesForStorage(
-          uid,
+          companyId,
           jobId,
           jobData.photos,
           jobData.signature
@@ -674,6 +675,7 @@ export default function FillJob() {
               ...jobToSave,
               photos: jobData.photos,
               signature: jobData.signature,
+              attachmentUploadId: jobId,
               idempotencyKey: `job_${Date.now()}_${jobId}`,
             }
           : {
@@ -703,43 +705,36 @@ export default function FillJob() {
       // Save to appropriate location
       if (mode === 'user') {
         console.log('💾 FillJob: Creating user finished job via Cloud Function...');
-        
-        // Use createJobV1 Cloud Function for atomic job creation with sequential ID
+        const attachmentUploadId = `pending-${crypto.randomUUID()}`;
+        const userUploadResult = await uploadJobFilesForStorage(
+          companyId,
+          attachmentUploadId,
+          jobData.photos,
+          jobData.signature
+        );
+        uploadedStoragePaths = userUploadResult.uploadedStoragePaths || [];
         const createJobFn = httpsCallable(functions, 'createJobV1');
         const result = await createJobFn({
           companyId,
           type: 'finished',
           ...jobToSave,
-          photos: [],
-          signature: null,
+          photos: userUploadResult.photoRefs,
+          signature: userUploadResult.signatureRef,
+          attachmentUploadId,
           idempotencyKey: `job_${Date.now()}_${jobId}`,
         }) as { data?: { jobId?: string } };
 
-        const serverJobId = result.data?.jobId;
-        if (!serverJobId) {
+        const createdServerJobId = result.data?.jobId;
+        if (!createdServerJobId) {
           throw new Error('Job was created without a server job ID');
         }
-        const userUploadResult = await uploadJobFilesForStorage(
-          uid,
-          serverJobId,
-          jobData.photos,
-          jobData.signature
-        );
-        uploadedStoragePaths = userUploadResult.uploadedStoragePaths || [];
-        const updateJobFn = httpsCallable(functions, 'updateJobV1');
-        await updateJobFn({
-          companyId,
-          jobId: serverJobId,
-          photos: userUploadResult.photoRefs,
-          signature: userUploadResult.signatureRef,
-        });
         jobPersisted = true;
         photoRefs = userUploadResult.photoRefs;
         signatureRef = userUploadResult.signatureRef;
         
         // Update local cache with the server-generated ID
         console.log('📦 FillJob: Adding to local cache...');
-        addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: serverJobId });
+        addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: createdServerJobId });
         
         console.log('✅ FillJob: Job saved successfully');
         

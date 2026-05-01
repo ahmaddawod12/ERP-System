@@ -12,6 +12,12 @@ export const getEnv = () => ({
   supabaseUrl: Deno.env.get("SUPABASE_URL") || "",
   supabaseAnonKey: Deno.env.get("SUPABASE_ANON_KEY") || "",
   supabaseServiceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
+  supabaseJwtIssuer: Deno.env.get("SUPABASE_JWT_ISSUER")
+    || `${String(Deno.env.get("SUPABASE_URL") || "").replace(/\/+$/, "")}/auth/v1`,
+  supabaseJwtAudiences: (Deno.env.get("SUPABASE_JWT_AUDIENCE") || "authenticated")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
 
   // JWT Secret for Supabase
   jwtSecret: Deno.env.get("JWT_SECRET") || "",
@@ -108,15 +114,28 @@ export function parseBearerToken(authHeader: string | null): string | null {
 // ── JWT Verification (Supabase) ────────────────────────────────────────────
 export async function verifySupabaseJwt(
   token: string,
-  jwtSecret: string
+  env: ReturnType<typeof getEnv>
 ): Promise<{ uid: string; email?: string; [key: string]: any } | null> {
+  if (!token || !env.jwtSecret) {
+    return null;
+  }
+
   try {
-    const secret = new TextEncoder().encode(jwtSecret);
-    const verified = await jwtVerify(token, secret);
+    const secret = new TextEncoder().encode(env.jwtSecret);
+    const verified = await jwtVerify(token, secret, {
+      issuer: String(env.supabaseJwtIssuer || "").trim() || undefined,
+      audience: env.supabaseJwtAudiences.length > 0 ? env.supabaseJwtAudiences : ["authenticated"],
+    });
     const claims = verified.payload as any;
+    const uid = typeof claims.sub === "string"
+      ? claims.sub.trim()
+      : (typeof claims.uid === "string" ? claims.uid.trim() : "");
+    if (!uid) {
+      return null;
+    }
     return {
-      uid: claims.sub || claims.uid,
-      email: claims.email,
+      uid,
+      email: typeof claims.email === "string" ? claims.email : undefined,
       ...claims,
     };
   } catch {
@@ -131,7 +150,7 @@ export async function verifyBearerAuth(
 ): Promise<{ uid: string; email?: string; claims: any } | null> {
   if (!token) return null;
 
-  const supabaseClaims = await verifySupabaseJwt(token, env.jwtSecret);
+  const supabaseClaims = await verifySupabaseJwt(token, env);
   if (supabaseClaims) {
     return {
       uid: supabaseClaims.uid,
@@ -362,20 +381,18 @@ export async function resolveCompanyIdentifiers(
   const normalized = validateCompanyId(companyId);
   const supabase = createSupabaseClient(env);
 
-  let query = supabase
-    .from("companies")
-    .select("id, public_company_id")
-    .eq("id", normalized)
-    .limit(1);
-
   const numericCandidate = Number(normalized);
-  if (Number.isInteger(numericCandidate) && numericCandidate > 0) {
-    query = supabase
-      .from("companies")
-      .select("id, public_company_id")
-      .or(`id.eq.${normalized},public_company_id.eq.${numericCandidate}`)
-      .limit(1);
-  }
+  const query = (Number.isInteger(numericCandidate) && numericCandidate > 0)
+    ? supabase
+        .from("companies")
+        .select("id, public_company_id")
+        .or(`id.eq.${normalized},public_company_id.eq.${numericCandidate}`)
+        .limit(1)
+    : supabase
+        .from("companies")
+        .select("id, public_company_id")
+        .eq("id", normalized)
+        .limit(1);
 
   const { data, error } = await query.maybeSingle();
   if (error || !data?.id) {
@@ -498,8 +515,12 @@ export async function checkRateLimit(
     });
 
   if (rpcError) {
-    ctx.logger.warn("Rate limit RPC failed; allowing request", { key: rawKey, error: rpcError.message });
-    return;
+    ctx.logger.error("Rate limit RPC failed; rejecting request", { key: rawKey, error: rpcError.message });
+    throw {
+      code: "unavailable",
+      message: "Rate limiting is temporarily unavailable. Please try again later.",
+      httpStatus: 503,
+    };
   }
 
   const hitCount = Number(rpcData ?? 0);
@@ -862,6 +883,60 @@ export async function dispatchCloudRunPdfTask(
       httpStatus: 503,
       message: `Failed to dispatch PDF task (${response.status})`,
     };
+  }
+}
+
+// ── UUID Validation Helper ─────────────────────────────────────────────────
+export function isUuidLike(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+// ── Atomic Company Sync Version Bump ──────────────────────────────────────
+// Replaces the non-atomic SELECT → UPDATE pattern. Calls a SQL function that
+// uses INSERT … ON CONFLICT DO UPDATE SET version = version + 1, which is safe
+// under concurrent requests.
+export async function bumpCompanySyncVersion(
+  companyId: string,
+  field: "jobs_version" | "documents_version" | "clients_version" | "workers_version" | "company_inventory_version",
+  ctx: EdgeFunctionContext,
+): Promise<void> {
+  const supabase = createSupabaseClient(ctx.env);
+  const { error } = await supabase.rpc("bump_company_sync_version", {
+    p_company_id: companyId,
+    p_field: field,
+  });
+  if (error) {
+    ctx.logger.warn("Failed to bump company sync version", { companyId, field, error: error.message });
+  }
+}
+
+// ── Enabled Modules by Subscription Tier ──────────────────────────────────
+export function enabledModulesForTier(tier: string): Record<string, boolean> {
+  switch (tier) {
+    case "Enterprise":
+      return {
+        homepage: true, settings: true, workers: true, clients: true,
+        jobs: true, inventory: true, documents: true, support: true,
+        admin: true, upgrade: true,
+      };
+    case "Team":
+      return {
+        homepage: true, settings: true, workers: true, clients: true,
+        jobs: true, inventory: true, documents: true, support: true,
+        admin: false, upgrade: true,
+      };
+    case "Solo":
+      return {
+        homepage: true, settings: true, workers: false, clients: true,
+        jobs: true, inventory: true, documents: true, support: true,
+        admin: false, upgrade: true,
+      };
+    default:
+      return {
+        homepage: true, settings: true, workers: false, clients: true,
+        jobs: false, inventory: false, documents: true, support: true,
+        admin: false, upgrade: true,
+      };
   }
 }
 

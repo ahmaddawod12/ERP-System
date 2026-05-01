@@ -67,7 +67,7 @@ export async function fetchDataFromFirebase(
   companyId: string,
   role: string,
 ): Promise<any> {
-  console.log(`?? [READ MODEL] Fetching ${field} from backend...`);
+  console.log(`[READ MODEL] Fetching ${field} from backend...`);
 
   try {
     switch (field) {

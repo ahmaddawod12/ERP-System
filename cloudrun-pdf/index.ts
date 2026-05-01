@@ -1,10 +1,11 @@
 import express from 'express';
 import { Storage } from '@google-cloud/storage';
 import puppeteer from 'puppeteer';
+import { createPublicKey, createVerify } from 'node:crypto';
 import { getEmailServiceInstance, getDocumentTitle } from './emailService';
 import generateDocumentHTML from './htmlTemplate';
 import { bumpCompanyDocumentsVersion } from './company-sync-store';
-        import { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client } from 'google-auth-library';
 
 /**
  * Cloud Run Service: PDF Document Generator & Preview (Merged)
@@ -123,6 +124,12 @@ const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCO
   .split(',')
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const EDGE_SERVICE_ACCOUNT_EMAIL = String(
+  process.env.GCP_SERVICE_ACCOUNT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL || '',
+).trim().toLowerCase();
+const EDGE_SERVICE_ACCOUNT_PRIVATE_KEY = String(
+  process.env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY || '',
+).replace(/\\n/g, '\n').trim();
 const CLOUD_RUN_SERVICE_URL = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
@@ -171,6 +178,67 @@ function buildRetryableError(code, message) {
   const error: any = new Error(message);
   error.code = code;
   return error;
+}
+
+function decodeJwtSegment(segment) {
+  const normalized = String(segment || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+  return JSON.parse(Buffer.from(`${normalized}${padding}`, 'base64').toString('utf8'));
+}
+
+function verifySelfSignedServiceAccountJwt(idToken, expectedAudience) {
+  if (!EDGE_SERVICE_ACCOUNT_EMAIL || !EDGE_SERVICE_ACCOUNT_PRIVATE_KEY || !expectedAudience) {
+    return false;
+  }
+
+  const parts = String(idToken || '').split('.');
+  if (parts.length !== 3) {
+    return false;
+  }
+
+  try {
+    const [encodedHeader, encodedPayload, encodedSignature] = parts;
+    const header = decodeJwtSegment(encodedHeader);
+    const payload = decodeJwtSegment(encodedPayload);
+    if (String(header?.alg || '') !== 'RS256') {
+      return false;
+    }
+
+    const signer = String(payload?.iss || payload?.sub || '').trim().toLowerCase();
+    const audience = String(payload?.aud || '').trim();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const expiresAt = Number(payload?.exp || 0);
+    const issuedAt = Number(payload?.iat || 0);
+    if (!signer || signer !== EDGE_SERVICE_ACCOUNT_EMAIL) {
+      return false;
+    }
+    if (audience !== expectedAudience) {
+      return false;
+    }
+    if (!Number.isFinite(expiresAt) || expiresAt <= nowSeconds - 30) {
+      return false;
+    }
+    if (Number.isFinite(issuedAt) && issuedAt > nowSeconds + 30) {
+      return false;
+    }
+    if (PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
+      console.warn('PUBSUB_ALLOWED_SERVICE_ACCOUNTS is empty — rejecting service-account JWT (fail closed)');
+      return false;
+    }
+    if (!PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(signer)) {
+      console.warn('Service-account JWT rejected by allowlist', { signer });
+      return false;
+    }
+
+    const verifier = createVerify('RSA-SHA256');
+    verifier.update(`${encodedHeader}.${encodedPayload}`);
+    verifier.end();
+    const signature = Buffer.from(encodedSignature.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    return verifier.verify(createPublicKey(EDGE_SERVICE_ACCOUNT_PRIVATE_KEY), signature);
+  } catch (error) {
+    console.warn('Service-account JWT verification failed:', error?.message || error);
+    return false;
+  }
 }
 
 function isTransientProcessingError(error) {
@@ -342,8 +410,8 @@ if (!isSqlAccessStoreEnabled()) {
 async function verifyPubSubRequest(req, res, next) {
   const expectedAudience = CLOUD_RUN_SERVICE_URL;
 
-  let oidcVerified = false;
-  // Factor 1: Check OIDC JWT if present (primary auth in production)
+  let bearerVerified = false;
+  // Factor 1: Check trusted bearer token if present (Google-issued ID token or edge-signed service-account JWT)
   const authHeader = req.headers['authorization'] || '';
   if (expectedAudience && authHeader.startsWith('Bearer ')) {
     const idToken = authHeader.slice('Bearer '.length).trim();
@@ -369,7 +437,7 @@ async function verifyPubSubRequest(req, res, next) {
         const serviceAccountAllowed = PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
 
         if (issuerValid && emailValid && serviceAccountAllowed) {
-          oidcVerified = true;
+          bearerVerified = true;
         } else {
           console.warn('OIDC JWT rejected by claim validation', {
             issuer,
@@ -378,16 +446,20 @@ async function verifyPubSubRequest(req, res, next) {
           });
         }
       } catch (oidcError) {
-        console.warn('OIDC JWT verification failed:', oidcError.message);
-        // Fall through to check shared token
+        const selfSignedVerified = verifySelfSignedServiceAccountJwt(idToken, expectedAudience);
+        if (selfSignedVerified) {
+          bearerVerified = true;
+        } else {
+          console.warn('Trusted bearer verification failed:', oidcError.message);
+        }
       }
     }
   } else if (!expectedAudience) {
-    console.warn('CLOUD_RUN_SERVICE_URL is not set; OIDC auth is disabled, using shared token fallback only');
+    console.warn('CLOUD_RUN_SERVICE_URL is not set; bearer auth is disabled, using shared token fallback only');
   }
 
-  if (expectedAudience && !oidcVerified) {
-    return res.status(401).send('OIDC token required');
+  if (expectedAudience && !bearerVerified) {
+    return res.status(401).send('Trusted bearer token required');
   }
 
   // Factor 2: Check shared token (required in addition to OIDC when configured)

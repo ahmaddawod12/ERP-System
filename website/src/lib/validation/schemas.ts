@@ -72,6 +72,7 @@ export const readModelSchema = z
     targetUid: optionalText(200),
     taskId: optionalText(200),
     recordId: optionalText(200),
+    countOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -119,6 +120,8 @@ export const contactRequestSchema = z
     email: z.string().trim().email("Valid email is required"),
     company: requiredText(2, 140, "company"),
     message: requiredText(8, 2000, "message"),
+    challenge: requiredText(1, 8, "challenge"),
+    website: z.string().max(0).optional(),
   })
   .strict();
 

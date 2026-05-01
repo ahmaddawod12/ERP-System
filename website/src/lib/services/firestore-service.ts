@@ -29,6 +29,14 @@ interface BootstrapReadModel {
   documents: DocumentRecord[];
   jobsNextCursor?: string | null;
   documentsNextCursor?: string | null;
+  counts?: {
+    jobs: number;
+    clients: number;
+    documents: number;
+    inventoryParts: number;
+    companyInventoryParts: number;
+    workers: number;
+  };
 }
 
 type CallableOperation =
@@ -85,6 +93,15 @@ export async function loadBootstrapReadModel(companyId?: string | null, includeC
     kind: "bootstrap",
     ...(companyId ? { companyId } : {}),
     includeCollections,
+  });
+}
+
+export async function loadOverviewCounts(companyId: string) {
+  return fetchReadModel<NonNullable<BootstrapReadModel["counts"]>>({
+    kind: "bootstrap",
+    companyId,
+    includeCollections: false,
+    countOnly: true,
   });
 }
 
@@ -297,12 +314,12 @@ export async function listClients(
   lastDoc: DocumentSnapshot | null;
   hasMore: boolean;
 }> {
-  void opts;
+  void opts?.lastDoc;
   const clients = await fetchReadModel<ClientRecord[]>({ kind: "clients", companyId });
   return {
     clients,
-    lastDoc: null,
-    hasMore: false,
+    lastDoc: clients.length > 0 ? clients[clients.length - 1]?.id ?? null : null,
+    hasMore: Boolean(opts?.pageSize && clients.length >= opts.pageSize),
   };
 }
 

@@ -14,6 +14,8 @@ const schema = z.object({
   email: z.string().email("Valid email required"),
   company: z.string().min(2, "Company is required"),
   message: z.string().min(8, "Message should be at least 8 characters"),
+  challenge: z.string().trim().regex(/^7$/, "Answer the anti-spam challenge correctly"),
+  website: z.string().max(0),
 });
 
 type ContactFormValues = z.infer<typeof schema>;
@@ -27,6 +29,9 @@ export function ContactForm() {
     formState: { errors, isSubmitting },
   } = useForm<ContactFormValues>({
     resolver: zodResolver(schema),
+    defaultValues: {
+      website: "",
+    },
   });
 
   const onSubmit = async (values: ContactFormValues) => {
@@ -71,6 +76,8 @@ export function ContactForm() {
         error={errors.email?.message}
       />
       <Input label="Company" placeholder="Company name" {...register("company")} error={errors.company?.message} />
+      <Input label="Anti-spam: 3 + 4" placeholder="7" {...register("challenge")} error={errors.challenge?.message} />
+      <input type="text" tabIndex={-1} autoComplete="off" className="hidden" {...register("website")} />
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Message</span>
         <textarea

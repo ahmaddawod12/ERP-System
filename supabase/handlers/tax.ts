@@ -27,22 +27,20 @@ async function requireTaxManagerOrDev(
   }
 
   const supabase = createSupabaseClient(ctx.env);
-  const { data: user } = await supabase
-    .from("app_users")
-    .select("system_role")
-    .eq("id", ctx.auth.uid)
-    .maybeSingle();
+  const [{ data: user }, { data: membership, error }] = await Promise.all([
+    supabase.from("app_users").select("system_role").eq("id", ctx.auth.uid).maybeSingle(),
+    supabase
+      .from("company_memberships")
+      .select("id, role")
+      .eq("company_id", companyId)
+      .eq("user_id", ctx.auth.uid)
+      .eq("status", "active")
+      .single(),
+  ]);
+
   if (String(user?.system_role || "").toLowerCase() === "dev") {
     return { membershipId: "dev", membershipRole: "dev" };
   }
-
-  const { data: membership, error } = await supabase
-    .from("company_memberships")
-    .select("id, role")
-    .eq("company_id", companyId)
-    .eq("user_id", ctx.auth.uid)
-    .eq("status", "active")
-    .single();
 
   if (error || !membership || String(membership.role) !== "manager") {
     throw { code: "permission-denied", message: "Manager role required for tax operations", httpStatus: 403 };

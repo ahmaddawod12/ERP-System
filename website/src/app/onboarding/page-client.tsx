@@ -67,11 +67,13 @@ const schema = z
     if (
       value.workspaceMode === "business" &&
       value.role !== "manager" &&
-      value.role !== "worker"
+      value.role !== "worker" &&
+      value.role !== "user" &&
+      value.role !== "basic"
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Business accounts must use manager or worker role.",
+        message: "Business accounts must use a supported business role.",
         path: ["role"],
       });
     }
@@ -114,7 +116,7 @@ const schema = z
       }
     }
 
-    if (value.workspaceMode === "business" && value.role === "worker") {
+    if (value.workspaceMode === "business" && ["worker", "user", "basic"].includes(value.role)) {
       if (!value.joinCompanyId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -127,6 +129,13 @@ const schema = z
           code: z.ZodIssueCode.custom,
           message: "Invite code is required",
           path: ["inviteCode"],
+        });
+      }
+      if (value.joinCompanyId && !/^\d+$/.test(value.joinCompanyId.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "companyId must be numeric",
+          path: ["joinCompanyId"],
         });
       }
     }
@@ -188,7 +197,7 @@ export default function OnboardingClient() {
   const showCompanySetup = useMemo(() => workspaceMode === "business", [workspaceMode]);
   const totalSteps = steps.length;
   const progress = Math.round(((step + 1) / totalSteps) * 100);
-  const isWorkerJoinFlow = workspaceMode === "business" && role === "worker";
+  const isInviteJoinFlow = workspaceMode === "business" && ["worker", "user", "basic"].includes(role);
 
   useEffect(() => {
     if (!user) {
@@ -209,7 +218,7 @@ export default function OnboardingClient() {
       setValue("role", "basic");
       return;
     }
-    if (role !== "manager" && role !== "worker") {
+    if (!["manager", "worker", "user", "basic"].includes(role)) {
       setValue("role", "manager");
     }
   }, [workspaceMode, role, setValue]);
@@ -246,7 +255,7 @@ export default function OnboardingClient() {
         return;
       }
 
-      if (role === "worker") {
+      if (["worker", "user", "basic"].includes(role)) {
         const ok = await trigger(["joinCompanyId", "inviteCode"]);
         if (ok) setStep(3);
         return;
@@ -268,7 +277,7 @@ export default function OnboardingClient() {
             ? "basic"
             : values.role;
 
-      if (accountType === "business" && resolvedRole === "worker") {
+      if (accountType === "business" && ["worker", "user", "basic"].includes(resolvedRole)) {
         const response = await fetch("/api/callable", {
           method: "POST",
           headers: await buildAuthedJsonHeaders(),
@@ -276,7 +285,7 @@ export default function OnboardingClient() {
             operation: "joinCompanyV1",
             payload: {
               email: user.email,
-              role: "worker",
+              role: resolvedRole,
               name: values.name,
               phoneNumber: values.phoneNumber,
               companyId: values.joinCompanyId?.trim(),
@@ -426,7 +435,7 @@ export default function OnboardingClient() {
                   Server write flow
                 </p>
                 <ul className="mt-2 space-y-1 text-xs text-slate-700 dark:text-slate-200">
-                  {isWorkerJoinFlow ? (
+                  {isInviteJoinFlow ? (
                     <>
                       <li>`joinCompanyV1` validates invite + company membership.</li>
                       <li>
@@ -565,7 +574,7 @@ export default function OnboardingClient() {
 
                 {step === 1 ? (
                   <div className="grid gap-4">
-                    <div className="grid gap-3 md:grid-cols-2">
+                       <div className="grid gap-3 md:grid-cols-4">
                       <Input
                         label="Full Name"
                         {...register("name")}
@@ -633,6 +642,48 @@ export default function OnboardingClient() {
                             Join an existing company using invite code.
                           </p>
                         </label>
+                        <label
+                          className={cn(
+                            "cursor-pointer rounded-2xl border p-4 transition",
+                            role === "user"
+                              ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
+                              : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            value="user"
+                            {...register("role")}
+                            className="sr-only"
+                          />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            User
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Join an existing company using invite-based user access.
+                          </p>
+                        </label>
+                        <label
+                          className={cn(
+                            "cursor-pointer rounded-2xl border p-4 transition",
+                            role === "basic"
+                              ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
+                              : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            value="basic"
+                            {...register("role")}
+                            className="sr-only"
+                          />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Basic
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Join an existing company with lightweight invite-based access.
+                          </p>
+                        </label>
                       </div>
                     )}
 
@@ -682,7 +733,7 @@ export default function OnboardingClient() {
                       </div>
                     ) : null}
 
-                    {role === "worker" ? (
+                    {["worker", "user", "basic"].includes(role) ? (
                       <div className="grid gap-3 md:grid-cols-2">
                         <Input
                           label="Company ID"
@@ -697,7 +748,7 @@ export default function OnboardingClient() {
                       </div>
                     ) : null}
 
-                    {role !== "manager" && role !== "worker" ? (
+                    {role !== "manager" && !["worker", "user", "basic"].includes(role) ? (
                       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
                         No company details are needed for this role.
                       </div>
@@ -738,7 +789,7 @@ export default function OnboardingClient() {
 
                     <div className="md:col-span-2">
                       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200">
-                        {isWorkerJoinFlow ? (
+                        {isInviteJoinFlow ? (
                           <p>
                             Finishing setup will validate the invite and link your profile to the company workspace.
                           </p>

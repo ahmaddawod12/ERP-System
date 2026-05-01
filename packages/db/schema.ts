@@ -140,7 +140,9 @@ const companyMemberships = pgTable('company_memberships', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
-  membershipPerCompanyUserUnique: uniqueIndex('company_memberships_company_user_unique').on(table.companyId, table.userId),
+  membershipPerCompanyUserUnique: uniqueIndex('company_memberships_company_user_active_unique')
+    .on(table.companyId, table.userId)
+    .where(sql`${table.status} = 'active'`),
   membershipNoPerCompanyUnique: uniqueIndex('company_memberships_company_member_no_unique').on(table.companyId, table.memberNo),
   companyRoleIdx: index('company_memberships_company_role_idx').on(table.companyId, table.role, table.status),
 }));
@@ -251,7 +253,12 @@ const inventoryLocations = pgTable('inventory_locations', {
   name: varchar('name', { length: 200 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
-  companyLocationIdx: uniqueIndex('inventory_locations_company_location_unique').on(table.companyId, table.locationType, table.membershipId),
+  companyNullMembershipLocationIdx: uniqueIndex('inventory_locations_company_null_membership_unique')
+    .on(table.companyId, table.locationType)
+    .where(sql`${table.membershipId} IS NULL`),
+  companyMembershipLocationIdx: uniqueIndex('inventory_locations_company_membership_unique')
+    .on(table.companyId, table.locationType, table.membershipId)
+    .where(sql`${table.membershipId} IS NOT NULL`),
 }));
 
 const inventoryParts = pgTable('inventory_parts', {

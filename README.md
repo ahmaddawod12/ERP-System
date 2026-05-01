@@ -2,7 +2,7 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (April 29, 2026)
+## Runtime Snapshot (May 1, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
@@ -73,11 +73,29 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Public job API boundaries use sequential job numbers; internal UUIDs are resolved only inside backend handlers.
 - Keep `read-model` `kind` contracts synchronized across website, mobile, and backend handlers.
 
-## Recent Hardening (April 26–28, 2026)
+## Recent Hardening (April 26–29, 2026)
 
 ### Backend / SQL (migrations `0008_supabase_auth_rls.sql` and `0011_runtime_hardening.sql`)
 - Supabase mutation handlers normalize incoming `companyId` to internal company UUID before SQL queries.
 - SQL counter RPCs (`allocate_company_counter`, `allocate_system_counter`) cover all sequential IDs: `public_company_id`, `member_no`, `client_no`, `job_no`, tax invoice numbers (`doc_305`), and inventory part numbers (`part_no`).
+
+## Optimizations (May 1, 2026)
+
+### supabase/handlers/jobs.ts
+- Replaced two sequential `getMembershipSummaryById` calls in `mapJobRecordForResponse` with a single batched `.in("id", [...])` query — saves one DB round-trip per job response.
+- Parallelized `maybeResolveClient` and `maybeResolveAssignee` in `createJobV1` with `Promise.all` — saves one sequential round-trip per job creation.
+- Moved `resolveJobPartRows` to run before the parts delete in `updateJobV1` — eliminates the window where a job has no parts after a failed part-resolution query.
+
+### supabase/shared-edge-helpers.ts
+- Eliminated dead query construction in `resolveCompanyIdentifiers`: the function now builds a single correct query via a ternary instead of constructing and overwriting two query builders.
+
+### supabase/handlers/documents.ts + deno.json
+- Removed the local duplicate `DOC_SUFFIX` constant from `documents.ts`.
+- Added `@smart-job/contracts` import mapping to `deno.json` (`./packages/contracts/index.ts`).
+- `documents.ts` now imports `DOC_SUFFIX` and `DocTypeCode` from `@smart-job/contracts` — single canonical source.
+
+### supabase/handlers/support.ts
+- Replaced all six `payload: any` / `Promise<any>` handler signatures with typed interfaces (`CreateSupportConversationPayload`, `AppendSupportMessagePayload`, `ConversationIdPayload`, `ListSupportConversationsPayload`) and `Promise<Record<string, unknown>>` return types.
 - SQL rate-limit RPC (`increment_rate_limit_bucket`) replaces Firestore-backed rate limiting; join-company flow now enforces a per-user limit.
 - `document_number` immutability trigger blocks updates once a non-zero number is assigned (allows 0 → real, blocks real → different real).
 - `document_tasks` RLS policy fixed to reference the correct column (`user_id`).
@@ -89,6 +107,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `claim_tax_invoice_idempotency(...)` atomically claims tax approval work before side effects.
 
 ### Supabase Edge Functions
+- Shared edge JWT verification now enforces the expected Supabase issuer and audience and rejects tokens with an empty `uid`.
 - Read-model cursor pagination for jobs/documents uses composite cursor `(created_at, id)` via PostgREST `.or()` — no in-memory filtering.
 - `userSyncState` kind now returns `app_users.updated_at` instead of hardcoded zeros.
 - Inventory part listing attaches the next sequential part ID from the SQL counter.
@@ -103,6 +122,10 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Job reads and writes now return public sequential job/member IDs at the API boundary while still accepting legacy UUID job identifiers internally during transition.
 - Job pagination cursors still use the stable internal `(created_at, id)` tuple even though the payload exposes public sequential job IDs.
 - Job file signed URL issuance now requires an exact `job_attachments.storage_path` match for the resolved job before a short-lived URL is minted.
+- Edge-to-Cloud-Run document dispatch now accepts either a Google-issued invoker token or the Supabase edge service-account JWT signed with `GCP_SERVICE_ACCOUNT_PRIVATE_KEY`, while still requiring the shared `x-pubsub-token` layer when configured.
+- Inventory mutation helpers now fail closed on negative balances instead of clamping underflow to zero.
+- Inventory movement writes now use the SQL `apply_inventory_movement(...)` RPC, and active company-membership / inventory-location uniqueness is enforced with runtime-safe partial indexes.
+- Invite join responses now return the public membership number as `wid` and no longer leak the internal membership UUID.
 
 ### Website
 - Auth transport no longer persists Supabase access token or refresh token in `localStorage`; access token and expiry are kept in-memory and only non-sensitive user info (`uid`, `email`) is written to `sessionStorage`.
@@ -110,7 +133,9 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `generateCompanySlug` now uses `crypto.getRandomValues` instead of `Math.random()` for the randomized suffix.
 - Document task URLs split by task type: `preview_url` → `previewURL`, `generate_url` → `downloadURL`. `updateBusinessInfoV1` rejects `vat_number` mutations after onboarding.
 - Website server proxy auth now uses split HttpOnly cookies: signed session metadata in `__session`, current bearer token in `__session_access`.
+- Session route validation now requires the `__session_access` bearer cookie in addition to the signed `__session` metadata cookie.
 - Registration now signs the user in before redirecting into onboarding, which keeps the cookie-backed session continuous across the handoff.
+- Contact request spam/challenge failures now return `400` route errors with stable codes (`spam_rejected`, `invalid_challenge`).
 
 ### Mobile (`phone_app`)
 - Tax invoice `idempotencyKey` suffix now uses `crypto.randomUUID()` instead of `Math.random()`.
@@ -122,12 +147,17 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - The mobile Firebase barrel no longer exports `writeBatch` or `runTransaction`, which keeps protected Firestore writes out of shared client helpers.
 - The mobile auth MMKV encryption key is now derived from app/device runtime metadata or supplied explicitly through `EXPO_PUBLIC_MMKV_AUTH_KEY` instead of being hardcoded in source or persisted in the general MMKV cache.
 - Offline solo-job sync now replaces the locally queued temp job with the server-created public job after replay succeeds.
+- Company cache refresh now preserves the role-appropriate existing jobs cache when only documents change.
+- Solo finished jobs now upload attachments before `createJobV1`, so the created job record is born with real file refs instead of an empty placeholder payload.
+- Mobile job attachment uploads now use canonical company-scoped storage paths and may pass a temporary `attachmentUploadId` until the server allocates the final public job number.
+- Notification channel initialization is now idempotent, and push listeners/token sync are attached only after the authenticated cache bootstrap succeeds for the active user session.
 
 ### `cloudrun-pdf`
 - `buildStoredDocumentRecord` no longer writes forbidden field names (`clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `createdBy`) to stored document records.
 - `htmlTemplate.ts` now sanitizes `logoUrl` through `sanitizeUrl()` which rejects `javascript:` and `data:` schemes before insertion into the `<img src>` attribute.
 - Email service is now a true singleton; the non-singleton `getEmailService()` export has been removed.
 - Tax invoice PDF finalization now stays create-only in both Storage and SQL document finalization.
+- `cloudrun-pdf` trusted dispatch verification now supports the Supabase edge self-signed service-account JWT path in addition to Google OIDC verification.
 
 ### `cloudrun-archiver`
 - Monthly archives now drain paginated SQL reads and stream JSON payloads through temporary disk files before upload, which removes the old single-page and whole-month-in-memory failure mode.

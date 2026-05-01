@@ -29,8 +29,7 @@ function getAuthStorageEncryptionKey(): string {
     packageId,
     String(Device.brand || '').trim(),
     String(Device.manufacturer || '').trim(),
-    String(Device.modelId || '').trim(),
-    String(Device.osBuildId || Device.osInternalBuildId || '').trim(),
+    String(Device.modelId || Device.modelName || '').trim(),
   ].filter(Boolean);
 
   return runtimeFingerprint.join(':');

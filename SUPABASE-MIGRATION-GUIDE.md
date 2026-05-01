@@ -1,6 +1,6 @@
 # Supabase Migration Guide
 
-Status: Phase 2 hardening in progress (April 26, 2026)
+Status: Phase 2 hardening in progress (May 1, 2026)
 
 This document defines the migration approach from legacy Firebase-backed runtime paths to the Supabase Edge runtime under `supabase/functions/`, without breaking website or mobile behavior.
 

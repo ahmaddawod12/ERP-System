@@ -41,18 +41,15 @@ export async function createInviteV1(payload: any, ctx: EdgeFunctionContext): Pr
 
   const supabase = createSupabaseClient(ctx.env);
 
-  const { data: userProfile } = await supabase
-    .from("app_users")
-    .select("system_role")
-    .eq("id", ctx.auth.uid)
-    .maybeSingle();
-
-  const { data: creatorMembership } = await supabase
-    .from("company_memberships")
-    .select("id, role, status")
-    .eq("company_id", companyId)
-    .eq("user_id", ctx.auth.uid)
-    .maybeSingle();
+  const [{ data: userProfile }, { data: creatorMembership }] = await Promise.all([
+    supabase.from("app_users").select("system_role").eq("id", ctx.auth.uid).maybeSingle(),
+    supabase
+      .from("company_memberships")
+      .select("id, role, status")
+      .eq("company_id", companyId)
+      .eq("user_id", ctx.auth.uid)
+      .maybeSingle(),
+  ]);
 
   const isDev = userProfile?.system_role === "dev";
   const isManager = creatorMembership?.status === "active" && creatorMembership?.role === "manager";
@@ -172,7 +169,7 @@ export async function joinCompanyV1(payload: any, ctx: EdgeFunctionContext): Pro
 
   return {
     companyId: String(membership.public_company_id),
-    membershipId: String(membership.membership_id),
+    wid: Number(membership.member_no || 0),
     role: String(membership.role),
     displayName: optionalTrimmedString(membership.display_name, 200) || displayNameInput || "",
     status: "active",

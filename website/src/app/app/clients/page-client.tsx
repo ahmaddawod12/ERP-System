@@ -20,6 +20,7 @@ import {
   resolveCompanyScope,
   updateClient,
 } from "@/lib/services/firestore-service";
+import { createClientSchema } from "@/lib/validation/schemas";
 import type { ClientRecord } from "@/lib/types";
 
 interface ClientForm {
@@ -72,9 +73,10 @@ export default function ClientsClient() {
   }, [load]);
 
   const createClient = async () => {
-    if (!scopeId || !form.name) return;
+    if (!scopeId) return;
     try {
-      await createClientRecord(scopeId, form);
+      const payload = createClientSchema.parse({ companyId: scopeId, ...form });
+      await createClientRecord(scopeId, payload);
       setForm(initialForm);
       await load();
       toast({ title: "Client created", variant: "success" });
@@ -90,7 +92,17 @@ export default function ClientsClient() {
   const saveEdit = async () => {
     if (!editing || !scopeId) return;
     try {
-      await updateClient(scopeId, editing.id, editing);
+      const payload = createClientSchema.parse({
+        companyId: scopeId,
+        name: editing.name,
+        email: editing.email ?? "",
+        phone: editing.phone ?? "",
+        address: editing.address ?? "",
+        notes: editing.notes ?? "",
+        city: editing.city ?? "",
+        vatNumber: editing.vatNumber ?? "",
+      });
+      await updateClient(scopeId, editing.id, payload);
       setEditing(null);
       await load();
       toast({ title: "Client updated", variant: "success" });

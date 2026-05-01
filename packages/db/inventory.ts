@@ -803,7 +803,13 @@ async function deductUserInventoryPartsInTransaction(tx, companyInternalId, inpu
     const available = availableByPartNo.get(partNo);
     if (!available) continue;
 
-    const newQty = Math.max(0, Number(available.quantity_on_hand || 0) - qty);
+    const availableQty = Number(available.quantity_on_hand || 0);
+    if (availableQty < qty) {
+      const error = new Error(`Insufficient stock for part #${partNo}`);
+      (error as any).code = 'failed-precondition';
+      throw error;
+    }
+    const newQty = availableQty - qty;
     await tx
       .update(inventoryBalances)
       .set({ quantityOnHand: String(newQty), updatedAt: now })

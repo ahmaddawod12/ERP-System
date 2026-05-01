@@ -75,15 +75,19 @@ export async function proxyToHttpFunction(
 ) {
   void options?.region;
   const requireAuth = options?.requireAuth !== false;
+  let resolvedAuthToken: string | null = null;
   if (requireAuth) {
     // P1-3: Verify auth server-side before proxying (defense-in-depth)
-    await resolveRequestAuth(request);
+    const auth = await resolveRequestAuth(request);
+    resolvedAuthToken = auth.token?.accessToken || null;
   }
 
   const headers = new Headers({ "Content-Type": "application/json" });
   const authorization = request.headers.get("authorization");
   if (authorization) {
     headers.set("Authorization", authorization);
+  } else if (resolvedAuthToken) {
+    headers.set("Authorization", `Bearer ${resolvedAuthToken}`);
   } else if (requireAuth) {
     throw new ApiRouteError(401, "unauthorized", "Missing bearer token for protected proxy request");
   }

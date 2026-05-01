@@ -9,7 +9,25 @@ import {
   requireNonEmptyString,
 } from "../shared-edge-helpers.ts";
 
-export async function createSupportConversationV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
+type CreateSupportConversationPayload = {
+  category?: string;
+};
+
+type AppendSupportMessagePayload = {
+  conversationId: string;
+  text: string;
+};
+
+type ConversationIdPayload = {
+  conversationId: string;
+};
+
+type ListSupportConversationsPayload = {
+  limit?: number;
+  status?: string;
+};
+
+export async function createSupportConversationV1(payload: CreateSupportConversationPayload, ctx: EdgeFunctionContext): Promise<Record<string, unknown>> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }
@@ -66,7 +84,7 @@ export async function createSupportConversationV1(payload: any, ctx: EdgeFunctio
   };
 }
 
-export async function appendSupportMessageV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
+export async function appendSupportMessageV1(payload: AppendSupportMessagePayload, ctx: EdgeFunctionContext): Promise<Record<string, unknown>> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }
@@ -94,6 +112,10 @@ export async function appendSupportMessageV1(payload: any, ctx: EdgeFunctionCont
 
   if (conversationError || !conversation) {
     throw { code: "not-found", message: "Conversation not found", httpStatus: 404 };
+  }
+
+  if (!userRow) {
+    throw { code: "not-found", message: "User profile not found", httpStatus: 404 };
   }
 
   const isDev = userRow?.system_role === "dev" || membership?.role === "dev";
@@ -158,7 +180,7 @@ export async function appendSupportMessageV1(payload: any, ctx: EdgeFunctionCont
   };
 }
 
-export async function markSupportConversationReadV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
+export async function markSupportConversationReadV1(payload: ConversationIdPayload, ctx: EdgeFunctionContext): Promise<Record<string, unknown>> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }
@@ -207,7 +229,7 @@ export async function markSupportConversationReadV1(payload: any, ctx: EdgeFunct
   return { conversationId, updatedAt: now };
 }
 
-export async function closeSupportConversationV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
+export async function closeSupportConversationV1(payload: ConversationIdPayload, ctx: EdgeFunctionContext): Promise<Record<string, unknown>> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }
@@ -252,7 +274,7 @@ export async function closeSupportConversationV1(payload: any, ctx: EdgeFunction
   return { conversationId, status: "closed", closedAt: now };
 }
 
-export async function listSupportConversationsV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
+export async function listSupportConversationsV1(payload: ListSupportConversationsPayload, ctx: EdgeFunctionContext): Promise<Record<string, unknown>> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }
@@ -307,7 +329,7 @@ export async function listSupportConversationsV1(payload: any, ctx: EdgeFunction
   return { conversations: items, total: items.length, hasMore: (rows || []).length > items.length };
 }
 
-export async function getSupportConversationThreadV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
+export async function getSupportConversationThreadV1(payload: ConversationIdPayload, ctx: EdgeFunctionContext): Promise<Record<string, unknown>> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }

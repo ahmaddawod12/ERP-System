@@ -6,6 +6,7 @@ import {
   allocateNextCompanyCounter,
   EdgeFunctionContext,
   createSupabaseClient,
+  isUuidLike,
   optionalTrimmedString,
   requireNonEmptyString,
   resolveCompanyIdentifiers,
@@ -14,10 +15,6 @@ import {
 
 const MAX_PARTS_UPDATES = 300;
 const MAX_MOVEMENTS_UPDATES = 500;
-
-function isUuidLike(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
 
 async function resolvePartRecord(
   supabase: ReturnType<typeof createSupabaseClient>,
@@ -111,6 +108,22 @@ async function ensureMemberLocation(
     .select("id")
     .single();
 
+  if (insertLocationError && String(insertLocationError.code || "") === "23505") {
+    const { data: concurrentLocation, error: concurrentError } = await supabase
+      .from("inventory_locations")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("location_type", "member")
+      .eq("membership_id", membershipId)
+      .maybeSingle();
+    if (concurrentError) {
+      throw { code: "internal", message: "Failed to load member inventory location", httpStatus: 500 };
+    }
+    if (concurrentLocation?.id) {
+      return String(concurrentLocation.id);
+    }
+  }
+
   if (insertLocationError || !insertedLocation?.id) {
     throw { code: "internal", message: "Failed to create member inventory location", httpStatus: 500 };
   }
@@ -168,7 +181,13 @@ async function setBalanceQuantity(
   quantity: number,
   now: string,
 ): Promise<void> {
-  const normalizedQuantity = Math.max(0, quantity);
+  const normalizedQuantity = Number(quantity);
+  if (!Number.isFinite(normalizedQuantity)) {
+    throw { code: "invalid-argument", message: "Inventory quantity must be finite", httpStatus: 400 };
+  }
+  if (normalizedQuantity < 0) {
+    throw { code: "failed-precondition", message: "Inventory quantity cannot be negative", httpStatus: 400 };
+  }
   const { error } = await supabase
     .from("inventory_balances")
     .upsert(
@@ -193,9 +212,61 @@ async function incrementBalanceQuantity(
   delta: number,
   now: string,
 ): Promise<number> {
-  const nextQuantity = Math.max(0, await getBalanceQuantity(supabase, locationId, partId) + delta);
+  const nextQuantity = await getBalanceQuantity(supabase, locationId, partId) + delta;
   await setBalanceQuantity(supabase, locationId, partId, nextQuantity, now);
   return nextQuantity;
+}
+
+async function applyInventoryMovement(
+  supabase: ReturnType<typeof createSupabaseClient>,
+  input: {
+    companyId: string;
+    partId: string;
+    quantity: number;
+    fromLocationId?: string | null;
+    toLocationId?: string | null;
+    movementType: string;
+    createdByMembershipId: string;
+    jobId?: string | null;
+    documentId?: string | null;
+    note?: string | null;
+    createdAt: string;
+  },
+): Promise<{ movementId: string }> {
+  const { data, error } = await supabase.rpc("apply_inventory_movement", {
+    p_company_id: input.companyId,
+    p_part_id: input.partId,
+    p_quantity: input.quantity,
+    p_from_location_id: input.fromLocationId ?? null,
+    p_to_location_id: input.toLocationId ?? null,
+    p_movement_type: input.movementType,
+    p_created_by_membership_id: input.createdByMembershipId,
+    p_job_id: input.jobId ?? null,
+    p_document_id: input.documentId ?? null,
+    p_note: input.note ?? null,
+    p_created_at: input.createdAt,
+  });
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("inventory_invalid_quantity")) {
+      throw { code: "invalid-argument", message: "Inventory quantity must be positive", httpStatus: 400 };
+    }
+    if (message.includes("inventory_missing_location")) {
+      throw { code: "invalid-argument", message: "Movement must include fromLocationId or toLocationId", httpStatus: 400 };
+    }
+    if (message.includes("inventory_insufficient_stock") || String(error.code || "") === "23514") {
+      throw { code: "failed-precondition", message: "Insufficient stock for movement", httpStatus: 400 };
+    }
+    throw { code: "internal", message: "Failed to record movement", httpStatus: 500 };
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.movement_id) {
+    throw { code: "internal", message: "Failed to record movement", httpStatus: 500 };
+  }
+
+  return { movementId: String(row.movement_id) };
 }
 
 async function deleteBalanceEntry(
@@ -298,10 +369,28 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
       .select("id")
       .single();
 
-    if (insertLocationError || !insertedLocation) {
+    if (insertLocationError && String(insertLocationError.code || "") === "23505") {
+      const { data: concurrentLocation, error: concurrentLocationError } = await supabase
+        .from("inventory_locations")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("location_type", "company")
+        .is("membership_id", null)
+        .maybeSingle();
+      if (concurrentLocationError) {
+        throw { code: "internal", message: "Failed to load inventory location", httpStatus: 500 };
+      }
+      if (concurrentLocation?.id) {
+        companyLocationId = concurrentLocation.id;
+      }
+    }
+
+    if (!companyLocationId && (insertLocationError || !insertedLocation)) {
       throw { code: "internal", message: "Failed to create inventory location", httpStatus: 500 };
     }
-    companyLocationId = insertedLocation.id;
+    if (!companyLocationId) {
+      companyLocationId = insertedLocation!.id;
+    }
   }
 
   const action = optionalTrimmedString(payload?.action, 40);
@@ -653,42 +742,26 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
           throw { code: "not-found", message: "Inventory part not found", httpStatus: 404 };
         }
 
-        const companyQuantity = await getBalanceQuantity(supabase, companyLocationId, String(part.id));
-        if (companyQuantity < pickQty) {
-          throw { code: "failed-precondition", message: "Insufficient stock for movement", httpStatus: 400 };
-        }
-
-        await setBalanceQuantity(supabase, companyLocationId, String(part.id), companyQuantity - pickQty, now);
-        await incrementBalanceQuantity(supabase, targetLocationId, String(part.id), pickQty, now);
-
-        const { data: insertedMovement, error: movementError } = await supabase
-          .from("inventory_movements")
-          .insert({
-            company_id: companyId,
-            part_id: part.id,
-            quantity: pickQty,
-            from_location_id: companyLocationId,
-            to_location_id: targetLocationId,
-            movement_type: "pick",
-            created_by_membership_id: membership.id,
-            note: `Picked part #${Number(part.part_no || 0)}`,
-            created_at: now,
-          })
-          .select("id, quantity, from_location_id, to_location_id, movement_type, created_at")
-          .single();
-
-        if (movementError || !insertedMovement?.id) {
-          throw { code: "internal", message: "Failed to record movement", httpStatus: 500 };
-        }
+        const movement = await applyInventoryMovement(supabase, {
+          companyId,
+          partId: String(part.id),
+          quantity: pickQty,
+          fromLocationId: companyLocationId,
+          toLocationId: targetLocationId,
+          movementType: "pick",
+          createdByMembershipId: String(membership.id),
+          note: `Picked part #${Number(part.part_no || 0)}`,
+          createdAt: now,
+        });
 
         insertedMovements.push({
-          id: insertedMovement.id,
-          fromLocationId: insertedMovement.from_location_id ?? undefined,
-          toLocationId: insertedMovement.to_location_id ?? undefined,
+          id: movement.movementId,
+          fromLocationId: companyLocationId ?? undefined,
+          toLocationId: targetLocationId ?? undefined,
           partId: Number(part.part_no || 0),
-          quantity: Number(insertedMovement.quantity),
-          movementType: insertedMovement.movement_type,
-          createdAt: insertedMovement.created_at,
+          quantity: pickQty,
+          movementType: "pick",
+          createdAt: now,
         });
       }
 
@@ -824,51 +897,31 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
       await requireCompanyLocationRecord(supabase, companyId, toLocationId);
     }
 
-    if (fromLocationId) {
-      const currentQuantity = await getBalanceQuantity(supabase, fromLocationId, resolvedPartId);
-      if (currentQuantity < quantity) {
-        throw { code: "failed-precondition", message: "Insufficient stock for movement", httpStatus: 400 };
-      }
-      await setBalanceQuantity(supabase, fromLocationId, resolvedPartId, currentQuantity - quantity, now);
-    }
-
-    if (toLocationId) {
-      await incrementBalanceQuantity(supabase, toLocationId, resolvedPartId, quantity, now);
-    }
-
-    const { data: insertedMovement, error: movementError } = await supabase
-      .from("inventory_movements")
-      .insert({
-        company_id: companyId,
-        part_id: resolvedPartId,
-        quantity,
-        from_location_id: fromLocationId ?? null,
-        to_location_id: toLocationId ?? null,
-        movement_type: movementType,
-        job_id: jobId ?? null,
-        document_id: documentId ?? null,
-        created_by_membership_id: membership.id,
-        note: note ?? null,
-        created_at: now,
-      })
-      .select("id, part_id, quantity, from_location_id, to_location_id, movement_type, job_id, document_id, note, created_at")
-      .single();
-
-    if (movementError || !insertedMovement) {
-      throw { code: "internal", message: "Failed to record movement", httpStatus: 500 };
-    }
+    const movementResult = await applyInventoryMovement(supabase, {
+      companyId,
+      partId: resolvedPartId,
+      quantity,
+      fromLocationId: fromLocationId ?? null,
+      toLocationId: toLocationId ?? null,
+      movementType,
+      jobId: jobId ?? null,
+      documentId: documentId ?? null,
+      createdByMembershipId: String(membership.id),
+      note: note ?? null,
+      createdAt: now,
+    });
 
     insertedMovements.push({
-      id: insertedMovement.id,
-      fromLocationId: insertedMovement.from_location_id ?? undefined,
-      toLocationId: insertedMovement.to_location_id ?? undefined,
-      partId: Number(partRecord?.part_no || 0) || insertedMovement.part_id,
-      quantity: Number(insertedMovement.quantity),
-      movementType: insertedMovement.movement_type,
-      jobId: insertedMovement.job_id ?? undefined,
-      documentId: insertedMovement.document_id ?? undefined,
-      note: insertedMovement.note ?? undefined,
-      createdAt: insertedMovement.created_at,
+      id: movementResult.movementId,
+      fromLocationId: fromLocationId ?? undefined,
+      toLocationId: toLocationId ?? undefined,
+      partId: Number(partRecord?.part_no || 0) || resolvedPartId,
+      quantity,
+      movementType,
+      jobId: jobId ?? undefined,
+      documentId: documentId ?? undefined,
+      note: note ?? undefined,
+      createdAt: now,
     });
   }
 

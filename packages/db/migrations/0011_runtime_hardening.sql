@@ -110,6 +110,113 @@ BEGIN
 END;
 $$;
 
+-- ── 1c. Active membership invariants and atomic inventory movement RPC ──────
+DROP INDEX IF EXISTS company_memberships_company_user_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS company_memberships_company_user_active_unique
+  ON company_memberships (company_id, user_id)
+  WHERE status = 'active';
+
+DROP INDEX IF EXISTS inventory_locations_company_location_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_locations_company_null_membership_unique
+  ON inventory_locations (company_id, location_type)
+  WHERE membership_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS inventory_locations_company_membership_unique
+  ON inventory_locations (company_id, location_type, membership_id)
+  WHERE membership_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION apply_inventory_movement(
+  p_company_id UUID,
+  p_part_id UUID,
+  p_quantity NUMERIC,
+  p_from_location_id UUID,
+  p_to_location_id UUID,
+  p_movement_type inventory_movement_type,
+  p_created_by_membership_id UUID,
+  p_job_id UUID DEFAULT NULL,
+  p_document_id UUID DEFAULT NULL,
+  p_note TEXT DEFAULT NULL,
+  p_created_at TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TABLE (
+  movement_id UUID,
+  from_quantity NUMERIC,
+  to_quantity NUMERIC
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_from_quantity NUMERIC := NULL;
+  v_to_quantity NUMERIC := NULL;
+BEGIN
+  IF p_quantity IS NULL OR p_quantity <= 0 THEN
+    RAISE EXCEPTION 'inventory_invalid_quantity';
+  END IF;
+
+  IF p_from_location_id IS NULL AND p_to_location_id IS NULL THEN
+    RAISE EXCEPTION 'inventory_missing_location';
+  END IF;
+
+  IF p_from_location_id IS NOT NULL THEN
+    INSERT INTO inventory_balances (location_id, part_id, quantity_on_hand, updated_at)
+    VALUES (p_from_location_id, p_part_id, 0, p_created_at)
+    ON CONFLICT (location_id, part_id) DO NOTHING;
+
+    UPDATE inventory_balances
+    SET quantity_on_hand = quantity_on_hand - p_quantity,
+        updated_at = p_created_at
+    WHERE location_id = p_from_location_id
+      AND part_id = p_part_id
+      AND quantity_on_hand >= p_quantity
+    RETURNING quantity_on_hand INTO v_from_quantity;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'inventory_insufficient_stock';
+    END IF;
+  END IF;
+
+  IF p_to_location_id IS NOT NULL THEN
+    INSERT INTO inventory_balances (location_id, part_id, quantity_on_hand, updated_at)
+    VALUES (p_to_location_id, p_part_id, p_quantity, p_created_at)
+    ON CONFLICT (location_id, part_id) DO UPDATE
+      SET quantity_on_hand = inventory_balances.quantity_on_hand + EXCLUDED.quantity_on_hand,
+          updated_at = EXCLUDED.updated_at
+    RETURNING quantity_on_hand INTO v_to_quantity;
+  END IF;
+
+  INSERT INTO inventory_movements (
+    company_id,
+    part_id,
+    quantity,
+    from_location_id,
+    to_location_id,
+    movement_type,
+    job_id,
+    document_id,
+    created_by_membership_id,
+    note,
+    created_at
+  ) VALUES (
+    p_company_id,
+    p_part_id,
+    p_quantity,
+    p_from_location_id,
+    p_to_location_id,
+    p_movement_type,
+    p_job_id,
+    p_document_id,
+    p_created_by_membership_id,
+    p_note,
+    p_created_at
+  ) RETURNING id INTO movement_id;
+
+  from_quantity := v_from_quantity;
+  to_quantity := v_to_quantity;
+  RETURN NEXT;
+END;
+$$;
+
 -- ── 2. Atomic invite redemption RPC ─────────────────────────────────────────
 CREATE OR REPLACE FUNCTION redeem_company_invite(
   p_invite_code   VARCHAR(80),

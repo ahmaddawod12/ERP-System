@@ -20,7 +20,11 @@
 - Scope MMKV draft, pending-job, and support UI state by active `uid` / `companyId`; avoid raw global keys.
 - Archived month retrieval uses backend `fetchArchiveMonthV1`; the app does not read protected archive objects directly.
 - Cache refresh logic must drain paginated jobs/documents read-model pages completely.
+- Cache refresh must preserve the current role-scoped jobs cache when only document versions bump.
 - Offline queued solo jobs should be replaced by the server-created public job after sync succeeds; do not leave temp local duplicates behind.
+- Solo finished jobs must upload photos/signatures before `createJobV1` so the created record already contains canonical attachment refs.
+- Attachment uploads should use canonical company-scoped storage paths and may carry a temporary `attachmentUploadId` until the server allocates the final public job number.
+- Notification listeners and push-token registration should start only after auth + cache bootstrap succeeds for the active session; notification channel initialization must stay idempotent.
 - Keep protected writes backend-only.
 - Treat tax invoice approval as an async backend flow that creates the draft document and schedules PDF generation.
 
@@ -63,6 +67,7 @@ npm run test
 
 - `google-services.json`
 - `GoogleService-Info.plist`
+- APNs / Firebase Cloud Messaging project configuration if push notifications are enabled for the environment
 
 ## Build
 

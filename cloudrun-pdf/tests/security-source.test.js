@@ -8,7 +8,8 @@ const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
 test('Pub/Sub verification fails closed when allowlist or OIDC checks fail', () => {
   assert.match(source, /PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0/);
   assert.match(source, /return res.status\(403\)\.send\('Service account allowlist not configured'\)/);
-  assert.match(source, /return res.status\(401\)\.send\('OIDC token required'\)/);
+  assert.match(source, /verifySelfSignedServiceAccountJwt/);
+  assert.match(source, /return res.status\(401\)\.send\('Trusted bearer token required'\)/);
   assert.match(source, /x-pubsub-token/);
 });
 

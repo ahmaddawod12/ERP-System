@@ -468,7 +468,9 @@ function parseCursor(cursorRaw: unknown): { createdAt: string; id: string } | nu
   if (!raw || !raw.includes("|")) return null;
   const [createdAt, id] = raw.split("|");
   if (!createdAt || !id) return null;
-  return { createdAt, id };
+  const normalizedCreatedAt = normalizeIsoString(createdAt);
+  if (!normalizedCreatedAt || !isUuidLike(String(id))) return null;
+  return { createdAt: normalizedCreatedAt, id: String(id) };
 }
 
 async function buildReadModelResponse(body: Record<string, unknown>, uid: string): Promise<any> {
@@ -597,7 +599,14 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       .maybeSingle();
 
     if (!task) return null;
-    if (String(task.user_id) !== uid && String(task.company_id) !== scope.internalCompanyId) {
+    if (String(task.company_id) !== scope.internalCompanyId) {
+      throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
+    }
+
+    const requester = await getRequesterRoleContext(scope.internalCompanyId, uid);
+    const isTaskOwner = String(task.user_id) === uid;
+    const canReadCompanyTask = requester.isDev || requester.role === "manager";
+    if (!isTaskOwner && !canReadCompanyTask) {
       throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
     }
 
@@ -625,20 +634,32 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       .from("jobs")
       .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, meta, created_at, updated_at, finished_at, denied_at")
       .eq("company_id", scope.internalCompanyId);
-    const [{ data: job }, { data: document }] = await Promise.all([
+    const documentByCodeQuery = supabase
+      .from("documents")
+      .select("id, document_type, document_number, document_code, client_name_snapshot, client_phone_snapshot, created_at, storage_path")
+      .eq("company_id", scope.internalCompanyId)
+      .eq("document_code", normalizedRecordId)
+      .maybeSingle();
+    const documentByIdQuery = isUuidLike(normalizedRecordId)
+      ? supabase
+        .from("documents")
+        .select("id, document_type, document_number, document_code, client_name_snapshot, client_phone_snapshot, created_at, storage_path")
+        .eq("company_id", scope.internalCompanyId)
+        .eq("id", normalizedRecordId)
+        .maybeSingle()
+      : Promise.resolve({ data: null });
+
+    const [{ data: job }, { data: documentByCode }, { data: documentById }] = await Promise.all([
       (/^\d+$/.test(normalizedRecordId)
         ? jobQuery.eq("job_no", Number(normalizedRecordId))
         : isUuidLike(normalizedRecordId)
           ? jobQuery.eq("id", normalizedRecordId)
           : jobQuery.eq("id", "__never__")
       ).maybeSingle(),
-      supabase
-        .from("documents")
-        .select("id, document_type, document_number, document_code, client_name_snapshot, client_phone_snapshot, created_at, storage_path")
-        .eq("company_id", scope.internalCompanyId)
-        .or(`document_code.eq.${normalizedRecordId}${isUuidLike(normalizedRecordId) ? `,id.eq.${normalizedRecordId}` : ""}`)
-        .maybeSingle(),
+      documentByCodeQuery,
+      documentByIdQuery,
     ]);
+    const document = documentByCode || documentById;
 
     if (job) {
       const [membershipMap, attachmentsByJobId, partsByJobId] = await Promise.all([
@@ -754,6 +775,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
 
   // bootstrap
   const includeCollections = body.includeCollections === true;
+  const countOnly = body.countOnly === true;
 
   const [
     companyResult,
@@ -852,6 +874,52 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   const userInventory = await getUserInventoryParts(scope.internalCompanyId, uid);
   const companyInventory = await getCompanyInventoryParts(scope.internalCompanyId);
 
+  const counts = {
+    jobs: 0,
+    clients: 0,
+    documents: 0,
+    inventoryParts: userInventory.parts.length,
+    companyInventoryParts: companyInventory.parts.length,
+    workers: 0,
+  };
+
+  if (countOnly) {
+    const [{ count: jobsCount }, { count: clientsCount }, { count: documentsCount }, { count: workersCount }] = await Promise.all([
+      supabase.from("jobs").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
+      supabase.from("clients").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
+      supabase.from("documents").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
+      supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId).eq("status", "active"),
+    ]);
+
+    counts.jobs = Number(jobsCount || 0);
+    counts.clients = Number(clientsCount || 0);
+    counts.documents = Number(documentsCount || 0);
+    counts.workers = Number(workersCount || 0);
+
+    return {
+      profile,
+      subscription,
+      businessInfo,
+      inventory: userInventory,
+      companyInventory,
+      workers: [],
+      clients: [],
+      jobs: [],
+      documents: [],
+      jobsNextCursor: null,
+      documentsNextCursor: null,
+      counts,
+      syncState: {
+        jobsVersion: Number(syncResult.data?.jobs_version || 0),
+        documentsVersion: Number(syncResult.data?.documents_version || 0),
+        clientsVersion: Number(syncResult.data?.clients_version || 0),
+        workersVersion: Number(syncResult.data?.workers_version || 0),
+        companyInventoryVersion: Number(syncResult.data?.company_inventory_version || 0),
+        updatedAt: syncResult.data?.updated_at || new Date().toISOString(),
+      },
+    };
+  }
+
   let workers: any[] = [];
   let clients: any[] = [];
   let jobs: any[] = [];
@@ -864,6 +932,10 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     const docsResult = await buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 200 }, uid);
     jobs = jobsResult.items || [];
     documents = docsResult.items || [];
+    counts.workers = workers.length;
+    counts.clients = clients.length;
+    counts.jobs = jobs.length;
+    counts.documents = documents.length;
   }
 
   return {
@@ -878,6 +950,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     documents,
     jobsNextCursor: null,
     documentsNextCursor: null,
+    counts,
     syncState: {
       jobsVersion: Number(syncResult.data?.jobs_version || 0),
       documentsVersion: Number(syncResult.data?.documents_version || 0),

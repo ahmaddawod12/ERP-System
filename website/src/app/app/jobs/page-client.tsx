@@ -181,9 +181,17 @@ export default function JobsClient() {
 
   const removeJob = async (jobId: string) => {
     if (!scopeId) return;
-    await deleteJob(scopeId, jobId);
-    await loadJobs();
-    toast({ title: "Job removed", variant: "info" });
+    try {
+      await deleteJob(scopeId, jobId);
+      await loadJobs();
+      toast({ title: "Job removed", variant: "info" });
+    } catch (error) {
+      toast({
+        title: "Job delete failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "error",
+      });
+    }
   };
 
   return (

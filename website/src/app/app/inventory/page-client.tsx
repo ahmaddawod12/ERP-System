@@ -66,46 +66,88 @@ export default function InventoryClient() {
 
   const createItem = async () => {
     if (!uid || !companyId || !form.name) return;
-    if (isCompanyInventory && companyId) {
-      await addCompanyInventoryPart(companyId, {
-        name: form.name,
-        active: true,
-      });
-    } else {
-      await addUserInventoryPart(uid, {
-        name: form.name,
-        quantity: Number(form.quantity || "0"),
-        lowThreshold: Number(form.lowThreshold || "0"),
-      }, companyId);
+    const quantity = Number(form.quantity || "0");
+    const lowThreshold = Number(form.lowThreshold || "0");
+    if (!isCompanyInventory && (!Number.isFinite(quantity) || quantity < 0 || !Number.isFinite(lowThreshold) || lowThreshold < 0)) {
+      toast({ title: "Invalid inventory values", description: "Quantity and low threshold must be non-negative numbers.", variant: "error" });
+      return;
     }
-    setForm(initialForm);
-    await load();
-    toast({ title: "Part added", variant: "success" });
+    try {
+      if (isCompanyInventory && companyId) {
+        await addCompanyInventoryPart(companyId, {
+          name: form.name,
+          active: true,
+        });
+      } else {
+        await addUserInventoryPart(uid, {
+          name: form.name,
+          quantity,
+          lowThreshold,
+        }, companyId);
+      }
+      setForm(initialForm);
+      await load();
+      toast({ title: "Part added", variant: "success" });
+    } catch (error) {
+      toast({
+        title: "Inventory update failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "error",
+      });
+    }
   };
 
   const updateQty = async (partId: number, quantity: number) => {
     if (!uid || !companyId) return;
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      toast({ title: "Invalid quantity", description: "Quantity must be a non-negative number.", variant: "error" });
+      return;
+    }
     if (!isCompanyInventory) {
-      await updateUserInventoryPart(uid, partId, { quantity }, companyId);
-      await load();
+      try {
+        await updateUserInventoryPart(uid, partId, { quantity }, companyId);
+        await load();
+      } catch (error) {
+        toast({
+          title: "Inventory update failed",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "error",
+        });
+      }
     }
   };
 
   const removeItem = async (partId: number) => {
     if (!uid || !companyId) return;
-    if (isCompanyInventory && companyId) {
-      await removeCompanyInventoryPart(companyId, partId);
-    } else {
-      await removeUserInventoryPart(uid, partId, companyId);
+    try {
+      if (isCompanyInventory && companyId) {
+        await removeCompanyInventoryPart(companyId, partId);
+      } else {
+        await removeUserInventoryPart(uid, partId, companyId);
+      }
+      await load();
+      toast({ title: "Part removed", variant: "info" });
+    } catch (error) {
+      toast({
+        title: "Inventory delete failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "error",
+      });
     }
-    await load();
-    toast({ title: "Part removed", variant: "info" });
   };
 
   const toggleActive = async (partId: number) => {
     if (!companyId || !isCompanyInventory) return;
-    await toggleCompanyInventoryPart(companyId, partId);
-    await load();
+    try {
+      await toggleCompanyInventoryPart(companyId, partId);
+      await load();
+    } catch (error) {
+      toast({
+        title: "Inventory update failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "error",
+      });
+    }
   };
 
   return (

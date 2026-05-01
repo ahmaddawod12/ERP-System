@@ -38,7 +38,7 @@ type UserJobDraft = {
 type PendingJobRecord = {
   uid?: string;
   localJobId?: string;
-  jobData?: Partial<UserJobRecord>;
+  jobData?: Partial<UserJobRecord> & { attachmentUploadId?: string };
 };
 
 function getUserPendingJobsStorageKey() {
@@ -342,7 +342,20 @@ export default function Userjob() {
             ...(pendingJob.jobData || {}),
           };
 
-          // Use createJobV1 Cloud Function for atomic creation
+          const attachmentUploadId = typeof jobPayload.attachmentUploadId === 'string' && jobPayload.attachmentUploadId.trim()
+            ? jobPayload.attachmentUploadId.trim()
+            : `pending-${crypto.randomUUID()}`;
+
+          const uploadResult = await uploadJobFilesForStorage(
+            companyId,
+            attachmentUploadId,
+            Array.isArray(jobPayload.photos) ? jobPayload.photos as Array<string | { storagePath?: string; uri?: string }> : [],
+            (jobPayload.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
+          );
+          jobPayload.photos = uploadResult.photoRefs;
+          jobPayload.signature = uploadResult.signatureRef ?? undefined;
+          jobPayload.attachmentUploadId = attachmentUploadId;
+
           const createJobFn = httpsCallable(functions, 'createJobV1');
           const result = await createJobFn({
             companyId,
@@ -353,25 +366,6 @@ export default function Userjob() {
           const serverJobId = result.data?.jobId;
           if (!serverJobId) {
             throw new Error('Job was created without a server job ID');
-          }
-
-          const uploadResult = await uploadJobFilesForStorage(
-            user.uid,
-            serverJobId,
-            Array.isArray(jobPayload.photos) ? jobPayload.photos as Array<string | { storagePath?: string; uri?: string }> : [],
-            (jobPayload.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
-          );
-          if (uploadResult.photoRefs.length > 0 || uploadResult.signatureRef) {
-            const updateJobFn = httpsCallable(functions, 'updateJobV1');
-            const normalizedSignature = uploadResult.signatureRef ?? undefined;
-            await updateJobFn({
-              companyId,
-              jobId: serverJobId,
-              photos: uploadResult.photoRefs,
-              signature: normalizedSignature,
-            });
-            jobPayload.photos = uploadResult.photoRefs;
-            jobPayload.signature = normalizedSignature;
           }
 
           const jobToSave = {

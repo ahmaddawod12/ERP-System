@@ -2,7 +2,7 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the active April 2026 architecture:
+It reflects the active May 2026 architecture:
 
 - Supabase Auth for website and mobile sign-in
 - Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
@@ -165,6 +165,7 @@ Notes:
 - Supabase variables are required for active web auth.
 - `SESSION_COOKIE_SECRET` must be a strong shared secret per environment; it signs the website `__session` metadata payload.
 - Website server proxy auth uses two HttpOnly cookies: signed metadata in `__session`, bearer transport in `__session_access`.
+- Protected session validation requires both cookies; `__session` metadata alone is not enough to authorize backend proxy calls.
 - `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
 - If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
 - Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on the signed cookie-backed session plus in-memory auth transport state.
@@ -195,6 +196,7 @@ Notes:
 - If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
 - Mobile Supabase transport tokens are stored in a dedicated encrypted MMKV instance, separate from the general cache MMKV store.
 - If `EXPO_PUBLIC_MMKV_AUTH_KEY` is unset, the app derives an auth-store key from app/device runtime metadata instead of using a hardcoded source literal or persisting the key inside the general MMKV cache.
+- Push notification listeners and token registration are attached after authenticated cache bootstrap succeeds for the active session; Android channel setup is safe to call more than once.
 
 ## 7. Supabase Edge Environment
 
@@ -240,8 +242,10 @@ Rules:
 - Do not use `*` for CORS when sending credentials; use explicit origins in `CORS_ALLOWED_ORIGINS`.
 - Keep `CORS_ALLOWED_ORIGINS` non-empty in real environments. Empty origin lists are treated as fail-closed.
 - Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
+- Shared edge auth verification derives the expected JWT issuer/audience from the configured Supabase project and fails closed on empty `uid` claims.
 - Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
 - `GCP_SERVICE_ACCOUNT_EMAIL` / `GCP_SERVICE_ACCOUNT_PRIVATE_KEY` allow edge handlers to mint OIDC tokens for trusted `cloudrun-pdf` dispatch.
+- `cloudrun-pdf` should be configured with the same service-account identity material when you want it to verify the edge-signed bearer JWT path locally.
 - The same service account credentials are used by `fetchArchiveMonthV1` to read archive objects from `ARCHIVE_BUCKET` through backend-controlled bucket/path access.
 - `PUBSUB_VERIFICATION_TOKEN` should match the shared verification token expected by `cloudrun-pdf` when that hardening layer is enabled.
 - `CLOUD_RUN_PDF_SERVICE_URL` is required for preview/generate task dispatch from the edge runtime.
@@ -261,6 +265,9 @@ Current migration tip:
   - `claim_tax_invoice_idempotency(...)` atomic tax idempotency claim RPC
   - `part_no` counter key
   - `allocate_company_counter`, `allocate_system_counter`, and `increment_rate_limit_bucket` RPCs
+  - active membership uniqueness on `(company_id, user_id)` for non-revoked memberships only
+  - split `inventory_locations` uniqueness for company-only rows vs membership-scoped rows
+  - `apply_inventory_movement(...)` atomic inventory movement RPC
 
 Minimum steps:
 
@@ -368,6 +375,7 @@ Verify:
 - document preview and generate flows
 - tax invoice approval creates a draft SQL document and schedules the async generate task
 - signed URL flows for documents and job files
+- solo mobile job creation uploads attachments first and succeeds with temp `attachmentUploadId` references before the final job number exists
 - push-token updates and notification paths
 - archive creation and retrieval
 

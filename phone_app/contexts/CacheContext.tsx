@@ -477,6 +477,18 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     }
   }, [saveToLocalCache]);
 
+  const getExistingJobsCacheForRole = useCallback((role: string) => {
+    if (role === 'manager') {
+      const cached = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_JOBS);
+      return Array.isArray(cached) ? cached : [];
+    }
+    if (role === 'basic' || role === 'dev') {
+      return [];
+    }
+    const cached = mmkvHelpers.getObject(CACHE_KEYS.JOBS);
+    return Array.isArray(cached) ? cached : [];
+  }, []);
+
   /**
    * Set up cache refresh listeners.
    * 
@@ -631,11 +643,13 @@ export function CacheProvider({ children }: { children: ReactNode }) {
                 shouldFetchJobs ? fetchAllCursorPages(fetchJobsPage, companyId, 200) : Promise.resolve([]),
                 shouldFetchDocs ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200) : Promise.resolve([]),
               ]);
+              const cachedDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS);
+              const existingDocumentsCache = Array.isArray(cachedDocuments) ? cachedDocuments : [];
 
               applyBootstrappedJobDocumentCache(
                 role,
-                shouldFetchJobs ? jobsItems : mmkvHelpers.getObject(CACHE_KEYS.COMPANY_JOBS) ?? [],
-                shouldFetchDocs ? docsItems : mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS) ?? [],
+                shouldFetchJobs ? jobsItems : getExistingJobsCacheForRole(role),
+                shouldFetchDocs ? docsItems : existingDocumentsCache,
               );
               mmkvHelpers.setString(CACHE_KEYS.JOBS_LAST_SYNC, new Date().toISOString());
               mmkvHelpers.setString(CACHE_KEYS.DOCS_LAST_SYNC, new Date().toISOString());
@@ -734,7 +748,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     listenersActiveRef.current = true;
     
     console.log(`Cache listeners set up for ${role}`);
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, saveToLocalCache]);
+  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
 
   /**
    * Initialize cache for a user (called on login/app start)

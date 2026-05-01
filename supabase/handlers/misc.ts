@@ -4,6 +4,7 @@
  */
 import {
   EdgeFunctionContext,
+  enabledModulesForTier,
   createSupabaseClient,
   optionalTrimmedString,
   requireNonEmptyString,
@@ -18,63 +19,6 @@ function normalizeTier(value: unknown): string | null {
   if (!raw) return null;
   const matched = TIER_VALUES.find((tier) => tier.toLowerCase() === raw.toLowerCase());
   return matched || null;
-}
-
-function enabledModulesForTier(tier: string): Record<string, boolean> {
-  switch (tier) {
-    case "Enterprise":
-      return {
-        homepage: true,
-        settings: true,
-        workers: true,
-        clients: true,
-        jobs: true,
-        inventory: true,
-        documents: true,
-        support: true,
-        admin: true,
-        upgrade: true,
-      };
-    case "Team":
-      return {
-        homepage: true,
-        settings: true,
-        workers: true,
-        clients: true,
-        jobs: true,
-        inventory: true,
-        documents: true,
-        support: true,
-        admin: false,
-        upgrade: true,
-      };
-    case "Solo":
-      return {
-        homepage: true,
-        settings: true,
-        workers: false,
-        clients: true,
-        jobs: true,
-        inventory: true,
-        documents: true,
-        support: true,
-        admin: false,
-        upgrade: true,
-      };
-    default:
-      return {
-        homepage: true,
-        settings: true,
-        workers: false,
-        clients: true,
-        jobs: false,
-        inventory: false,
-        documents: true,
-        support: true,
-        admin: false,
-        upgrade: true,
-      };
-  }
 }
 
 async function requireDev(uid: string, ctx: EdgeFunctionContext): Promise<{ display_name: string | null; email: string | null }> {
@@ -101,28 +45,23 @@ async function resolveMembershipContext(uid: string, ctx: EdgeFunctionContext): 
   internalCompanyId: string | null;
 }> {
   const supabase = createSupabaseClient(ctx.env);
-  const { data: membership } = await supabase
+  const { data: row } = await supabase
     .from("company_memberships")
-    .select("role, company_id")
+    .select("role, company_id, companies!inner(public_company_id)")
     .eq("user_id", uid)
     .eq("status", "active")
     .limit(1)
     .maybeSingle();
 
-  if (!membership?.company_id) {
+  if (!row?.company_id) {
     return { role: null, publicCompanyId: null, internalCompanyId: null };
   }
 
-  const { data: company } = await supabase
-    .from("companies")
-    .select("public_company_id")
-    .eq("id", membership.company_id)
-    .single();
-
+  const companyRow = Array.isArray(row.companies) ? row.companies[0] : row.companies;
   return {
-    role: membership.role || null,
-    internalCompanyId: membership.company_id,
-    publicCompanyId: company?.public_company_id ? String(company.public_company_id) : null,
+    role: (row as any).role || null,
+    internalCompanyId: row.company_id,
+    publicCompanyId: companyRow?.public_company_id ? String(companyRow.public_company_id) : null,
   };
 }
 

@@ -28,6 +28,9 @@ export default function ForgotPasswordClient() {
     try {
       const supabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/+$/, "");
       const supabaseAnonKey = String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
+      const redirectTo = typeof window !== "undefined"
+        ? `${window.location.origin}/reset-password`
+        : "";
       if (!supabaseUrl || !supabaseAnonKey) {
         throw new Error("Supabase auth is not configured");
       }
@@ -40,6 +43,7 @@ export default function ForgotPasswordClient() {
         },
         body: JSON.stringify({
           email: values.email,
+          ...(redirectTo ? { redirect_to: redirectTo } : {}),
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as { error_description?: unknown; msg?: unknown };

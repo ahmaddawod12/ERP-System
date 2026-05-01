@@ -4,24 +4,18 @@
  */
 import {
   allocateNextCompanyCounter,
+  bumpCompanySyncVersion,
   dispatchCloudRunPdfTask,
   EdgeFunctionContext,
   createSupabaseClient,
+  isUuidLike,
   optionalTrimmedString,
   requireNonEmptyString,
   resolveCompanyIdentifiers,
   signGoogleServiceAccountJwt,
   validateCompanyId,
 } from "../shared-edge-helpers.ts";
-
-const DOC_SUFFIX: Record<number, string> = {
-  10: "PP",
-  200: "DN",
-  210: "RC",
-  305: "TI",
-  330: "RD",
-  400: "RT",
-};
+import { DOC_SUFFIX, type DocTypeCode } from "@smart-job/contracts";
 
 async function requireDocumentAccess(
   companyId: string,
@@ -32,22 +26,20 @@ async function requireDocumentAccess(
   }
 
   const supabase = createSupabaseClient(ctx.env);
-  const { data: user } = await supabase
-    .from("app_users")
-    .select("system_role")
-    .eq("id", ctx.auth.uid)
-    .maybeSingle();
+  const [{ data: user }, { data: membership, error }] = await Promise.all([
+    supabase.from("app_users").select("system_role").eq("id", ctx.auth.uid).maybeSingle(),
+    supabase
+      .from("company_memberships")
+      .select("id, role")
+      .eq("company_id", companyId)
+      .eq("user_id", ctx.auth.uid)
+      .eq("status", "active")
+      .single(),
+  ]);
+
   if (String(user?.system_role || "").toLowerCase() === "dev") {
     return { id: "dev", role: "dev" };
   }
-
-  const { data: membership, error } = await supabase
-    .from("company_memberships")
-    .select("id, role")
-    .eq("company_id", companyId)
-    .eq("user_id", ctx.auth.uid)
-    .eq("status", "active")
-    .single();
 
   if (error || !membership) {
     throw { code: "permission-denied", message: "Not allowed for this company", httpStatus: 403 };
@@ -58,30 +50,6 @@ async function requireDocumentAccess(
   }
 
   return { id: membership.id, role: String(membership.role) };
-}
-
-async function bumpDocumentsVersion(companyId: string, ctx: EdgeFunctionContext): Promise<void> {
-  const supabase = createSupabaseClient(ctx.env);
-  const now = new Date().toISOString();
-  const { data: state } = await supabase
-    .from("company_sync_state")
-    .select("documents_version")
-    .eq("company_id", companyId)
-    .maybeSingle();
-
-  if (!state) {
-    await supabase.from("company_sync_state").insert({
-      company_id: companyId,
-      documents_version: 1,
-      updated_at: now,
-    });
-    return;
-  }
-
-  await supabase
-    .from("company_sync_state")
-    .update({ documents_version: Number(state.documents_version || 0) + 1, updated_at: now })
-    .eq("company_id", companyId);
 }
 
 export async function createOrReuseDocumentTask(
@@ -150,6 +118,19 @@ export async function createOrReuseDocumentTask(
     throw { code: "internal", message: `Failed to queue ${taskType} task`, httpStatus: 500 };
   }
   return { ...insertedTask, isNew: true };
+}
+
+async function markDocumentTaskDispatchFailed(taskKey: string, message: string, ctx: EdgeFunctionContext): Promise<void> {
+  const supabase = createSupabaseClient(ctx.env);
+  await supabase
+    .from("document_tasks")
+    .update({
+      status: "failed",
+      error: String(message || "Task dispatch failed"),
+      completed_at: new Date().toISOString(),
+    })
+    .eq("task_key", taskKey)
+    .in("status", ["pending", "queued"]);
 }
 
 function normalizeStoragePath(value: unknown): string | null {
@@ -279,6 +260,8 @@ async function loadCompanyDocumentContext(companyId: string, membershipId: strin
   };
 }
 
+const MAX_ITEMS_PER_DOCUMENT = 100;
+
 function normalizeDocumentDataPayload(
   rawDocumentData: unknown,
   companyPayload: Record<string, unknown>,
@@ -286,6 +269,14 @@ function normalizeDocumentDataPayload(
   const documentData = rawDocumentData && typeof rawDocumentData === "object" && !Array.isArray(rawDocumentData)
     ? { ...(rawDocumentData as Record<string, unknown>) }
     : {};
+  const items = (documentData as any).items;
+  if (Array.isArray(items) && items.length > MAX_ITEMS_PER_DOCUMENT) {
+    throw {
+      code: "invalid-argument",
+      message: `Document may contain at most ${MAX_ITEMS_PER_DOCUMENT} items`,
+      httpStatus: 400,
+    };
+  }
   return {
     ...documentData,
     company: companyPayload,
@@ -293,7 +284,7 @@ function normalizeDocumentDataPayload(
 }
 
 export function buildPublicDocumentId(documentType: number, documentNumber: number, publicCompanyId: string) {
-  const suffix = DOC_SUFFIX[documentType];
+  const suffix = DOC_SUFFIX[documentType as DocTypeCode];
   if (!suffix) {
     throw { code: "invalid-argument", message: "Unsupported documentType", httpStatus: 400 };
   }
@@ -336,10 +327,6 @@ async function buildDocumentTaskLockKey(
   const normalizedPayload = JSON.stringify(normalizeTaskLockPayload(requestPayload));
   const payloadHash = await sha256Hex(`${taskType}:${documentType}:${normalizedPayload}`);
   return `${taskType}:${documentType}:${payloadHash}`;
-}
-
-function isUuidLike(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isActiveDocumentTaskConflict(error: any): boolean {
@@ -468,13 +455,18 @@ export async function publishPreviewTask(payload: any, ctx: EdgeFunctionContext)
   );
 
   if (task.isNew) {
-    await dispatchCloudRunPdfTask("/preview", {
-      taskId: task.task_key,
-      documentType,
-      documentData,
-      uid: ctx.auth?.uid || membership.id,
-      companyId: resolvedCompany.publicCompanyId,
-    }, ctx.env);
+    try {
+      await dispatchCloudRunPdfTask("/preview", {
+        taskId: task.task_key,
+        documentType,
+        documentData,
+        uid: ctx.auth?.uid || membership.id,
+        companyId: resolvedCompany.publicCompanyId,
+      }, ctx.env);
+    } catch (error) {
+      await markDocumentTaskDispatchFailed(task.task_key, error instanceof Error ? error.message : "Preview dispatch failed", ctx);
+      throw error;
+    }
   }
 
   return {
@@ -555,19 +547,24 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
   );
 
   if (task.isNew) {
-    await dispatchCloudRunPdfTask("/generate", {
-      taskId: task.task_key,
-      documentType,
-      documentData: {
-        ...documentData,
+    try {
+      await dispatchCloudRunPdfTask("/generate", {
+        taskId: task.task_key,
+        documentType,
+        documentData: {
+          ...documentData,
+          documentNumber: documentNumber || undefined,
+        },
+        uid: ctx.auth?.uid || membership.id,
+        companyId: resolvedCompany.publicCompanyId,
+        documentId: publicDocumentId,
         documentNumber: documentNumber || undefined,
-      },
-      uid: ctx.auth?.uid || membership.id,
-      companyId: resolvedCompany.publicCompanyId,
-      documentId: publicDocumentId,
-      documentNumber: documentNumber || undefined,
-      confirmationNumber: optionalTrimmedString(documentData["taxAuthorityConfirmationNumber"], 128) || undefined,
-    }, ctx.env);
+        confirmationNumber: optionalTrimmedString(documentData["taxAuthorityConfirmationNumber"], 128) || undefined,
+      }, ctx.env);
+    } catch (error) {
+      await markDocumentTaskDispatchFailed(task.task_key, error instanceof Error ? error.message : "Generate dispatch failed", ctx);
+      throw error;
+    }
   }
 
   return {
@@ -612,7 +609,7 @@ export async function deleteDocumentV1(payload: any, ctx: EdgeFunctionContext): 
     throw { code: "internal", message: "Failed to delete document", httpStatus: 500 };
   }
 
-  await bumpDocumentsVersion(companyId, ctx);
+  await bumpCompanySyncVersion(companyId, "documents_version", ctx);
   return {
     success: true,
     documentId: optionalTrimmedString(existingDocument.document_code, 128) || String(existingDocument.id),

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current April 2026 Smart-Job ERP architecture. It reflects the active code paths in `website/`, `phone_app/`, `supabase/functions/`, `cloudrun-pdf/`, `cloudrun-archiver/`, `packages/contracts/`, and `packages/db/`.
+This document describes the current May 2026 Smart-Job ERP architecture. It reflects the active code paths in `website/`, `phone_app/`, `supabase/functions/`, `cloudrun-pdf/`, `cloudrun-archiver/`, `packages/contracts/`, and `packages/db/`.
 
 ## Executive Summary
 
@@ -28,6 +28,7 @@ website/mobile
 
 - Supabase Auth owns sign-in and bearer tokens.
 - Backend authorization happens inside gateway handlers and shared edge helpers.
+- Shared edge JWT verification must enforce the expected Supabase issuer/audience and reject empty `uid` claims.
 - `uid` is the canonical user identity key.
 - `companyId` is the canonical tenant scope key.
 - Company-scoped access is validated server-side, not inferred from client payloads.
@@ -95,7 +96,10 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Mobile read-model calls are kind-based and share the same backend contract as website.
 - Mobile MMKV cache/draft/outbox keys must stay scoped by active `uid` / `companyId`.
 - Mobile cache refresh must drain paginated jobs/documents reads fully instead of assuming page one is complete.
+- Mobile cache refresh must preserve the existing role-scoped jobs cache when only document versions change.
 - Archived month reads go through backend `fetchArchiveMonthV1`; clients do not read protected archive objects directly.
+- Finished solo jobs upload attachments to company-scoped storage first and pass `attachmentUploadId` into `createJobV1` until the final public job number exists.
+- Push notification listeners and token registration attach only after authenticated cache bootstrap succeeds for the active mobile session.
 - Mobile does not own business registration.
 
 ### Backend mutations and reads
@@ -108,7 +112,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 
 - Gateway handlers publish preview/generate work.
 - Edge handlers enrich preview/generate payloads with company data, create SQL draft document rows for generate flows, and dispatch trusted work to `cloudrun-pdf`.
-- `cloudrun-pdf` validates requester identity, renders PDF output, stores files, and finalizes task/document state.
+- `cloudrun-pdf` validates requester identity, accepts trusted dispatch bearer auth from either Google OIDC or the configured edge service account, renders PDF output, stores files, and finalizes task/document state.
 - New generated artifacts must keep create-only semantics and orphan cleanup on finalize failure.
 - Tax invoice generate flows must not overwrite an existing finalized PDF or existing SQL `storage_path`.
 
@@ -143,10 +147,12 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Job APIs should expose public sequential IDs (`id`, `jobId`, `wid`, `mid`) at the client boundary, not internal membership/job UUIDs.
 - Job part usage payloads should expose public inventory part numbers, not internal inventory UUIDs.
 - Job attachments persist canonical refs such as `{ storagePath, kind }`.
+- Handlers may accept temporary attachment upload IDs before the final job number exists, but persisted attachment refs must normalize back to canonical company/job storage paths.
 
 ### Documents
 
-- Document types and suffixes come from `@smart-job/contracts`.
+- Document types and suffixes come from `@smart-job/contracts` (`DOC_SUFFIX`, `DocTypeCode`).
+- `deno.json` maps `@smart-job/contracts` to `./packages/contracts/index.ts` for Deno consumers.
 - Non-tax document IDs use the canonical suffix plus number pattern.
 - Tax flows require server-side validation and idempotency.
 
@@ -155,6 +161,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Protected writes to locked business collections stay backend-only.
 - Rate limiting, deduplication, and idempotency must happen before push/email/Pub/Sub side effects.
 - Firestore transactions must read before they write.
+- Inventory mutations must fail on negative resulting balances; they must not silently clamp stock underflow to zero.
+- Inventory movement mutations should be applied atomically through SQL helpers such as `apply_inventory_movement(...)` rather than client-visible read-modify-write sequences.
 
 ## Migration Direction
 

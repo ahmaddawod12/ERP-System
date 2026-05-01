@@ -77,7 +77,9 @@ test("session POST issues a signed session cookie after access-token verificatio
   assert.deepEqual(await response.json(), { ok: true });
 
   const sessionCookieValue = findCookieValue(response, "__session");
+  const accessCookieValue = findCookieValue(response, "__session_access");
   assert.ok(sessionCookieValue);
+  assert.equal(accessCookieValue, "firebase-id-token");
   assert.notEqual(sessionCookieValue, "firebase-id-token");
   assert.deepEqual(await verifySessionCookieValue(sessionCookieValue || ""), {
     uid: "user-123",
@@ -103,6 +105,7 @@ test("session POST clears cookies when token verification fails", async () => {
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { ok: false, error: "invalid_token" });
   assert.equal(findCookieValue(response, "__session"), "");
+  assert.equal(findCookieValue(response, "__session_access"), "");
 });
 
 test("session GET returns session payload for a valid signed session cookie", async () => {
@@ -123,10 +126,13 @@ test("session GET returns session payload for a valid signed session cookie", as
     }),
   });
   const sessionCookieValue = findCookieValue(createResponse, "__session");
+  const accessCookieValue = findCookieValue(createResponse, "__session_access");
 
   const response = await handleReadSession(new Request("https://example.com/api/auth/session", {
     method: "GET",
-    headers: { cookie: `__session=${encodeURIComponent(sessionCookieValue || "")}` },
+    headers: {
+      cookie: `__session=${encodeURIComponent(sessionCookieValue || "")}; __session_access=${encodeURIComponent(accessCookieValue || "")}`,
+    },
   }), {
     getUserByUid: async (uid) => ({
       uid,
@@ -158,15 +164,7 @@ test("session GET rejects invalid cookies and clears the session", async () => {
   assert.equal(findCookieValue(response, "__session"), "");
 });
 
-test("session DELETE clears session cookies", async () => {
-  const response = handleDeleteSession();
-
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true });
-  assert.equal(findCookieValue(response, "__session"), "");
-});
-
-test("session GET rejects revoked sessions and clears the session", async () => {
+test("session GET rejects requests missing the access-token companion cookie", async () => {
   const createResponse = await handleCreateSession(new Request("https://example.com/api/auth/session", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -188,6 +186,53 @@ test("session GET rejects revoked sessions and clears the session", async () => 
   const response = await handleReadSession(new Request("https://example.com/api/auth/session", {
     method: "GET",
     headers: { cookie: `__session=${encodeURIComponent(sessionCookieValue || "")}` },
+  }), {
+    getUserByUid: async () => ({
+      disabled: false,
+      tokensValidAfterTime: new Date("2024-01-01T00:00:00.000Z").toISOString(),
+    }),
+  });
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { ok: false, error: "missing_access_token" });
+  assert.equal(findCookieValue(response, "__session"), "");
+  assert.equal(findCookieValue(response, "__session_access"), "");
+});
+
+test("session DELETE clears session cookies", async () => {
+  const response = handleDeleteSession();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  assert.equal(findCookieValue(response, "__session"), "");
+  assert.equal(findCookieValue(response, "__session_access"), "");
+});
+
+test("session GET rejects revoked sessions and clears the session", async () => {
+  const createResponse = await handleCreateSession(new Request("https://example.com/api/auth/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: "firebase-id-token" }),
+  }), {
+    verifyAccessToken: async () => ({
+      uid: "user-123",
+      provider: "supabase",
+      role: "manager",
+      companyId: "1007",
+      authTime: 1710000000,
+      email: null,
+      decodedToken: null,
+      claims: null,
+    }),
+  });
+  const sessionCookieValue = findCookieValue(createResponse, "__session");
+  const accessCookieValue = findCookieValue(createResponse, "__session_access");
+
+  const response = await handleReadSession(new Request("https://example.com/api/auth/session", {
+    method: "GET",
+    headers: {
+      cookie: `__session=${encodeURIComponent(sessionCookieValue || "")}; __session_access=${encodeURIComponent(accessCookieValue || "")}`,
+    },
   }), {
     getUserByUid: async () => ({
       disabled: false,

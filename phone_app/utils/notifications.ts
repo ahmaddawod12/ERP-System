@@ -16,6 +16,7 @@
 import { Platform, PermissionsAndroid } from 'react-native';
 import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notifee/react-native';
 import { 
+  auth,
   functions,
   httpsCallable,
   messaging,
@@ -35,35 +36,65 @@ import { mmkvHelpers, CACHE_KEYS } from '../contexts/mmkv-storage';
 
 // Default Android notification channel ID
 const DEFAULT_CHANNEL_ID = 'smart_job_default';
+let notificationInitializationPromise: Promise<boolean> | null = null;
+
+function cacheRegisteredPushToken(pushToken: string): void {
+  const cachedProfile = mmkvHelpers.getObject<Record<string, unknown>>(CACHE_KEYS.PROFILE);
+  if (!cachedProfile) {
+    return;
+  }
+
+  mmkvHelpers.setObject(CACHE_KEYS.PROFILE, {
+    ...cachedProfile,
+    pushToken,
+  });
+}
+
+async function persistPushToken(pushToken: string): Promise<void> {
+  const updatePushTokenFn = httpsCallable(functions, 'updatePushTokenV1');
+  await updatePushTokenFn({
+    pushToken,
+    pushTokenPlatform: Platform.OS,
+    pushTokenType: 'fcm',
+  });
+  cacheRegisteredPushToken(pushToken);
+}
 
 /**
  * Initialize Notifee by creating the default Android notification channel
  * This should be called early in app initialization
  */
 export async function initializeNotifications(): Promise<boolean> {
-  try {
-    // Create default Android notification channel
-    if (Platform.OS === 'android') {
-      await notifee.createChannel({
-        id: DEFAULT_CHANNEL_ID,
-        name: 'Smart Job Notifications',
-        description: 'Job assignments, updates, and alerts',
-        importance: AndroidImportance.HIGH,
-        visibility: AndroidVisibility.PUBLIC,
-        sound: 'default',
-        vibration: true,
-        vibrationPattern: [300, 500], // [vibrate 300ms, pause 500ms] - MUST be even number of POSITIVE values
-        lights: true,
-        lightColor: '#00ACC1',
-      });
-      console.log('✅ Android notification channel created');
-    }
-    
-    return true;
-  } catch (error) {
-    console.error('Error initializing notifications:', error);
-    return false;
+  if (!notificationInitializationPromise) {
+    notificationInitializationPromise = (async () => {
+      try {
+        // Create the default Android notification channel once per app process.
+        if (Platform.OS === 'android') {
+          await notifee.createChannel({
+            id: DEFAULT_CHANNEL_ID,
+            name: 'Smart Job Notifications',
+            description: 'Job assignments, updates, and alerts',
+            importance: AndroidImportance.HIGH,
+            visibility: AndroidVisibility.PUBLIC,
+            sound: 'default',
+            vibration: true,
+            vibrationPattern: [300, 500], // [vibrate 300ms, pause 500ms] - MUST be even number of POSITIVE values
+            lights: true,
+            lightColor: '#00ACC1',
+          });
+          console.log('✅ Android notification channel created');
+        }
+
+        return true;
+      } catch (error) {
+        notificationInitializationPromise = null;
+        console.error('Error initializing notifications:', error);
+        return false;
+      }
+    })();
   }
+
+  return notificationInitializationPromise;
 }
 
 /**
@@ -163,13 +194,14 @@ export async function registerPushTokenForUser(userId: string): Promise<boolean>
       return true;
     }
 
+    const activeUserId = auth.currentUser?.uid;
+    if (!activeUserId || activeUserId !== userId) {
+      console.log('Skipping push token registration because the active auth session changed');
+      return false;
+    }
+
     // Use Cloud Function to update push token (profile is read-only from client)
-    const updatePushTokenFn = httpsCallable(functions, 'updatePushTokenV1');
-    await updatePushTokenFn({
-      pushToken: fcmToken,
-      pushTokenPlatform: Platform.OS,
-      pushTokenType: 'fcm',
-    });
+    await persistPushToken(fcmToken);
 
     console.log(`✅ FCM token registered for ${userId}`);
     return true;
@@ -202,20 +234,20 @@ interface LocalNotificationParams {
 
 export async function displayLocalNotification({ title, body, data = {} }: LocalNotificationParams): Promise<void> {
   try {
+    const androidNotification: Record<string, unknown> = {
+      channelId: DEFAULT_CHANNEL_ID,
+      importance: AndroidImportance.HIGH,
+      pressAction: {
+        id: 'default',
+      },
+      color: '#00ACC1',
+      sound: 'default',
+    };
     await notifee.displayNotification({
       title: title,
       body: body,
       data: data,
-      android: {
-        channelId: DEFAULT_CHANNEL_ID,
-        importance: AndroidImportance.HIGH,
-        pressAction: {
-          id: 'default',
-        },
-        smallIcon: 'ic_notification', // Make sure this icon exists in android/app/src/main/res
-        color: '#00ACC1',
-        sound: 'default',
-      },
+      android: androidNotification,
       ios: {
         sound: 'default',
         foregroundPresentationOptions: {
@@ -258,7 +290,7 @@ export function setupNotificationListeners(
   const unsubscribers = [];
 
   // Initialize notification channels
-  initializeNotifications();
+  void initializeNotifications();
 
   // 1. Foreground message handler (FCM)
   // When app is in foreground, FCM won't display notifications automatically
@@ -344,13 +376,14 @@ export function setupNotificationListeners(
   // 6. Token refresh listener — P1-8: save refreshed tokens to server
   const unsubscribeTokenRefresh = onTokenRefresh(messaging, async (newToken) => {
     console.log('🔄 FCM token refreshed:', newToken.substring(0, 30) + '...');
+    const activeUserId = auth.currentUser?.uid;
+    if (!activeUserId) {
+      console.log('Skipping refreshed FCM token sync because no user is authenticated');
+      return;
+    }
+
     try {
-      const updatePushTokenFn = httpsCallable(functions, 'updatePushTokenV1');
-      await updatePushTokenFn({
-        pushToken: newToken,
-        pushTokenPlatform: Platform.OS,
-        pushTokenType: 'fcm',
-      });
+      await persistPushToken(newToken);
       console.log('✅ Refreshed FCM token saved to server');
     } catch (err) {
       console.error('Failed to save refreshed FCM token:', err);

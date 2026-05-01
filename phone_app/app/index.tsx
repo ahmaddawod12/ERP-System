@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { auth, onAuthStateChanged } from '../firebase';
@@ -22,9 +22,13 @@ export default function App() {
   const [user, setUser] = useState<SupabaseAuthUser | null>(null);
   const [firebaseInitialized, setFirebaseInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [readySessionUid, setReadySessionUid] = useState<string | null>(null);
   const { language } = useLanguageContext();
   const { initializeCache } = useCache();
   const alert = useAlert();
+  const initializedAuthUidRef = useRef<string | null>(null);
+  const notificationCleanupRef = useRef<(() => void) | null>(null);
+  const navigationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Animation states for loading dots
   const [dot1Anim] = useState(new Animated.Value(0.4));
@@ -84,14 +88,28 @@ export default function App() {
   };
 
   useEffect(() => {
+    void initializeNotifications();
+
+    return () => {
+      if (navigationTimeoutRef.current) {
+        clearTimeout(navigationTimeoutRef.current);
+        navigationTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     let unsubscribe: (() => void) | null = null;
-    let cleanupNotifications: (() => void) | null = null;
-    let isInitialized = false; // Prevent duplicate initialization
+    let isActive = true;
     
     /**
      * Show success animation and navigate to homepage
      */
     const showSuccessAndNavigate = (role: string) => {
+      if (!isActive) {
+        return;
+      }
+
       setIsLoading(false);
       setShowSuccess(true);
       
@@ -111,7 +129,15 @@ export default function App() {
       ]).start();
       
       // Navigate after animation
-      setTimeout(() => {
+      if (navigationTimeoutRef.current) {
+        clearTimeout(navigationTimeoutRef.current);
+      }
+
+      navigationTimeoutRef.current = setTimeout(() => {
+        if (!isActive) {
+          return;
+        }
+
         if (role === 'manager') {
           router.replace('/ManagerHomepage');
         } else if (role === 'worker') {
@@ -123,65 +149,54 @@ export default function App() {
         } else {
           router.replace('/UserHomepage');
         }
+        navigationTimeoutRef.current = null;
       }, 1500);
     };
 
     // Initialize Firebase auth listener
     const initializeAuth = async () => {
-      if (isInitialized) {
-        console.log('⏭️ Auth already initialized, skipping duplicate setup');
-        return;
-      }
-      
-      isInitialized = true;
       console.log('🔐 Initializing auth and notifications...');
       
       try {
         // Firebase is already initialized in firebase.js
         // Now set up the auth listener - React Native Firebase Modular API
-        unsubscribe = onAuthStateChanged(auth, async (user) => {
-          setUser(user);
+        unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
+          if (!isActive) {
+            return;
+          }
+
+          setUser(nextUser);
           setFirebaseInitialized(true);
           
-          if (user) {
+          if (nextUser) {
+            if (initializedAuthUidRef.current === nextUser.uid) {
+              return;
+            }
+
+            initializedAuthUidRef.current = nextUser.uid;
+            setReadySessionUid(null);
+            setShowSuccess(false);
+            setIsLoading(true);
+
             try {
               // Initialize cache - it handles profile loading from cache first, then Firebase if needed
               // Returns { uid, role, companyId } or null on failure
-              const cacheResult = await initializeCache(user.uid);
+              const cacheResult = await initializeCache(nextUser.uid);
+
+              if (!isActive) {
+                return;
+              }
               
               if (cacheResult) {
-                // Setup notification listeners ONCE per auth session
-                if (!cleanupNotifications) {
-                  cleanupNotifications = setupNotificationListeners(
-                    (remoteMessage: any) => {
-                      console.log('📬 Foreground notification:', remoteMessage?.notification?.title);
-                    },
-                    (response) => {
-                      const data = response.data || {};
-                      if (data?.type === 'job_assigned' && data?.screen === 'Workerjob') {
-                        router.push('/Workerjob');
-                      } else if (data?.type === 'job_submitted' && data?.screen === 'ManageJobs') {
-                        router.push('/ManageJobs');
-                      }
-                    }
-                  );
-                }
-                
                 const { uid, role } = cacheResult;
+                setReadySessionUid(uid);
                 console.log(`🔐 User authenticated: ${uid} (${role})`);
-                
-                // Register push token for notifications (always overwrite - handles token rotation)
-                registerPushTokenForUser(user.uid).then((success) => {
-                  if (success) {
-                    console.log('🔔 Push token registered successfully');
-                  }
-                }).catch((err) => {
-                  console.warn('Push token registration failed (non-blocking):', err.message);
-                });
-                
+
                 // All checks passed - show success animation then navigate
                 showSuccessAndNavigate(role);
               } else {
+                initializedAuthUidRef.current = null;
+                setReadySessionUid(null);
                 // No profile found - show error and return to login
                 console.log('❌ Could not initialize cache/profile');
                 alert.error(
@@ -195,11 +210,16 @@ export default function App() {
                 setIsLoading(false);
               }
             } catch (error) {
+              initializedAuthUidRef.current = null;
+              setReadySessionUid(null);
               console.error('Error during authentication:', error);
               setIsLoading(false);
             }
           } else {
             // No user authenticated
+            initializedAuthUidRef.current = null;
+            setReadySessionUid(null);
+            setShowSuccess(false);
             setIsLoading(false);
           }
         });
@@ -210,22 +230,58 @@ export default function App() {
       }
     };
 
-    // Initialize notification channels (Android) - must be called before setupNotificationListeners
-    initializeNotifications();
-    
-    // Initialize auth and notifications
+    // Initialize auth state
     initializeAuth();
 
     // Cleanup function
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
+      isActive = false;
+      if (navigationTimeoutRef.current) {
+        clearTimeout(navigationTimeoutRef.current);
+        navigationTimeoutRef.current = null;
       }
-      if (cleanupNotifications) {
-        cleanupNotifications();
-      }
+      unsubscribe?.();
     };
   }, [router, initializeCache, alert, language]);
+
+  useEffect(() => {
+    if (!readySessionUid) {
+      if (notificationCleanupRef.current) {
+        notificationCleanupRef.current();
+        notificationCleanupRef.current = null;
+      }
+      return;
+    }
+
+    notificationCleanupRef.current = setupNotificationListeners(
+      (remoteMessage: any) => {
+        console.log('📬 Foreground notification:', remoteMessage?.notification?.title);
+      },
+      (response) => {
+        const data = response.data || {};
+        if (data?.type === 'job_assigned' && data?.screen === 'Workerjob') {
+          router.push('/Workerjob');
+        } else if (data?.type === 'job_submitted' && data?.screen === 'ManageJobs') {
+          router.push('/ManageJobs');
+        }
+      }
+    );
+
+    registerPushTokenForUser(readySessionUid).then((success) => {
+      if (success) {
+        console.log('🔔 Push token registered successfully');
+      }
+    }).catch((err) => {
+      console.warn('Push token registration failed (non-blocking):', err.message);
+    });
+
+    return () => {
+      if (notificationCleanupRef.current) {
+        notificationCleanupRef.current();
+        notificationCleanupRef.current = null;
+      }
+    };
+  }, [readySessionUid, router]);
 
   // Show loading screen while Firebase initializes with branded design
   if (isLoading || !firebaseInitialized) {

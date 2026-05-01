@@ -1,12 +1,13 @@
 # Backend
 
-This document summarizes the active backend boundaries in April 2026.
+This document summarizes the active backend boundaries in May 2026.
 
 ## Current Backend Reality
 
 - The top-level `functions/` package is not present in this repository.
 - Active in-repo backend entry surfaces are implemented under `supabase/functions/` plus Cloud Run services.
 - Supabase Auth is the active bearer-token provider.
+- Shared edge auth verification is expected to enforce the Supabase JWT issuer/audience and reject empty `uid` claims.
 - SQL is the primary persistence layer for company-scoped ERP data.
 - Firestore is still used for selected operational paths, compatibility mirrors, rules-backed reads, and residual legacy surfaces.
 - Supabase Edge Functions in `supabase/functions/` are the maintained gateway surface in this workspace.
@@ -117,22 +118,30 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 ## Development Guidance
 
 - Treat `supabase/functions/` and `supabase/handlers/` as the active in-repo backend surface.
+- Verify Supabase bearer tokens against the configured issuer/audience and fail closed on missing or empty `uid` claims.
 - Preserve canonical field names and status enums from `@smart-job/contracts`.
 - Preserve backend-only mutation boundaries for locked business collections.
 - Keep `storagePath` as the canonical persisted file reference.
 - Do not weaken idempotency, deduplication, or create-only semantics in document flows.
 - Allocate sequential identifiers through SQL counters; avoid `MAX + 1` allocation in concurrent mutation paths.
-- Normalize external/public `companyId` inputs to internal company UUIDs before SQL filters in handlers.
+- Normalize incoming/public `companyId` inputs to internal company UUIDs before SQL filters in handlers.
+- When a handler needs to look up multiple membership records for the same company, batch the lookup with a single `.in("id", [...])` query rather than issuing one query per membership ID.
+- Parallelize independent DB lookups (e.g., client resolution and assignee resolution) with `Promise.all` instead of sequential `await` calls.
+- Resolve and validate dependent data (e.g., inventory part rows) before issuing destructive writes (e.g., deleting existing part usage rows) so failures leave the original state intact.
 - Normalize public job identifiers to internal rows inside handlers, but return public sequential job/member IDs back to website/mobile callers.
+- Return public membership identifiers such as `wid` at the boundary and do not leak internal membership UUIDs in invite or job flows.
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
 - When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
 - Keep job file signed URLs bound to persisted attachment rows, not caller-selected prefixes.
+- Accept temporary `attachmentUploadId` references during job creation only long enough to validate and normalize them into canonical attachment rows/storage paths.
 - Keep document task result URLs semantically split by task type (`preview_url` vs `generate_url`) to avoid response-contract drift.
 - Keep invite redemption race-safe by consuming invite state atomically before membership finalization.
 - Keep preview/generate/tax document flows on the same SQL-backed draft-document plus `document_tasks` pipeline.
 - Require manager authorization for company inventory mutations and for cross-member inventory mutations.
 - Validate inventory location ownership against the resolved internal company UUID before applying movement updates.
+- Reject inventory underflow instead of clamping balances to zero during backend mutations.
+- Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
 - Keep tax invoice PDF finalization create-only once `storage_path` is already set.
 - Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.

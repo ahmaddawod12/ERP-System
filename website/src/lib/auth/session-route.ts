@@ -160,6 +160,13 @@ export async function handleReadSession(
     return response;
   }
 
+  const sessionAccessToken = extractCookieValue(request.headers.get("cookie"), SESSION_ACCESS_TOKEN_COOKIE) || "";
+  if (!sessionAccessToken) {
+    const response = NextResponse.json({ ok: false, error: "missing_access_token" }, { status: 401 });
+    clearSessionCookie(response);
+    return response;
+  }
+
   return NextResponse.json({
     ok: true,
     session: {

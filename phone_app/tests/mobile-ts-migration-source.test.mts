@@ -30,5 +30,5 @@ test('auth MMKV storage does not use a hardcoded encryption key literal', () => 
   assert.doesNotMatch(mmkvStorage, /AUTH_STORAGE_KEY_SEED/);
   assert.doesNotMatch(mmkvStorage, /storage\.getString\([^\n]*AUTH_STORAGE_KEY/);
   assert.match(mmkvStorage, /Constants\.expoConfig\?/);
-  assert.match(mmkvStorage, /Device\.(brand|manufacturer|modelId|osBuildId)/);
+  assert.match(mmkvStorage, /Device\.(brand|manufacturer|modelId|modelName)/);
 });

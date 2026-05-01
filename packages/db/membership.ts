@@ -219,6 +219,14 @@ async function joinCompanyWithInvite(input, options: any = {}) {
       throw error;
     }
 
+    const invitedEmail = String((invite as { invited_email?: unknown }).invited_email || '').trim().toLowerCase();
+    const inputEmail = String(input.email || '').trim().toLowerCase();
+    if (invitedEmail && invitedEmail !== inputEmail) {
+      const error = new Error('Invite is restricted to a different email');
+      (error as any).code = 'permission-denied';
+      throw error;
+    }
+
     const resolvedRole = String(invite.target_role || input.requestedRole || 'worker').trim().toLowerCase();
     if (!['manager', 'worker', 'user', 'basic'].includes(resolvedRole)) {
       const error = new Error('Invite target role is invalid');

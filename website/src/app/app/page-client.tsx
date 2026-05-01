@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useAppContext } from "@/hooks/use-app-context";
 import { roleUsesScopedJobAccess } from "@/lib/job-access";
-import { loadBootstrapReadModel, resolveCompanyScope } from "@/lib/services/firestore-service";
+import { loadOverviewCounts, resolveCompanyScope } from "@/lib/services/firestore-service";
 
 interface StatItem {
   label: string;
@@ -30,22 +30,22 @@ export default function AppOverviewClient() {
       }
 
       try {
-        const bootstrap = await loadBootstrapReadModel(scopeId, true);
+        const counts = await loadOverviewCounts(scopeId);
         if (cancelled) return;
 
         const useCompanyInventory = profile.role === "manager" || profile.role === "dev";
         const inventoryPartsCount = useCompanyInventory
-          ? (bootstrap.companyInventory?.parts?.length ?? 0)
-          : (bootstrap.inventory?.parts?.length ?? 0);
+          ? (counts.companyInventoryParts ?? 0)
+          : (counts.inventoryParts ?? 0);
 
         setStats([
           {
             label: roleUsesScopedJobAccess(profile.role) ? "My Jobs" : "Total Jobs",
-            value: bootstrap.jobs?.length ?? 0,
+            value: counts.jobs ?? 0,
           },
           {
             label: "Clients",
-            value: bootstrap.clients?.length ?? 0,
+            value: counts.clients ?? 0,
           },
           {
             label: "Inventory Parts",

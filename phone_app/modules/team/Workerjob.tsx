@@ -249,7 +249,7 @@ export default function Workerjob() {
 
           if (existingData) {
             const uploadResult = await uploadJobFilesForStorage(
-              user.uid,
+              companyId,
               jobId,
               Array.isArray(pendingJob.jobData?.photos)
                 ? pendingJob.jobData.photos as Array<string | { storagePath?: string; uri?: string }>

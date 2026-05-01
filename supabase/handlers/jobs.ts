@@ -4,8 +4,10 @@
  */
 import {
   allocateNextCompanyCounter,
+  bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
+  isUuidLike,
   optionalTrimmedString,
   requireNonEmptyString,
   resolveCompanyIdentifiers,
@@ -40,10 +42,6 @@ function parseDateOrNull(value: unknown, fieldName: string): string | null {
   return new Date(ts).toISOString();
 }
 
-function isUuidLike(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
 function normalizeAttachmentRef(value: unknown): JobAttachmentRef | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const storagePath = optionalTrimmedString((value as { storagePath?: unknown }).storagePath, 1024);
@@ -56,6 +54,7 @@ function validateJobAttachmentStoragePath(
   companyPublicId: string,
   uid: string | null | undefined,
   publicJobId: string,
+  attachmentUploadId?: string | null,
 ): string {
   const normalized = storagePath.replace(/^\/+/, "").trim();
   if (!normalized || normalized.includes("..") || normalized.includes("?")) {
@@ -64,7 +63,8 @@ function validateJobAttachmentStoragePath(
 
   const validPrefixes = [
     `companies/${companyPublicId}/jobs/${publicJobId}/`,
-    ...(uid ? [`${uid}/jobs/${publicJobId}/`] : []),
+    ...(attachmentUploadId ? [`companies/${companyPublicId}/jobs/${attachmentUploadId}/`] : []),
+    ...(uid ? [`${uid}/jobs/${publicJobId}/`, ...(attachmentUploadId ? [`${uid}/jobs/${attachmentUploadId}/`] : [])] : []),
   ];
   if (!validPrefixes.some((prefix) => normalized.startsWith(prefix))) {
     throw { code: "invalid-argument", message: "Job attachment storagePath does not match the requested job", httpStatus: 400 };
@@ -78,12 +78,13 @@ function validateJobAttachmentsForWrite(
   companyPublicId: string,
   uid: string | null | undefined,
   publicJobId: string,
+  attachmentUploadId?: string | null,
 ): NormalizedJobAttachmentPayload {
   const normalizedPhotos = attachments.photos?.map((photo) => ({
-    storagePath: validateJobAttachmentStoragePath(photo.storagePath, companyPublicId, uid, publicJobId),
+    storagePath: validateJobAttachmentStoragePath(photo.storagePath, companyPublicId, uid, publicJobId, attachmentUploadId),
   }));
   const normalizedSignature = attachments.signature
-    ? { storagePath: validateJobAttachmentStoragePath(attachments.signature.storagePath, companyPublicId, uid, publicJobId) }
+    ? { storagePath: validateJobAttachmentStoragePath(attachments.signature.storagePath, companyPublicId, uid, publicJobId, attachmentUploadId) }
     : attachments.signature ?? undefined;
   return {
     ...(normalizedPhotos !== undefined ? { photos: normalizedPhotos } : {}),
@@ -128,29 +129,71 @@ function buildJobMetaPatch(payload: any, existingMeta: Record<string, unknown> |
   return meta;
 }
 
-function normalizeParts(parts: unknown): Array<{ partId?: string; partName?: string; qty: number }> {
+function normalizeJobParts(parts: unknown): Array<{ partId?: string; partName?: string; qty: number }> {
   if (!Array.isArray(parts)) return [];
   return parts.map((part, index) => {
     const qty = Number((part as any)?.qty ?? (part as any)?.quantity ?? 0);
     if (!Number.isFinite(qty) || qty < 0) {
       throw { code: "invalid-argument", message: `parts[${index}].qty must be non-negative`, httpStatus: 400 };
     }
-    const partId = optionalTrimmedString((part as any)?.partId, 128);
-    const partName = optionalTrimmedString((part as any)?.partName, 240);
+    const partId = optionalTrimmedString((part as any)?.partId ?? (part as any)?.id, 128);
+    const partName = optionalTrimmedString((part as any)?.partName ?? (part as any)?.name, 240);
     return { partId: partId || undefined, partName: partName || undefined, qty };
   });
 }
 
-function normalizePartsUsed(parts: unknown): Array<{ partId?: string; partName?: string; qty: number }> {
-  if (!Array.isArray(parts)) return [];
-  return parts.map((part, index) => {
-    const quantity = Number((part as any)?.quantity ?? (part as any)?.qty ?? 0);
-    if (!Number.isFinite(quantity) || quantity < 0) {
-      throw { code: "invalid-argument", message: `partsUsed[${index}].quantity must be non-negative`, httpStatus: 400 };
+async function resolveJobPartRows(
+  companyId: string,
+  parts: Array<{ partId?: string; partName?: string; qty: number }>,
+  ctx: EdgeFunctionContext,
+): Promise<Array<{ inventory_part_id: string | null; part_name_snapshot: string | null; quantity: number; created_at: string }>> {
+  if (parts.length === 0) return [];
+
+  const supabase = createSupabaseClient(ctx.env);
+  const now = new Date().toISOString();
+  const numericPartNos = Array.from(new Set(
+    parts
+      .map((part) => optionalTrimmedString(part.partId, 128))
+      .filter((partId): partId is string => typeof partId === 'string' && partId.length > 0 && /^\d+$/.test(partId))
+      .map((partId) => Number(partId)),
+  ));
+
+  const partByPublicNo = new Map<number, { id: string; name: string | null }>();
+  if (numericPartNos.length > 0) {
+    const { data: partRows, error } = await supabase
+      .from("inventory_parts")
+      .select("id, part_no, name")
+      .eq("company_id", companyId)
+      .in("part_no", numericPartNos);
+    if (error) {
+      throw { code: "internal", message: "Failed to resolve job part references", httpStatus: 500 };
     }
-    const partId = optionalTrimmedString((part as any)?.partId ?? (part as any)?.id, 128);
-    const partName = optionalTrimmedString((part as any)?.partName ?? (part as any)?.name, 240);
-    return { partId: partId || undefined, partName: partName || undefined, qty: quantity };
+    for (const row of partRows || []) {
+      if (row?.id && row?.part_no != null) {
+        partByPublicNo.set(Number(row.part_no), {
+          id: String(row.id),
+          name: row.name ? String(row.name) : null,
+        });
+      }
+    }
+  }
+
+  return parts.map((part) => {
+    const rawPartId = optionalTrimmedString(part.partId, 128);
+    const resolvedPart = rawPartId && /^\d+$/.test(rawPartId)
+      ? partByPublicNo.get(Number(rawPartId)) ?? null
+      : (rawPartId && isUuidLike(rawPartId) ? { id: rawPartId, name: null } : null);
+
+    if (rawPartId && !resolvedPart) {
+      throw { code: "not-found", message: `Inventory part not found for partId=${rawPartId}`, httpStatus: 404 };
+    }
+
+    return {
+      inventory_part_id: resolvedPart?.id ?? null,
+      part_name_snapshot: part.partName || resolvedPart?.name || null,
+      quantity: part.qty,
+      created_at: now,
+    };
   });
 }
 
@@ -252,8 +295,7 @@ async function maybeResolveClient(
       .eq("client_no", Number(cidStr))
       .maybeSingle();
     client = data || null;
-  }
-  if (!client) {
+  } else {
     const { data } = await supabase
       .from("clients")
       .select("id, name, phone")
@@ -293,8 +335,7 @@ async function maybeResolveAssignee(
       .eq("status", "active")
       .maybeSingle();
     membership = data || null;
-  }
-  if (!membership) {
+  } else {
     const { data } = await supabase
       .from("company_memberships")
       .select("id, member_no, display_name")
@@ -316,69 +357,47 @@ async function maybeResolveAssignee(
   };
 }
 
-async function getMembershipSummaryById(
+async function batchGetMembershipSummaries(
   companyId: string,
-  membershipId: string | null | undefined,
+  membershipIds: Array<string | null | undefined>,
   ctx: EdgeFunctionContext,
-): Promise<{ wid: string | null; wname: string | null } | null> {
-  const normalizedMembershipId = optionalTrimmedString(membershipId, 128);
-  if (!normalizedMembershipId) return null;
+): Promise<Map<string, { wid: string | null; wname: string | null }>> {
+  const unique = Array.from(new Set(
+    membershipIds
+      .map((id) => optionalTrimmedString(id, 128))
+      .filter((id): id is string => typeof id === "string"),
+  ));
+  if (unique.length === 0) return new Map();
 
   const supabase = createSupabaseClient(ctx.env);
-  const { data: membership, error } = await supabase
+  const { data: rows, error } = await supabase
     .from("company_memberships")
-    .select("member_no, display_name")
+    .select("id, member_no, display_name")
     .eq("company_id", companyId)
-    .eq("id", normalizedMembershipId)
-    .eq("status", "active")
-    .maybeSingle();
+    .in("id", unique)
+    .eq("status", "active");
 
   if (error) {
-    throw { code: "internal", message: "Failed to resolve membership", httpStatus: 500 };
+    throw { code: "internal", message: "Failed to resolve memberships", httpStatus: 500 };
   }
-  if (!membership) return null;
 
-  return {
-    wid: membership.member_no != null ? String(membership.member_no) : null,
-    wname: membership.display_name || null,
-  };
-}
-
-async function bumpJobsVersion(companyId: string, ctx: EdgeFunctionContext): Promise<void> {
-  const supabase = createSupabaseClient(ctx.env);
-  const now = new Date().toISOString();
-  const { data: state } = await supabase
-    .from("company_sync_state")
-    .select("jobs_version")
-    .eq("company_id", companyId)
-    .maybeSingle();
-
-  if (!state) {
-    const { error: insertError } = await supabase.from("company_sync_state").insert({
-      company_id: companyId,
-      jobs_version: 1,
-      updated_at: now,
-    });
-    if (insertError) {
-      throw { code: "internal", message: "Failed to initialize jobs sync state", httpStatus: 500 };
+  const result = new Map<string, { wid: string | null; wname: string | null }>();
+  for (const row of rows || []) {
+    if (row?.id) {
+      result.set(String(row.id), {
+        wid: row.member_no != null ? String(row.member_no) : null,
+        wname: row.display_name || null,
+      });
     }
-    return;
   }
-
-  const { error: updateError } = await supabase
-    .from("company_sync_state")
-    .update({ jobs_version: Number(state.jobs_version || 0) + 1, updated_at: now })
-    .eq("company_id", companyId);
-  if (updateError) {
-    throw { code: "internal", message: "Failed to bump jobs sync state", httpStatus: 500 };
-  }
+  return result;
 }
 
-async function mapJobRecordForResponse(job: any, ctx: EdgeFunctionContext): Promise<any> {
+async function mapJobRecordForResponse(job: any, ctx: EdgeFunctionContext, publicCompanyId?: string | null): Promise<any> {
   const supabase = createSupabaseClient(ctx.env);
   const meta = job.meta && typeof job.meta === "object" && !Array.isArray(job.meta) ? job.meta as Record<string, unknown> : {};
 
-  const [{ data: parts }, { data: attachments }, assigneeSummary, creatorSummary] = await Promise.all([
+  const [{ data: parts }, { data: attachments }, membershipSummaries] = await Promise.all([
     supabase
       .from("job_part_usages")
       .select("inventory_part_id, part_name_snapshot, quantity")
@@ -387,9 +406,19 @@ async function mapJobRecordForResponse(job: any, ctx: EdgeFunctionContext): Prom
       .from("job_attachments")
       .select("storage_path, kind")
       .eq("job_id", job.id),
-    getMembershipSummaryById(String(job.company_id), job.assigned_membership_id, ctx),
-    getMembershipSummaryById(String(job.company_id), job.created_by_membership_id, ctx),
+    batchGetMembershipSummaries(
+      String(job.company_id),
+      [job.assigned_membership_id, job.created_by_membership_id],
+      ctx,
+    ),
   ]);
+
+  const assigneeSummary = job.assigned_membership_id
+    ? (membershipSummaries.get(String(job.assigned_membership_id)) ?? null)
+    : null;
+  const creatorSummary = job.created_by_membership_id
+    ? (membershipSummaries.get(String(job.created_by_membership_id)) ?? null)
+    : null;
 
   const photoRefs = (attachments || [])
     .filter((attachment: any) => String(attachment.kind) === "photo")
@@ -420,7 +449,7 @@ async function mapJobRecordForResponse(job: any, ctx: EdgeFunctionContext): Prom
     jobId: String(job.job_no || job.id),
     jobNo: job.job_no,
     status: String(job.status),
-    companyId: String(job.company_id),
+    companyId: String(publicCompanyId || job.company_id),
     title: job.title || "",
     description: job.description || "",
     notes: job.notes || "",
@@ -484,15 +513,18 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   const priority = optionalTrimmedString(payload?.priority, 40) || "";
   const dueAt = parseDateOrNull(payload?.dueAt, "dueAt");
   const parts = Object.prototype.hasOwnProperty.call(payload || {}, "partsUsed")
-    ? normalizePartsUsed(payload?.partsUsed)
-    : normalizeParts(payload?.parts);
+    ? normalizeJobParts(payload?.partsUsed)
+    : normalizeJobParts(payload?.parts);
   const status = jobType === "pending" ? "pending" : "finished";
   const now = new Date().toISOString();
   const attachments = normalizeAttachmentPayload(payload);
 
-  const client = await maybeResolveClient(companyId, payload?.cid, payload?.cname, payload?.cphone, ctx);
-  const assignee = await maybeResolveAssignee(companyId, payload?.wid, ctx);
+  const [client, assignee] = await Promise.all([
+    maybeResolveClient(companyId, payload?.cid, payload?.cname, payload?.cphone, ctx),
+    maybeResolveAssignee(companyId, payload?.wid, ctx),
+  ]);
   const idempotencyKey = optionalTrimmedString(payload?.idempotencyKey, 128) || null;
+  const attachmentUploadId = optionalTrimmedString(payload?.attachmentUploadId, 128) || null;
 
   const supabase = createSupabaseClient(ctx.env);
   if (idempotencyKey) {
@@ -503,7 +535,7 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
       .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (duplicateJob) {
-      return await mapJobRecordForResponse(duplicateJob, ctx);
+      return await mapJobRecordForResponse(duplicateJob, ctx, resolvedCompany.publicCompanyId);
     }
   }
 
@@ -513,6 +545,7 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     resolvedCompany.publicCompanyId,
     ctx.auth?.uid || null,
     String(nextJobNo),
+    attachmentUploadId,
   );
   const { data: inserted, error: insertError } = await supabase
     .from("jobs")
@@ -555,12 +588,9 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   }
 
   if (parts.length > 0) {
-    const partRows = parts.map((part) => ({
+    const partRows = (await resolveJobPartRows(companyId, parts, ctx)).map((part) => ({
       job_id: inserted.id,
-      inventory_part_id: part.partId || null,
-      part_name_snapshot: part.partName || null,
-      quantity: part.qty,
-      created_at: now,
+      ...part,
     }));
     const { error: partsError } = await supabase.from("job_part_usages").insert(partRows);
     if (partsError) {
@@ -609,8 +639,8 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     }
   }
 
-  await bumpJobsVersion(companyId, ctx);
-  return await mapJobRecordForResponse(inserted, ctx);
+  await bumpCompanySyncVersion(companyId, "jobs_version", ctx);
+  return await mapJobRecordForResponse(inserted, ctx, resolvedCompany.publicCompanyId);
 }
 
 export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
@@ -632,6 +662,11 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     const assignedMatchesMembership = assignedMembershipId && assignedMembershipId === membership.id;
     if (!assignedMatchesMembership) {
       throw { code: "permission-denied", message: "You can only update your assigned jobs", httpStatus: 403 };
+    }
+    if (
+      payload?.cid !== undefined || payload?.cname !== undefined || payload?.cphone !== undefined || payload?.wid !== undefined
+    ) {
+      throw { code: "permission-denied", message: "Assigned workers cannot change client or assignee fields", httpStatus: 403 };
     }
   }
 
@@ -695,25 +730,21 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   }
 
   if (payload?.parts !== undefined || payload?.partsUsed !== undefined) {
-    const parts = payload?.partsUsed !== undefined ? normalizePartsUsed(payload.partsUsed) : normalizeParts(payload.parts);
+    const parts = payload?.partsUsed !== undefined ? normalizeJobParts(payload.partsUsed) : normalizeJobParts(payload.parts);
     const { data: existingParts } = await supabase
       .from("job_part_usages")
       .select("inventory_part_id, part_name_snapshot, quantity, created_at")
       .eq("job_id", jobId);
 
+    const resolvedPartRows = parts.length > 0
+      ? (await resolveJobPartRows(companyId, parts, ctx)).map((part) => ({ job_id: jobId, ...part }))
+      : [];
     const { error: deletePartsError } = await supabase.from("job_part_usages").delete().eq("job_id", jobId);
     if (deletePartsError) {
       throw { code: "internal", message: "Failed to reset job parts", httpStatus: 500 };
     }
-    if (parts.length > 0) {
-      const rows = parts.map((part) => ({
-        job_id: jobId,
-        inventory_part_id: part.partId || null,
-        part_name_snapshot: part.partName || null,
-        quantity: part.qty,
-        created_at: new Date().toISOString(),
-      }));
-      const { error: partsError } = await supabase.from("job_part_usages").insert(rows);
+    if (resolvedPartRows.length > 0) {
+      const { error: partsError } = await supabase.from("job_part_usages").insert(resolvedPartRows);
       if (partsError) {
         if (Array.isArray(existingParts) && existingParts.length > 0) {
           const { error: restoreError } = await supabase.from("job_part_usages").insert(
@@ -774,8 +805,8 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     }
   }
 
-  await bumpJobsVersion(companyId, ctx);
-  return await mapJobRecordForResponse(updatedJob, ctx);
+  await bumpCompanySyncVersion(companyId, "jobs_version", ctx);
+  return await mapJobRecordForResponse(updatedJob, ctx, resolvedCompany.publicCompanyId);
 }
 
 export async function deleteJobV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
@@ -813,7 +844,7 @@ export async function deleteJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     throw { code: "internal", message: "Failed to delete job", httpStatus: 500 };
   }
 
-  await bumpJobsVersion(companyId, ctx);
+  await bumpCompanySyncVersion(companyId, "jobs_version", ctx);
   return { deleted: true, jobId: String(existingJob.job_no || requestedJobId) };
 }
 
@@ -849,8 +880,8 @@ export async function acceptJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     throw { code: "not-found", message: "Job not found", httpStatus: 404 };
   }
 
-  await bumpJobsVersion(companyId, ctx);
-  return await mapJobRecordForResponse(accepted, ctx);
+  await bumpCompanySyncVersion(companyId, "jobs_version", ctx);
+  return await mapJobRecordForResponse(accepted, ctx, resolvedCompany.publicCompanyId);
 }
 
 export async function createJobFileDownloadUrlV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {

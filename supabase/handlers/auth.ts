@@ -8,6 +8,8 @@
 import {
   allocateNextCompanyCounter,
   allocateNextSystemCounter,
+  bumpCompanySyncVersion,
+  enabledModulesForTier,
   EdgeFunctionContext,
   createSupabaseClient,
   optionalTrimmedString,
@@ -35,49 +37,6 @@ function tierForRole(role: string, accountType: string): string {
   return "Basic";
 }
 
-function enabledModulesForTier(tier: string): Record<string, boolean> {
-  if (tier === "Team") {
-    return {
-      homepage: true,
-      settings: true,
-      workers: true,
-      clients: true,
-      jobs: true,
-      inventory: true,
-      documents: true,
-      support: true,
-      admin: false,
-      upgrade: true,
-    };
-  }
-  if (tier === "Solo") {
-    return {
-      homepage: true,
-      settings: true,
-      workers: false,
-      clients: true,
-      jobs: true,
-      inventory: true,
-      documents: true,
-      support: true,
-      admin: false,
-      upgrade: true,
-    };
-  }
-  return {
-    homepage: true,
-    settings: true,
-    workers: false,
-    clients: true,
-    jobs: false,
-    inventory: false,
-    documents: true,
-    support: true,
-    admin: false,
-    upgrade: true,
-  };
-}
-
 async function requireManagerOrDev(
   companyId: string,
   ctx: EdgeFunctionContext,
@@ -87,62 +46,26 @@ async function requireManagerOrDev(
   }
 
   const supabase = createSupabaseClient(ctx.env);
-  const { data: user } = await supabase
-    .from("app_users")
-    .select("system_role")
-    .eq("id", ctx.auth.uid)
-    .maybeSingle();
+  const [{ data: user }, { data: membership, error }] = await Promise.all([
+    supabase.from("app_users").select("system_role").eq("id", ctx.auth.uid).maybeSingle(),
+    supabase
+      .from("company_memberships")
+      .select("id, role")
+      .eq("company_id", companyId)
+      .eq("user_id", ctx.auth.uid)
+      .eq("status", "active")
+      .single(),
+  ]);
+
   if (String(user?.system_role || "").toLowerCase() === "dev") {
     return { callerMembershipId: null };
   }
-
-  const { data: membership, error } = await supabase
-    .from("company_memberships")
-    .select("id, role")
-    .eq("company_id", companyId)
-    .eq("user_id", ctx.auth.uid)
-    .eq("status", "active")
-    .single();
 
   if (error || !membership || String(membership.role) !== "manager") {
     throw { code: "permission-denied", message: "Manager role required", httpStatus: 403 };
   }
 
   return { callerMembershipId: membership.id };
-}
-
-async function bumpWorkersVersion(companyId: string, ctx: EdgeFunctionContext): Promise<void> {
-  const supabase = createSupabaseClient(ctx.env);
-  const now = new Date().toISOString();
-  const { data: state } = await supabase
-    .from("company_sync_state")
-    .select("workers_version")
-    .eq("company_id", companyId)
-    .maybeSingle();
-
-  if (!state) {
-    const { error: insertError } = await supabase.from("company_sync_state").insert({
-      company_id: companyId,
-      jobs_version: 0,
-      documents_version: 0,
-      clients_version: 0,
-      workers_version: 1,
-      company_inventory_version: 0,
-      updated_at: now,
-    });
-    if (insertError) {
-      throw { code: "internal", message: "Failed to initialize workers sync state", httpStatus: 500 };
-    }
-    return;
-  }
-
-  const { error: updateError } = await supabase
-    .from("company_sync_state")
-    .update({ workers_version: Number(state.workers_version || 0) + 1, updated_at: now })
-    .eq("company_id", companyId);
-  if (updateError) {
-    throw { code: "internal", message: "Failed to bump workers sync state", httpStatus: 500 };
-  }
 }
 
 async function nextMemberNo(companyId: string, ctx: EdgeFunctionContext): Promise<number> {
@@ -227,7 +150,7 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
       throw { code: "internal", message: "Failed to create worker membership", httpStatus: 500 };
     }
 
-    await bumpWorkersVersion(companyId, ctx);
+    await bumpCompanySyncVersion(companyId, "workers_version", ctx);
     return {
       success: true,
       uid: workerUid,
@@ -256,7 +179,7 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
       throw { code: "internal", message: "Failed to delete worker", httpStatus: 500 };
     }
 
-    await bumpWorkersVersion(companyId, ctx);
+    await bumpCompanySyncVersion(companyId, "workers_version", ctx);
     return { success: true, message: "Worker account deleted successfully" };
   }
 
@@ -292,7 +215,7 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
     throw { code: "internal", message: "Failed to update worker profile", httpStatus: 500 };
   }
 
-  await bumpWorkersVersion(companyId, ctx);
+  await bumpCompanySyncVersion(companyId, "workers_version", ctx);
   return { success: true, message: "Worker account updated successfully" };
 }
 

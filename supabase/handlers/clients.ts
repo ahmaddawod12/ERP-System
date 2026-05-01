@@ -4,6 +4,7 @@
  */
 import {
   allocateNextCompanyCounter,
+  bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
   optionalTrimmedString,
@@ -35,43 +36,6 @@ async function requireActiveMembership(
   }
 
   return membership;
-}
-
-async function bumpClientsVersion(companyId: string, ctx: EdgeFunctionContext): Promise<void> {
-  const supabase = createSupabaseClient(ctx.env);
-  const now = new Date().toISOString();
-  const { data: state, error: stateError } = await supabase
-    .from("company_sync_state")
-    .select("clients_version")
-    .eq("company_id", companyId)
-    .maybeSingle();
-
-  if (stateError) {
-    ctx.logger.warn("Failed reading company_sync_state", { companyId, error: stateError.message });
-    return;
-  }
-
-  if (!state) {
-    const { error: insertError } = await supabase.from("company_sync_state").insert({
-      company_id: companyId,
-      clients_version: 1,
-      updated_at: now,
-    });
-    if (insertError) {
-      ctx.logger.warn("Failed initializing company_sync_state", { companyId, error: insertError.message });
-    }
-    return;
-  }
-
-  const nextVersion = Number(state.clients_version || 0) + 1;
-  const { error: updateError } = await supabase
-    .from("company_sync_state")
-    .update({ clients_version: nextVersion, updated_at: now })
-    .eq("company_id", companyId);
-
-  if (updateError) {
-    ctx.logger.warn("Failed bumping clients_version", { companyId, error: updateError.message });
-  }
 }
 
 export async function addClientV1(payload: any, ctx: EdgeFunctionContext): Promise<any> {
@@ -116,7 +80,7 @@ export async function addClientV1(payload: any, ctx: EdgeFunctionContext): Promi
     throw { code: "internal", message: "Failed to create client", httpStatus: 500 };
   }
 
-  await bumpClientsVersion(companyId, ctx);
+  await bumpCompanySyncVersion(companyId, "clients_version", ctx);
 
   return {
     clientId: insertedClient.id,
@@ -176,7 +140,7 @@ export async function updateClientV1(payload: any, ctx: EdgeFunctionContext): Pr
     throw { code: "internal", message: "Failed to update client", httpStatus: 500 };
   }
 
-  await bumpClientsVersion(companyId, ctx);
+  await bumpCompanySyncVersion(companyId, "clients_version", ctx);
 
   return {
     clientId: updatedClient.id,
@@ -217,7 +181,7 @@ export async function deleteClientV1(payload: any, ctx: EdgeFunctionContext): Pr
     throw { code: "internal", message: "Failed to delete client", httpStatus: 500 };
   }
 
-  await bumpClientsVersion(companyId, ctx);
+  await bumpCompanySyncVersion(companyId, "clients_version", ctx);
 
   return { deleted: true };
 }

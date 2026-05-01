@@ -131,7 +131,7 @@ export async function resolveJobFileUri(
 
 export async function uploadFileToJobStorage(
   fileRef: string | JobFileRef | null | undefined,
-  uid: string,
+  companyId: string,
   jobId: string,
   fileName: string,
 ): Promise<{ storagePath: string; uploaded: boolean }> {
@@ -145,17 +145,15 @@ export async function uploadFileToJobStorage(
     throw new Error('Job file must be a local URI or canonical storage reference');
   }
 
-  const storagePath = `${uid}/jobs/${jobId}/${fileName}`;
+  const storagePath = `companies/${companyId}/jobs/${jobId}/${fileName}`;
   const storageRef = fbStorage().ref(storagePath);
-  const response = await fetch(localUri);
-  const blob = await response.blob();
-  await storageRef.put(blob);
+  await storageRef.putFile(localUri);
 
   return { storagePath, uploaded: true };
 }
 
 export async function uploadJobFilesForStorage(
-  uid: string,
+  companyId: string,
   jobId: string,
   photos: Array<string | JobFileRef>,
   signature: string | JobFileRef | null,
@@ -169,7 +167,7 @@ export async function uploadJobFilesForStorage(
   const uploadedStoragePaths: string[] = [];
 
   for (let i = 0; i < photos.length; i++) {
-    const photoRef = await uploadFileToJobStorage(photos[i], uid, jobId, `photo_${i + 1}.jpg`);
+    const photoRef = await uploadFileToJobStorage(photos[i], companyId, jobId, `photo_${i + 1}.jpg`);
     photoRefs.push(photoRef);
     if (photoRef.uploaded && photoRef.storagePath) {
       uploadedStoragePaths.push(photoRef.storagePath);
@@ -177,7 +175,7 @@ export async function uploadJobFilesForStorage(
   }
 
   if (signature) {
-    signatureRef = await uploadFileToJobStorage(signature, uid, jobId, 'signature.png');
+    signatureRef = await uploadFileToJobStorage(signature, companyId, jobId, 'signature.png');
     if (signatureRef.uploaded && signatureRef.storagePath) {
       uploadedStoragePaths.push(signatureRef.storagePath);
     }

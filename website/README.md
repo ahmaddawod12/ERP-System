@@ -11,6 +11,7 @@
 - Proxies protected operations to backend gateways instead of writing directly to protected data stores.
 - Uses short-lived browser auth transport state and avoids persisting refresh tokens in `localStorage`.
 - The website uses split HttpOnly cookies: signed metadata in `__session`, current bearer token in `__session_access` for `/api/callable` and `/api/read-model` proxy auth before client auth rehydrates.
+- Protected session validation requires both `__session` and `__session_access`; signed metadata without the bearer cookie is treated as unauthenticated.
 - Polls SQL-backed `document_tasks` through `/api/read-model` for preview/generate progress.
 
 ## Key Responsibilities
@@ -22,6 +23,7 @@
 - Tax invoice creation delegates to backend draft-document reservation and async PDF scheduling.
 - Website document and job-file access rely on backend-issued short-lived URLs; protected storage paths are not read directly by the browser.
 - Registration signs the user in immediately before redirecting into onboarding so the cookie-backed session survives the handoff.
+- Contact request spam/challenge validation failures return stable `400` API errors (`spam_rejected`, `invalid_challenge`) instead of ambiguous server failures.
 
 ## Required Patterns
 

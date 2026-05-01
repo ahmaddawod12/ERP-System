@@ -4,11 +4,17 @@ import {
   buildLoginRedirectUrl,
   hasValidRevocationCheckedSession,
 } from "@/lib/auth/session-middleware";
-
-const SESSION_COOKIE = "__session";
+import { SESSION_ACCESS_TOKEN_COOKIE, SESSION_COOKIE } from "@/lib/auth/session-token";
 
 function clearSessionCookie(response: NextResponse) {
   response.cookies.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
+  response.cookies.set(SESSION_ACCESS_TOKEN_COOKIE, "", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",

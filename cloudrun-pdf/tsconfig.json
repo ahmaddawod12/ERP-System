@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "node16",
+    "allowJs": true,
+    "checkJs": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "access-store.ts",
+    "company-sync-store.ts",
+    "document-payload.ts",
+    "document-store.ts",
+    "emailService.ts",
+    "htmlTemplate.ts",
+    "index.ts",
+    "persistence.ts",
+    "task-store.ts",
+    "tests/**/*.js",
+    "types/**/*.d.ts"
+  ],
+  "exclude": ["dist"]
+}

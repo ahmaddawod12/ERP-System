@@ -1,226 +1,158 @@
-# Cloud Functions that we need for the app #
+# Backend
 
-## Add/Delete/Edit Worker Users in Safe way 
-* We need function that when the manager wants to add a worker , it adds Authenticated user✅
-* We need function that when manager wants to delete a worker , it checks if the worker from the same company and his role is worker based on profile folder in Firebase Cloud Store then it deletes his Authenticated user✅
-* We need function that when manager wants to edit worker data , it checks if the worker from the same company and his role is worker based on profile folder in Firebase Cloud Store then it edits authenticated user's email or password based on what the manager added✅
+This document summarizes the active backend boundaries in May 2026.
 
-## Tasks Finished
+## Current Backend Reality
 
-### Add/Delete/Edit Worker Users in Safe way 
-* addWorker,editWorker,deleteWorker works perfectly and tested
+- The top-level `functions/` package is not present in this repository.
+- Active in-repo backend entry surfaces are implemented under `supabase/functions/` plus Cloud Run services.
+- Supabase Auth is the active bearer-token provider.
+- Shared edge auth verification is expected to enforce the Supabase JWT issuer/audience and reject empty `uid` claims.
+- SQL is the primary persistence layer for company-scoped ERP data.
+- Firestore is still used for selected operational paths, compatibility mirrors, rules-backed reads, and residual legacy surfaces.
+- Supabase Edge Functions in `supabase/functions/` are the maintained gateway surface in this workspace.
 
+## Service Boundaries
 
+### supabase/functions/
 
-## Israel Taxes API
+The `supabase/functions/` package is the active trust boundary in this workspace. It is responsible for:
 
-* https://github.com/ISRTaxesOpenAPI/-postmanExample
+- auth and company-scope verification
+- protected mutations and read-model endpoints
+- rate limiting and idempotency
+- document task orchestration
+- dispatching trusted preview/generate work to `cloudrun-pdf`
+- signed URL issuance
+- archive retrieval
+- tax authority flows
+- push/email side-effect coordination
+- compatibility writes to Firestore where still required
 
-* Token :https://secapp.taxes.gov.il/OpenApiUserGuide/OpenApiUserGuide.pdf
+Read-model calls are kind-based and must preserve compatibility with website/mobile `kind` payload contracts.
+Job contracts must expose public sequential IDs and full attachment/meta fields at that boundary, while resolving internal UUID rows only inside handlers.
+Because read-model edge code uses the Supabase service role, it must explicitly apply the runtime role matrix in code before returning rows: worker/business-user job reads are membership-scoped, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
 
-* Document https://www.gov.il/BlobFolder/generalpage/israel-invoice-160723/he/IncomeTax_software-houses-100923.pdf
-### Token Generation
-#### סוגי השרותים
-* שירותים ללא הזדהות ACCESS OPEN
-*  הזדהות עם שירותים(ONE TIME/LONG TIME)
-* פנייה להפעלת שירות עם הזדהות חייבת להיות מלווה עם TOKEN
- לכל שירות יש תיעוד בפורטל המפתחים איזה סוג TOKEN נדרש להפעלתו (TIME LONG/TIME ONE )
+Important active entry surfaces include:
 
-* this is Node js example how to get Token https://github.com/ISRTaxesOpenAPI/nodeJSExample
+- `mutationGatewayV1`
+- `mutationGatewayMeWest1V1`
+- `readModelV1`
+- path-based endpoint handlers under `supabase/functions/**/index.ts`
 
-const axios = require('axios');
+### cloudrun-pdf/
 
-//This module is used to get the token from url
-module.exports = function  getToken(url,grantType,authCode,tokenRedirectUri,scope,clientID,clientSecret,callback) {
-    //Get the authCode
-    console.log(url +"/ url"+grantType +"/grantType "+authCode +"/authCode "+tokenRedirectUri +"/tokenRedirectUri "+scope +"/ scope")
-    if (authCode == null) {
-        console.log('No authCode found');
-    }
-    else {
-        //Send an http post request to get Token 
-        axios.post(url,
-            {
-                "grant_type": grantType,
-                "code": authCode,
-                "redirect_uri": tokenRedirectUri,
-                "scope": scope
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Authorization': 'Basic ' + Buffer.from(clientID + ':' + clientSecret).toString('base64')
-                }
-            })
-            .then(function (response) {
-                console.log("get token success: "+response);
-                return callback(response.data);
-            })
-            .catch(function (error) {
-                console.log("get token error: "+error);
-            }
-            );
-    }
-}
+This service owns PDF preview and generation. It:
 
+- validates requester identity and company scope
+- renders previews and final PDFs
+- stores files by canonical `storagePath`
+- finalizes task and document state
+- preserves create-only semantics for new generated documents
 
-### Document Generation
+### cloudrun-archiver/
 
+This batch job owns monthly archive creation and verified deletion. It:
 
-Allocation Number Request – Approval API (Supplier Side / קבלת מספר הקצאה – צד הספק).  
-Purpose: Requesting an Allocation Number (מספר הקצאה) from the Israeli Tax Authority is a mandatory condition for VAT input deduction on tax invoices.
+- snapshots eligible finished jobs and documents
+- drains paginated SQL reads for the full target month
+- writes archive payloads to Cloud Storage
+- verifies integrity by checksum before deletion
+- deletes only the exact IDs captured in the verified archive
 
-Sandbox Endpoint:  
-POST https://openapi.taxes.gov.il/shaam/tsandbox/Invoices/v1/Approval
+### packages/db/
 
-Headers:  
-Content-Type: application/json  
-Accept: application/json  
-Authorization: Bearer <OAuth2 Token>
+This package is the SQL persistence layer. It contains:
 
-Main Request Fields (JSON body):
+- schema definitions
+- migrations
+- typed access helpers
+- read-model helpers used by backend services
 
-Required fields that we need for json in our case:  
-Invoice_ID – unique internal invoice identifier (string).  
-Invoice_Type – document type code (number).  
-Vat_Number – supplier VAT number (number).  
-Invoice_Reference_Num : מספר סידורי
-Customer_Name 
-Invoice_Date – invoice date (YYYY-MM-DD).  
-Invoice_Issuance_Date – issue date, system-generated (YYYY-MM-DD).  
-Accounting_Software_Number – accounting software registration number, or 99999999 if not registered (number).  
-Amount_Before_Discount
-Discount
-Payment_Amount – total amount before VAT (number).  
-VAT_Amount – VAT amount (number).  
-Payment_Amount_Including_VAT – total amount including VAT (number).
+### supabase/
 
-Optional Field(we will think about it later)
-Items[] – line items (products or services).
+This directory contains the backend gateways and extracted handler logic. `supabase/handlers/` remains the main migration work area for parity hardening and runtime rollout.
 
-Supported Document Types (official codes and Hebrew names as in documentation):
+## Active Data Model Responsibilities
 
-300 – Invoice / Transaction Invoice – חשבונית / חשבונית עסקה – allocation not required.  
-305 – Tax Invoice – חשבונית מס – allocation required.  
-310 – Consolidated Tax Invoice – חשבונית מס ריכוז – allocation required.  
-320 – Tax Invoice + Receipt – חשבונית מס / קבלה – allocation required.  
-330 – Tax Credit Invoice – חשבונית מס זיכוי – allocation required.   
-332 – Proforma / Transaction Account – חשבון עסקה / פרופורמה – allocation required as pre-approval.
+### SQL-first areas
 
-Success response example (allocation approved):  
-{
-  "Status": 200,
-  "Message": "Invoice approved",
-  "Confirmation_Number": "2023062805428380179010998"
-}
+Primary ERP entities live in SQL, including:
 
-Only the rightmost 9 digits of the allocation number must be printed on the invoice under the Hebrew label “הקצאה מספר:”.
+- companies and profiles
+- memberships and counters
+- clients
+- jobs and job attachments
+- inventory
+- documents and document tasks
+- invites
+- support conversations
+- tax workflow state
+- operational delivery, rate-limit, and archive tables
 
-Transaction Invoice (חשבונית עסקה, code 300): Informational document only, does not allow VAT deduction. May receive a pre-approval allocation using document type 332. Must include the note: “לא ניתן לקזז מס תשומות בגין מסמך זה”.
+### Firestore residual areas
 
-Tax Invoice (חשבונית מס, code 305): Official VAT document, allocation number is mandatory, allows VAT input deduction.
+Firestore remains active for:
 
-Tax Invoice + Receipt (חשבונית מס / קבלה, code 320): Combined document, allocation number is mandatory.
+- company ID allocation via `system/data/comid`
+- compatibility profile and cache mirrors
+- selected membership mirrors
+- document generation locks
+- residual admin and operational collections
+- remaining personal inventory surface
 
-Tax Credit Invoice (חשבונית מס זיכוי, code 330): Used for refunds or cancellations, amounts are logically negative, allocation number is mandatory.
+## Request Patterns
 
+### Website
 
-Response includes supplier and customer details, invoice dates, amounts, VAT values, and line items (Items[]).
+The website uses API proxy routes and signed HttpOnly `__session` cookies, then calls backend edge function endpoints.
+Those server routes authenticate backend calls from a verified split-cookie session: signed metadata in `__session`, current bearer token in HttpOnly `__session_access`.
 
-Error Response Codes (טבלת קודי שגיאה):
+### Mobile
 
-400 Bad Request – Invalid JSON syntax – validate request body.  
-401 Unauthorized – Invalid or expired OAuth token – refresh token.  
-403 Forbidden – Missing permissions – check service access rights.  
-404 Not Found – Invalid endpoint – verify URL.  
-406 Not Acceptable – VAT validation issue – verify VAT numbers and permissions.  
-422 Unprocessable Entity – Schema validation failed – fix field values according to schema.  
-500 Internal Server Error – Server-side error – contact support if persists.
+The mobile app attaches Supabase bearer tokens and calls backend edge gateway endpoints.
 
-* this is Node js example how to request approval with long time access token
-const axios = require('axios');
+### Direct SQL access
 
-module.exports = function createRequestWithToken(url,token) {
+Client applications must not bypass the backend and talk directly to SQL for protected ERP operations.
 
+## Development Guidance
 
-//send an http post with Authorization header 
-  axios.post(url,
-  {
-    
-        "Invoice_ID": "987654321",
-        "Vat_Number": 777777715,
-        "Invoice_Reference_Number": 975975975,
-        "Customer_VAT_Number": 18,
-        "Payment_Amount": 10000,
-        "VAT_Amount": 1700,
-        "Invoice_Sign": 1,
-        "Invoice_Type": 1,
-        "Invoice_Date": "02/18/2023",
-        "Charge_Reversal": 0
-      
-      //postdata
-  },
-  {
-      headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
-      }
-  })
-  .then(function (response) {
-    console.dir("api data request succses: "+ response.data)
+- Treat `supabase/functions/` and `supabase/handlers/` as the active in-repo backend surface.
+- Verify Supabase bearer tokens against the configured issuer/audience and fail closed on missing or empty `uid` claims.
+- Preserve canonical field names and status enums from `@smart-job/contracts`.
+- Preserve backend-only mutation boundaries for locked business collections.
+- Keep `storagePath` as the canonical persisted file reference.
+- Do not weaken idempotency, deduplication, or create-only semantics in document flows.
+- Allocate sequential identifiers through SQL counters; avoid `MAX + 1` allocation in concurrent mutation paths.
+- Normalize incoming/public `companyId` inputs to internal company UUIDs before SQL filters in handlers; public numeric IDs and internal UUIDs must use separate query paths.
+- When a handler needs to look up multiple membership records for the same company, batch the lookup with a single `.in("id", [...])` query rather than issuing one query per membership ID.
+- Parallelize independent DB lookups (e.g., client resolution and assignee resolution) with `Promise.all` instead of sequential `await` calls.
+- Resolve and validate dependent data (e.g., inventory part rows) before issuing destructive writes (e.g., deleting existing part usage rows) so failures leave the original state intact.
+- Normalize public job identifiers to internal rows inside handlers, but return public sequential job/member IDs back to website/mobile callers.
+- Return public membership identifiers such as `wid` at the boundary and do not leak internal membership UUIDs in invite or job flows.
+- Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
+- When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
+- Keep read-model filters wired through the edge layer: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
+- Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
+- Keep job file signed URLs bound to persisted attachment rows, not caller-selected prefixes.
+- Accept temporary `attachmentUploadId` references during job creation only long enough to validate and normalize them into canonical attachment rows/storage paths.
+- Keep document task result URLs semantically split by task type (`preview_url` vs `generate_url`) to avoid response-contract drift.
+- Keep invite redemption race-safe by consuming invite state atomically before membership finalization.
+- Keep preview/generate/tax document flows on the same SQL-backed draft-document plus `document_tasks` pipeline.
+- Require manager authorization for company inventory mutations and for cross-member inventory mutations.
+- Validate inventory location ownership against the resolved internal company UUID before applying movement updates.
+- Reject inventory underflow instead of clamping balances to zero during backend mutations.
+- Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
+- Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
+- Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.
+- Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.
+- Keep archived month reads behind backend handlers with fixed bucket/path derivation.
 
-    return response;
-  })
-  .catch(function (error) {
-      debugger
-      console.log("api data request error: "+error);
+## Runtime Note
 
-      if(error.response.status ==403){
-          console.log("403")
-    }
-      if(error.response.status ==401){
-          //post with refresh token to get new token 
-            console.log("401")
-      }
-  });
-}
+The migration goal remains runtime replacement without contract drift. During this period:
 
-* Response Success Approval:
-{
- "Status": 200,
- "Message": "Invoice approved",
- "Confirmation_number": "2023062805428380179010998"
-}
-* if theres any errors we will receive like this response
-"Status": 200,
- "Message": [
- {
- "errors": [
- {
- "code": 432,
- "message": "Customer VAT Number is incorrect",
- "param": "Customer_VAT_Number",
- "location": "validation"
- }
- ]
- },
- {
- "errors": [
- {
- "code": 434,
- "message": "Invoice date is more than two weeks
-old",
- "param": "Invoice_Date",
- "location": "validation"
- }
- ]
- }
- ],
- "Confirmation_Number": 0
-
-
-### Invoice Information Retrieval – Invoice Information API (Customer Side / קבלת פרטי חשבונית):  
-Sandbox Endpoint:  
-POST https://openapi.taxes.gov.il/shaam/tsandbox/invoice-information/v1/details
-
-* same way with the header but the json will contain the confirmation number
+- client payloads and response envelopes must stay stable
+- website and mobile app behavior should remain unchanged
+- some legacy Firebase backend paths may still exist outside this workspace, but source changes in this repo should target `supabase/functions/`

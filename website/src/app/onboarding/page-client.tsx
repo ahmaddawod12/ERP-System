@@ -1,0 +1,836 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { z } from "zod";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  Building2,
+  Check,
+  ChevronRight,
+  Globe2,
+  Palette,
+  UserRound,
+  Users,
+} from "lucide-react";
+import { PublicLayout } from "@/components/layout/public-layout";
+import { Card } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import type { Locale } from "@/lib/i18n/translations";
+import { useAuth } from "@/hooks/use-auth";
+import { useAppToast } from "@/hooks/use-toast";
+import { useLocale } from "@/hooks/use-i18n";
+import { useTheme } from "@/components/providers/theme-provider";
+import type { ClientApiResponse } from "@/lib/api/client";
+import { getClientApiErrorMessage } from "@/lib/api/client";
+import {
+  buildAuthedJsonHeaders,
+} from "@/lib/firebase/client-auth";
+import { cn } from "@/lib/utils";
+
+const schema = z
+  .object({
+    workspaceMode: z.enum(["solo", "business", "basic"]),
+    role: z.enum(["manager", "worker", "user", "basic"]),
+    name: z.string().min(2, "Name is required"),
+    phoneNumber: z.string().min(6, "Phone number is required"),
+    companyName: z.string().optional(),
+    businessNumber: z.string().optional(),
+    businessAddress: z.string().optional(),
+    businessPhone: z.string().optional(),
+    businessCity: z.string().optional(),
+    businessType: z.string().optional(),
+    joinCompanyId: z.string().optional(),
+    inviteCode: z.string().optional(),
+    language: z.enum(["en", "he", "ar"]),
+    theme: z.enum(["light", "dark"]),
+  })
+  .superRefine((value, ctx) => {
+    if (value.workspaceMode === "solo" && value.role !== "user") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Solo accounts use user role.",
+        path: ["role"],
+      });
+    }
+
+    if (value.workspaceMode === "basic" && value.role !== "basic") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Basic accounts use basic role.",
+        path: ["role"],
+      });
+    }
+
+    if (
+      value.workspaceMode === "business" &&
+      value.role !== "manager" &&
+      value.role !== "worker" &&
+      value.role !== "user" &&
+      value.role !== "basic"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Business accounts must use a supported business role.",
+        path: ["role"],
+      });
+    }
+
+    if (value.workspaceMode === "business" && value.role === "manager") {
+      if (!value.companyName) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Company name is required",
+          path: ["companyName"],
+        });
+      }
+      if (!value.businessNumber) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Business number is required",
+          path: ["businessNumber"],
+        });
+      }
+      if (!value.businessAddress) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Address is required",
+          path: ["businessAddress"],
+        });
+      }
+      if (!value.businessPhone) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Business phone is required",
+          path: ["businessPhone"],
+        });
+      }
+      if (!value.businessType) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Business type is required",
+          path: ["businessType"],
+        });
+      }
+    }
+
+    if (value.workspaceMode === "business" && ["worker", "user", "basic"].includes(value.role)) {
+      if (!value.joinCompanyId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "companyId is required",
+          path: ["joinCompanyId"],
+        });
+      }
+      if (!value.inviteCode) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Invite code is required",
+          path: ["inviteCode"],
+        });
+      }
+      if (value.joinCompanyId && !/^\d+$/.test(value.joinCompanyId.trim())) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "companyId must be numeric",
+          path: ["joinCompanyId"],
+        });
+      }
+    }
+  });
+
+type FormValues = z.infer<typeof schema>;
+
+const steps = [
+  {
+    title: "Account Model",
+    description: "Choose how you will run this workspace.",
+  },
+  {
+    title: "Profile",
+    description: "Set your role and personal details.",
+  },
+  {
+    title: "Company Setup",
+    description: "Create or join a company workspace.",
+  },
+  {
+    title: "Preferences",
+    description: "Pick language and visual style.",
+  },
+] as const;
+
+const profileDocPath = "users/{uid}/data/profile";
+const userCacheDocPath = "users/{uid}/data/cache";
+const companyRootDocPath = "companies/{companyId}";
+const companyWorkerDocPath = "companies/{companyId}/workers/{wid}";
+
+export default function OnboardingClient() {
+  const router = useRouter();
+  const { user, profile, refreshUserData } = useAuth();
+  const { toast } = useAppToast();
+  const { setLocale } = useLocale();
+  const { setTheme } = useTheme();
+  const [step, setStep] = useState(0);
+
+  const {
+    register,
+    handleSubmit,
+    watch,
+    trigger,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: {
+      workspaceMode: "solo",
+      role: "user",
+      language: "en",
+      theme: "light",
+    },
+  });
+
+  const workspaceMode = watch("workspaceMode");
+  const role = watch("role");
+  const showCompanySetup = useMemo(() => workspaceMode === "business", [workspaceMode]);
+  const totalSteps = steps.length;
+  const progress = Math.round(((step + 1) / totalSteps) * 100);
+  const isInviteJoinFlow = workspaceMode === "business" && ["worker", "user", "basic"].includes(role);
+
+  useEffect(() => {
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (profile?.role) {
+      router.replace("/app");
+    }
+  }, [profile?.role, router, user]);
+
+  useEffect(() => {
+    if (workspaceMode === "solo") {
+      setValue("role", "user");
+      return;
+    }
+    if (workspaceMode === "basic") {
+      setValue("role", "basic");
+      return;
+    }
+    if (!["manager", "worker", "user", "basic"].includes(role)) {
+      setValue("role", "manager");
+    }
+  }, [workspaceMode, role, setValue]);
+
+  const goNext = async () => {
+    if (step === 0) {
+      const ok = await trigger(["workspaceMode"]);
+      if (ok) setStep(1);
+      return;
+    }
+
+    if (step === 1) {
+      const ok = await trigger(["role", "name", "phoneNumber"]);
+      if (!ok) return;
+
+      if (!showCompanySetup) {
+        setStep(3);
+      } else {
+        setStep(2);
+      }
+      return;
+    }
+
+    if (step === 2) {
+      if (role === "manager") {
+        const ok = await trigger([
+          "companyName",
+          "businessNumber",
+          "businessAddress",
+          "businessPhone",
+          "businessType",
+        ]);
+        if (ok) setStep(3);
+        return;
+      }
+
+      if (["worker", "user", "basic"].includes(role)) {
+        const ok = await trigger(["joinCompanyId", "inviteCode"]);
+        if (ok) setStep(3);
+        return;
+      }
+
+      setStep(3);
+    }
+  };
+
+  const onSubmit = async (values: FormValues) => {
+    if (!user || !user.email) return;
+
+    try {
+      const accountType = values.workspaceMode === "business" ? "business" : "solo";
+      const resolvedRole =
+        values.workspaceMode === "solo"
+          ? "user"
+          : values.workspaceMode === "basic"
+            ? "basic"
+            : values.role;
+
+      if (accountType === "business" && ["worker", "user", "basic"].includes(resolvedRole)) {
+        const response = await fetch("/api/callable", {
+          method: "POST",
+          headers: await buildAuthedJsonHeaders(),
+          body: JSON.stringify({
+            operation: "joinCompanyV1",
+            payload: {
+              email: user.email,
+              role: resolvedRole,
+              name: values.name,
+              phoneNumber: values.phoneNumber,
+              companyId: values.joinCompanyId?.trim(),
+              inviteCode: values.inviteCode,
+            },
+          }),
+        });
+
+        const data = (await response.json()) as ClientApiResponse<{
+          companyId: string;
+          role: "worker" | "user" | "basic";
+        }>;
+
+        if (!response.ok || !data.ok || !data.data.companyId) {
+          throw new Error(
+            getClientApiErrorMessage(data, "Invite validation failed"),
+          );
+        }
+      } else {
+        const response = await fetch("/api/callable", {
+          method: "POST",
+          headers: await buildAuthedJsonHeaders(),
+          body: JSON.stringify({
+            operation: "registerBusinessV1",
+            payload: {
+          role: resolvedRole,
+          accountType,
+          name: values.name,
+          phoneNumber: values.phoneNumber,
+          he_name:
+            accountType === "solo"
+              ? values.name
+              : (values.companyName ?? ""),
+          en_name:
+            accountType === "solo"
+              ? values.name
+              : (values.companyName ?? ""),
+          vat_number: values.businessNumber ?? "",
+          business_type:
+            accountType === "solo"
+              ? (resolvedRole === "basic" ? "basic" : "solo")
+              : (values.businessType ?? ""),
+          city: values.businessCity ?? "",
+          address: values.businessAddress ?? "",
+          business_phone: values.businessPhone ?? "",
+          business_email: user.email,
+            },
+          }),
+        });
+
+        const data = (await response.json()) as ClientApiResponse<{
+          success: boolean;
+          companyId: string;
+          role: string;
+          tier: string;
+        }>;
+
+        if (!response.ok || !data.ok || !data.data.companyId) {
+          throw new Error(
+            getClientApiErrorMessage(data, "Onboarding registration failed"),
+          );
+        }
+      }
+
+      setLocale(values.language as Locale);
+      setTheme(values.theme);
+
+      await refreshUserData();
+      toast({
+        title: "Onboarding complete",
+        description: "Your profile and workspace setup were saved.",
+        variant: "success",
+      });
+      router.push("/app");
+    } catch (error) {
+      toast({
+        title: "Onboarding failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "error",
+      });
+    }
+  };
+
+  return (
+    <PublicLayout>
+      <section className="border-b border-slate-200 bg-white py-12 dark:border-slate-800 dark:bg-slate-950">
+        <div className="page-shell">
+          <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[320px_1fr]">
+            <Card className="h-fit">
+              <p className="section-kicker">
+                Guided Setup
+              </p>
+              <h1 className="mt-3 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">
+                Build your workspace in minutes
+              </h1>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                Complete the remaining setup and we will provision your profile and company documents automatically.
+              </p>
+
+              <div className="mt-6 space-y-3">
+                {steps.map((item, index) => {
+                  const isActive = index === step;
+                  const isCompleted = index < step;
+
+                  return (
+                    <div
+                      key={item.title}
+                      className={cn(
+                        "rounded-lg border px-3 py-2 transition",
+                        isActive
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : isCompleted
+                            ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-500/50 dark:bg-emerald-500/10"
+                            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950",
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={cn(
+                            "mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold",
+                            isCompleted
+                              ? "bg-emerald-500 text-white"
+                              : isActive
+                                ? "bg-blue-600 text-white"
+                                : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300",
+                          )}
+                        >
+                          {isCompleted ? <Check className="h-3.5 w-3.5" /> : index + 1}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {item.title}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            {item.description}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-300">
+                  Server write flow
+                </p>
+                <ul className="mt-2 space-y-1 text-xs text-slate-700 dark:text-slate-200">
+                  {isInviteJoinFlow ? (
+                    <>
+                      <li>`joinCompanyV1` validates invite + company membership.</li>
+                      <li>
+                        <code>{profileDocPath}</code> is set with role and company.
+                      </li>
+                      <li>
+                        <code>{companyWorkerDocPath}</code> is upserted.
+                      </li>
+                    </>
+                  ) : (
+                    <>
+                      <li>`registerBusinessV1` writes all onboarding docs in one transaction.</li>
+                      <li>
+                        <code>{profileDocPath}</code> + <code>{userCacheDocPath}</code> are initialized.
+                      </li>
+                      <li>
+                        <code>{companyRootDocPath}</code> + `data/business_info` + `data/cache` are initialized.
+                      </li>
+                    </>
+                  )}
+                </ul>
+              </div>
+            </Card>
+
+            <Card>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
+                    Step {step + 1} of {totalSteps}
+                  </p>
+                  <h2 className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+                    {steps[step].title}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    {steps[step].description}
+                  </p>
+                </div>
+                <p className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:text-slate-200">
+                  {progress}% complete
+                </p>
+              </div>
+
+              <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+
+              <form className="mt-6 grid gap-4" onSubmit={handleSubmit(onSubmit)}>
+                {step === 0 ? (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label
+                        className={cn(
+                        "cursor-pointer rounded-xl border p-4 transition",
+                        workspaceMode === "solo"
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        value="solo"
+                        {...register("workspaceMode")}
+                        className="sr-only"
+                      />
+                      <div className="flex items-center gap-3">
+                        <UserRound className="h-5 w-5 text-blue-700 dark:text-blue-300" />
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Solo owner
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Personal workflow with your own company scope.
+                          </p>
+                        </div>
+                      </div>
+                    </label>
+                    <label
+                        className={cn(
+                        "cursor-pointer rounded-xl border p-4 transition",
+                        workspaceMode === "business"
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        value="business"
+                        {...register("workspaceMode")}
+                        className="sr-only"
+                      />
+                      <div className="flex items-center gap-3">
+                        <Users className="h-5 w-5 text-blue-700 dark:text-blue-300" />
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Business team
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Manager or worker setup for shared operations.
+                          </p>
+                        </div>
+                      </div>
+                    </label>
+                    <label
+                        className={cn(
+                        "cursor-pointer rounded-xl border p-4 transition",
+                        workspaceMode === "basic"
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        value="basic"
+                        {...register("workspaceMode")}
+                        className="sr-only"
+                      />
+                      <div className="flex items-center gap-3">
+                        <Building2 className="h-5 w-5 text-blue-700 dark:text-blue-300" />
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Basic
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Lightweight account with document access only.
+                          </p>
+                        </div>
+                      </div>
+                    </label>
+                    {errors.workspaceMode?.message ? (
+                      <p className="text-xs text-red-600">{errors.workspaceMode.message}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {step === 1 ? (
+                  <div className="grid gap-4">
+                       <div className="grid gap-3 md:grid-cols-4">
+                      <Input
+                        label="Full Name"
+                        {...register("name")}
+                        error={errors.name?.message}
+                      />
+                      <Input
+                        label="Phone Number"
+                        {...register("phoneNumber")}
+                        error={errors.phoneNumber?.message}
+                      />
+                    </div>
+
+                    {workspaceMode === "solo" || workspaceMode === "basic" ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          Role: {workspaceMode === "basic" ? "basic" : "user"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                          {workspaceMode === "basic"
+                            ? "Basic accounts automatically use the basic role."
+                            : "Solo accounts automatically use the user role."}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label
+                          className={cn(
+                            "cursor-pointer rounded-xl border p-4 transition",
+                            role === "manager"
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            value="manager"
+                            {...register("role")}
+                            className="sr-only"
+                          />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Manager
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Create and manage your company workspace.
+                          </p>
+                        </label>
+                        <label
+                          className={cn(
+                            "cursor-pointer rounded-xl border p-4 transition",
+                            role === "worker"
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            value="worker"
+                            {...register("role")}
+                            className="sr-only"
+                          />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Worker
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Join an existing company using invite code.
+                          </p>
+                        </label>
+                        <label
+                          className={cn(
+                            "cursor-pointer rounded-xl border p-4 transition",
+                            role === "user"
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            value="user"
+                            {...register("role")}
+                            className="sr-only"
+                          />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            User
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Join an existing company using invite-based user access.
+                          </p>
+                        </label>
+                        <label
+                          className={cn(
+                            "cursor-pointer rounded-xl border p-4 transition",
+                            role === "basic"
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            value="basic"
+                            {...register("role")}
+                            className="sr-only"
+                          />
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            Basic
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            Join an existing company with lightweight invite-based access.
+                          </p>
+                        </label>
+                      </div>
+                    )}
+
+                    {errors.role?.message ? (
+                      <p className="text-xs text-red-600">{errors.role.message}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {step === 2 ? (
+                  <div className="grid gap-3">
+                    {role === "manager" ? (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <Input
+                          label="Company Name"
+                          {...register("companyName")}
+                          error={errors.companyName?.message}
+                        />
+                        <Input
+                          label="Business Number"
+                          {...register("businessNumber")}
+                          error={errors.businessNumber?.message}
+                        />
+                        <Input
+                          label="Business Phone"
+                          {...register("businessPhone")}
+                          error={errors.businessPhone?.message}
+                        />
+                        <Input
+                          label="City (optional)"
+                          {...register("businessCity")}
+                          error={errors.businessCity?.message}
+                        />
+                        <Input
+                          label="Business Type"
+                          placeholder="e.g. HVAC, Plumbing, Electrical"
+                          {...register("businessType")}
+                          error={errors.businessType?.message}
+                        />
+                        <div className="md:col-span-2">
+                          <Input
+                            label="Address"
+                            {...register("businessAddress")}
+                            error={errors.businessAddress?.message}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {["worker", "user", "basic"].includes(role) ? (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <Input
+                          label="Company ID"
+                          {...register("joinCompanyId")}
+                          error={errors.joinCompanyId?.message}
+                        />
+                        <Input
+                          label="Invite Code"
+                          {...register("inviteCode")}
+                          error={errors.inviteCode?.message}
+                        />
+                      </div>
+                    ) : null}
+
+                    {role !== "manager" && !["worker", "user", "basic"].includes(role) ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                        No company details are needed for this role.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {step === 3 ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="flex flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+                      <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+                        <Globe2 className="h-4 w-4" />
+                        Language
+                      </span>
+                      <select
+                        {...register("language")}
+                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-900"
+                      >
+                        <option value="en">English</option>
+                        <option value="he">Hebrew</option>
+                        <option value="ar">Arabic</option>
+                      </select>
+                    </label>
+
+                    <label className="flex flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+                      <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
+                        <Palette className="h-4 w-4" />
+                        Theme
+                      </span>
+                      <select
+                        {...register("theme")}
+                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-900"
+                      >
+                        <option value="light">Light</option>
+                        <option value="dark">Dark</option>
+                      </select>
+                    </label>
+
+                    <div className="md:col-span-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                        {isInviteJoinFlow ? (
+                          <p>
+                            Finishing setup will validate the invite and link your profile to the company workspace.
+                          </p>
+                        ) : (
+                          <p>
+                            Finishing setup will call <strong>`registerBusinessV1`</strong> to initialize your profile, cache,
+                            company document, and `business_info` documents server-side.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
+                  {step > 0 ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setStep((prev) => Math.max(prev - 1, 0))}
+                    >
+                      Back
+                    </Button>
+                  ) : null}
+
+                  {step < totalSteps - 1 ? (
+                    <Button type="button" onClick={goNext} className="inline-flex items-center gap-1">
+                      Continue
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  ) : (
+                    <Button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-1">
+                      {isSubmitting ? "Saving setup..." : "Finish onboarding"}
+                      {!isSubmitting ? <Building2 className="h-4 w-4" /> : null}
+                    </Button>
+                  )}
+                </div>
+              </form>
+            </Card>
+          </div>
+        </div>
+      </section>
+    </PublicLayout>
+  );
+}

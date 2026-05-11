@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+:root {
+  --page-ink: 17 24 39;
+  --page-muted: 75 85 99;
+  --page-border: 209 213 219;
+  --page-accent: 37 99 235;
+  --page-accent-soft: 13 148 136;
+  --page-warning: 217 119 6;
+}
+
+* {
+  border-color: rgb(var(--page-border) / 0.85);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  position: relative;
+  font-family: var(--font-sans), sans-serif;
+  overflow-x: hidden;
+  background: rgb(248 250 252);
+  color: rgb(var(--page-ink));
+}
+
+html:lang(he) body {
+  font-family: var(--font-hebrew), var(--font-sans), sans-serif;
+}
+
+html:lang(ar) body {
+  font-family: var(--font-arabic), var(--font-sans), sans-serif;
+}
+
+code,
+pre {
+  font-family: var(--font-mono), monospace;
+}
+
+body::before {
+  content: none;
+}
+
+.dark body {
+  background: rgb(2 6 23);
+  color: rgb(226 232 240);
+}
+
+.dark body::before {
+  background-image:
+    linear-gradient(rgb(30 41 59 / 0.46) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(30 41 59 / 0.42) 1px, transparent 1px);
+}
+
+::selection {
+  background: rgb(37 99 235 / 0.18);
+}
+
+.page-shell {
+  @apply mx-auto w-full max-w-[86rem] px-4 sm:px-6 lg:px-8;
+}
+
+.glass-panel {
+  @apply rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950;
+}
+
+.section-kicker {
+  @apply inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300;
+}
+
+.section-title {
+  @apply text-4xl font-semibold tracking-normal text-slate-950 sm:text-5xl lg:text-6xl dark:text-white;
+}
+
+.section-copy {
+  @apply text-base leading-8 text-slate-600 sm:text-lg dark:text-slate-300;
+}
+
+.mesh-card {
+  @apply rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950;
+}
+
+.data-pill {
+  @apply inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200;
+}
+
+.spotlight-ring {
+  @apply absolute rounded-full blur-3xl;
+}
+
+.fade-in-up {
+  animation: fade-in-up 0.7s ease both;
+}
+
+.dashboard-page {
+  @apply grid gap-4 sm:gap-5;
+}
+
+.dashboard-hero {
+  @apply relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-950;
+}
+
+.dashboard-hero::before {
+  content: none;
+}
+
+.dashboard-kicker {
+  @apply inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300;
+}
+
+.dashboard-title {
+  @apply text-2xl font-semibold tracking-normal text-slate-950 sm:text-3xl dark:text-white;
+}
+
+.dashboard-copy {
+  @apply text-sm leading-7 text-slate-600 sm:text-base dark:text-slate-300;
+}
+
+.dashboard-panel {
+  @apply rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950;
+}
+
+.dashboard-field {
+  @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100;
+}
+
+.dashboard-table-select {
+  @apply h-8 rounded-md border border-slate-300 bg-white px-2.5 text-xs text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100;
+}
+
+.dashboard-stat {
+  @apply rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900;
+}
+
+.brand-mark {
+  @apply inline-flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold tracking-normal text-white shadow-sm dark:bg-blue-500 dark:text-white;
+}
+
+.status-dot {
+  @apply inline-block h-2 w-2 rounded-full;
+}
+
+.quiet-list-item {
+  @apply rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .fade-in-up {
+    animation: none;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[dir="rtl"] table {
+  text-align: right;
+}

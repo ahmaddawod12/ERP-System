@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@smart-job/contracts": "./packages/contracts/index.ts",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "jose": "npm:jose@5"
+  }
+}

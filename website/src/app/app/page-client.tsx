@@ -92,17 +92,17 @@ export default function AppOverviewClient() {
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             <div className="dashboard-stat">
               <p className="text-sm text-slate-500 dark:text-slate-400">Access role</p>
-              <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">
+              <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">
                 {profile?.role ?? "Unknown"}
               </p>
             </div>
             <div className="dashboard-stat">
               <p className="text-sm text-slate-500 dark:text-slate-400">Active tier</p>
-              <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">{tier}</p>
+              <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">{tier}</p>
             </div>
             <div className="dashboard-stat">
               <p className="text-sm text-slate-500 dark:text-slate-400">Company scope</p>
-              <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">
+              <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">
                 {companyId ?? "Pending"}
               </p>
             </div>
@@ -111,9 +111,9 @@ export default function AppOverviewClient() {
 
         <div className="grid gap-4 md:grid-cols-3">
           {stats.map((stat, index) => (
-            <Card key={stat.label} className={index === 0 ? "bg-[linear-gradient(145deg,rgba(15,23,42,0.96),rgba(8,145,178,0.78))] text-white dark:bg-[linear-gradient(145deg,rgba(103,232,249,0.9),rgba(224,242,254,0.95))] dark:text-slate-950" : undefined}>
-              <p className={index === 0 ? "text-sm text-slate-200 dark:text-slate-700" : "text-sm text-slate-500 dark:text-slate-400"}>{stat.label}</p>
-              <p className={index === 0 ? "mt-2 text-4xl font-semibold tracking-[-0.05em] text-white dark:text-slate-950" : "mt-2 text-4xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white"}>
+            <Card key={stat.label} className={index === 0 ? "border-blue-200 bg-blue-50 dark:border-blue-900/70 dark:bg-blue-950/30" : undefined}>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{stat.label}</p>
+              <p className="mt-2 text-4xl font-semibold tracking-normal text-slate-950 dark:text-white">
                 {stat.value}
               </p>
             </Card>

@@ -17,6 +17,5 @@ config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules || {}),
   '@smart-job/contracts': path.resolve(workspaceRoot, 'packages/contracts'),
 };
-config.resolver.unstable_enableSymlinks = true;
 
 module.exports = config;

@@ -24,11 +24,13 @@ This document defines the migration approach from legacy Firebase-backed runtime
 - Keep document task URL mapping stable: `previewURL <- preview_url` and `downloadURL <- generate_url`.
 - Allocate sequential identifiers through SQL counters, not `MAX + 1` reads.
 - Keep invite redemption race-safe with atomic invite-consume semantics.
-- Normalize incoming/public `companyId` values to internal company UUIDs in handler write paths.
+- Normalize incoming/public `companyId` values to internal company UUIDs in handler write paths, using separate query paths for public numeric IDs and internal UUIDs.
 - Keep public job identifiers sequential at the API boundary and resolve legacy/internal UUID job rows only inside handlers.
 - Preserve stable cursor pagination semantics for timestamp-sorted read-model collections.
 - If a payload exposes public IDs, keep cursor tokens pinned to the underlying ordered SQL columns to avoid skip/repeat regressions.
-- Keep preview, generate, and tax invoice document flows on one SQL-backed draft-document plus `document_tasks` pipeline.
+- Service-role read-model functions must enforce tenant, role, and membership scoping in code before returning rows; do not rely on RLS for those responses.
+- Read-model list endpoints must keep `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters wired through to SQL/PostgREST queries.
+- Keep preview, generate, and tax invoice document flows on one SQL-backed draft-document plus `document_tasks` pipeline, with create-only generated PDF finalization for every document type.
 
 ## Active Entry Surfaces
 

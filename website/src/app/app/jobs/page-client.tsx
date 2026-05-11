@@ -217,19 +217,19 @@ export default function JobsClient() {
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Pending</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
                   {pendingJobs.length}
                 </p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Assigned</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
                   {pendingAssignedCount}
                 </p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Finished</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
                   {finishedJobs.length}
                 </p>
               </div>

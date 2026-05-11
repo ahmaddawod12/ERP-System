@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { borderRadius, getColors, spacing, typography, type ColorPalette } from '../theme';
 import { useThemeContext } from '../contexts/ThemeContext';
 import AppButton from './AppButton';
@@ -44,8 +44,8 @@ export default function ClientSelectorModal({
 
   const normalized = searchQuery.trim().toLowerCase();
   const filteredClients = (clients || []).filter((client) => {
-    const name = String(client?.name || '').toLowerCase();
-    const phone = String(client?.phone || '').toLowerCase();
+    const name = String(client?.name || client?.cname || '').toLowerCase();
+    const phone = String(client?.phone || client?.cphone || '').toLowerCase();
     const email = String(client?.email || '').toLowerCase();
     return !normalized || name.includes(normalized) || phone.includes(normalized) || email.includes(normalized);
   });
@@ -85,18 +85,25 @@ export default function ClientSelectorModal({
             </AppText>
           </TouchableOpacity>
 
-          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-            {filteredClients.length === 0 ? (
+          <FlatList
+            data={filteredClients}
+            keyExtractor={(client) => String(client.id || client.cid || client.phone || client.cphone || client.email || client.name || client.cname)}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            keyboardShouldPersistTaps="handled"
+            initialNumToRender={12}
+            windowSize={5}
+            removeClippedSubviews
+            ListEmptyComponent={
               <AppText variant="caption" color={palette.textLight} style={styles.emptyText}>
                 {searchQuery ? t.noResults : t.noClients}
               </AppText>
-            ) : (
-              filteredClients.map((client) => {
-                const name = client?.name || '-';
+            }
+            renderItem={({ item: client }) => {
+                const name = client?.name || client?.cname || '-';
                 const selected = currentFilter === name;
                 return (
                   <TouchableOpacity
-                    key={client.id || `${name}-${client.phone || client.email}`}
                     style={[
                       styles.item,
                       {
@@ -111,18 +118,17 @@ export default function ClientSelectorModal({
                   >
                     <View style={styles.itemMain}>
                       <AppText variant="bodyStrong">{name}</AppText>
-                      {client.phone ? (
+                      {client.phone || client.cphone ? (
                         <AppText variant="caption" color={palette.textSecondary}>
-                          {client.phone}
+                          {client.phone || client.cphone}
                         </AppText>
                       ) : null}
                     </View>
                     {selected ? <AppIcon name="checkmark-circle" size={18} color={palette.secondary} /> : null}
                   </TouchableOpacity>
                 );
-              })
-            )}
-          </ScrollView>
+              }}
+          />
 
           <AppButton title={t.close} variant="secondary" onPress={onClose} />
         </View>

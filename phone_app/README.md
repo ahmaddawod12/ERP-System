@@ -5,6 +5,7 @@
 ## Runtime Role
 
 - Uses Supabase access tokens for backend transport.
+- Stores Supabase access and refresh tokens in Expo SecureStore, not MMKV.
 - Calls backend gateway endpoints for protected operations.
 - Keeps registration and business onboarding on the website.
 - Tracks preview/generate work through backend `document_tasks` polling.
@@ -18,9 +19,12 @@
 - Use `useAlert()` instead of `Alert.alert()`.
 - Use MMKV helpers in `contexts/mmkv-storage.ts`.
 - Scope MMKV draft, pending-job, and support UI state by active `uid` / `companyId`; avoid raw global keys.
+- Keep bearer and refresh tokens out of MMKV; token transport belongs in SecureStore-backed helpers.
 - Archived month retrieval uses backend `fetchArchiveMonthV1`; the app does not read protected archive objects directly.
-- Cache refresh logic must drain paginated jobs/documents read-model pages completely.
+- Cache refresh logic must drain paginated jobs/documents read-model pages for the active 90-day cache window: open jobs, recently updated closed jobs, and recent documents.
 - Cache refresh must preserve the current role-scoped jobs cache when only document versions bump.
+- Read-model array helpers unwrap `{ items, nextCursor }` for legacy callers; use explicit page helpers when a screen needs cursor-aware pagination.
+- Use `utils/logger.ts` for debug output so noisy logs are dev-only; keep warnings/errors visible.
 - Offline queued solo jobs should be replaced by the server-created public job after sync succeeds; do not leave temp local duplicates behind.
 - Solo finished jobs must upload photos/signatures before `createJobV1` so the created record already contains canonical attachment refs.
 - Attachment uploads should use canonical company-scoped storage paths and may carry a temporary `attachmentUploadId` until the server allocates the final public job number.
@@ -47,7 +51,6 @@ firebase.ts     Auth wrappers and gateway helpers
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 - `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` (optional)
-- `EXPO_PUBLIC_MMKV_AUTH_KEY` (optional explicit auth-store encryption key override)
 
 If edge base URL is unset, the app defaults to `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
 

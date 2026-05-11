@@ -6,6 +6,7 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = dirname(rootDir);
 
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   transpilePackages: ["@smart-job/contracts"],
   turbopack: {
     root: monorepoRoot,
@@ -33,6 +34,7 @@ const nextConfig: NextConfig = {
               "font-src 'self'",
               "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.supabase.co https://www.google.com https://www.gstatic.com https://www.recaptcha.net wss://*.firebaseio.com",
               "frame-src 'self' https://*.firebaseapp.com https://www.google.com https://www.recaptcha.net",
+              "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",
             ].join("; "),

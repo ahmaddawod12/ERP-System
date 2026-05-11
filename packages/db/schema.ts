@@ -219,6 +219,12 @@ const jobs = pgTable('jobs', {
   companyDueCreatedIdx: index('jobs_company_due_created_idx').on(table.companyId, table.dueAt, table.createdAt),
   companyStatusUpdatedIdx: index('jobs_company_status_updated_idx').on(table.companyId, table.status, table.updatedAt),
   companyAssignedStatusUpdatedIdx: index('jobs_company_assignee_status_updated_idx').on(table.companyId, table.assignedMembershipId, table.status, table.updatedAt),
+  companyCreatedCursorIdx: index('jobs_company_created_cursor_idx').on(table.companyId, table.createdAt, table.id),
+  companyUpdatedCursorIdx: index('jobs_company_updated_cursor_idx').on(table.companyId, table.updatedAt, table.id),
+  companyAssigneeCreatedCursorIdx: index('jobs_company_assignee_created_cursor_idx').on(table.companyId, table.assignedMembershipId, table.createdAt, table.id),
+  companyAssigneeUpdatedCursorIdx: index('jobs_company_assignee_updated_cursor_idx').on(table.companyId, table.assignedMembershipId, table.updatedAt, table.id),
+  companyStatusCreatedCursorIdx: index('jobs_company_status_created_cursor_idx').on(table.companyId, table.status, table.createdAt, table.id),
+  companyStatusUpdatedCursorIdx: index('jobs_company_status_updated_cursor_idx').on(table.companyId, table.status, table.updatedAt, table.id),
 }));
 
 const jobAttachments = pgTable('job_attachments', {
@@ -348,6 +354,12 @@ const documents = pgTable('documents', {
   companyCreatorCreatedIdx: index('documents_company_creator_created_idx').on(table.companyId, table.createdByMembershipId, table.createdAt),
   companyUpdatedCreatedIdx: index('documents_company_updated_created_idx').on(table.companyId, table.updatedAt, table.createdAt),
   companyDocumentDateCreatedIdx: index('documents_company_document_date_created_idx').on(table.companyId, table.documentDate, table.createdAt),
+  companyCreatedCursorIdx: index('documents_company_created_cursor_idx').on(table.companyId, table.createdAt, table.id),
+  companyUpdatedCursorIdx: index('documents_company_updated_cursor_idx').on(table.companyId, table.updatedAt, table.id),
+  companyDocumentDateCursorIdx: index('documents_company_document_date_cursor_idx').on(table.companyId, table.documentDate, table.id),
+  companyStatusCreatedCursorIdx: index('documents_company_status_created_cursor_idx').on(table.companyId, table.generationStatus, table.createdAt, table.id),
+  companyTypeCreatedCursorIdx: index('documents_company_type_created_cursor_idx').on(table.companyId, table.documentType, table.createdAt, table.id),
+  companyCreatorCreatedCursorIdx: index('documents_company_creator_created_cursor_idx').on(table.companyId, table.createdByMembershipId, table.createdAt, table.id),
   totalBeforeVatNonNegative: check('documents_total_before_vat_non_negative_check', sql`${table.totalBeforeVat} >= 0`),
   vatAmountNonNegative: check('documents_vat_amount_non_negative_check', sql`${table.vatAmount} >= 0`),
   totalWithVatNonNegative: check('documents_total_with_vat_non_negative_check', sql`${table.totalWithVat} >= 0`),

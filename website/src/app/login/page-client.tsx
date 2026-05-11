@@ -51,15 +51,43 @@ export default function LoginClient() {
 
   return (
     <PublicLayout>
-      <section className="page-shell pb-16 pt-8 sm:pt-10">
-        <div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-          <Card className="mesh-card p-7 sm:p-8">
-            <p className="section-kicker">Web access</p>
-            <h1 className="mt-5 text-4xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">
-              Sign in to the web control surface for your operation.
+      <section className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+        <div className="page-shell grid min-h-[calc(100vh-4rem)] gap-8 py-12 lg:grid-cols-[0.92fr_1.08fr] lg:items-center">
+          <Card className="mx-auto w-full max-w-lg p-8">
+            <h1 className="text-center text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
+              Sign in
             </h1>
-            <p className="mt-4 text-base leading-8 text-slate-600 dark:text-slate-300">
-              Use the website to manage onboarding, dashboard modules, and company-scoped workflows without losing alignment with the mobile app.
+            <p className="mt-2 text-center text-sm leading-7 text-slate-600 dark:text-slate-300">
+              Welcome back. Continue to your Smart-Job ERP workspace.
+            </p>
+
+            <form className="mt-7 grid gap-4" onSubmit={handleSubmit(onSubmit)}>
+              <Input label="Email" type="email" {...register("email")} error={errors.email?.message} />
+              <Input label="Password" type="password" {...register("password")} error={errors.password?.message} />
+              <Button type="submit" disabled={isSubmitting} className="gap-2">
+                {isSubmitting ? "Signing in..." : "Sign in"}
+                {!isSubmitting ? <ArrowRight className="h-4 w-4" /> : null}
+              </Button>
+            </form>
+            <div className="mt-4 flex items-center justify-between text-sm">
+              <Link href="/forgot-password" className="font-medium text-blue-700 hover:underline dark:text-blue-300">
+                Forgot password?
+              </Link>
+              <Link href="/register" className="font-medium text-blue-700 hover:underline dark:text-blue-300">
+                Create account
+              </Link>
+            </div>
+            <div className="mt-8 border-t border-slate-200 pt-5 text-center text-xs leading-6 text-slate-500 dark:border-slate-800 dark:text-slate-400">
+              Secure sign in for company-scoped operations.
+            </div>
+          </Card>
+
+          <div>
+            <h2 className="text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
+              Web access for the control surface your team uses every day.
+            </h2>
+            <p className="mt-4 max-w-2xl text-base leading-8 text-slate-600 dark:text-slate-300">
+              Manage onboarding, dashboard modules, and company-scoped workflows without losing alignment with the mobile app.
             </p>
 
             <div className="mt-8 grid gap-3">
@@ -68,37 +96,18 @@ export default function LoginClient() {
                 [Wrench, "Field-ready workflow", "Jobs, workers, documents, and inventory stay in the same system."],
                 [CheckCircle2, "Clean handoff", "Registration begins on the website, then provisioning continues in onboarding."],
               ].map(([Icon, title, copy]) => (
-                <div key={title as string} className="rounded-[1.4rem] border border-slate-200/70 bg-white/75 px-4 py-4 dark:border-white/10 dark:bg-slate-900/55">
-                  <Icon className="h-5 w-5 text-slate-950 dark:text-white" />
-                  <p className="mt-3 text-lg font-semibold text-slate-950 dark:text-white">{title as string}</p>
-                  <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">{copy as string}</p>
+                <div key={title as string} className="quiet-list-item">
+                  <div className="flex items-start gap-3">
+                    <Icon className="mt-0.5 h-5 w-5 text-blue-600 dark:text-blue-300" />
+                    <div>
+                      <p className="font-semibold text-slate-950 dark:text-white">{title as string}</p>
+                      <p className="mt-1 leading-7 text-slate-600 dark:text-slate-300">{copy as string}</p>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-          </Card>
-
-          <Card className="glass-panel rounded-4xl p-6 sm:p-8">
-            <h2 className="text-2xl font-semibold tracking-[-0.03em] text-slate-900 dark:text-slate-100">Login</h2>
-            <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">
-              Access your Smart-Job ERP web account.
-            </p>
-            <form className="mt-5 grid gap-3" onSubmit={handleSubmit(onSubmit)}>
-              <Input label="Email" type="email" {...register("email")} error={errors.email?.message} />
-              <Input label="Password" type="password" {...register("password")} error={errors.password?.message} />
-              <Button type="submit" disabled={isSubmitting} className="rounded-2xl gap-2">
-                {isSubmitting ? "Signing in..." : "Sign in"}
-                {!isSubmitting ? <ArrowRight className="h-4 w-4" /> : null}
-              </Button>
-            </form>
-            <div className="mt-4 flex items-center justify-between text-sm">
-              <Link href="/forgot-password" className="font-medium text-cyan-700 hover:underline dark:text-cyan-400">
-                Forgot password?
-              </Link>
-              <Link href="/register" className="font-medium text-cyan-700 hover:underline dark:text-cyan-400">
-                Create account
-              </Link>
-            </div>
-          </Card>
+          </div>
         </div>
       </section>
     </PublicLayout>

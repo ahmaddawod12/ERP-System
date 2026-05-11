@@ -31,6 +31,7 @@ The `supabase/functions/` package is the active trust boundary in this workspace
 
 Read-model calls are kind-based and must preserve compatibility with website/mobile `kind` payload contracts.
 Job contracts must expose public sequential IDs and full attachment/meta fields at that boundary, while resolving internal UUID rows only inside handlers.
+Because read-model edge code uses the Supabase service role, it must explicitly apply the runtime role matrix in code before returning rows: worker/business-user job reads are membership-scoped, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
 
 Important active entry surfaces include:
 
@@ -124,7 +125,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep `storagePath` as the canonical persisted file reference.
 - Do not weaken idempotency, deduplication, or create-only semantics in document flows.
 - Allocate sequential identifiers through SQL counters; avoid `MAX + 1` allocation in concurrent mutation paths.
-- Normalize incoming/public `companyId` inputs to internal company UUIDs before SQL filters in handlers.
+- Normalize incoming/public `companyId` inputs to internal company UUIDs before SQL filters in handlers; public numeric IDs and internal UUIDs must use separate query paths.
 - When a handler needs to look up multiple membership records for the same company, batch the lookup with a single `.in("id", [...])` query rather than issuing one query per membership ID.
 - Parallelize independent DB lookups (e.g., client resolution and assignee resolution) with `Promise.all` instead of sequential `await` calls.
 - Resolve and validate dependent data (e.g., inventory part rows) before issuing destructive writes (e.g., deleting existing part usage rows) so failures leave the original state intact.
@@ -132,6 +133,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Return public membership identifiers such as `wid` at the boundary and do not leak internal membership UUIDs in invite or job flows.
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
 - When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
+- Keep read-model filters wired through the edge layer: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
 - Keep job file signed URLs bound to persisted attachment rows, not caller-selected prefixes.
 - Accept temporary `attachmentUploadId` references during job creation only long enough to validate and normalize them into canonical attachment rows/storage paths.
@@ -143,7 +145,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Reject inventory underflow instead of clamping balances to zero during backend mutations.
 - Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
-- Keep tax invoice PDF finalization create-only once `storage_path` is already set.
+- Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.
 - Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.
 - Keep archived month reads behind backend handlers with fixed bucket/path derivation.
 

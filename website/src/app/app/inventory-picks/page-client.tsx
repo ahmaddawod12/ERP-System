@@ -70,11 +70,11 @@ export default function InventoryPicksClient() {
             <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[18rem]">
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Available parts</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{parts.length}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{parts.length}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Mode</p>
-                <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">Worker pick</p>
+                <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">Worker pick</p>
               </div>
             </div>
           </div>

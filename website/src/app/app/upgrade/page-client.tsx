@@ -98,7 +98,7 @@ export default function UpgradeClient() {
             </div>
             <div className="dashboard-stat min-w-60">
               <p className="text-sm text-slate-500 dark:text-slate-400">Current tier</p>
-              <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+              <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
                 {subscription?.tier ?? "Basic"}
               </p>
             </div>
@@ -109,13 +109,13 @@ export default function UpgradeClient() {
           {tierDetails.map((tier) => (
             <Card
               key={tier.name}
-              className={tier.name === (subscription?.tier ?? "Basic") ? "bg-[linear-gradient(145deg,rgba(15,23,42,0.96),rgba(8,145,178,0.78))] text-white dark:bg-[linear-gradient(145deg,rgba(103,232,249,0.9),rgba(224,242,254,0.95))] dark:text-slate-950" : undefined}
+              className={tier.name === (subscription?.tier ?? "Basic") ? "border-blue-200 bg-blue-50 dark:border-blue-900/70 dark:bg-blue-950/30" : undefined}
             >
               <div className="flex items-center justify-between gap-3">
-                <h2 className={tier.name === (subscription?.tier ?? "Basic") ? "text-lg font-semibold text-white dark:text-slate-950" : "text-lg font-semibold text-slate-900 dark:text-slate-100"}>{tier.name}</h2>
-                {tier.name === (subscription?.tier ?? "Basic") ? <Badge className="bg-white/15 text-white dark:bg-slate-950/10 dark:text-slate-950">Current</Badge> : null}
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">{tier.name}</h2>
+                {tier.name === (subscription?.tier ?? "Basic") ? <Badge variant="info">Current</Badge> : null}
               </div>
-              <p className={tier.name === (subscription?.tier ?? "Basic") ? "mt-2 text-sm text-slate-200 dark:text-slate-700" : "mt-2 text-sm text-slate-600 dark:text-slate-300"}>{tier.desc}</p>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{tier.desc}</p>
             </Card>
           ))}
         </div>

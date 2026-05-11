@@ -21,7 +21,7 @@ export default async function DocPage({
     <PublicLayout>
       <section className="page-shell py-12">
         <div className="mb-4">
-          <Link href="/docs" className="text-sm font-medium text-cyan-700 hover:underline dark:text-cyan-400">
+          <Link href="/docs" className="text-sm font-medium text-blue-700 hover:underline dark:text-blue-300">
             Back to docs
           </Link>
         </div>
@@ -83,7 +83,7 @@ export default async function DocPage({
               <ul className="grid gap-2 text-sm">
                 {entry.links.map((item) => (
                   <li key={item.href}>
-                    <Link href={item.href} className="text-cyan-700 hover:underline dark:text-cyan-400">
+                    <Link href={item.href} className="text-blue-700 hover:underline dark:text-blue-300">
                       {item.label}
                     </Link>
                   </li>

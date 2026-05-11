@@ -30,6 +30,7 @@ import { auth, storage as firebaseStorage } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
 import { safeJsonParse } from '../utils/helpers';
+import { logger } from '../utils/logger';
 import {
   fetchDataFromFirebase as _fetchDataFromFirebase,
   fetchCompanySyncState as _fetchCompanySyncState,
@@ -133,7 +134,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const pauseListeners = useCallback(() => {
     if (!listenersActiveRef.current) return; // Already paused
     
-    console.log('?? [CACHE] Pausing Firestore listeners to prevent background reads');
+    logger.debug('?? [CACHE] Pausing Firestore listeners to prevent background reads');
     
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -157,7 +158,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const resumeListeners = useCallback(() => {
     if (listenersActiveRef.current) return; // Already active
     
-    console.log('?? [CACHE] Resuming Firestore listeners');
+    logger.debug('?? [CACHE] Resuming Firestore listeners');
     
     const uid = getUid();
     const role = getUserRole();
@@ -228,7 +229,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     
     const expiredCount = data.length - filteredData.length;
     if (expiredCount > 0) {
-      console.log(`Cleaned up ${expiredCount} expired ${type} entries`);
+      logger.debug(`Cleaned up ${expiredCount} expired ${type} entries`);
     }
     
     return { filteredData, expiredIds: [] };
@@ -238,7 +239,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * Load data from local cache
    */
   const loadFromLocalCache = useCallback((expectedUid: string | null = null) => {
-    console.log('[CACHE READ] Loading from local MMKV cache...');
+    logger.debug('[CACHE READ] Loading from local MMKV cache...');
     
     const cachedUid = mmkvHelpers.getString(CACHE_KEYS.UID);
     const cachedRole = mmkvHelpers.getString(CACHE_KEYS.USER_ROLE);
@@ -385,29 +386,45 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   );
 
   const fetchJobsPage = useCallback(
-    (companyId: string, opts?: { pageSize?: number; afterCursor?: string; signal?: AbortSignal }) =>
+    (companyId: string, opts?: {
+      pageSize?: number;
+      afterCursor?: string;
+      signal?: AbortSignal;
+      status?: string | string[];
+      dateField?: 'createdAt' | 'updatedAt' | 'finishedAt' | 'dueAt';
+      dateFrom?: string;
+      dateTo?: string;
+    }) =>
       _fetchJobsPage(companyId, opts),
     [],
   );
 
   const fetchDocumentsPage = useCallback(
-    (companyId: string, opts?: { pageSize?: number; afterCursor?: string; signal?: AbortSignal }) =>
+    (companyId: string, opts?: {
+      pageSize?: number;
+      afterCursor?: string;
+      signal?: AbortSignal;
+      dateField?: 'createdAt' | 'updatedAt' | 'documentDate';
+      dateFrom?: string;
+      dateTo?: string;
+    }) =>
       _fetchDocumentsPage(companyId, opts),
     [],
   );
 
   const fetchAllCursorPages = useCallback(
     async (
-      fetchPage: (companyId: string, opts?: { pageSize?: number; afterCursor?: string; signal?: AbortSignal }) => Promise<{ items: any[]; nextCursor: string | null }>,
+      fetchPage: (companyId: string, opts?: any) => Promise<{ items: any[]; nextCursor: string | null }>,
       companyId: string,
       pageSize = 200,
+      baseOpts: Record<string, unknown> = {},
     ) => {
       const allItems: any[] = [];
       const seenCursors = new Set<string>();
       let nextCursor: string | null = null;
 
       do {
-        const page = await fetchPage(companyId, { pageSize, afterCursor: nextCursor || undefined });
+        const page = await fetchPage(companyId, { ...baseOpts, pageSize, afterCursor: nextCursor || undefined });
         if (Array.isArray(page.items) && page.items.length > 0) {
           allItems.push(...page.items);
         }
@@ -500,11 +517,11 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * All roles: user sync poller (profile/inventory) + company sync poller (version fields)
    */
   const setupCacheListeners = useCallback((uid: string, role: string, companyId: string | null) => {
-    console.log(`Setting up cache listeners for ${role}...`);
+    logger.debug(`Setting up cache listeners for ${role}...`);
     
     // Dev role doesn't need cache listeners
     if (role === 'dev') {
-      console.log('Dev role: skipping cache listeners (support-only role)');
+      logger.debug('Dev role: skipping cache listeners (support-only role)');
       return;
     }
     
@@ -549,7 +566,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           const localVersion = Number(localVersions[field] || 0);
 
           if (remoteVersion > localVersion) {
-            console.log(`User sync mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
+            logger.debug(`User sync mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
             if (field === 'subscription') {
               const subData = await fetchDataFromFirebase('subscription', uid, companyId || '', role);
               saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
@@ -614,7 +631,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           const remoteData = await fetchCompanySyncState(companyId);
           const localVersions: Record<string, any> = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS) || {};
 
-          console.log('Company sync state received:', JSON.stringify({
+          logger.debug('Company sync state received:', JSON.stringify({
             jobsVersion: remoteData.jobsVersion,
             documentsVersion: remoteData.documentsVersion,
             clientsVersion: remoteData.clientsVersion,
@@ -632,17 +649,25 @@ export function CacheProvider({ children }: { children: ReactNode }) {
 
           if ((role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion) ||
               (role !== 'dev' && remoteDocsVersion !== localDocsVersion)) {
-            console.log(`Company jobs/documents changed: jobs ${localJobsVersion}->${remoteJobsVersion}, docs ${localDocsVersion}->${remoteDocsVersion}`);
+            logger.debug(`Company jobs/documents changed: jobs ${localJobsVersion}->${remoteJobsVersion}, docs ${localDocsVersion}->${remoteDocsVersion}`);
 
             fetchPromises.push((async () => {
-              // Use paginated fetches to avoid pulling full collection on every version bump.
               const shouldFetchJobs = role !== 'basic' && role !== 'dev' && remoteJobsVersion !== localJobsVersion;
               const shouldFetchDocs = role !== 'dev' && remoteDocsVersion !== localDocsVersion;
+              const cacheStartIso = getCacheStartDate().toISOString();
 
-              const [jobsItems, docsItems] = await Promise.all([
-                shouldFetchJobs ? fetchAllCursorPages(fetchJobsPage, companyId, 200) : Promise.resolve([]),
-                shouldFetchDocs ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200) : Promise.resolve([]),
+              const [openJobs, closedJobs, docsItems] = await Promise.all([
+                shouldFetchJobs
+                  ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
+                  : Promise.resolve([]),
+                shouldFetchJobs
+                  ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
+                  : Promise.resolve([]),
+                shouldFetchDocs
+                  ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
+                  : Promise.resolve([]),
               ]);
+              const jobsItems = [...openJobs, ...closedJobs];
               const cachedDocuments = mmkvHelpers.getObject(CACHE_KEYS.DOCUMENTS);
               const existingDocumentsCache = Array.isArray(cachedDocuments) ? cachedDocuments : [];
 
@@ -661,7 +686,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           const remoteClientsVersion = remoteData.clientsVersion || 0;
           const localClientsVersion = localVersions.clientsVersion || 0;
           if (remoteClientsVersion !== localClientsVersion) {
-            console.log(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
+            logger.debug(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
 
             fetchPromises.push((async () => {
               const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
@@ -678,7 +703,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             const localWorkersVersion = localVersions.workersVersion || 0;
 
             if (remoteWorkersVersion !== localWorkersVersion) {
-              console.log(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
+              logger.debug(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
 
               fetchPromises.push((async () => {
                 const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
@@ -695,7 +720,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             const localCompanyInventoryVersion = localVersions.companyInventoryVersion || 0;
 
             if (remoteCompanyInventoryVersion !== localCompanyInventoryVersion) {
-              console.log(`Company inventory version changed: local=${localCompanyInventoryVersion}, remote=${remoteCompanyInventoryVersion}`);
+              logger.debug(`Company inventory version changed: local=${localCompanyInventoryVersion}, remote=${remoteCompanyInventoryVersion}`);
 
               fetchPromises.push((async () => {
                 const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
@@ -747,7 +772,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     // Mark listeners as active
     listenersActiveRef.current = true;
     
-    console.log(`Cache listeners set up for ${role}`);
+    logger.debug(`Cache listeners set up for ${role}`);
   }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
 
   /**
@@ -761,7 +786,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * 4. Setup snapshot listeners (they handle version sync automatically on connect)
    */
   const initializeCache = useCallback(async (userId: string) => {
-    console.log(`?? Initializing cache...`);
+    logger.debug(`?? Initializing cache...`);
     setIsLoading(true);
     
     try {
@@ -825,7 +850,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // If we have cached metadata, use it
       if (!cachedData.identityMismatch && uid && role && companyId && profileData && !shouldForceFreshBootstrap) {
-        console.log(`?? Using cached credentials: ${uid} (${role})`);
+        logger.debug(`?? Using cached credentials: ${uid} (${role})`);
       } else {
         // Try to get from cached profile
         if (profileData && !role) {
@@ -840,7 +865,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         
         // If still no profile, this is first login - fetch from Firebase
         if (!profileData) {
-          console.log('?? No cached profile, fetching from Firebase (first login)...');
+          logger.debug('?? No cached profile, fetching from Firebase (first login)...');
           profileData = await fetchDataFromFirebase('profile', uid || '', companyId || '', role || '');
           
           if (!profileData) {
@@ -874,11 +899,11 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       if (profileData?.wid) mmkvHelpers.setString(CACHE_KEYS.USER_WID, String(profileData.wid));
       else mmkvHelpers.delete(CACHE_KEYS.USER_WID);
       
-      console.log(`?? Cache init: ${uid} (${role}) @ ${companyId}`);
+      logger.debug(`?? Cache init: ${uid} (${role}) @ ${companyId}`);
       
       // STEP 3: Check if this is first time (no local cache) or returning user
       if (shouldForceFreshBootstrap) {
-        console.log('?? No local cache found, performing full fresh fetch...');
+        logger.debug('?? No local cache found, performing full fresh fetch...');
         await fetchAllFresh(uid || '', role || '', companyId || '');
         // Check if business_info exists in Firestore (don't cache the data itself)
         const hasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO) === 'true';
@@ -888,11 +913,11 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       // STEP 4: Set up real-time snapshot listeners
       // The listeners will automatically sync versions and fetch any missing/outdated data
       // when they first connect (onSnapshot fires immediately with current state)
-      console.log('?? Setting up cache listeners (will sync versions automatically)...');
+      logger.debug('?? Setting up cache listeners (will sync versions automatically)...');
       setupCacheListeners(uid || '', role || '', companyId);
       
       setIsInitialized(true);
-      console.log('? Cache initialized successfully');
+      logger.debug('? Cache initialized successfully');
       
       // Read the flag (either from cache or freshly migrated)
       const hasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO) === 'true';
@@ -912,7 +937,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * Also fetches remote cache doc versions to store correct version numbers
    */
   const fetchAllFresh = useCallback(async (uid: string, role: string, companyId: string) => {
-    console.log('?? Fetching all data fresh from Firebase (first login)...');
+    logger.debug('?? Fetching all data fresh from Firebase (first login)...');
     
     try {
       // Fetch profile for all roles
@@ -954,7 +979,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         if (workersData) saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
       } else if (role === 'dev') {
         // Dev role doesn't need workers
-        console.log('?? Dev role: skipping workers fetch');
+        logger.debug('?? Dev role: skipping workers fetch');
       }
       
       // Check if business_info exists through the read model so SQL-backed
@@ -970,13 +995,22 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       }
       
       // Fetch all recent jobs from Firebase
-      console.log('Fetching all recent jobs for initial cache...');
+      logger.debug('Fetching all recent jobs for initial cache...');
       let { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
       if (companyId) {
-        const [allJobsData, allDocumentsData] = await Promise.all([
-          role !== 'basic' && role !== 'dev' ? fetchAllCursorPages(fetchJobsPage, companyId, 200) : Promise.resolve([]),
-          role !== 'dev' ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200) : Promise.resolve([]),
+        const cacheStartIso = getCacheStartDate().toISOString();
+        const [openJobsData, closedJobsData, allDocumentsData] = await Promise.all([
+          role !== 'basic' && role !== 'dev'
+            ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
+            : Promise.resolve([]),
+          role !== 'basic' && role !== 'dev'
+            ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
+            : Promise.resolve([]),
+          role !== 'dev'
+            ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
+            : Promise.resolve([]),
         ]);
+        const allJobsData = [...openJobsData, ...closedJobsData];
 
         if (allJobsData.length > 0 || (role !== 'basic' && role !== 'dev')) {
           jobsData = allJobsData;
@@ -991,7 +1025,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch clients for all roles (shared company collection)
       if (companyId) {
-        console.log('?? Fetching clients for initial cache...');
+        logger.debug('?? Fetching clients for initial cache...');
         const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
         if (Array.isArray(clientsData)) {
           saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
@@ -1000,7 +1034,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       }
       
       // Fetch remote cache docs to get correct version numbers
-      console.log('Fetching remote cache docs for version numbers...');
+      logger.debug('Fetching remote cache docs for version numbers...');
       const versions: Record<string, any> = {};
       const companyVersions: Record<string, any> = {};
       
@@ -1030,7 +1064,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       setIsInitialized(true);
       setIsLoading(false);
       
-      console.log('Initial cache populated with', jobsData.length, 'jobs');
+      logger.debug('Initial cache populated with', jobsData.length, 'jobs');
     } catch (error) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
@@ -1122,7 +1156,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * Clear all cache (on logout)
    */
   const clearCache = useCallback(() => {
-    console.log('??? Clearing all cache...');
+    logger.debug('??? Clearing all cache...');
     
     // Unsubscribe from listeners
     if (unsubscribeRef.current) {
@@ -1149,7 +1183,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     
     listenersActiveRef.current = false;
     
-    console.log('? Cache cleared');
+    logger.debug('? Cache cleared');
   }, [resetCacheState]);
 
   // Archive-aware month and date-range queries — extracted to hooks/useArchiveQuery.ts

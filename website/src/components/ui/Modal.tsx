@@ -30,7 +30,7 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -42,7 +42,7 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
     >
       <div
         className={cn(
-          "w-full max-w-xl rounded-[1.75rem] border border-white/70 bg-white/90 p-6 shadow-[0_30px_120px_-48px_rgba(15,23,42,0.8)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/90",
+          "w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-950/15 dark:border-slate-800 dark:bg-slate-950",
           className,
         )}
       >
@@ -53,7 +53,7 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
             aria-label="Close modal"
           >
             <X className="h-4 w-4" />

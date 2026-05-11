@@ -112,15 +112,15 @@ export default function WorkersClient() {
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Workers</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{workersCount}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{workersCount}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Users</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{usersCount}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{usersCount}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Basic</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{basicCount}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{basicCount}</p>
               </div>
             </div>
           </div>

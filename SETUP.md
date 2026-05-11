@@ -187,15 +187,14 @@ EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_ANON_KEY=
 
 EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=
-EXPO_PUBLIC_MMKV_AUTH_KEY=   # optional explicit auth-store encryption key override
 ```
 
 Notes:
 
 - Registration and onboarding remain website-only.
 - If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
-- Mobile Supabase transport tokens are stored in a dedicated encrypted MMKV instance, separate from the general cache MMKV store.
-- If `EXPO_PUBLIC_MMKV_AUTH_KEY` is unset, the app derives an auth-store key from app/device runtime metadata instead of using a hardcoded source literal or persisting the key inside the general MMKV cache.
+- Mobile Supabase transport tokens are stored in Expo SecureStore, separate from the general cache MMKV store.
+- General MMKV stores non-sensitive cache and identity hints only; do not store access or refresh tokens there.
 - Push notification listeners and token registration are attached after authenticated cache bootstrap succeeds for the active session; Android channel setup is safe to call more than once.
 
 ## 7. Supabase Edge Environment
@@ -256,8 +255,10 @@ Rules:
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration tip:
-- Ensure the runtime hardening migrations are applied, including `0008_supabase_auth_rls.sql` and `0011_runtime_hardening.sql`. These changes include:
+- Ensure the runtime hardening migrations are applied, including `0008_supabase_auth_rls.sql`, `0011_runtime_hardening.sql`, `0013_support_owner_rls.sql`, and `0014_read_model_cursor_indexes.sql`. These changes include:
   - corrected `document_tasks` / `support_conversations` RLS references
+  - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
+  - cursor-covering read-model indexes for timestamp-plus-id jobs/documents pagination
   - `contact_requests.subject` column
   - `upgrade_requests.company_id` → UUID
   - `document_tasks.lock_key` plus active uniqueness on `(company_id, task_type, lock_key)`
@@ -309,10 +310,10 @@ Required deployment concerns:
 
 Preserve these invariants:
 
-- create-only semantics for new generated PDFs and documents
+- create-only semantics for new generated PDFs and documents across all document types
 - orphan file cleanup when finalize fails
 - canonical `storagePath` persistence instead of durable URLs
-- tax invoice finalization must also refuse to overwrite an existing SQL `storage_path`
+- document finalization must refuse to overwrite an existing SQL `storage_path`
 
 ## 11. Cloud Run Archiver
 

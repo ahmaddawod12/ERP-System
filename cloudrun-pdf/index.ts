@@ -851,8 +851,6 @@ async function processGenerateTask(taskData) {
     
     const pdfSize = pdfBuffer.length;
     
-    const enforceCreateOnlyStorage = documentType === 305;
-
     // Upload to Storage (permanent)
     const fileName = `${normalizedDocumentId}.pdf`;
     const bucket = storage.bucket(STORAGE_BUCKET);
@@ -870,7 +868,7 @@ async function processGenerateTask(taskData) {
           pdfSize: pdfSize.toString(),
         }
       },
-      ...(enforceCreateOnlyStorage ? { preconditionOpts: { ifGenerationMatch: 0 } } : {}),
+      preconditionOpts: { ifGenerationMatch: 0 },
     });
     savedGeneratedFile = file;
     const [taskDownloadURL] = await file.getSignedUrl({

@@ -32,10 +32,10 @@ const principles = [
 export default function SecurityPage() {
   return (
     <PublicLayout>
-      <section className="page-shell pb-14 pt-8 sm:pt-10">
+      <section className="page-shell py-12">
         <div className="max-w-3xl">
           <p className="section-kicker">Security overview</p>
-          <h1 className="mt-5 text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl dark:text-white">
+          <h1 className="mt-4 text-4xl font-semibold tracking-normal text-slate-950 sm:text-5xl dark:text-white">
             Secure by data model, role boundaries, and protected write paths.
           </h1>
           <p className="mt-4 text-base leading-8 text-slate-600 dark:text-slate-300">
@@ -49,7 +49,7 @@ export default function SecurityPage() {
             ["companyId", "Server-allocated business scope, never derived from email."],
             ["Cloud Functions", "Protected writes for jobs, clients, documents, workers, and invites."],
           ].map(([title, copy]) => (
-            <div key={title} className="glass-panel rounded-3xl px-4 py-4">
+            <div key={title} className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <p className="text-lg font-semibold text-slate-950 dark:text-white">{title}</p>
               <p className="mt-1 text-sm leading-7 text-slate-600 dark:text-slate-300">{copy}</p>
             </div>
@@ -58,10 +58,8 @@ export default function SecurityPage() {
 
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {items.map((item) => (
-            <Card key={item.title} className="mesh-card p-7">
-              <div className="inline-flex rounded-2xl bg-slate-950 p-3 text-white dark:bg-white dark:text-slate-950">
-                <item.icon className="h-6 w-6" />
-              </div>
+            <Card key={item.title} className="p-7">
+              <item.icon className="h-6 w-6 text-blue-600 dark:text-blue-300" />
               <h2 className="mt-4 text-lg font-semibold text-slate-900 dark:text-slate-100">{item.title}</h2>
               <p className="mt-3 text-sm leading-7 text-slate-600 dark:text-slate-300">{item.description}</p>
             </Card>
@@ -69,34 +67,34 @@ export default function SecurityPage() {
         </div>
 
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.02fr_0.98fr]">
-          <Card className="mesh-card p-7 sm:p-8">
+          <Card className="p-7 sm:p-8">
             <p className="section-kicker">Architecture notes</p>
-            <h2 className="mt-5 text-3xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">
+            <h2 className="mt-4 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
               Identity and company scope are separate on purpose.
             </h2>
             <ul className="mt-6 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
-              <li className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+              <li className="quiet-list-item flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
                 <span>Primary account identity: Supabase auth uid.</span>
               </li>
-              <li className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+              <li className="quiet-list-item flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
                 <span>Company context: companyId allocated by backend registration.</span>
               </li>
-              <li className="flex items-start gap-3 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 dark:border-white/10 dark:bg-slate-900/55">
+              <li className="quiet-list-item flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
                 <span>Worker records use sequential wid values inside a company scope.</span>
               </li>
             </ul>
           </Card>
 
-          <Card className="glass-panel rounded-[1.8rem] p-7 sm:p-8">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500 dark:text-slate-400">
+          <Card className="p-7 sm:p-8">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
               Guardrails
             </p>
             <div className="mt-5 grid gap-3">
               {principles.map((principle) => (
-                <div key={principle} className="rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-3 text-sm leading-7 text-slate-700 dark:border-white/10 dark:bg-slate-900/55 dark:text-slate-200">
+                <div key={principle} className="quiet-list-item leading-7">
                   {principle}
                 </div>
               ))}

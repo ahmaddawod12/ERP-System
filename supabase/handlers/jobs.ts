@@ -539,6 +539,9 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     }
   }
 
+  const resolvedPartRows = parts.length > 0
+    ? await resolveJobPartRows(companyId, parts, ctx)
+    : [];
   const nextJobNo = await allocateNextCompanyCounter(companyId, "job_no", ctx);
   const validatedAttachments = validateJobAttachmentsForWrite(
     attachments,
@@ -588,7 +591,7 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   }
 
   if (parts.length > 0) {
-    const partRows = (await resolveJobPartRows(companyId, parts, ctx)).map((part) => ({
+    const partRows = resolvedPartRows.map((part) => ({
       job_id: inserted.id,
       ...part,
     }));
@@ -777,6 +780,13 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
       ctx.auth?.uid || null,
       String(existingJob.job_no || requestedJobId),
     );
+    const { data: existingAttachments, error: existingAttachmentsError } = await supabase
+      .from("job_attachments")
+      .select("storage_path, kind, uploaded_by_user_id, created_at")
+      .eq("job_id", jobId);
+    if (existingAttachmentsError) {
+      throw { code: "internal", message: "Failed to load existing job attachments", httpStatus: 500 };
+    }
     const { error: deleteAttachmentsError } = await supabase.from("job_attachments").delete().eq("job_id", jobId);
     if (deleteAttachmentsError) {
       throw { code: "internal", message: "Failed to reset job attachments", httpStatus: 500 };
@@ -800,6 +810,24 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     if (attachmentRows.length > 0) {
       const { error: attachmentError } = await supabase.from("job_attachments").insert(attachmentRows);
       if (attachmentError) {
+        if (Array.isArray(existingAttachments) && existingAttachments.length > 0) {
+          const { error: restoreError } = await supabase.from("job_attachments").insert(
+            existingAttachments.map((attachment: any) => ({
+              job_id: jobId,
+              storage_path: attachment.storage_path,
+              kind: attachment.kind,
+              uploaded_by_user_id: attachment.uploaded_by_user_id || null,
+              created_at: attachment.created_at || new Date().toISOString(),
+            })),
+          );
+          if (restoreError) {
+            ctx.logger.error("Failed to restore job attachments after update failure", {
+              jobId,
+              companyId,
+              restoreError: restoreError.message,
+            });
+          }
+        }
         throw { code: "internal", message: "Failed to update job attachments", httpStatus: 500 };
       }
     }

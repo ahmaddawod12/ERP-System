@@ -7,6 +7,7 @@ import {
   initializeAppCheck,
 } from '@react-native-firebase/app-check';
 import appCheck from '@react-native-firebase/app-check';
+import * as SecureStore from 'expo-secure-store';
 import {
   getFirestore,
   collection,
@@ -41,7 +42,7 @@ import {
   getAPNSToken,
   AuthorizationStatus,
 } from '@react-native-firebase/messaging';
-import { authStorage, storage as mmkvStorage } from './contexts/mmkv-storage';
+import { storage as mmkvStorage } from './contexts/mmkv-storage';
 
 // Get the default app instance (modular API)
 export const app = getApp();
@@ -92,6 +93,37 @@ type SupabaseSessionPayload = {
   msg?: unknown;
 };
 
+async function isSecureStoreAvailable(): Promise<boolean> {
+  try {
+    return await SecureStore.isAvailableAsync();
+  } catch {
+    return false;
+  }
+}
+
+async function getSecureAuthItem(key: string): Promise<string> {
+  if (!(await isSecureStoreAvailable())) {
+    return '';
+  }
+  return String((await SecureStore.getItemAsync(key)) || '').trim();
+}
+
+async function setSecureAuthItem(key: string, value: string): Promise<void> {
+  if (!(await isSecureStoreAvailable())) {
+    throw new Error('Secure credential storage is unavailable on this device');
+  }
+  await SecureStore.setItemAsync(key, value, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+}
+
+async function deleteSecureAuthItem(key: string): Promise<void> {
+  if (!(await isSecureStoreAvailable())) {
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
+}
+
 function toSupabaseAuthUser(uid: string, email: string | null): SupabaseAuthUser {
   return {
     uid,
@@ -135,7 +167,7 @@ function readSupabaseConfig() {
   return { url, anonKey };
 }
 
-function saveSupabaseSession(payload: SupabaseSessionPayload) {
+async function saveSupabaseSession(payload: SupabaseSessionPayload) {
   const accessToken = String(payload.access_token || '').trim();
   const refreshToken = String(payload.refresh_token || '').trim();
   const expiresAt = Number(payload.expires_at || 0);
@@ -145,9 +177,11 @@ function saveSupabaseSession(payload: SupabaseSessionPayload) {
     throw new Error('Supabase session payload is invalid');
   }
 
-  authStorage.set(SUPABASE_ACCESS_TOKEN_KEY, accessToken);
-  authStorage.set(SUPABASE_REFRESH_TOKEN_KEY, refreshToken);
-  authStorage.set(SUPABASE_EXPIRES_AT_KEY, String(expiresAt));
+  await Promise.all([
+    setSecureAuthItem(SUPABASE_ACCESS_TOKEN_KEY, accessToken),
+    setSecureAuthItem(SUPABASE_REFRESH_TOKEN_KEY, refreshToken),
+    setSecureAuthItem(SUPABASE_EXPIRES_AT_KEY, String(expiresAt)),
+  ]);
   setAuthCurrentUser(uid, email);
 }
 
@@ -167,11 +201,11 @@ export async function signInSupabaseAuthTransport(email: string, password: strin
     throw new Error(String(payload?.error_description || payload?.msg || 'Supabase sign-in failed'));
   }
 
-  saveSupabaseSession(payload);
+  await saveSupabaseSession(payload);
 }
 
 export async function getSupabaseAuthTransportToken(forceRefresh = true): Promise<string | null> {
-  const accessToken = String(authStorage.getString(SUPABASE_ACCESS_TOKEN_KEY) || '').trim();
+  const accessToken = await getSecureAuthItem(SUPABASE_ACCESS_TOKEN_KEY);
   if (!accessToken) {
     return null;
   }
@@ -180,13 +214,13 @@ export async function getSupabaseAuthTransportToken(forceRefresh = true): Promis
     return accessToken;
   }
 
-  const expiresAt = Number(authStorage.getString(SUPABASE_EXPIRES_AT_KEY) || 0);
+  const expiresAt = Number(await getSecureAuthItem(SUPABASE_EXPIRES_AT_KEY) || 0);
   const now = Math.floor(Date.now() / 1000);
   if (Number.isFinite(expiresAt) && expiresAt > now + 30) {
     return accessToken;
   }
 
-  const refreshToken = String(authStorage.getString(SUPABASE_REFRESH_TOKEN_KEY) || '').trim();
+  const refreshToken = await getSecureAuthItem(SUPABASE_REFRESH_TOKEN_KEY);
   if (!refreshToken) {
     return null;
   }
@@ -207,14 +241,16 @@ export async function getSupabaseAuthTransportToken(forceRefresh = true): Promis
     return null;
   }
 
-  saveSupabaseSession(payload);
+  await saveSupabaseSession(payload);
   return String(payload.access_token || '').trim() || null;
 }
 
 export async function clearSupabaseAuthTransportSession(): Promise<void> {
-  authStorage.remove(SUPABASE_ACCESS_TOKEN_KEY);
-  authStorage.remove(SUPABASE_REFRESH_TOKEN_KEY);
-  authStorage.remove(SUPABASE_EXPIRES_AT_KEY);
+  await Promise.all([
+    deleteSecureAuthItem(SUPABASE_ACCESS_TOKEN_KEY),
+    deleteSecureAuthItem(SUPABASE_REFRESH_TOKEN_KEY),
+    deleteSecureAuthItem(SUPABASE_EXPIRES_AT_KEY),
+  ]);
   clearAuthCurrentUser();
 }
 

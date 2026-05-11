@@ -32,7 +32,7 @@ export async function completeDocumentGeneration({ companyId, documentId, storag
         AND c.public_company_id = $1
         AND d.document_code = $2
         AND ($4::integer IS NULL OR d.document_type = $4)
-        AND ($4::integer IS DISTINCT FROM 305 OR d.storage_path IS NULL)
+        AND d.storage_path IS NULL
     `,
     [Number(companyId), String(documentId || '').trim(), String(storagePath || '').trim(), normalizedDocumentType],
   );

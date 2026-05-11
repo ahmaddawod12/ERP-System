@@ -32,7 +32,7 @@ website/mobile
 - `uid` is the canonical user identity key.
 - `companyId` is the canonical tenant scope key.
 - Company-scoped access is validated server-side, not inferred from client payloads.
-- Backend handlers must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes.
+- Backend handlers must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes. Public numeric IDs and internal UUIDs are resolved with separate SQL filters.
 - Public job API boundaries use sequential `job_no` values; internal SQL UUIDs are resolved only inside backend handlers.
 - Read-model job cursors remain based on the internal stable tuple `(created_at, jobs.id)` even when item payloads expose public sequential job IDs.
 
@@ -87,16 +87,18 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Server routes verify Supabase tokens and issue signed HttpOnly `__session` cookies.
 - Website server proxy auth uses a split-cookie transport: `__session` stores signed session metadata and a separate HttpOnly `__session_access` cookie stores the current bearer token for server-side Edge proxy calls.
 - Protected web actions go through API proxy routes, then into backend functions.
-- Website read-model calls are kind-based and must remain contract-compatible with backend `read-model` kinds.
+- Website read-model calls are kind-based and must remain contract-compatible with backend `read-model` kinds. Service-role read-model code must enforce the runtime role matrix before returning rows.
 
 ### Mobile
 
-- The Expo app stores Supabase transport tokens in MMKV-backed auth helpers.
+- The Expo app stores Supabase transport tokens in Expo SecureStore-backed auth helpers.
 - Protected operations go through backend HTTP/gateway helpers.
 - Mobile read-model calls are kind-based and share the same backend contract as website.
 - Mobile MMKV cache/draft/outbox keys must stay scoped by active `uid` / `companyId`.
-- Mobile cache refresh must drain paginated jobs/documents reads fully instead of assuming page one is complete.
+- Mobile Supabase access and refresh tokens are stored in Expo SecureStore, not MMKV.
+- Mobile cache refresh must drain paginated jobs/documents reads for the active 90-day cache window instead of assuming page one is complete.
 - Mobile cache refresh must preserve the existing role-scoped jobs cache when only document versions change.
+- Mobile debug logging uses the dev-only logger wrapper for noisy cache/read-model output.
 - Archived month reads go through backend `fetchArchiveMonthV1`; clients do not read protected archive objects directly.
 - Finished solo jobs upload attachments to company-scoped storage first and pass `attachmentUploadId` into `createJobV1` until the final public job number exists.
 - Push notification listeners and token registration attach only after authenticated cache bootstrap succeeds for the active mobile session.
@@ -114,7 +116,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Edge handlers enrich preview/generate payloads with company data, create SQL draft document rows for generate flows, and dispatch trusted work to `cloudrun-pdf`.
 - `cloudrun-pdf` validates requester identity, accepts trusted dispatch bearer auth from either Google OIDC or the configured edge service account, renders PDF output, stores files, and finalizes task/document state.
 - New generated artifacts must keep create-only semantics and orphan cleanup on finalize failure.
-- Tax invoice generate flows must not overwrite an existing finalized PDF or existing SQL `storage_path`.
+- Generate flows must not overwrite an existing finalized PDF or existing SQL `storage_path`, regardless of document type.
 
 ### Archiving
 

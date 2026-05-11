@@ -24,8 +24,9 @@ export default function FieldServicesSolutionPage() {
   return (
     <PublicLayout>
       <section className="page-shell py-12">
-        <h1 className="text-4xl font-bold text-slate-900 dark:text-white">Field Services Solution</h1>
-        <p className="mt-3 max-w-3xl text-slate-600 dark:text-slate-300">
+        <p className="section-kicker">Field services</p>
+        <h1 className="mt-4 text-4xl font-semibold tracking-normal text-slate-950 sm:text-5xl dark:text-white">Field Services Solution</h1>
+        <p className="mt-4 max-w-3xl text-base leading-8 text-slate-600 dark:text-slate-300">
           For plumbing, electrical, maintenance, and mixed field operations that need predictable service delivery.
         </p>
         <div className="mt-8 grid gap-4 md:grid-cols-3">
@@ -56,4 +57,3 @@ export default function FieldServicesSolutionPage() {
     </PublicLayout>
   );
 }
-

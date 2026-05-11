@@ -16,6 +16,7 @@ import {
 const env = getEnv();
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
+const NEVER_UUID = "00000000-0000-4000-8000-000000000000";
 
 const READ_MODEL_KINDS = new Set([
   "bootstrap",
@@ -35,6 +36,14 @@ type CompanyScope = {
   publicCompanyId: string;
 };
 
+type RequesterContext = {
+  role: string;
+  membershipId: string | null;
+  memberNo: number | null;
+  accountType: string;
+  isDev: boolean;
+};
+
 function normalizeIsoString(value: unknown): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -47,6 +56,74 @@ function parsePageSize(raw: unknown): number {
   const value = Number(raw || DEFAULT_PAGE_SIZE);
   if (!Number.isFinite(value)) return DEFAULT_PAGE_SIZE;
   return Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(value)));
+}
+
+function parseReadLimit(body: Record<string, unknown>): number {
+  const raw = body.limit ?? body.pageSize;
+  const value = Number(raw || DEFAULT_PAGE_SIZE);
+  if (!Number.isFinite(value)) return DEFAULT_PAGE_SIZE;
+  const max = body.limit != null ? 10_000 : MAX_PAGE_SIZE;
+  return Math.min(max, Math.max(1, Math.floor(value)));
+}
+
+function normalizeStringList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return Array.from(new Set(
+    values
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean),
+  ));
+}
+
+function normalizeDateFilter(value: unknown): string | null {
+  const normalized = normalizeIsoString(value);
+  return normalized || null;
+}
+
+function resolveJobDateField(value: unknown): "created_at" | "updated_at" | "finished_at" | "due_at" {
+  switch (String(value || "").trim()) {
+    case "updatedAt":
+      return "updated_at";
+    case "finishedAt":
+      return "finished_at";
+    case "dueAt":
+      return "due_at";
+    default:
+      return "created_at";
+  }
+}
+
+function resolveDocumentDateField(value: unknown): "created_at" | "updated_at" | "document_date" {
+  switch (String(value || "").trim()) {
+    case "updatedAt":
+      return "updated_at";
+    case "documentDate":
+      return "document_date";
+    default:
+      return "created_at";
+  }
+}
+
+function getRowDateValue(row: any, field: string): unknown {
+  return row?.[field] || row?.created_at || "";
+}
+
+function shouldScopeJobsToMembership(requester: RequesterContext): boolean {
+  if (requester.isDev) return false;
+  if (requester.role === "worker") return true;
+  return requester.role === "user" && requester.accountType !== "solo";
+}
+
+function canReadCompanyJobs(requester: RequesterContext): boolean {
+  return requester.isDev || requester.role !== "basic";
+}
+
+function canReadCompanyDocuments(requester: RequesterContext): boolean {
+  return requester.isDev || requester.role !== "worker";
+}
+
+function canReadCompanyWorkers(requester: RequesterContext): boolean {
+  return requester.isDev || requester.role === "manager";
 }
 
 function isUuidLike(value: string): boolean {
@@ -84,6 +161,27 @@ async function getMembershipMap(internalCompanyId: string, membershipIds: string
     });
   }
   return map;
+}
+
+async function getMembershipIdsForUser(internalCompanyId: string, uid: string): Promise<string[]> {
+  const normalizedUid = String(uid || "").trim();
+  if (!normalizedUid) return [];
+
+  const supabase = createSupabaseClient(env);
+  const { data, error } = await supabase
+    .from("company_memberships")
+    .select("id")
+    .eq("company_id", internalCompanyId)
+    .eq("user_id", normalizedUid)
+    .eq("status", "active");
+
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to resolve creator membership" };
+  }
+
+  return (data || [])
+    .map((row: any) => String(row.id || "").trim())
+    .filter(Boolean);
 }
 
 async function getJobAttachments(jobIds: string[]) {
@@ -285,9 +383,13 @@ async function resolveCompanyScope(
   };
 }
 
-async function getRequesterRoleContext(internalCompanyId: string, uid: string) {
+async function getRequesterContext(scope: CompanyScope, uid: string): Promise<RequesterContext> {
   const supabase = createSupabaseClient(env);
-  const [{ data: userRow, error: userError }, { data: membership, error: membershipError }] = await Promise.all([
+  const [
+    { data: userRow, error: userError },
+    { data: membership, error: membershipError },
+    { data: company, error: companyError },
+  ] = await Promise.all([
     supabase
       .from("app_users")
       .select("system_role")
@@ -295,23 +397,32 @@ async function getRequesterRoleContext(internalCompanyId: string, uid: string) {
       .maybeSingle(),
     supabase
       .from("company_memberships")
-      .select("role")
-      .eq("company_id", internalCompanyId)
+      .select("id, role, member_no")
+      .eq("company_id", scope.internalCompanyId)
       .eq("user_id", uid)
       .eq("status", "active")
       .maybeSingle(),
+    supabase
+      .from("companies")
+      .select("account_type")
+      .eq("id", scope.internalCompanyId)
+      .maybeSingle(),
   ]);
 
-  if (userError) {
-    throw { code: "internal", httpStatus: 500, message: "Failed to load requester role" };
+  if (userError || companyError) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load requester context" };
   }
-  if (membershipError || !membership) {
+  const isDev = String(userRow?.system_role || "").toLowerCase() === "dev";
+  if (membershipError || (!membership && !isDev)) {
     throw { code: "permission-denied", httpStatus: 403, message: "Not allowed for this company" };
   }
 
   return {
-    role: String(membership.role || "").toLowerCase(),
-    isDev: String(userRow?.system_role || "").toLowerCase() === "dev",
+    role: isDev ? "dev" : String(membership?.role || "").toLowerCase(),
+    membershipId: membership?.id ? String(membership.id) : null,
+    memberNo: membership?.member_no == null ? null : Number(membership.member_no),
+    accountType: String(company?.account_type || "").toLowerCase(),
+    isDev,
   };
 }
 
@@ -507,6 +618,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     env,
     corsHeaders: {},
   } as any);
+  const requester = await getRequesterContext(scope, uid);
 
   if (kind === "companySyncState") {
     const { data } = await supabase
@@ -526,11 +638,16 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   }
 
   if (kind === "workers") {
+    if (!canReadCompanyWorkers(requester)) {
+      return [];
+    }
+
     const { data } = await supabase
       .from("company_memberships")
       .select("id, user_id, member_no, role, display_name, phone_number, created_at, updated_at, app_users(email)")
       .eq("company_id", scope.internalCompanyId)
       .eq("status", "active")
+      .in("role", ["worker", "user", "basic"])
       .order("member_no", { ascending: true });
 
     return (data || []).map((row: any) => ({
@@ -572,7 +689,6 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     if (scopeKind === "user") {
       const targetUid = optionalTrimmedString(body.targetUid, 200) || uid;
       if (targetUid !== uid) {
-        const requester = await getRequesterRoleContext(scope.internalCompanyId, uid);
         if (!requester.isDev && requester.role !== "manager") {
           throw {
             code: "permission-denied",
@@ -603,7 +719,6 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
     }
 
-    const requester = await getRequesterRoleContext(scope.internalCompanyId, uid);
     const isTaskOwner = String(task.user_id) === uid;
     const canReadCompanyTask = requester.isDev || requester.role === "manager";
     if (!isTaskOwner && !canReadCompanyTask) {
@@ -654,7 +769,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
         ? jobQuery.eq("job_no", Number(normalizedRecordId))
         : isUuidLike(normalizedRecordId)
           ? jobQuery.eq("id", normalizedRecordId)
-          : jobQuery.eq("id", "__never__")
+          : jobQuery.eq("id", NEVER_UUID)
       ).maybeSingle(),
       documentByCodeQuery,
       documentByIdQuery,
@@ -662,6 +777,15 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     const document = documentByCode || documentById;
 
     if (job) {
+      if (!canReadCompanyJobs(requester)) {
+        return null;
+      }
+      if (
+        shouldScopeJobsToMembership(requester) &&
+        (!requester.membershipId || String(job.assigned_membership_id || "") !== requester.membershipId)
+      ) {
+        return null;
+      }
       const [membershipMap, attachmentsByJobId, partsByJobId] = await Promise.all([
         getMembershipMap(scope.internalCompanyId, [job.assigned_membership_id, job.created_by_membership_id].filter(Boolean).map(String)),
         getJobAttachments([String(job.id)]),
@@ -671,6 +795,9 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     }
 
     if (document) {
+      if (!canReadCompanyDocuments(requester)) {
+        return null;
+      }
       return {
         id: document.id,
         type: document.document_type,
@@ -688,18 +815,43 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   }
 
   if (kind === "jobs") {
-    const pageSize = parsePageSize(body.pageSize || body.limit);
+    if (!canReadCompanyJobs(requester)) {
+      return { items: [], nextCursor: null };
+    }
+
+    const pageSize = parseReadLimit(body);
     const cursor = parseCursor(body.afterCursor);
+    const dateField = resolveJobDateField(body.dateField);
+    const statuses = normalizeStringList(body.status);
+    const dateFrom = normalizeDateFilter(body.dateFrom);
+    const dateTo = normalizeDateFilter(body.dateTo);
     let query = supabase
       .from("jobs")
-      .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, created_at, updated_at, finished_at, denied_at")
+      .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, meta, created_at, updated_at, finished_at, denied_at")
       .eq("company_id", scope.internalCompanyId)
-      .order("created_at", { ascending: false })
+      .order(dateField, { ascending: false })
       .order("id", { ascending: false })
       .limit(pageSize + 1);
 
+    if (shouldScopeJobsToMembership(requester)) {
+      if (!requester.membershipId) {
+        return { items: [], nextCursor: null };
+      }
+      query = query.eq("assigned_membership_id", requester.membershipId);
+    }
+    if (statuses.length === 1) {
+      query = query.eq("status", statuses[0]);
+    } else if (statuses.length > 1) {
+      query = query.in("status", statuses);
+    }
+    if (dateFrom) {
+      query = query.gte(dateField, dateFrom);
+    }
+    if (dateTo) {
+      query = query.lte(dateField, dateTo);
+    }
     if (cursor) {
-      query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+      query = query.or(`${dateField}.lt.${cursor.createdAt},and(${dateField}.eq.${cursor.createdAt},id.lt.${cursor.id})`);
     }
 
     const { data, error } = await query;
@@ -717,26 +869,62 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     const items = slicedRows.map((job: any) => mapJobRecord(job, membershipMap, attachmentsByJobId, partsByJobId));
 
     const nextCursor = hasMore && items.length > 0
-      ? makeCursor(slicedRows[slicedRows.length - 1]?.created_at, slicedRows[slicedRows.length - 1]?.id)
+      ? makeCursor(getRowDateValue(slicedRows[slicedRows.length - 1], dateField), slicedRows[slicedRows.length - 1]?.id)
       : null;
 
     return { items, nextCursor };
   }
 
   if (kind === "documents") {
-    const pageSize = parsePageSize(body.pageSize || body.limit);
+    if (!canReadCompanyDocuments(requester)) {
+      return { items: [], nextCursor: null };
+    }
+
+    const pageSize = parseReadLimit(body);
     const cursor = parseCursor(body.afterCursor);
+    const dateField = resolveDocumentDateField(body.dateField);
+    const statuses = normalizeStringList(body.status);
+    const dateFrom = normalizeDateFilter(body.dateFrom);
+    const dateTo = normalizeDateFilter(body.dateTo);
+    const documentType = Number(body.documentType);
+    const createdByUid = optionalTrimmedString(body.createdByUid, 200);
+    const creatorMembershipIds = createdByUid
+      ? await getMembershipIdsForUser(scope.internalCompanyId, createdByUid)
+      : [];
+
+    if (createdByUid && creatorMembershipIds.length === 0) {
+      return { items: [], nextCursor: null };
+    }
 
     let query = supabase
       .from("documents")
-      .select("id, document_type, document_number, document_code, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, created_at")
+      .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, created_at, updated_at, document_date")
       .eq("company_id", scope.internalCompanyId)
-      .order("created_at", { ascending: false })
+      .order(dateField, { ascending: false })
       .order("id", { ascending: false })
       .limit(pageSize + 1);
 
+    if (statuses.length === 1) {
+      query = query.eq("generation_status", statuses[0]);
+    } else if (statuses.length > 1) {
+      query = query.in("generation_status", statuses);
+    }
+    if (Number.isInteger(documentType)) {
+      query = query.eq("document_type", documentType);
+    }
+    if (creatorMembershipIds.length === 1) {
+      query = query.eq("created_by_membership_id", creatorMembershipIds[0]);
+    } else if (creatorMembershipIds.length > 1) {
+      query = query.in("created_by_membership_id", creatorMembershipIds);
+    }
+    if (dateFrom) {
+      query = query.gte(dateField, dateFrom);
+    }
+    if (dateTo) {
+      query = query.lte(dateField, dateTo);
+    }
     if (cursor) {
-      query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+      query = query.or(`${dateField}.lt.${cursor.createdAt},and(${dateField}.eq.${cursor.createdAt},id.lt.${cursor.id})`);
     }
 
     const { data, error } = await query;
@@ -763,11 +951,12 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
       vatAmount: Number(doc.vat_amount || 0),
       totalWithVat: Number(doc.total_with_vat || 0),
       documentData: doc.payload || {},
+      status: doc.generation_status || undefined,
       createdAt: doc.created_at,
     }));
 
     const nextCursor = hasMore && items.length > 0
-      ? makeCursor((data || [])[pageSize - 1]?.created_at, (data || [])[pageSize - 1]?.id)
+      ? makeCursor(getRowDateValue((data || [])[pageSize - 1], dateField), (data || [])[pageSize - 1]?.id)
       : null;
 
     return { items, nextCursor };
@@ -884,11 +1073,26 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   };
 
   if (countOnly) {
+    let jobsCountQuery = supabase.from("jobs").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId);
+    if (!canReadCompanyJobs(requester)) {
+      jobsCountQuery = jobsCountQuery.eq("id", NEVER_UUID);
+    } else if (shouldScopeJobsToMembership(requester)) {
+      jobsCountQuery = requester.membershipId
+        ? jobsCountQuery.eq("assigned_membership_id", requester.membershipId)
+        : jobsCountQuery.eq("id", NEVER_UUID);
+    }
+    const documentsCountQuery = canReadCompanyDocuments(requester)
+      ? supabase.from("documents").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId)
+      : supabase.from("documents").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
+    const workersCountQuery = canReadCompanyWorkers(requester)
+      ? supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId).eq("status", "active").in("role", ["worker", "user", "basic"])
+      : supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
+
     const [{ count: jobsCount }, { count: clientsCount }, { count: documentsCount }, { count: workersCount }] = await Promise.all([
-      supabase.from("jobs").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
+      jobsCountQuery,
       supabase.from("clients").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
-      supabase.from("documents").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
-      supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId).eq("status", "active"),
+      documentsCountQuery,
+      workersCountQuery,
     ]);
 
     counts.jobs = Number(jobsCount || 0);
@@ -924,6 +1128,8 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   let clients: any[] = [];
   let jobs: any[] = [];
   let documents: any[] = [];
+  let jobsNextCursor: string | null = null;
+  let documentsNextCursor: string | null = null;
 
   if (includeCollections) {
     workers = await buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid);
@@ -932,6 +1138,8 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     const docsResult = await buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 200 }, uid);
     jobs = jobsResult.items || [];
     documents = docsResult.items || [];
+    jobsNextCursor = jobsResult.nextCursor || null;
+    documentsNextCursor = docsResult.nextCursor || null;
     counts.workers = workers.length;
     counts.clients = clients.length;
     counts.jobs = jobs.length;
@@ -948,8 +1156,8 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     clients,
     jobs,
     documents,
-    jobsNextCursor: null,
-    documentsNextCursor: null,
+    jobsNextCursor,
+    documentsNextCursor,
     counts,
     syncState: {
       jobsVersion: Number(syncResult.data?.jobs_version || 0),

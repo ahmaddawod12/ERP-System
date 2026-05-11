@@ -386,13 +386,23 @@ export async function resolveCompanyIdentifiers(
     ? supabase
         .from("companies")
         .select("id, public_company_id")
-        .or(`id.eq.${normalized},public_company_id.eq.${numericCandidate}`)
+        .eq("public_company_id", numericCandidate)
         .limit(1)
-    : supabase
-        .from("companies")
-        .select("id, public_company_id")
-        .eq("id", normalized)
-        .limit(1);
+    : isUuidLike(normalized)
+      ? supabase
+          .from("companies")
+          .select("id, public_company_id")
+          .eq("id", normalized)
+          .limit(1)
+      : null;
+
+  if (!query) {
+    throw {
+      code: "invalid-argument",
+      message: "companyId must be a public numeric ID or internal UUID",
+      httpStatus: 400,
+    };
+  }
 
   const { data, error } = await query.maybeSingle();
   if (error || !data?.id) {

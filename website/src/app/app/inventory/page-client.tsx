@@ -173,19 +173,19 @@ export default function InventoryClient() {
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Total parts</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{parts.length}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{parts.length}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">
                   {isCompanyInventory ? "Inactive" : "Low stock"}
                 </p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">
                   {isCompanyInventory ? inactiveCount : lowStockCount}
                 </p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Mode</p>
-                <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">
                   {isCompanyInventory ? "Company" : "Personal"}
                 </p>
               </div>

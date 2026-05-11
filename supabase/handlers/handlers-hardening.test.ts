@@ -33,9 +33,41 @@ test('document task publishing dispatches Cloud Run only for newly created tasks
 test('read-model task access is restricted to task owner or manager/dev', () => {
   const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
 
-  assert.match(readModelHandler, /const requester = await getRequesterRoleContext/);
+  assert.match(readModelHandler, /const requester = await getRequesterContext\(scope, uid\)/);
   assert.match(readModelHandler, /const isTaskOwner = String\(task\.user_id\) === uid/);
   assert.match(readModelHandler, /const canReadCompanyTask = requester\.isDev \|\| requester\.role === "manager"/);
+});
+
+test('read-model service-role list queries enforce role scoping before returning data', () => {
+  const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
+
+  assert.match(readModelHandler, /type RequesterContext = \{/);
+  assert.match(readModelHandler, /membershipId: string \| null/);
+  assert.match(readModelHandler, /accountType: string/);
+  assert.match(readModelHandler, /function shouldScopeJobsToMembership/);
+  assert.match(readModelHandler, /requester\.role === "worker"/);
+  assert.match(readModelHandler, /requester\.role === "user" && requester\.accountType !== "solo"/);
+  assert.match(readModelHandler, /if \(!canReadCompanyJobs\(requester\)\) \{/);
+  assert.match(readModelHandler, /\.eq\("assigned_membership_id", requester\.membershipId\)/);
+  assert.match(readModelHandler, /if \(!canReadCompanyDocuments\(requester\)\) \{/);
+  assert.match(readModelHandler, /if \(!canReadCompanyWorkers\(requester\)\) \{/);
+});
+
+test('read-model list filters and cursors are wired into service-role queries', () => {
+  const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
+
+  assert.match(readModelHandler, /function parseReadLimit/);
+  assert.match(readModelHandler, /function resolveJobDateField/);
+  assert.match(readModelHandler, /function resolveDocumentDateField/);
+  assert.match(readModelHandler, /normalizeStringList\(body\.status\)/);
+  assert.match(readModelHandler, /\.in\("status", statuses\)/);
+  assert.match(readModelHandler, /\.gte\(dateField, dateFrom\)/);
+  assert.match(readModelHandler, /\.lte\(dateField, dateTo\)/);
+  assert.match(readModelHandler, /\.eq\("document_type", documentType\)/);
+  assert.match(readModelHandler, /getMembershipIdsForUser\(scope\.internalCompanyId, createdByUid\)/);
+  assert.match(readModelHandler, /makeCursor\(getRowDateValue/);
+  assert.match(readModelHandler, /jobsNextCursor = jobsResult\.nextCursor \|\| null/);
+  assert.match(readModelHandler, /documentsNextCursor = docsResult\.nextCursor \|\| null/);
 });
 
 test('rate limiting fails closed when RPC is unavailable', () => {
@@ -46,12 +78,39 @@ test('rate limiting fails closed when RPC is unavailable', () => {
   assert.doesNotMatch(helpers, /allowing request/);
 });
 
+test('company identifier resolution does not OR numeric IDs against UUID columns', () => {
+  const helpers = readFile('supabase', 'shared-edge-helpers.ts');
+
+  assert.match(helpers, /\.eq\("public_company_id", numericCandidate\)/);
+  assert.match(helpers, /isUuidLike\(normalized\)/);
+  assert.match(helpers, /\.eq\("id", normalized\)/);
+  assert.doesNotMatch(helpers, /\.or\(`id\.eq\.\$\{normalized\},public_company_id\.eq\.\$\{numericCandidate\}`\)/);
+});
+
 test('job part usage resolves public part numbers before insert', () => {
   const jobsHandler = readFile('supabase', 'handlers', 'jobs.ts');
 
   assert.match(jobsHandler, /async function resolveJobPartRows/);
   assert.match(jobsHandler, /\.from\("inventory_parts"\)/);
   assert.match(jobsHandler, /\.in\("part_no", numericPartNos\)/);
+  const jobInsertIndex = jobsHandler.search(/\.from\("jobs"\)\s*\.insert\(\{/);
+  assert.ok(
+    jobsHandler.indexOf('const resolvedPartRows = parts.length > 0') <
+      jobInsertIndex,
+    'createJobV1 should resolve job parts before inserting the job row',
+  );
+});
+
+test('job attachment update restores existing rows if replacement insert fails', () => {
+  const jobsHandler = readFile('supabase', 'handlers', 'jobs.ts');
+
+  assert.match(jobsHandler, /Failed to load existing job attachments/);
+  assert.match(jobsHandler, /Failed to restore job attachments after update failure/);
+  assert.ok(
+    jobsHandler.indexOf('select("storage_path, kind, uploaded_by_user_id, created_at")') <
+      jobsHandler.indexOf('deleteAttachmentsError'),
+    'existing attachments should be loaded before destructive replacement',
+  );
 });
 
 test('inventory mutations fail closed instead of clamping negative balances', () => {
@@ -81,4 +140,14 @@ test('archive month retrieval is implemented through backend-controlled storage 
   assert.doesNotMatch(documentsHandler, /replace\(\/%2F\/g, "\/"\)/);
   assert.match(documentsHandler, /success: true,/);
   assert.match(documentsHandler, /items: items \|\| \[\]/);
+});
+
+test('support RLS only exposes personal support threads to owner or dev', () => {
+  const migration = readFile('packages', 'db', 'migrations', '0013_support_owner_rls.sql');
+
+  assert.match(migration, /support_conversations_owner_read_policy/);
+  assert.match(migration, /app_is_dev\(\) OR user_id = app_auth_uid\(\)/);
+  assert.match(migration, /support_messages_owner_read_policy/);
+  assert.match(migration, /c\.user_id = app_auth_uid\(\)/);
+  assert.doesNotMatch(migration, /company_id IS NULL OR app_has_company_access/);
 });

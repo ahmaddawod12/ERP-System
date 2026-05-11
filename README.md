@@ -2,7 +2,7 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (May 1, 2026)
+## Runtime Snapshot (May 10, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
@@ -65,7 +65,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 ## Core Rules
 
 - `uid` is canonical user identity.
-- `companyId` is canonical tenant scope.
+- `companyId` is canonical tenant scope; backend handlers resolve public numeric company IDs and internal UUIDs through separate SQL filters.
 - Sequential IDs are allocated through SQL-backed counters, not `MAX + 1` reads.
 - Protected company writes stay backend-only.
 - Persist canonical `storagePath` for generated files, not durable download URLs.
@@ -73,10 +73,11 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Public job API boundaries use sequential job numbers; internal UUIDs are resolved only inside backend handlers.
 - Keep `read-model` `kind` contracts synchronized across website, mobile, and backend handlers.
 
-## Recent Hardening (April 26–29, 2026)
+## Recent Hardening (April 26-May 10, 2026)
 
-### Backend / SQL (migrations `0008_supabase_auth_rls.sql` and `0011_runtime_hardening.sql`)
+### Backend / SQL (migrations `0008_supabase_auth_rls.sql`, `0011_runtime_hardening.sql`, `0013_support_owner_rls.sql`, and `0014_read_model_cursor_indexes.sql`)
 - Supabase mutation handlers normalize incoming `companyId` to internal company UUID before SQL queries.
+- `resolveCompanyIdentifiers` now resolves public numeric IDs and internal UUIDs with separate queries so public company IDs are never OR-filtered against UUID columns.
 - SQL counter RPCs (`allocate_company_counter`, `allocate_system_counter`) cover all sequential IDs: `public_company_id`, `member_no`, `client_no`, `job_no`, tax invoice numbers (`doc_305`), and inventory part numbers (`part_no`).
 
 ## Optimizations (May 1, 2026)
@@ -99,7 +100,8 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - SQL rate-limit RPC (`increment_rate_limit_bucket`) replaces Firestore-backed rate limiting; join-company flow now enforces a per-user limit.
 - `document_number` immutability trigger blocks updates once a non-zero number is assigned (allows 0 → real, blocks real → different real).
 - `document_tasks` RLS policy fixed to reference the correct column (`user_id`).
-- `support_conversations` RLS policy fixed to allow access for records with no company scope.
+- `support_conversations` / `support_messages` RLS is owner-or-dev for personal support threads, including records with no company scope.
+- `0014_read_model_cursor_indexes.sql` adds timestamp-plus-id covering indexes for jobs/documents read-model pagination and common role/status filters.
 - `contact_requests` now stores a dedicated `subject VARCHAR(500)` column.
 - `upgrade_requests.company_id` migrated from `VARCHAR(32)` to `UUID`; handlers store the internal company UUID.
 - `document_tasks` now persist `lock_key`, and active-task uniqueness is enforced on `(company_id, task_type, lock_key)`.
@@ -108,7 +110,9 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 
 ### Supabase Edge Functions
 - Shared edge JWT verification now enforces the expected Supabase issuer and audience and rejects tokens with an empty `uid`.
-- Read-model cursor pagination for jobs/documents uses composite cursor `(created_at, id)` via PostgREST `.or()` — no in-memory filtering.
+- Read-model service-role queries enforce the runtime role matrix before returning rows: workers/business users only get assigned jobs, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
+- Read-model cursor pagination for jobs/documents uses composite timestamp-plus-id cursors via PostgREST `.or()` and honors `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters.
+- `bootstrap` returns `jobsNextCursor` and `documentsNextCursor` from the first read-model page instead of hardcoded `null`.
 - `userSyncState` kind now returns `app_users.updated_at` instead of hardcoded zeros.
 - Inventory part listing attaches the next sequential part ID from the SQL counter.
 - Invite redemption consumes invite state atomically before membership finalization (prevents multi-join races).
@@ -119,6 +123,8 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Duplicate preview/generate/tax dispatches are now suppressed when an active SQL `document_tasks` row already exists for the same lock key.
 - `fetchArchiveMonthV1` now retrieves archived month JSON through the backend trust boundary using server-controlled bucket/path access.
 - Job mutations and read-model responses now preserve worker/mobile job fields such as `timeFrom`, `timeTo`, `travelDistance`, `signingPerson`, `photos`, `signature`, and `partsUsed`.
+- `createJobV1` resolves job part references before inserting the job row, preventing partial job creation when a supplied part ID is invalid.
+- `updateJobV1` loads existing attachment rows before replacement and attempts to restore them if a replacement insert fails.
 - Job reads and writes now return public sequential job/member IDs at the API boundary while still accepting legacy UUID job identifiers internally during transition.
 - Job pagination cursors still use the stable internal `(created_at, id)` tuple even though the payload exposes public sequential job IDs.
 - Job file signed URL issuance now requires an exact `job_attachments.storage_path` match for the resolved job before a short-lived URL is minted.
@@ -141,11 +147,12 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Tax invoice `idempotencyKey` suffix now uses `crypto.randomUUID()` instead of `Math.random()`.
 - `document-copy.ts` replaced all hardcoded numeric doc-type keys with `[DOC_TYPE.*]` computed properties from `@smart-job/contracts`.
 - `SupportChat.tsx` back-button label fixed (was mojibake `×—×–×•×¨` / `Ø±Ø¬ÙˆØ¹`; now correct UTF-8 `חזור` / `رجوع`).
-- Jobs/documents cache bootstrap and version refresh now drain all paginated read-model pages instead of stopping after the first page.
+- Jobs/documents cache bootstrap and version refresh drain paginated read-model pages only for the active 90-day cache window: open jobs, recently updated closed jobs, and recent documents.
+- Mobile read-model array helpers unwrap paginated `{ items, nextCursor }` responses while page helpers preserve the cursor for future infinite-scroll callers.
+- Core mobile cache/debug logging is routed through a dev-only logger wrapper; warnings and errors remain visible.
 - MMKV draft, pending-job, and support hide-state keys are now scoped by active `uid` / `companyId` instead of sharing global device-wide keys.
-- Supabase auth transport tokens now live in a dedicated encrypted MMKV store, separate from the general cache MMKV instance.
+- Supabase auth transport tokens now live in Expo SecureStore; non-sensitive identity hints remain in the general MMKV cache.
 - The mobile Firebase barrel no longer exports `writeBatch` or `runTransaction`, which keeps protected Firestore writes out of shared client helpers.
-- The mobile auth MMKV encryption key is now derived from app/device runtime metadata or supplied explicitly through `EXPO_PUBLIC_MMKV_AUTH_KEY` instead of being hardcoded in source or persisted in the general MMKV cache.
 - Offline solo-job sync now replaces the locally queued temp job with the server-created public job after replay succeeds.
 - Company cache refresh now preserves the role-appropriate existing jobs cache when only documents change.
 - Solo finished jobs now upload attachments before `createJobV1`, so the created job record is born with real file refs instead of an empty placeholder payload.
@@ -156,7 +163,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `buildStoredDocumentRecord` no longer writes forbidden field names (`clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `createdBy`) to stored document records.
 - `htmlTemplate.ts` now sanitizes `logoUrl` through `sanitizeUrl()` which rejects `javascript:` and `data:` schemes before insertion into the `<img src>` attribute.
 - Email service is now a true singleton; the non-singleton `getEmailService()` export has been removed.
-- Tax invoice PDF finalization now stays create-only in both Storage and SQL document finalization.
+- Generated PDF finalization now stays create-only in both Storage and SQL document finalization for all document types.
 - `cloudrun-pdf` trusted dispatch verification now supports the Supabase edge self-signed service-account JWT path in addition to Google OIDC verification.
 
 ### `cloudrun-archiver`

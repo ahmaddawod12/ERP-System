@@ -457,15 +457,15 @@ export default function DocumentsClient() {
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">History</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{records.length}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{records.length}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Tax invoices</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{taxDocumentCount}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{taxDocumentCount}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Mode</p>
-                <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">
+                <p className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">
                   {viewMode === "history" ? "History" : "Create"}
                 </p>
               </div>

@@ -184,6 +184,8 @@ Use SQL counters — never `MAX + 1`. Applies to: `public_company_id`, `member_n
 
 ### Cursor pagination
 Composite cursor `(createdAt, id)` — must remain stable; never change to single-field.
+Read-model edge queries must honor `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters without in-memory post-filtering as the primary access control.
+Service-role read-model code must enforce role scoping before returning rows: workers/business users only assigned jobs, basic no jobs, workers no documents, workers list manager/dev only.
 
 ### `vat_number` is immutable after onboarding
 `updateBusinessInfoV1` must reject mutations to this field.
@@ -203,6 +205,8 @@ Must consume invite state atomically before finalizing membership (prevents mult
 
 ### phone_app/
 - Local persistence: `react-native-mmkv` — **never `AsyncStorage`** for MMKV-owned surfaces
+- Auth transport tokens: Expo SecureStore — never MMKV, AsyncStorage, localStorage, or JS-readable cookies
+- Debug logging: use `utils/logger.ts`; noisy cache/read-model logs must be dev-only, while warnings/errors remain visible
 - Alerts: `useAlert()` from `contexts/AlertContext` — **never `Alert.alert()`**
 - JSON parsing: `safeJsonParse()` — **never raw `JSON.parse()`** in mobile modules
 - Business registration is website-only — no registration routes in mobile

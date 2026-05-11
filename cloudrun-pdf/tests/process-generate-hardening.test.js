@@ -19,11 +19,12 @@ test('generate tasks reclaim stale processing records instead of getting stuck f
   assert.match(source, /claimSqlTaskProcessing\(/);
 });
 
-test('tax invoice PDFs use create-only storage and guarded SQL finalization', () => {
+test('generated PDFs use create-only storage and guarded SQL finalization', () => {
   assert.match(source, /preconditionOpts:\s*\{\s*ifGenerationMatch:\s*0\s*\}/);
   assert.match(source, /completeSqlDocumentGeneration/);
   assert.match(source, /documentType,\s*\n\s*}\);|documentType\s*\}/);
   assert.match(documentStoreSource, /d\.storage_path IS NULL/);
+  assert.doesNotMatch(documentStoreSource, /IS DISTINCT FROM 305/);
   assert.match(source, /bumpCompanyDocumentsVersion/);
 });
 

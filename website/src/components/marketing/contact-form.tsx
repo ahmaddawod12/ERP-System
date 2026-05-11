@@ -84,11 +84,11 @@ export function ContactForm() {
           {...register("message")}
           rows={5}
           placeholder="What kind of workflow, rollout, or support do you need?"
-          className="min-h-36 w-full resize-none rounded-[1.2rem] border border-slate-300 bg-white/90 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-100"
+          className="min-h-36 w-full resize-none rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         />
         {errors.message?.message ? <span className="text-xs text-red-600">{errors.message.message}</span> : null}
       </label>
-      <Button type="submit" disabled={isSubmitting} className="rounded-2xl">
+      <Button type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Sending..." : "Send message"}
       </Button>
       <p className="text-xs leading-6 text-slate-500 dark:text-slate-400">

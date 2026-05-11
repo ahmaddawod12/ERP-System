@@ -10,6 +10,7 @@ import {
   CACHE_KEYS,
 } from './mmkv-storage';
 import { callHttpFunction } from '../utils/httpFunctions';
+import { logger } from '../utils/logger';
 
 interface BootstrapPayload {
   profile: any | null;
@@ -67,7 +68,7 @@ export async function fetchDataFromFirebase(
   companyId: string,
   role: string,
 ): Promise<any> {
-  console.log(`[READ MODEL] Fetching ${field} from backend...`);
+  logger.debug(`[READ MODEL] Fetching ${field} from backend...`);
 
   try {
     switch (field) {
@@ -140,7 +141,7 @@ export async function fetchDocumentById(
   companyId: string,
   _role: string,
 ): Promise<any | null> {
-  console.log(`[READ MODEL] Fetching document ${docId} from backend...`);
+  logger.debug(`[READ MODEL] Fetching document ${docId} from backend...`);
 
   try {
     return await callHttpFunction<any | null>('readModelV1', {
@@ -160,11 +161,11 @@ export async function fetchAllRecentJobs(
   role: string,
 ): Promise<{ jobsData: any[]; documentsData: any[] }> {
   if (role === 'dev') {
-    console.log('Dev role: skipping all jobs/documents fetch (early return)');
+    logger.debug('Dev role: skipping all jobs/documents fetch (early return)');
     return { jobsData: [], documentsData: [] };
   }
 
-  console.log('[READ MODEL] Fetching bootstrap jobs/documents from backend...');
+  logger.debug('[READ MODEL] Fetching bootstrap jobs/documents from backend...');
 
   try {
     const bootstrap = await readBootstrap(companyId, true);
@@ -213,7 +214,15 @@ export async function fetchCompanySyncState(companyId: string): Promise<CompanyS
  */
 export async function fetchJobsPage(
   companyId: string,
-  opts: { pageSize?: number; afterCursor?: string; signal?: AbortSignal } = {},
+  opts: {
+    pageSize?: number;
+    afterCursor?: string;
+    signal?: AbortSignal;
+    status?: string | string[];
+    dateField?: 'createdAt' | 'updatedAt' | 'finishedAt' | 'dueAt';
+    dateFrom?: string;
+    dateTo?: string;
+  } = {},
 ): Promise<{ items: any[]; nextCursor: string | null }> {
   try {
     const body: Record<string, unknown> = {
@@ -222,6 +231,10 @@ export async function fetchJobsPage(
       pageSize: opts.pageSize ?? 50,
     };
     if (opts.afterCursor) body.afterCursor = opts.afterCursor;
+    if (opts.status) body.status = opts.status;
+    if (opts.dateField) body.dateField = opts.dateField;
+    if (opts.dateFrom) body.dateFrom = opts.dateFrom;
+    if (opts.dateTo) body.dateTo = opts.dateTo;
     return await callHttpFunction<{ items: any[]; nextCursor: string | null }>('readModelV1', body, { signal: opts.signal });
   } catch (error) {
     console.error('Error fetching jobs page:', error);
@@ -234,7 +247,14 @@ export async function fetchJobsPage(
  */
 export async function fetchDocumentsPage(
   companyId: string,
-  opts: { pageSize?: number; afterCursor?: string; signal?: AbortSignal } = {},
+  opts: {
+    pageSize?: number;
+    afterCursor?: string;
+    signal?: AbortSignal;
+    dateField?: 'createdAt' | 'updatedAt' | 'documentDate';
+    dateFrom?: string;
+    dateTo?: string;
+  } = {},
 ): Promise<{ items: any[]; nextCursor: string | null }> {
   try {
     const body: Record<string, unknown> = {
@@ -243,6 +263,9 @@ export async function fetchDocumentsPage(
       pageSize: opts.pageSize ?? 50,
     };
     if (opts.afterCursor) body.afterCursor = opts.afterCursor;
+    if (opts.dateField) body.dateField = opts.dateField;
+    if (opts.dateFrom) body.dateFrom = opts.dateFrom;
+    if (opts.dateTo) body.dateTo = opts.dateTo;
     return await callHttpFunction<{ items: any[]; nextCursor: string | null }>('readModelV1', body, { signal: opts.signal });
   } catch (error) {
     console.error('Error fetching documents page:', error);

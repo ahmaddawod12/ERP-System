@@ -11,7 +11,7 @@ export function LanguageSwitcher() {
       <select
         value={locale}
         onChange={(event) => setLocale(event.target.value as Locale)}
-        className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+        className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-xs font-medium text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
         aria-label="Language"
       >
         {Object.entries(languageLabels).map(([key, label]) => (
@@ -23,4 +23,3 @@ export function LanguageSwitcher() {
     </label>
   );
 }
-

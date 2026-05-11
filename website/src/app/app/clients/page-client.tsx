@@ -148,15 +148,15 @@ export default function ClientsClient() {
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[24rem]">
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">Total clients</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{clients.length}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{clients.length}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">With email</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{clientsWithEmail}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{clientsWithEmail}</p>
               </div>
               <div className="dashboard-stat">
                 <p className="text-sm text-slate-500 dark:text-slate-400">With phone</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-white">{clientsWithPhone}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 dark:text-white">{clientsWithPhone}</p>
               </div>
             </div>
           </div>

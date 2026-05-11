@@ -11,14 +11,14 @@
  * ```javascript
  * useAppStateListener({
  *   onBackground: () => {
- *     console.log('App backgrounded - pause listeners');
+ *     logger.debug('App backgrounded - pause listeners');
  *     if (unsubscribeRef.current) {
  *       unsubscribeRef.current();
  *       unsubscribeRef.current = null;
  *     }
  *   },
  *   onActive: () => {
- *     console.log('App active - resume listeners');
+ *     logger.debug('App active - resume listeners');
  *     setupListeners();
  *   }
  * });
@@ -27,6 +27,7 @@
 
 import { useEffect, useRef } from 'react';
 import { AppState, Platform, type AppStateStatus } from 'react-native';
+import { logger } from '../utils/logger';
 
 export interface AppStateListenerCallbacks {
   onActive?: () => void;
@@ -47,14 +48,14 @@ export function useAppStateListener({ onActive, onBackground, onInactive }: AppS
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
       const previousState = appStateRef.current;
       
-      console.log(`📱 AppState changed: ${previousState} → ${nextAppState}`);
+      logger.debug(`📱 AppState changed: ${previousState} → ${nextAppState}`);
 
       // App went from background/inactive to active (user returned to app)
       if (
         (previousState === 'background' || previousState === 'inactive') &&
         nextAppState === 'active'
       ) {
-        console.log('✅ App became active - resume listeners');
+        logger.debug('✅ App became active - resume listeners');
         if (callbacksRef.current.onActive) {
           callbacksRef.current.onActive();
         }
@@ -65,7 +66,7 @@ export function useAppStateListener({ onActive, onBackground, onInactive }: AppS
         previousState === 'active' &&
         (nextAppState === 'background' || nextAppState === 'inactive')
       ) {
-        console.log('⏸️ App went to background - pause listeners');
+        logger.debug('⏸️ App went to background - pause listeners');
         if (callbacksRef.current.onBackground) {
           callbacksRef.current.onBackground();
         }
@@ -73,7 +74,7 @@ export function useAppStateListener({ onActive, onBackground, onInactive }: AppS
 
       // iOS-specific: Inactive state (during phone call, control center, etc.)
       if (Platform.OS === 'ios' && nextAppState === 'inactive') {
-        console.log('⏸️ App became inactive (iOS) - pause listeners');
+        logger.debug('⏸️ App became inactive (iOS) - pause listeners');
         if (callbacksRef.current.onInactive) {
           callbacksRef.current.onInactive();
         }
@@ -86,7 +87,7 @@ export function useAppStateListener({ onActive, onBackground, onInactive }: AppS
     const subscription = AppState.addEventListener('change', handleAppStateChange);
 
     // Log initial state
-    console.log('📱 Initial AppState:', AppState.currentState);
+    logger.debug('📱 Initial AppState:', AppState.currentState);
 
     // Cleanup
     return () => {

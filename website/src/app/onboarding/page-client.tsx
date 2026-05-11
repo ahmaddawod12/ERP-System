@@ -371,15 +371,14 @@ export default function OnboardingClient() {
 
   return (
     <PublicLayout>
-      <section className="relative overflow-hidden py-12">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_10%_10%,rgba(14,165,233,0.18),transparent_35%),radial-gradient(circle_at_90%_0%,rgba(16,185,129,0.12),transparent_30%),linear-gradient(180deg,rgba(248,250,252,0.95)_0%,rgba(241,245,249,0.78)_100%)] dark:bg-[radial-gradient(circle_at_10%_10%,rgba(14,165,233,0.28),transparent_40%),radial-gradient(circle_at_90%_0%,rgba(16,185,129,0.2),transparent_35%),linear-gradient(180deg,rgba(2,6,23,0.85)_0%,rgba(2,6,23,0.96)_100%)]" />
+      <section className="border-b border-slate-200 bg-white py-12 dark:border-slate-800 dark:bg-slate-950">
         <div className="page-shell">
           <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[320px_1fr]">
             <Card className="h-fit">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-300">
+              <p className="section-kicker">
                 Guided Setup
               </p>
-              <h1 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+              <h1 className="mt-3 text-2xl font-semibold tracking-normal text-slate-950 dark:text-white">
                 Build your workspace in minutes
               </h1>
               <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
@@ -395,12 +394,12 @@ export default function OnboardingClient() {
                     <div
                       key={item.title}
                       className={cn(
-                        "rounded-xl border px-3 py-2 transition",
+                        "rounded-lg border px-3 py-2 transition",
                         isActive
-                          ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
                           : isCompleted
                             ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-500/50 dark:bg-emerald-500/10"
-                            : "border-slate-200 bg-white/70 dark:border-slate-700 dark:bg-slate-900/40",
+                            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950",
                       )}
                     >
                       <div className="flex items-start gap-3">
@@ -410,7 +409,7 @@ export default function OnboardingClient() {
                             isCompleted
                               ? "bg-emerald-500 text-white"
                               : isActive
-                                ? "bg-cyan-600 text-white"
+                                ? "bg-blue-600 text-white"
                                 : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300",
                           )}
                         >
@@ -430,8 +429,8 @@ export default function OnboardingClient() {
                 })}
               </div>
 
-              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-700 dark:bg-slate-900/60">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300">
+              <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-300">
                   Server write flow
                 </p>
                 <ul className="mt-2 space-y-1 text-xs text-slate-700 dark:text-slate-200">
@@ -473,14 +472,14 @@ export default function OnboardingClient() {
                     {steps[step].description}
                   </p>
                 </div>
-                <p className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-200">
+                <p className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 dark:border-slate-800 dark:text-slate-200">
                   {progress}% complete
                 </p>
               </div>
 
-              <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
+              <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                 <div
-                  className="h-full rounded-full bg-linear-to-r from-cyan-500 to-emerald-500 transition-all duration-300"
+                  className="h-full rounded-full bg-blue-600 transition-all duration-300"
                   style={{ width: `${progress}%` }}
                 />
               </div>
@@ -489,11 +488,11 @@ export default function OnboardingClient() {
                 {step === 0 ? (
                   <div className="grid gap-3 md:grid-cols-3">
                     <label
-                      className={cn(
-                        "cursor-pointer rounded-2xl border p-4 transition",
+                        className={cn(
+                        "cursor-pointer rounded-xl border p-4 transition",
                         workspaceMode === "solo"
-                          ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                          : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                       )}
                     >
                       <input
@@ -503,7 +502,7 @@ export default function OnboardingClient() {
                         className="sr-only"
                       />
                       <div className="flex items-center gap-3">
-                        <UserRound className="h-5 w-5 text-cyan-700 dark:text-cyan-300" />
+                        <UserRound className="h-5 w-5 text-blue-700 dark:text-blue-300" />
                         <div>
                           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                             Solo owner
@@ -515,11 +514,11 @@ export default function OnboardingClient() {
                       </div>
                     </label>
                     <label
-                      className={cn(
-                        "cursor-pointer rounded-2xl border p-4 transition",
+                        className={cn(
+                        "cursor-pointer rounded-xl border p-4 transition",
                         workspaceMode === "business"
-                          ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                          : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                       )}
                     >
                       <input
@@ -529,7 +528,7 @@ export default function OnboardingClient() {
                         className="sr-only"
                       />
                       <div className="flex items-center gap-3">
-                        <Users className="h-5 w-5 text-cyan-700 dark:text-cyan-300" />
+                        <Users className="h-5 w-5 text-blue-700 dark:text-blue-300" />
                         <div>
                           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                             Business team
@@ -541,11 +540,11 @@ export default function OnboardingClient() {
                       </div>
                     </label>
                     <label
-                      className={cn(
-                        "cursor-pointer rounded-2xl border p-4 transition",
+                        className={cn(
+                        "cursor-pointer rounded-xl border p-4 transition",
                         workspaceMode === "basic"
-                          ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                          : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                          ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                          : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                       )}
                     >
                       <input
@@ -555,7 +554,7 @@ export default function OnboardingClient() {
                         className="sr-only"
                       />
                       <div className="flex items-center gap-3">
-                        <Building2 className="h-5 w-5 text-cyan-700 dark:text-cyan-300" />
+                        <Building2 className="h-5 w-5 text-blue-700 dark:text-blue-300" />
                         <div>
                           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                             Basic
@@ -588,7 +587,7 @@ export default function OnboardingClient() {
                     </div>
 
                     {workspaceMode === "solo" || workspaceMode === "basic" ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
                         <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                           Role: {workspaceMode === "basic" ? "basic" : "user"}
                         </p>
@@ -602,10 +601,10 @@ export default function OnboardingClient() {
                       <div className="grid gap-3 md:grid-cols-2">
                         <label
                           className={cn(
-                            "cursor-pointer rounded-2xl border p-4 transition",
+                            "cursor-pointer rounded-xl border p-4 transition",
                             role === "manager"
-                              ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                              : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                           )}
                         >
                           <input
@@ -623,10 +622,10 @@ export default function OnboardingClient() {
                         </label>
                         <label
                           className={cn(
-                            "cursor-pointer rounded-2xl border p-4 transition",
+                            "cursor-pointer rounded-xl border p-4 transition",
                             role === "worker"
-                              ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                              : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                           )}
                         >
                           <input
@@ -644,10 +643,10 @@ export default function OnboardingClient() {
                         </label>
                         <label
                           className={cn(
-                            "cursor-pointer rounded-2xl border p-4 transition",
+                            "cursor-pointer rounded-xl border p-4 transition",
                             role === "user"
-                              ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                              : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                           )}
                         >
                           <input
@@ -665,10 +664,10 @@ export default function OnboardingClient() {
                         </label>
                         <label
                           className={cn(
-                            "cursor-pointer rounded-2xl border p-4 transition",
+                            "cursor-pointer rounded-xl border p-4 transition",
                             role === "basic"
-                              ? "border-cyan-400 bg-cyan-50/70 dark:border-cyan-500 dark:bg-cyan-500/10"
-                              : "border-slate-200 hover:border-cyan-300 dark:border-slate-700 dark:hover:border-cyan-500/60",
+                              ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40"
+                              : "border-slate-200 hover:border-blue-300 dark:border-slate-800 dark:hover:border-blue-800",
                           )}
                         >
                           <input
@@ -749,7 +748,7 @@ export default function OnboardingClient() {
                     ) : null}
 
                     {role !== "manager" && !["worker", "user", "basic"].includes(role) ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
                         No company details are needed for this role.
                       </div>
                     ) : null}
@@ -758,14 +757,14 @@ export default function OnboardingClient() {
 
                 {step === 3 ? (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <label className="flex flex-col gap-1.5 rounded-2xl border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                    <label className="flex flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
                       <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
                         <Globe2 className="h-4 w-4" />
                         Language
                       </span>
                       <select
                         {...register("language")}
-                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
+                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-900"
                       >
                         <option value="en">English</option>
                         <option value="he">Hebrew</option>
@@ -773,14 +772,14 @@ export default function OnboardingClient() {
                       </select>
                     </label>
 
-                    <label className="flex flex-col gap-1.5 rounded-2xl border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                    <label className="flex flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
                       <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-200">
                         <Palette className="h-4 w-4" />
                         Theme
                       </span>
                       <select
                         {...register("theme")}
-                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-900"
+                        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-800 dark:bg-slate-900"
                       >
                         <option value="light">Light</option>
                         <option value="dark">Dark</option>
@@ -788,7 +787,7 @@ export default function OnboardingClient() {
                     </label>
 
                     <div className="md:col-span-2">
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
                         {isInviteJoinFlow ? (
                           <p>
                             Finishing setup will validate the invite and link your profile to the company workspace.
@@ -804,7 +803,7 @@ export default function OnboardingClient() {
                   </div>
                 ) : null}
 
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4 dark:border-slate-700">
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4 dark:border-slate-800">
                   {step > 0 ? (
                     <Button
                       type="button"

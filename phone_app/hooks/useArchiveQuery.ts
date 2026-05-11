@@ -28,6 +28,7 @@ import {
   roleUsesScopedJobAccess,
 } from '../contexts/job-membership';
 import { fetchCompanyDocuments, fetchCompanyJobs } from '../utils/read-model';
+import { logger } from '../utils/logger';
 
 const ARCHIVE_READ_LIMIT = 10_000;
 
@@ -99,11 +100,11 @@ export function useArchiveQuery({
 
     const cached = mmkvHelpers.getObject<any[]>(mmkvCacheKey);
     if (cached !== null) {
-      console.log(`?? Archive ${archiveKey} loaded from local cache (${(cached as any[]).length} docs)`);
+      logger.debug(`?? Archive ${archiveKey} loaded from local cache (${(cached as any[]).length} docs)`);
       return cached;
     }
 
-    console.log(`?? Fetching archive ${archiveKey} through backend`);
+    logger.debug(`?? Fetching archive ${archiveKey} through backend`);
 
     try {
       const callable = httpsCallable(functions, 'fetchArchiveMonthV1');
@@ -117,13 +118,13 @@ export function useArchiveQuery({
       };
 
       const docs = Array.isArray(result?.data?.items) ? result.data.items : [];
-      console.log(`?? Fetched archive ${archiveKey}: ${docs.length} docs`);
+      logger.debug(`?? Fetched archive ${archiveKey}: ${docs.length} docs`);
       mmkvHelpers.setObject(mmkvCacheKey, docs);
       return docs;
     } catch (error) {
       const message = (error as Error)?.message || '';
       if (message.includes('not-found') || message.includes('invalid')) {
-        console.log(`?? No archive found for ${archiveKey} or archive unavailable`);
+        logger.debug(`?? No archive found for ${archiveKey} or archive unavailable`);
         return [];
       }
       console.error(`? Error fetching archive ${archiveKey}:`, error);

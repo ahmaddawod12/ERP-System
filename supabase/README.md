@@ -23,6 +23,11 @@ This directory is where backend runtime work happens in this repository.
 Job-specific contract notes:
 
 - `jobs` and `recordById` return public sequential job IDs and public member numbers (`wid`, `mid`) at the client boundary.
+- `jobs` must enforce service-role read scoping in code: `basic` sees no jobs, `worker` and business `user` see only jobs assigned to their active membership, and `manager` / solo `user` / `dev` may read company jobs.
+- `documents` must return no rows for `worker`; `manager`, `user`, `basic`, and `dev` may read company documents.
+- `workers` lists are manager/dev only; other roles receive an empty list.
+- `jobs` and `documents` support `pageSize`, `limit`, `afterCursor`, `status`, date filters, and stable timestamp-plus-id cursor tokens. `documents` also supports `documentType` and `createdByUid`.
+- `bootstrap` returns first-page `jobsNextCursor` and `documentsNextCursor`; clients must not assume a `null` cursor means the collection was fully fetched unless the first page exhausted.
 - Job part usage payloads must also expose public inventory part numbers, not internal inventory UUIDs.
 - `createJobV1` / `updateJobV1` must preserve job meta and attachment fields used by website/mobile, including `timeFrom`, `timeTo`, `travelDistance`, `signingPerson`, `photos`, `signature`, and `partsUsed`.
 - `createJobV1` may receive a temporary `attachmentUploadId` before the final public job number exists; handlers must validate that temp upload reference and normalize persisted attachment refs back to canonical company/job storage paths.
@@ -72,7 +77,8 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 
 - Keep operation contracts stable.
 - Keep role and company checks explicit.
-- Normalize incoming/public `companyId` values to internal company UUIDs before SQL filters.
+- Remember that edge read-model handlers use the service role for database access; every list query must apply its own tenant and role filters before data is returned.
+- Normalize incoming/public `companyId` values to internal company UUIDs before SQL filters; resolve public numeric IDs and internal UUIDs with separate query paths.
 - Normalize public job identifiers to internal rows inside handlers, but do not expose internal job or membership UUIDs back to clients.
 - Return the public membership number as `wid` from invite join flows; do not leak internal membership UUIDs.
 - Use canonical field names and enums from `@smart-job/contracts`.

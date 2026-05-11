@@ -3,20 +3,21 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+const indexSource = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
+const pubsubAuthSource = fs.readFileSync(path.resolve(__dirname, '../pubsub-auth.js'), 'utf8');
 
 test('Pub/Sub verification fails closed when allowlist or OIDC checks fail', () => {
-  assert.match(source, /PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0/);
-  assert.match(source, /return res.status\(403\)\.send\('Service account allowlist not configured'\)/);
-  assert.match(source, /verifySelfSignedServiceAccountJwt/);
-  assert.match(source, /return res.status\(401\)\.send\('Trusted bearer token required'\)/);
-  assert.match(source, /x-pubsub-token/);
+  assert.match(indexSource, /PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0/);
+  assert.match(pubsubAuthSource, /return res.status\(403\)\.send\('Service account allowlist not configured'\)/);
+  assert.match(pubsubAuthSource, /verifySelfSignedServiceAccountJwt/);
+  assert.match(pubsubAuthSource, /return res.status\(401\)\.send\('Trusted bearer token required'\)/);
+  assert.match(pubsubAuthSource, /x-pubsub-token/);
 });
 
 test('requester identity and company match are enforced before document work', () => {
-  assert.match(source, /Missing required task identity fields \(uid and companyId\)/);
-  assert.match(source, /Requester profile not found/);
-  assert.match(source, /Requester company mismatch/);
-  assert.match(source, /Role not authorized for document generation/);
-  assert.match(source, /Role not authorized for document preview/);
+  assert.match(indexSource, /Missing required task identity fields \(uid and companyId\)/);
+  assert.match(indexSource, /Requester profile not found/);
+  assert.match(indexSource, /Requester company mismatch/);
+  assert.match(indexSource, /Role not authorized for document generation/);
+  assert.match(indexSource, /Role not authorized for document preview/);
 });

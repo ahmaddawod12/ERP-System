@@ -1,2 +1,2 @@
-import Screen from '../modules/support/SupportChat';
+import Screen from '../modules/support/screens/SupportChat';
 export default Screen;

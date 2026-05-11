@@ -35,9 +35,15 @@
 ## Core Structure
 
 ```text
-app/            Expo Router route wrappers
-modules/        Feature screen logic
-components/     Shared UI primitives
+app/            Expo Router route wrappers only
+modules/        Feature logic grouped by domain
+  root/         App bootstrap entry used by app/index.tsx
+  home/         Role home dashboards
+  jobs/         Job list, edit, fill, and job file helpers
+  workers/      Worker/team screens
+  documents/    Document screens, components, hooks, and static config/copy
+components/     Shared UI grouped as primitives, layout, forms, feedback, and domain
+navigation/     Stable route constants used by screens and notification handling
 contexts/       Theme, alert, cache, auth, storage
 hooks/          Shared hooks
 utils/          Request helpers and utilities

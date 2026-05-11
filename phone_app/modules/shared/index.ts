@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Subscription Gating Utilities
  * 
@@ -8,12 +7,27 @@
 
 import type { Subscription } from '../../types';
 
+function toExpiryDate(expiresAt: NonNullable<Subscription['expiresAt']>): Date {
+  if (expiresAt instanceof Date) {
+    return expiresAt;
+  }
+  if (
+    typeof expiresAt === 'object' &&
+    expiresAt !== null &&
+    'toDate' in expiresAt &&
+    typeof expiresAt.toDate === 'function'
+  ) {
+    return expiresAt.toDate();
+  }
+  return new Date(expiresAt as string | number);
+}
+
 export function isSubscriptionActive(subscription: Subscription | null): boolean {
   if (!subscription) return false;
   const { status, expiresAt } = subscription;
   if (status !== 'active' && status !== 'trial') return false;
   if (expiresAt) {
-    const expiry = expiresAt.toDate ? expiresAt.toDate() : new Date(expiresAt);
+    const expiry = toExpiryDate(expiresAt);
     if (expiry < new Date()) return false;
   }
   return true;

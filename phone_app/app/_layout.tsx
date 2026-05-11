@@ -5,7 +5,7 @@ import { ThemeProvider } from '../contexts/ThemeContext';
 import { AlertProvider } from '../contexts/AlertContext';
 import { CacheProvider } from '../contexts/CacheContext';
 import { HeaderProvider } from '../contexts/HeaderContext';
-import { ErrorBoundary } from '../components/ErrorBoundary';
+import { ErrorBoundary } from '../components/layout/ErrorBoundary';
 
 export default function RootLayout() {
   return (

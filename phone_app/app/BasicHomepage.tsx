@@ -1,2 +1,2 @@
-import Screen from '../modules/homepage/BasicHomepage';
+import Screen from '../modules/home/screens/BasicHomepage';
 export default Screen;

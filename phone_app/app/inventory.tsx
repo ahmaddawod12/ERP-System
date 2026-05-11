@@ -2,8 +2,8 @@
 import { useLocalSearchParams } from 'expo-router';
 import { withGate } from '../modules/shared/withGate';
 import { useCache } from '../contexts/CacheContext';
-import WorkerInventory from '../modules/inventory/WorkerInventory';
-import UserInventory from '../modules/inventory/UserInventory';
+import WorkerInventory from '../modules/inventory/screens/WorkerInventory';
+import UserInventory from '../modules/inventory/screens/UserInventory';
 
 /**
  * Inventory route — renders the correct screen based on role:

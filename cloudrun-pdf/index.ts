@@ -1,11 +1,14 @@
 import express from 'express';
 import { Storage } from '@google-cloud/storage';
-import puppeteer from 'puppeteer';
-import { createPublicKey, createVerify } from 'node:crypto';
 import { getEmailServiceInstance, getDocumentTitle } from './emailService';
 import generateDocumentHTML from './htmlTemplate';
 import { bumpCompanyDocumentsVersion } from './company-sync-store';
-import { OAuth2Client } from 'google-auth-library';
+import { createBrowserPool, isTransientProcessingError } from './browser-pool';
+import { createCompanyLogoFetcher } from './logo-cache';
+import { installStructuredLogging } from './logging';
+import { createPubSubVerifier } from './pubsub-auth';
+import { registerPreviewRoute } from './routes/preview';
+import { registerGenerateRoute } from './routes/generate';
 
 /**
  * Cloud Run Service: PDF Document Generator & Preview (Merged)
@@ -31,70 +34,7 @@ import { OAuth2Client } from 'google-auth-library';
 
 // Email service for document delivery
 
-const rawConsole = {
-  log: console.log.bind(console),
-  warn: console.warn.bind(console),
-  error: console.error.bind(console),
-};
-
-function normalizeLogValue(value) {
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack || null,
-    };
-  }
-
-  if (value && typeof value === 'object') {
-    return value;
-  }
-
-  return value ?? null;
-}
-
-function writeStructuredLog(severity, fallbackMessage, firstArg, restArgs) {
-  const payload: any = {
-    severity,
-    message: typeof firstArg === 'string' ? firstArg : fallbackMessage,
-  };
-
-  const fields: any = {};
-  if (typeof firstArg !== 'string') {
-    fields.arg0 = normalizeLogValue(firstArg);
-  }
-
-  restArgs.forEach((arg, index) => {
-    const normalized = normalizeLogValue(arg);
-    if (
-      normalized &&
-      typeof normalized === 'object' &&
-      !Array.isArray(normalized)
-    ) {
-      Object.assign(fields, normalized);
-      return;
-    }
-
-    fields[`arg${typeof firstArg === 'string' ? index + 1 : index + 1}`] = normalized;
-  });
-
-  if (Object.keys(fields).length > 0) {
-    payload.fields = fields;
-  }
-
-  const line = JSON.stringify(payload);
-  if (severity === 'ERROR') {
-    rawConsole.error(line);
-  } else if (severity === 'WARNING') {
-    rawConsole.warn(line);
-  } else {
-    rawConsole.log(line);
-  }
-}
-
-console.log = (firstArg, ...restArgs) => writeStructuredLog('INFO', 'cloudrun-pdf log', firstArg, restArgs);
-console.warn = (firstArg, ...restArgs) => writeStructuredLog('WARNING', 'cloudrun-pdf warning', firstArg, restArgs);
-console.error = (firstArg, ...restArgs) => writeStructuredLog('ERROR', 'cloudrun-pdf error', firstArg, restArgs);
+installStructuredLogging('cloudrun-pdf');
 
 const STORAGE_BUCKET = process.env.STORAGE_BUCKET;
 if (!STORAGE_BUCKET) {
@@ -143,20 +83,6 @@ if (IS_PRODUCTION && PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
 
 const MAX_LOGO_SIZE = 1 * 1024 * 1024; // 1MB max logo size
 
-// In-memory logo cache: companyId -> { dataUrl, fetchedAt }
-const logoCache = new Map();
-const LOGO_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-const LOGO_CACHE_MAX_SIZE = 100;
-
-function evictLogoCacheIfNeeded() {
-  if (logoCache.size <= LOGO_CACHE_MAX_SIZE) return;
-  // Evict oldest entries by fetchedAt
-  const sorted = [...logoCache.entries()].sort((a, b) => a[1].fetchedAt - b[1].fetchedAt);
-  const toRemove = sorted.slice(0, sorted.length - LOGO_CACHE_MAX_SIZE);
-  for (const [key] of toRemove) logoCache.delete(key);
-}
-
-
 /** Document IDs are now plain Base62 — no prefix stripping needed. */
 function toBaseDocumentId(documentId) {
   return String(documentId || '').trim();
@@ -164,191 +90,33 @@ function toBaseDocumentId(documentId) {
 
 /** Alias kept for call-site clarity (Firestore doc ID vs display ID). */
 const toDocumentDocId = toBaseDocumentId;
-// ============================================================================
-// SHARED BROWSER MANAGEMENT (Singleton)
-// ============================================================================
-let browserInstance = null;
-let activeTabs = 0;
-let browserGeneration = 0; // Track browser instance generation for disconnect safety
+const browserPool = createBrowserPool({
+  maxConcurrentTabs: MAX_CONCURRENT_TABS,
+  maxTabWaiters: MAX_TAB_WAITERS,
+  tabWaitTimeoutMs: TAB_WAIT_TIMEOUT,
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+});
+const {
+  getBrowser,
+  acquireTab,
+  releaseTab,
+  getStats: getBrowserPoolStats,
+  getGeneration: getBrowserGeneration,
+} = browserPool;
 
-// Promise-based tab queue to replace busy-wait polling
-const tabWaiters = [];
+const verifyPubSubRequest = createPubSubVerifier({
+  cloudRunServiceUrl: CLOUD_RUN_SERVICE_URL,
+  pubsubVerificationToken: PUBSUB_VERIFICATION_TOKEN,
+  allowedServiceAccounts: PUBSUB_ALLOWED_SERVICE_ACCOUNTS,
+  edgeServiceAccountEmail: EDGE_SERVICE_ACCOUNT_EMAIL,
+  edgeServiceAccountPrivateKey: EDGE_SERVICE_ACCOUNT_PRIVATE_KEY,
+});
 
-function buildRetryableError(code, message) {
-  const error: any = new Error(message);
-  error.code = code;
-  return error;
-}
-
-function decodeJwtSegment(segment) {
-  const normalized = String(segment || '').replace(/-/g, '+').replace(/_/g, '/');
-  const padding = '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
-  return JSON.parse(Buffer.from(`${normalized}${padding}`, 'base64').toString('utf8'));
-}
-
-function verifySelfSignedServiceAccountJwt(idToken, expectedAudience) {
-  if (!EDGE_SERVICE_ACCOUNT_EMAIL || !EDGE_SERVICE_ACCOUNT_PRIVATE_KEY || !expectedAudience) {
-    return false;
-  }
-
-  const parts = String(idToken || '').split('.');
-  if (parts.length !== 3) {
-    return false;
-  }
-
-  try {
-    const [encodedHeader, encodedPayload, encodedSignature] = parts;
-    const header = decodeJwtSegment(encodedHeader);
-    const payload = decodeJwtSegment(encodedPayload);
-    if (String(header?.alg || '') !== 'RS256') {
-      return false;
-    }
-
-    const signer = String(payload?.iss || payload?.sub || '').trim().toLowerCase();
-    const audience = String(payload?.aud || '').trim();
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const expiresAt = Number(payload?.exp || 0);
-    const issuedAt = Number(payload?.iat || 0);
-    if (!signer || signer !== EDGE_SERVICE_ACCOUNT_EMAIL) {
-      return false;
-    }
-    if (audience !== expectedAudience) {
-      return false;
-    }
-    if (!Number.isFinite(expiresAt) || expiresAt <= nowSeconds - 30) {
-      return false;
-    }
-    if (Number.isFinite(issuedAt) && issuedAt > nowSeconds + 30) {
-      return false;
-    }
-    if (PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
-      console.warn('PUBSUB_ALLOWED_SERVICE_ACCOUNTS is empty — rejecting service-account JWT (fail closed)');
-      return false;
-    }
-    if (!PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(signer)) {
-      console.warn('Service-account JWT rejected by allowlist', { signer });
-      return false;
-    }
-
-    const verifier = createVerify('RSA-SHA256');
-    verifier.update(`${encodedHeader}.${encodedPayload}`);
-    verifier.end();
-    const signature = Buffer.from(encodedSignature.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-    return verifier.verify(createPublicKey(EDGE_SERVICE_ACCOUNT_PRIVATE_KEY), signature);
-  } catch (error) {
-    console.warn('Service-account JWT verification failed:', error?.message || error);
-    return false;
-  }
-}
-
-function isTransientProcessingError(error) {
-  const code = String(error?.code || '').trim().toLowerCase();
-  if (code === 'tab_queue_full' || code === 'tab_wait_timeout') {
-    return true;
-  }
-  const message = String(error?.message || '');
-  return message.includes('retry') ||
-    message.includes('Protocol error') ||
-    message.includes('Navigation timeout') ||
-    message.includes('Timeout');
-}
-
-/**
- * Get or create shared browser instance.
- * Tracks a generation counter so in-flight requests can detect stale browsers.
- */
-async function getBrowser() {
-  if (!browserInstance) {
-    console.log('Launching new shared browser instance...');
-    browserGeneration++;
-    const myGeneration = browserGeneration;
-    browserInstance = await puppeteer.launch({
-      headless: true,
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-      ],
-    });
-    
-    browserInstance.on('disconnected', () => {
-      console.log('Browser disconnected, will create new instance on next request');
-      browserInstance = null;
-      activeTabs = 0;
-      // Reject all waiting tab requests so they can retry with a fresh browser
-      while (tabWaiters.length > 0) {
-        const waiter = tabWaiters.shift();
-        waiter.reject(new Error('Browser disconnected while waiting for tab'));
-      }
-    });
-  }
-  return browserInstance;
-}
-
-/**
- * Acquire a browser tab slot using a promise-based queue.
- * Avoids CPU-wasting busy-wait polling.
- * Returns the browser generation at time of acquisition for disconnect safety.
- */
-async function acquireTab(taskId, taskType) {
-  if (activeTabs < MAX_CONCURRENT_TABS) {
-    activeTabs++;
-    console.log(`[${taskType}:${taskId}] Tab acquired. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
-    return browserGeneration;
-  }
-
-  if (tabWaiters.length >= MAX_TAB_WAITERS) {
-    throw buildRetryableError(
-      'tab_queue_full',
-      `retry: browser tab queue full (${tabWaiters.length}/${MAX_TAB_WAITERS})`,
-    );
-  }
-
-  // Queue a promise that will be resolved when a tab is released
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      const idx = tabWaiters.findIndex(w => w.taskId === taskId);
-      if (idx !== -1) tabWaiters.splice(idx, 1);
-      reject(buildRetryableError('tab_wait_timeout', `retry: timeout waiting for available browser tab (${TAB_WAIT_TIMEOUT}ms)`));
-    }, TAB_WAIT_TIMEOUT);
-
-    tabWaiters.push({
-      taskId,
-      resolve: () => {
-        clearTimeout(timeoutId);
-        activeTabs++;
-        console.log(`[${taskType}:${taskId}] Tab acquired (from queue). Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
-        resolve(browserGeneration);
-      },
-      reject: (err) => {
-        clearTimeout(timeoutId);
-        reject(err);
-      },
-    });
-    console.log(`[${taskType}:${taskId}] Queued for tab. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}, waiting: ${tabWaiters.length}`);
-  });
-}
-
-/**
- * Release a browser tab slot and wake the next waiter if any.
- */
-function releaseTab(taskId, taskType) {
-  if (activeTabs > 0) {
-    activeTabs--;
-  }
-  console.log(`[${taskType}:${taskId}] Tab released. Active: ${activeTabs}/${MAX_CONCURRENT_TABS}`);
-
-  // Wake the next queued waiter
-  if (tabWaiters.length > 0 && activeTabs < MAX_CONCURRENT_TABS) {
-    const next = tabWaiters.shift();
-    next.resolve();
-  }
-}
+const fetchCompanyLogo = createCompanyLogoFetcher({
+  storage,
+  bucketName: STORAGE_BUCKET,
+  maxLogoSize: MAX_LOGO_SIZE,
+});
 
 // ============================================================================
 // HTML TEMPLATE GENERATOR
@@ -395,146 +163,6 @@ if (!isSqlDocumentStoreEnabled()) {
 
 if (!isSqlAccessStoreEnabled()) {
   throw new Error('cloudrun-pdf requires SQL access store');
-}
-
-/**
- * Request verification for Pub/Sub push endpoints.
- * P0-4: Two-factor auth model:
- * 1. Primary: Verify Pub/Sub OIDC JWT from Authorization: Bearer header
- * 2. Secondary: Verify shared PUBSUB_VERIFICATION_TOKEN from x-pubsub-token header
- * 
- * In production, Cloud Run should be deployed with --no-allow-unauthenticated,
- * and Pub/Sub subscriptions should use OIDC push authentication with a
- * service account that has roles/run.invoker.
- */
-async function verifyPubSubRequest(req, res, next) {
-  const expectedAudience = CLOUD_RUN_SERVICE_URL;
-
-  let bearerVerified = false;
-  // Factor 1: Check trusted bearer token if present (Google-issued ID token or edge-signed service-account JWT)
-  const authHeader = req.headers['authorization'] || '';
-  if (expectedAudience && authHeader.startsWith('Bearer ')) {
-    const idToken = authHeader.slice('Bearer '.length).trim();
-    if (idToken) {
-      try {
-        // Verify the OIDC token; in production this is a Google-signed JWT
-        // from the Pub/Sub push subscription's service account
-        const client = new OAuth2Client();
-        const ticket = await client.verifyIdToken({
-          idToken,
-          audience: expectedAudience,
-        });
-        const payload = ticket.getPayload();
-        const issuer = String(payload?.iss || '');
-        const email = String(payload?.email || '').toLowerCase();
-        const issuerValid = issuer === 'https://accounts.google.com' || issuer === 'accounts.google.com';
-        const emailValid = Boolean(payload?.email_verified) && email.length > 0;
-        // Fail closed: if allowlist is empty, reject all tokens
-        if (PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
-          console.warn('PUBSUB_ALLOWED_SERVICE_ACCOUNTS is empty — rejecting OIDC token (fail closed)');
-          return res.status(403).send('Service account allowlist not configured');
-        }
-        const serviceAccountAllowed = PUBSUB_ALLOWED_SERVICE_ACCOUNTS.includes(email);
-
-        if (issuerValid && emailValid && serviceAccountAllowed) {
-          bearerVerified = true;
-        } else {
-          console.warn('OIDC JWT rejected by claim validation', {
-            issuer,
-            email,
-            hasAllowlist: PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length > 0,
-          });
-        }
-      } catch (oidcError) {
-        const selfSignedVerified = verifySelfSignedServiceAccountJwt(idToken, expectedAudience);
-        if (selfSignedVerified) {
-          bearerVerified = true;
-        } else {
-          console.warn('Trusted bearer verification failed:', oidcError.message);
-        }
-      }
-    }
-  } else if (!expectedAudience) {
-    console.warn('CLOUD_RUN_SERVICE_URL is not set; bearer auth is disabled, using shared token fallback only');
-  }
-
-  if (expectedAudience && !bearerVerified) {
-    return res.status(401).send('Trusted bearer token required');
-  }
-
-  // Factor 2: Check shared token (required in addition to OIDC when configured)
-  if (!PUBSUB_VERIFICATION_TOKEN) {
-    if (!expectedAudience) {
-      console.warn('PUBSUB_VERIFICATION_TOKEN is unset and CLOUD_RUN_SERVICE_URL is not configured; allowing request in non-production mode');
-    }
-    return next();
-  }
-
-  // Only accept token from header (not query string) to reduce leakage risk
-  const token = String(req.headers['x-pubsub-token'] || '').trim();
-  if (token !== PUBSUB_VERIFICATION_TOKEN) {
-    console.warn('Rejected unauthenticated Pub/Sub request', {
-      hasHeader: !!req.headers['x-pubsub-token'],
-      hasOidc: !!authHeader,
-      ip: req.ip,
-    });
-    return res.status(401).send('Unauthorized');
-  }
-
-  return next();
-}
-
-// ============================================================================
-// LOGO HELPER (cached, size-validated)
-// ============================================================================
-
-/**
- * Fetch and cache company logo as a base64 data URL.
- * Returns null if no logo exists, the logo is too large, or on error.
- */
-async function fetchCompanyLogo(companyId, taskId, taskType) {
-  if (!companyId) return null;
-
-  // Check in-memory cache
-  const cached = logoCache.get(companyId);
-  if (cached && (Date.now() - cached.fetchedAt) < LOGO_CACHE_TTL) {
-    console.log(`[${taskType}:${taskId}] Logo served from cache for ${companyId}`);
-    return cached.dataUrl;
-  }
-
-  try {
-    const bucket = storage.bucket(STORAGE_BUCKET);
-    const logoPath = `companies/${companyId}/logo.png`;
-    const logoFile = bucket.file(logoPath);
-    const [exists] = await logoFile.exists();
-
-    if (!exists) {
-      console.log(`[${taskType}:${taskId}] No logo found at ${logoPath}`);
-      logoCache.set(companyId, { dataUrl: null, fetchedAt: Date.now() });
-      return null;
-    }
-
-    // Check size before downloading
-    const [metadata] = await logoFile.getMetadata();
-    const fileSize = parseInt(String(metadata.size), 10) || 0;
-    if (fileSize > MAX_LOGO_SIZE) {
-      console.warn(`[${taskType}:${taskId}] Logo too large (${fileSize} bytes, max ${MAX_LOGO_SIZE}). Skipping.`);
-      logoCache.set(companyId, { dataUrl: null, fetchedAt: Date.now() });
-      return null;
-    }
-
-    const [logoBuffer] = await logoFile.download();
-    const base64Logo = logoBuffer.toString('base64');
-    const dataUrl = `data:image/png;base64,${base64Logo}`;
-    console.log(`[${taskType}:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
-
-    logoCache.set(companyId, { dataUrl, fetchedAt: Date.now() });
-    evictLogoCacheIfNeeded();
-    return dataUrl;
-  } catch (logoError) {
-    console.warn(`[${taskType}:${taskId}] Error fetching logo:`, logoError.message);
-    return null;
-  }
 }
 
 // ============================================================================
@@ -602,7 +230,7 @@ async function processPreviewTask(taskData) {
     
     // Generate PDF using shared browser (validate generation to detect browser restarts)
     const browser = await getBrowser();
-    if (browserGeneration !== acquiredGen) {
+    if (getBrowserGeneration() !== acquiredGen) {
       throw new Error('Browser was recycled during tab wait — retry');
     }
     page = await browser.newPage();
@@ -826,7 +454,7 @@ async function processGenerateTask(taskData) {
     
     // Generate PDF using shared browser (validate generation to detect browser restarts)
     const browser = await getBrowser();
-    if (browserGeneration !== acquiredGen) {
+    if (getBrowserGeneration() !== acquiredGen) {
       throw new Error('Browser was recycled during tab wait — retry');
     }
     page = await browser.newPage();
@@ -1002,89 +630,32 @@ async function processGenerateTask(taskData) {
 // PUB/SUB PUSH ENDPOINTS
 // ============================================================================
 
-/**
- * POST /preview - Pub/Sub push endpoint for preview tasks
- */
-app.post('/preview', verifyPubSubRequest, async (req, res) => {
-  try {
-    if (!req.body || !req.body.message || !req.body.message.data) {
-      return res.status(200).send('Invalid Pub/Sub message format — not retryable');
-    }
 
-    let messageData;
-    try {
-      messageData = JSON.parse(
-        Buffer.from(req.body.message.data, 'base64').toString()
-      );
-    } catch (parseError) {
-      return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
-    }
-    
-    console.log('Received preview task:', messageData.taskId);
-    await processPreviewTask(messageData);
-    res.status(200).send('OK');
-    
-  } catch (error) {
-    console.error('Preview task error:', error.message);
-    // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
-    // Only transient errors (browser crash, timeout) should trigger retry via 500.
-    const isTransient = isTransientProcessingError(error);
-    const status = isTransient ? 500 : 200;
-    res.status(status).send(`Error: ${error.message}`);
-  }
+registerPreviewRoute(app, {
+  verifyPubSubRequest,
+  processPreviewTask,
+  isTransientProcessingError,
 });
-
-/**
- * POST /generate - Pub/Sub push endpoint for generate tasks
- */
-app.post('/generate', verifyPubSubRequest, async (req, res) => {
-  try {
-    if (!req.body || !req.body.message || !req.body.message.data) {
-      return res.status(200).send('Invalid Pub/Sub message format — not retryable');
-    }
-
-    let messageData;
-    try {
-      messageData = JSON.parse(
-        Buffer.from(req.body.message.data, 'base64').toString()
-      );
-    } catch (parseError) {
-      return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
-    }
-    
-    console.log('Received generate task:', messageData.taskId);
-    await processGenerateTask(messageData);
-    res.status(200).send('OK');
-    
-  } catch (error) {
-    console.error('Generate task error:', error.message);
-    // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
-    // Only transient errors (browser crash, timeout) should trigger retry via 500.
-    const isTransient = isTransientProcessingError(error);
-    const status = isTransient ? 500 : 200;
-    res.status(status).send(`Error: ${error.message}`);
-  }
+registerGenerateRoute(app, {
+  verifyPubSubRequest,
+  processGenerateTask,
+  isTransientProcessingError,
 });
 
 /**
  * GET /health - Health check endpoint
  */
 app.get('/health', async (req, res) => {
-  let browserOk = false;
-  if (browserInstance) {
-    try {
-      browserOk = browserInstance.isConnected();
-    } catch (_) { /* browser disconnected */ }
-  }
-  const status = browserInstance && !browserOk ? 'degraded' : 'healthy';
+  const browserStats = getBrowserPoolStats();
+  const status = browserStats.hasBrowser && !browserStats.browserConnected ? 'degraded' : 'healthy';
   res.status(200).json({
     status,
     service: 'pdf-service',
-    hasBrowser: !!browserInstance,
-    browserConnected: browserOk,
-    activeTabs,
+    hasBrowser: browserStats.hasBrowser,
+    browserConnected: browserStats.browserConnected,
+    activeTabs: browserStats.activeTabs,
     maxConcurrentTabs: MAX_CONCURRENT_TABS,
-    queuedWaiters: tabWaiters.length,
+    queuedWaiters: browserStats.queuedWaiters,
     maxTabWaiters: MAX_TAB_WAITERS,
   });
 });

@@ -8,12 +8,12 @@ function readProjectFile(...segments: string[]) {
 }
 
 test('typed job and document screens do not regress to ts-nocheck', () => {
-  const documentHistory = readProjectFile('modules', 'documents', 'DocumentHistory.tsx');
-  const createDocument = readProjectFile('modules', 'documents', 'CreateDocument.tsx');
-  const useTaxInvoiceSubmission = readProjectFile('modules', 'documents', 'useTaxInvoiceSubmission.ts');
-  const userJob = readProjectFile('modules', 'solojob', 'Userjob.tsx');
-  const workerJob = readProjectFile('modules', 'team', 'Workerjob.tsx');
-  const fillJob = readProjectFile('modules', 'shared', 'FillJob.tsx');
+  const documentHistory = readProjectFile('modules', 'documents', 'screens', 'DocumentHistory.tsx');
+  const createDocument = readProjectFile('modules', 'documents', 'screens', 'CreateDocument.tsx');
+  const useTaxInvoiceSubmission = readProjectFile('modules', 'documents', 'hooks', 'useTaxInvoiceSubmission.ts');
+  const userJob = readProjectFile('modules', 'jobs', 'screens', 'Userjob.tsx');
+  const workerJob = readProjectFile('modules', 'workers', 'screens', 'Workerjob.tsx');
+  const fillJob = readProjectFile('modules', 'jobs', 'screens', 'FillJob.tsx');
 
   assert.doesNotMatch(documentHistory, /@ts-nocheck/);
   assert.doesNotMatch(createDocument, /@ts-nocheck/);

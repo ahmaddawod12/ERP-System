@@ -30,6 +30,9 @@ Write code compatible with these versions.
 ## Structure Rules
 
 - Keep screen logic in `modules/`.
+- Keep feature screens under `modules/<feature>/screens/`, with feature-local helpers in `components/`, `hooks/`, or `lib/` folders where they exist.
+- Keep shared UI grouped under `components/primitives`, `components/layout`, `components/forms`, `components/feedback`, and `components/domain`; preserve `components/index.tsx` as the main import surface.
+- Use `navigation/routes.ts` for mobile route constants instead of new hardcoded route strings.
 - Keep `app/` files as thin route wrappers.
 - Use shared components from `components/` first.
 - Keep static feature copy and large config tables in feature-local helper files instead of large screen components.

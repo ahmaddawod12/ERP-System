@@ -8,7 +8,7 @@ function readProjectFile(...segments: string[]) {
 }
 
 test('solo finished jobs upload files before createJobV1 is called', () => {
-  const fillJob = readProjectFile('modules', 'shared', 'FillJob.tsx');
+  const fillJob = readProjectFile('modules', 'jobs', 'screens', 'FillJob.tsx');
 
   const uploadIndex = fillJob.indexOf('const userUploadResult = await uploadJobFilesForStorage(');
   const createIndex = fillJob.indexOf("const result = await createJobFn({");

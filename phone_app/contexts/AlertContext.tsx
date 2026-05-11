@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useMemo, type 
 import { View, ActivityIndicator, StyleSheet, Modal } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import CustomAlert from '../components/CustomAlert';
+import CustomAlert from '../components/feedback/CustomAlert';
 import { AppText } from '../components';
 import { gradients as themeGradients } from '../theme';
 import type { AlertType, AlertButton, AlertConfig, LoadingConfig, AlertContextValue } from '../types';

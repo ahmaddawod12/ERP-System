@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Push Notification Utilities - Firebase Cloud Messaging + Notifee
  * 
@@ -33,10 +32,26 @@ import {
   AuthorizationStatus
 } from '../firebase';
 import { mmkvHelpers, CACHE_KEYS } from '../contexts/mmkv-storage';
+import { logger } from './logger';
 
 // Default Android notification channel ID
 const DEFAULT_CHANNEL_ID = 'smart_job_default';
 let notificationInitializationPromise: Promise<boolean> | null = null;
+
+type NotificationData = Record<string, string>;
+
+function normalizeNotificationData(data?: Record<string, unknown> | null): NotificationData {
+  if (!data) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => {
+      const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+      return [key, serialized ?? String(value)];
+    }),
+  );
+}
 
 function cacheRegisteredPushToken(pushToken: string): void {
   const cachedProfile = mmkvHelpers.getObject<Record<string, unknown>>(CACHE_KEYS.PROFILE);
@@ -82,13 +97,13 @@ export async function initializeNotifications(): Promise<boolean> {
             lights: true,
             lightColor: '#00ACC1',
           });
-          console.log('✅ Android notification channel created');
+          logger.debug('✅ Android notification channel created');
         }
 
         return true;
       } catch (error) {
         notificationInitializationPromise = null;
-        console.error('Error initializing notifications:', error);
+        logger.error('Error initializing notifications:', error);
         return false;
       }
     })();
@@ -112,7 +127,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
         authStatus === AuthorizationStatus.AUTHORIZED ||
         authStatus === AuthorizationStatus.PROVISIONAL;
       
-      console.log(`📱 iOS notification permission: ${enabled ? 'granted' : 'denied'}`);
+      logger.debug(`📱 iOS notification permission: ${enabled ? 'granted' : 'denied'}`);
       return enabled;
     } else if (Platform.OS === 'android') {
       // Android 13+ (API 33+): Need to request POST_NOTIFICATIONS permission
@@ -121,7 +136,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
           PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
         );
         const enabled = result === PermissionsAndroid.RESULTS.GRANTED;
-        console.log(`📱 Android notification permission: ${enabled ? 'granted' : 'denied'}`);
+        logger.debug(`📱 Android notification permission: ${enabled ? 'granted' : 'denied'}`);
         return enabled;
       }
       // Android < 13: Notifications enabled by default
@@ -129,7 +144,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
     }
     return false;
   } catch (error) {
-    console.error('Error requesting notification permission:', error);
+    logger.error('Error requesting notification permission:', error);
     return false;
   }
 }
@@ -145,7 +160,7 @@ export async function getFCMToken(): Promise<string | null> {
     // Ensure permissions are granted
     const hasPermission = await requestNotificationPermission();
     if (!hasPermission) {
-      console.warn('Notification permission not granted - cannot get FCM token');
+      logger.warn('Notification permission not granted - cannot get FCM token');
       return null;
     }
 
@@ -153,13 +168,13 @@ export async function getFCMToken(): Promise<string | null> {
     const fcmToken = await getToken(messaging);
     
     if (fcmToken) {
-      console.log('🔑 FCM Token obtained:', fcmToken.substring(0, 30) + '...');
+      logger.debug('🔑 FCM Token obtained:', fcmToken.substring(0, 30) + '...');
       return fcmToken;
     }
     
     return null;
   } catch (error) {
-    console.error('Error getting FCM token:', error);
+    logger.error('Error getting FCM token:', error);
     return null;
   }
 }
@@ -174,7 +189,7 @@ export async function getFCMToken(): Promise<string | null> {
  */
 export async function registerPushTokenForUser(userId: string): Promise<boolean> {
   if (!userId) {
-    console.error('registerPushTokenForUser: No userId provided');
+    logger.error('registerPushTokenForUser: No userId provided');
     return false;
   }
 
@@ -183,34 +198,34 @@ export async function registerPushTokenForUser(userId: string): Promise<boolean>
     const fcmToken = await getFCMToken();
 
     if (!fcmToken) {
-      console.log('No FCM token available - skipping registration');
+      logger.debug('No FCM token available - skipping registration');
       return false;
     }
 
     // Quick client-side check to skip if token hasn't changed
     const cachedProfile = mmkvHelpers.getObject<{ pushToken?: string }>(CACHE_KEYS.PROFILE);
     if (cachedProfile?.pushToken === fcmToken) {
-      console.log('FCM token unchanged - skipping update');
+      logger.debug('FCM token unchanged - skipping update');
       return true;
     }
 
     const activeUserId = auth.currentUser?.uid;
     if (!activeUserId || activeUserId !== userId) {
-      console.log('Skipping push token registration because the active auth session changed');
+      logger.debug('Skipping push token registration because the active auth session changed');
       return false;
     }
 
     // Use Cloud Function to update push token (profile is read-only from client)
     await persistPushToken(fcmToken);
 
-    console.log(`✅ FCM token registered for ${userId}`);
+    logger.debug(`✅ FCM token registered for ${userId}`);
     return true;
   } catch (error) {
-    console.error('Error registering push token:', error);
+    logger.error('Error registering push token:', error);
     
     // If profile doesn't exist, the CF will throw not-found - this is expected for new users
     if ((error as { code?: string }).code === 'functions/not-found' || (error as { code?: string }).code === 'not-found') {
-      console.warn('User profile not found - push token registration skipped');
+      logger.warn('User profile not found - push token registration skipped');
     }
     
     return false;
@@ -229,7 +244,7 @@ export async function registerPushTokenForUser(userId: string): Promise<boolean>
 interface LocalNotificationParams {
   title: string;
   body: string;
-  data?: Record<string, string>;
+  data?: NotificationData;
 }
 
 export async function displayLocalNotification({ title, body, data = {} }: LocalNotificationParams): Promise<void> {
@@ -258,9 +273,9 @@ export async function displayLocalNotification({ title, body, data = {} }: Local
         },
       },
     });
-    console.log('📬 Local notification displayed:', title);
+    logger.debug('📬 Local notification displayed:', title);
   } catch (error) {
-    console.error('Error displaying local notification:', error);
+    logger.error('Error displaying local notification:', error);
   }
 }
 
@@ -279,7 +294,7 @@ export async function displayLocalNotification({ title, body, data = {} }: Local
  */
 interface NotificationTapEvent {
   type: 'background' | 'quit' | 'foreground';
-  data: Record<string, string>;
+  data: NotificationData;
   notification: unknown;
 }
 
@@ -287,7 +302,7 @@ export function setupNotificationListeners(
   onNotificationReceived?: (message: unknown) => void,
   onNotificationTapped?: (event: NotificationTapEvent) => void,
 ): () => void {
-  const unsubscribers = [];
+  const unsubscribers: Array<() => void> = [];
 
   // Initialize notification channels
   void initializeNotifications();
@@ -296,7 +311,7 @@ export function setupNotificationListeners(
   // When app is in foreground, FCM won't display notifications automatically
   // We use Notifee to display them
   const unsubscribeForeground = onMessage(messaging, async (remoteMessage) => {
-    console.log('📬 FCM foreground message received:', remoteMessage);
+    logger.debug('📬 FCM foreground message received:', remoteMessage);
     
     const { notification, data } = remoteMessage;
     
@@ -305,7 +320,7 @@ export function setupNotificationListeners(
       await displayLocalNotification({
         title: notification.title || 'New Notification',
         body: notification.body || '',
-        data: data || {},
+        data: normalizeNotificationData(data),
       });
     }
     
@@ -320,12 +335,12 @@ export function setupNotificationListeners(
 
   // 3. Notification opened app (from background state)
   const unsubscribeNotificationOpened = onNotificationOpenedApp(messaging, (remoteMessage) => {
-    console.log('👆 Notification opened app from background:', remoteMessage);
+    logger.debug('👆 Notification opened app from background:', remoteMessage);
     
     if (onNotificationTapped) {
       onNotificationTapped({
         type: 'background',
-        data: remoteMessage.data || {},
+        data: normalizeNotificationData(remoteMessage.data),
         notification: remoteMessage.notification,
       });
     }
@@ -336,12 +351,12 @@ export function setupNotificationListeners(
   getInitialNotification(messaging)
     .then((remoteMessage) => {
       if (remoteMessage) {
-        console.log('🚀 App opened from quit state by notification:', remoteMessage);
+        logger.debug('🚀 App opened from quit state by notification:', remoteMessage);
         
         if (onNotificationTapped) {
           onNotificationTapped({
             type: 'quit',
-            data: remoteMessage.data || {},
+            data: normalizeNotificationData(remoteMessage.data),
             notification: remoteMessage.notification,
           });
         }
@@ -350,7 +365,7 @@ export function setupNotificationListeners(
 
   // 5. Notifee foreground event handler (for notification interactions)
   const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
-    console.log('🔔 Notifee foreground event:', type, detail);
+    logger.debug('🔔 Notifee foreground event:', type, detail);
     
     switch (type) {
       case EventType.PRESS:
@@ -358,14 +373,14 @@ export function setupNotificationListeners(
         if (onNotificationTapped) {
           onNotificationTapped({
             type: 'foreground',
-            data: detail.notification?.data || {},
+            data: normalizeNotificationData(detail.notification?.data),
             notification: detail.notification,
           });
         }
         break;
       case EventType.DISMISSED:
         // User dismissed notification
-        console.log('Notification dismissed');
+        logger.debug('Notification dismissed');
         break;
       default:
         break;
@@ -375,18 +390,18 @@ export function setupNotificationListeners(
 
   // 6. Token refresh listener — P1-8: save refreshed tokens to server
   const unsubscribeTokenRefresh = onTokenRefresh(messaging, async (newToken) => {
-    console.log('🔄 FCM token refreshed:', newToken.substring(0, 30) + '...');
+    logger.debug('🔄 FCM token refreshed:', newToken.substring(0, 30) + '...');
     const activeUserId = auth.currentUser?.uid;
     if (!activeUserId) {
-      console.log('Skipping refreshed FCM token sync because no user is authenticated');
+      logger.debug('Skipping refreshed FCM token sync because no user is authenticated');
       return;
     }
 
     try {
       await persistPushToken(newToken);
-      console.log('✅ Refreshed FCM token saved to server');
+      logger.debug('✅ Refreshed FCM token saved to server');
     } catch (err) {
-      console.error('Failed to save refreshed FCM token:', err);
+      logger.error('Failed to save refreshed FCM token:', err);
     }
   });
   unsubscribers.push(unsubscribeTokenRefresh);
@@ -407,18 +422,18 @@ export function setupNotificationListeners(
  * 
  * @returns {Promise<Object|null>} Notification data or null
  */
-export async function getLastNotificationResponse(): Promise<{ data: Record<string, string>; notification: unknown } | null> {
+export async function getLastNotificationResponse(): Promise<{ data: NotificationData; notification: unknown } | null> {
   try {
     const remoteMessage = await getInitialNotification(messaging);
     if (remoteMessage) {
       return {
-        data: remoteMessage.data || {},
+        data: normalizeNotificationData(remoteMessage.data),
         notification: remoteMessage.notification,
       };
     }
     return null;
   } catch (error) {
-    console.error('Error getting initial notification:', error);
+    logger.error('Error getting initial notification:', error);
     return null;
   }
 }
@@ -430,9 +445,9 @@ export async function getLastNotificationResponse(): Promise<{ data: Record<stri
 export async function clearAllNotifications(): Promise<void> {
   try {
     await notifee.cancelAllNotifications();
-    console.log('✅ All notifications cleared');
+    logger.debug('✅ All notifications cleared');
   } catch (error) {
-    console.error('Error clearing notifications:', error);
+    logger.error('Error clearing notifications:', error);
   }
 }
 
@@ -444,9 +459,9 @@ export async function clearAllNotifications(): Promise<void> {
 export async function setBadgeCount(count: number): Promise<void> {
   try {
     await notifee.setBadgeCount(count);
-    console.log(`✅ Badge count set to ${count}`);
+    logger.debug(`✅ Badge count set to ${count}`);
   } catch (error) {
-    console.error('Error setting badge count:', error);
+    logger.error('Error setting badge count:', error);
   }
 }
 
@@ -459,7 +474,7 @@ export async function getBadgeCount(): Promise<number> {
     const count = await notifee.getBadgeCount();
     return count;
   } catch (error) {
-    console.error('Error getting badge count:', error);
+    logger.error('Error getting badge count:', error);
     return 0;
   }
 }
@@ -482,7 +497,7 @@ export async function areNotificationsEnabled(): Promise<boolean> {
       return settings.authorizationStatus >= 1; // AUTHORIZED or PROVISIONAL
     }
   } catch (error) {
-    console.error('Error checking notification status:', error);
+    logger.error('Error checking notification status:', error);
     return false;
   }
 }
@@ -514,10 +529,10 @@ export async function setupPushNotifications(): Promise<{ granted: boolean; toke
 export async function subscribeToTopic(topic: string): Promise<boolean> {
   try {
     await fcmSubscribeToTopic(messaging, topic);
-    console.log(`✅ Subscribed to topic: ${topic}`);
+    logger.debug(`✅ Subscribed to topic: ${topic}`);
     return true;
   } catch (error) {
-    console.error(`Error subscribing to topic ${topic}:`, error);
+    logger.error(`Error subscribing to topic ${topic}:`, error);
     return false;
   }
 }
@@ -531,10 +546,10 @@ export async function subscribeToTopic(topic: string): Promise<boolean> {
 export async function unsubscribeFromTopic(topic: string): Promise<boolean> {
   try {
     await fcmUnsubscribeFromTopic(messaging, topic);
-    console.log(`✅ Unsubscribed from topic: ${topic}`);
+    logger.debug(`✅ Unsubscribed from topic: ${topic}`);
     return true;
   } catch (error) {
-    console.error(`Error unsubscribing from topic ${topic}:`, error);
+    logger.error(`Error unsubscribing from topic ${topic}:`, error);
     return false;
   }
 }
@@ -551,11 +566,11 @@ export async function getAPNsToken(): Promise<string | null> {
   try {
     const apnsToken = await getAPNSToken(messaging);
     if (apnsToken) {
-      console.log('🍎 APNs token:', apnsToken.substring(0, 30) + '...');
+      logger.debug('🍎 APNs token:', apnsToken.substring(0, 30) + '...');
     }
     return apnsToken;
   } catch (error) {
-    console.error('Error getting APNs token:', error);
+    logger.error('Error getting APNs token:', error);
     return null;
   }
 }

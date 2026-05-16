@@ -15,8 +15,6 @@ import type {
   WorkerProfile,
 } from "@/lib/types";
 
-type DocumentSnapshot = unknown;
-
 interface BootstrapReadModel {
   profile: UserProfile | null;
   subscription: UserSubscription | null;
@@ -244,8 +242,13 @@ export async function removeCompanyInventoryPart(companyId: string, partId: numb
   });
 }
 
-export async function getUserInventory(uid: string): Promise<InventoryDoc> {
-  return fetchReadModel<InventoryDoc>({ kind: "inventory", scope: "user", targetUid: uid });
+export async function getUserInventory(companyId: string, uid: string): Promise<InventoryDoc> {
+  return fetchReadModel<InventoryDoc>({
+    kind: "inventory",
+    companyId,
+    scope: "user",
+    targetUid: uid,
+  });
 }
 
 export async function addUserInventoryPart(
@@ -308,18 +311,62 @@ export async function pickCompanyParts(
 
 export async function listClients(
   companyId: string,
-  opts?: { pageSize?: number; lastDoc?: DocumentSnapshot },
+  opts?: { pageSize?: number; afterCursor?: string | null; lastDoc?: string | null; search?: string },
 ): Promise<{
   clients: ClientRecord[];
-  lastDoc: DocumentSnapshot | null;
+  items: ClientRecord[];
+  nextCursor: string | null;
+  lastDoc: string | null;
   hasMore: boolean;
 }> {
-  void opts?.lastDoc;
-  const clients = await fetchReadModel<ClientRecord[]>({ kind: "clients", companyId });
+  const wantsSinglePage = Boolean(opts?.pageSize || opts?.afterCursor || opts?.lastDoc || opts?.search);
+  const fetchClientPage = async (afterCursor?: string | null) => {
+    const body: Record<string, unknown> = {
+      kind: "clients",
+      companyId,
+      pageSize: opts?.pageSize ?? 200,
+    };
+    const cursor = afterCursor || opts?.afterCursor || opts?.lastDoc || null;
+    if (cursor) body.afterCursor = cursor;
+    if (opts?.search) body.search = opts.search;
+    const result = await fetchReadModel<{ items: ClientRecord[]; nextCursor: string | null }>(body);
+    const items = result.items ?? [];
+    const nextCursor = result.nextCursor ?? null;
+    return {
+      clients: items,
+      items,
+      nextCursor,
+      lastDoc: nextCursor,
+      hasMore: Boolean(nextCursor),
+    };
+  };
+
+  if (wantsSinglePage) {
+    return fetchClientPage();
+  }
+
+  const clients: ClientRecord[] = [];
+  let afterCursor: string | null = null;
+  const seenCursors = new Set<string>();
+
+  do {
+    const page = await fetchClientPage(afterCursor);
+    clients.push(...page.clients);
+    const nextCursor = page.nextCursor && page.nextCursor.trim() ? page.nextCursor.trim() : null;
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      afterCursor = null;
+      continue;
+    }
+    seenCursors.add(nextCursor);
+    afterCursor = nextCursor;
+  } while (afterCursor);
+
   return {
     clients,
-    lastDoc: clients.length > 0 ? clients[clients.length - 1]?.id ?? null : null,
-    hasMore: Boolean(opts?.pageSize && clients.length >= opts.pageSize),
+    items: clients,
+    nextCursor: null,
+    lastDoc: null,
+    hasMore: false,
   };
 }
 

@@ -330,7 +330,7 @@ export default function GenerateTaxInvoice() {
     return []; // basic/dev: no inventory
   };
 
-  // Fetch finished jobs from Firestore
+  // Fetch finished jobs from the backend read model.
   useEffect(() => {
     const fetchJobs = async () => {
       try {

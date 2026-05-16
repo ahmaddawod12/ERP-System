@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import {
   DOCUMENT_TASK_POLL_MAX_INTERVAL_MS,
   DOCUMENT_TASK_POLL_MIN_INTERVAL_MS,
@@ -17,4 +19,12 @@ test("document task polling backs off while work remains in flight", () => {
 
 test("document task polling caps at the configured maximum interval", () => {
   assert.equal(getNextDocumentTaskPollIntervalMs(10), DOCUMENT_TASK_POLL_MAX_INTERVAL_MS);
+});
+
+test("document task polling carries company scope to read-model", () => {
+  const source = fs.readFileSync(path.resolve(process.cwd(), "src", "hooks", "use-document-task.ts"), "utf8");
+
+  assert.match(source, /\.\.\.\(companyId \? \{ companyId \} : \{\}\)/);
+  assert.match(source, /listenToTask\(result\.taskId, "preview", params\.companyId\)/);
+  assert.match(source, /listenToTask\(result\.taskId, "generate", params\.companyId\)/);
 });

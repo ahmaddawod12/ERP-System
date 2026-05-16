@@ -236,7 +236,7 @@ export default function WorkersMonitor() {
     
     if (selectedWorker && user) {
       const setupListener = async () => {
-        // Find the Firebase Auth UID for this worker (selectedWorker is wid)
+        // Find the auth UID for this worker (selectedWorker is wid)
         const workerObj = workers.find(w => w.wid === selectedWorker);
         const workerUid = workerObj?.uid;
         if (workerUid) {
@@ -254,11 +254,11 @@ export default function WorkersMonitor() {
     };
   }, [selectedWorker]); // Only depend on selectedWorker - prevents listener recreation on cache updates
 
-  // Effect 2: Update worker jobs from cache (no Firebase reads)
+  // Effect 2: Update worker jobs from cache (no backend reads)
   useEffect(() => {
     if (!selectedWorker) return;
     
-    // Filter jobs from cache by selected worker (no Firebase reads)
+    // Filter jobs from cache by selected worker (no backend reads)
     const pendingJobs = (cachedPendingJobs || []).filter(
       job => job.wid === selectedWorker
     );
@@ -319,8 +319,8 @@ export default function WorkersMonitor() {
         return;
       }
       
-      // Fallback to Firebase
-      console.log('🔥 [FIREBASE READ] WorkersMonitor - fetching workers from Firebase (no cache)');
+      // Fallback to backend
+      console.log('[BACKEND READ] WorkersMonitor - fetching workers from backend (no cache)');
       const fetchedWorkers = await fetchCompanyWorkers(companyId);
 
       if (fetchedWorkers.length > 0) {

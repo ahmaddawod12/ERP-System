@@ -70,6 +70,7 @@ export const readModelSchema = z
     createdByUid: optionalText(200),
     scope: z.enum(['company', 'user']).optional(),
     targetUid: optionalText(200),
+    search: optionalText(80),
     taskId: optionalText(200),
     recordId: optionalText(200),
     countOnly: z.boolean().optional(),

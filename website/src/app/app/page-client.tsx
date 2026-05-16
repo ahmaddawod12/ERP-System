@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useAppContext } from "@/hooks/use-app-context";
 import { roleUsesScopedJobAccess } from "@/lib/job-access";
-import { loadOverviewCounts, resolveCompanyScope } from "@/lib/services/firestore-service";
+import { loadOverviewCounts, resolveCompanyScope } from "@/lib/services/backend-service";
 
 interface StatItem {
   label: string;

@@ -1,6 +1,7 @@
 import {
   EdgeFunctionContext,
   assertCompanyAccess,
+  bumpCompanySyncVersion,
   createSupabaseClient,
   optionalTrimmedString,
   requireNonEmptyString,
@@ -265,48 +266,12 @@ export async function updateCacheV1(payload: any, ctx: EdgeFunctionContext): Pro
   };
 
   const versionField = versionFieldMap[canonicalField];
-  const supabase = createSupabaseClient(ctx.env);
-
-  const { data: syncState } = await supabase
-    .from("company_sync_state")
-    .select(versionField)
-    .eq("company_id", resolvedCompany.internalCompanyId)
-    .maybeSingle();
-
   const now = new Date().toISOString();
-  const versionState = (syncState || {}) as Record<string, unknown>;
-  const nextVersion = Number(versionState[versionField] || 0) + 1;
-  const patch: Record<string, unknown> = {
-    [versionField]: nextVersion,
-    updated_at: now,
-  };
-
-  if (!syncState) {
-    const base = {
-      company_id: resolvedCompany.internalCompanyId,
-      jobs_version: 0,
-      documents_version: 0,
-      clients_version: 0,
-      workers_version: 0,
-      company_inventory_version: 0,
-      updated_at: now,
-      [versionField]: nextVersion,
-    };
-
-    const { error: insertError } = await supabase.from("company_sync_state").insert(base);
-    if (insertError) {
-      throw { code: "internal", message: "Failed to initialize cache state", httpStatus: 500 };
-    }
-  } else {
-    const { error: updateError } = await supabase
-      .from("company_sync_state")
-      .update(patch)
-      .eq("company_id", resolvedCompany.internalCompanyId);
-
-    if (updateError) {
-      throw { code: "internal", message: "Failed to update cache", httpStatus: 500 };
-    }
-  }
+  await bumpCompanySyncVersion(
+    resolvedCompany.internalCompanyId,
+    versionField as "jobs_version" | "documents_version" | "clients_version" | "workers_version" | "company_inventory_version",
+    ctx,
+  );
 
   return {
     companyId: resolvedCompany.publicCompanyId,

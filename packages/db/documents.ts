@@ -303,8 +303,22 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   const documentTypeFilter = Number.isInteger(requestedDocumentType)
     ? sql` AND d.document_type = ${requestedDocumentType}`
     : sql``;
-  const createdByUidFilter = requestedCreatedByUid
-    ? sql` AND cm.user_id = ${requestedCreatedByUid}`
+  let creatorMembershipIds: string[] = [];
+  if (requestedCreatedByUid) {
+    const creatorRows = await db.execute(sql`
+      SELECT id
+      FROM company_memberships
+      WHERE company_id = ${company.id}
+        AND user_id = ${requestedCreatedByUid}
+        AND status = 'active'
+    `);
+    creatorMembershipIds = (creatorRows.rows || []).map((row) => String(row.id || '')).filter(Boolean);
+    if (creatorMembershipIds.length === 0) {
+      return { items: [], nextCursor: null };
+    }
+  }
+  const createdByMembershipFilter = creatorMembershipIds.length > 0
+    ? sql` AND d.created_by_membership_id IN (${sql.join(creatorMembershipIds.map((id) => sql`${id}`), sql`, `)})`
     : sql``;
   const dateFromFilter = requestedDateFrom
     ? sql` AND ${dateColumn} >= ${requestedDateFrom}`
@@ -353,7 +367,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       AND NOT (d.document_type = 305 AND d.tax_authority_status <> 'approved')
       ${documentCodeFilter}
       ${documentTypeFilter}
-      ${createdByUidFilter}
+      ${createdByMembershipFilter}
       ${dateFromFilter}
       ${dateToFilter}
       ${statusFilter}

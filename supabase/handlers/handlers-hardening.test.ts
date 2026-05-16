@@ -115,7 +115,7 @@ test('job attachment update restores existing rows if replacement insert fails',
 
 test('inventory mutations fail closed instead of clamping negative balances', () => {
   const inventoryHandler = readFile('supabase', 'handlers', 'inventory.ts');
-  const migration = readFile('packages', 'db', 'migrations', '0011_runtime_hardening.sql');
+  const migration = readFile('packages', 'db', 'migrations', '0000_optimized_baseline.sql');
 
   assert.match(inventoryHandler, /Inventory quantity cannot be negative/);
   assert.match(inventoryHandler, /apply_inventory_movement/);
@@ -143,7 +143,7 @@ test('archive month retrieval is implemented through backend-controlled storage 
 });
 
 test('support RLS only exposes personal support threads to owner or dev', () => {
-  const migration = readFile('packages', 'db', 'migrations', '0013_support_owner_rls.sql');
+  const migration = readFile('packages', 'db', 'migrations', '0000_optimized_baseline.sql');
 
   assert.match(migration, /support_conversations_owner_read_policy/);
   assert.match(migration, /app_is_dev\(\) OR user_id = app_auth_uid\(\)/);

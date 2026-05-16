@@ -2,7 +2,7 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (May 10, 2026)
+## Runtime Snapshot (May 15, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
@@ -72,15 +72,18 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Valid job statuses are `pending`, `waiting`, `finished`, and `denied`.
 - Public job API boundaries use sequential job numbers; internal UUIDs are resolved only inside backend handlers.
 - Keep `read-model` `kind` contracts synchronized across website, mobile, and backend handlers.
+- Clients and inventory read-model calls use SQL RPC-backed pagination/search; do not reintroduce full-collection in-memory filtering for those paths.
 
-## Recent Hardening (April 26-May 10, 2026)
+## Recent Hardening (April 26-May 15, 2026)
 
-### Backend / SQL (migrations `0008_supabase_auth_rls.sql`, `0011_runtime_hardening.sql`, `0013_support_owner_rls.sql`, and `0014_read_model_cursor_indexes.sql`)
+### Backend / SQL (optimized baseline `0000_optimized_baseline.sql`)
 - Supabase mutation handlers normalize incoming `companyId` to internal company UUID before SQL queries.
 - `resolveCompanyIdentifiers` now resolves public numeric IDs and internal UUIDs with separate queries so public company IDs are never OR-filtered against UUID columns.
 - SQL counter RPCs (`allocate_company_counter`, `allocate_system_counter`) cover all sequential IDs: `public_company_id`, `member_no`, `client_no`, `job_no`, tax invoice numbers (`doc_305`), and inventory part numbers (`part_no`).
+- New empty databases start from a single optimized SQL baseline instead of the old incremental migration chain. The baseline includes RLS hardening, support-owner policies, document task locks, atomic inventory/invite/idempotency RPCs, read-model indexes for jobs/documents/clients/memberships/inventory, and service-role RPCs for client/inventory pages.
+- `packages/db/perf/profiling.sql` contains the read-only profiling checklist for Supabase advisors, `pg_stat_statements`, and `EXPLAIN` before broader index changes.
 
-## Optimizations (May 1, 2026)
+## Optimizations (May 1-May 15, 2026)
 
 ### supabase/handlers/jobs.ts
 - Replaced two sequential `getMembershipSummaryById` calls in `mapJobRecordForResponse` with a single batched `.in("id", [...])` query — saves one DB round-trip per job response.
@@ -101,7 +104,8 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `document_number` immutability trigger blocks updates once a non-zero number is assigned (allows 0 → real, blocks real → different real).
 - `document_tasks` RLS policy fixed to reference the correct column (`user_id`).
 - `support_conversations` / `support_messages` RLS is owner-or-dev for personal support threads, including records with no company scope.
-- `0014_read_model_cursor_indexes.sql` adds timestamp-plus-id covering indexes for jobs/documents read-model pagination and common role/status filters.
+- The optimized SQL baseline includes timestamp-plus-id covering indexes for jobs/documents read-model pagination and common role/status filters.
+- The optimized SQL baseline includes operational lookup indexes for tax reservations, tax OAuth callbacks, support queues, and client email prefix search.
 - `contact_requests` now stores a dedicated `subject VARCHAR(500)` column.
 - `upgrade_requests.company_id` migrated from `VARCHAR(32)` to `UUID`; handlers store the internal company UUID.
 - `document_tasks` now persist `lock_key`, and active-task uniqueness is enforced on `(company_id, task_type, lock_key)`.
@@ -112,6 +116,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Shared edge JWT verification now enforces the expected Supabase issuer and audience and rejects tokens with an empty `uid`.
 - Read-model service-role queries enforce the runtime role matrix before returning rows: workers/business users only get assigned jobs, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
 - Read-model cursor pagination for jobs/documents uses composite timestamp-plus-id cursors via PostgREST `.or()` and honors `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters.
+- Client and inventory read-model pagination/search now execute through service-role SQL RPCs (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`) while preserving the website/mobile response shapes.
 - `bootstrap` returns `jobsNextCursor` and `documentsNextCursor` from the first read-model page instead of hardcoded `null`.
 - `userSyncState` kind now returns `app_users.updated_at` instead of hardcoded zeros.
 - Inventory part listing attaches the next sequential part ID from the SQL counter.
@@ -131,6 +136,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Edge-to-Cloud-Run document dispatch now accepts either a Google-issued invoker token or the Supabase edge service-account JWT signed with `GCP_SERVICE_ACCOUNT_PRIVATE_KEY`, while still requiring the shared `x-pubsub-token` layer when configured.
 - Inventory mutation helpers now fail closed on negative balances instead of clamping underflow to zero.
 - Inventory movement writes now use the SQL `apply_inventory_movement(...)` RPC, and active company-membership / inventory-location uniqueness is enforced with runtime-safe partial indexes.
+- Multi-part inventory picks now use `apply_inventory_pick_batch(...)` so the pick operation commits or fails as one database transaction.
 - Invite join responses now return the public membership number as `wid` and no longer leak the internal membership UUID.
 
 ### Website

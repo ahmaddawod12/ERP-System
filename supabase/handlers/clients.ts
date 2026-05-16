@@ -44,10 +44,12 @@ export async function addClientV1(payload: any, ctx: EdgeFunctionContext): Promi
   const companyId = resolvedCompany.internalCompanyId;
   const name = requireNonEmptyString(payload?.name, "name", 1, 240);
   const phone = optionalTrimmedString(payload?.phone, 40);
-  const email = payload?.email !== undefined ? validateEmail(payload.email) : undefined;
+  const email = payload?.email !== undefined && String(payload.email).trim() !== ""
+    ? validateEmail(payload.email)
+    : undefined;
   const address = optionalTrimmedString(payload?.address, 500);
   const city = optionalTrimmedString(payload?.city, 120);
-  const vatNumber = optionalTrimmedString(payload?.vat_number, 32);
+  const vatNumber = optionalTrimmedString(payload?.vatNumber ?? payload?.vat_number, 32);
   const notes = optionalTrimmedString(payload?.notes, 2000);
 
   const membership = await requireActiveMembership(companyId, ctx);
@@ -90,6 +92,7 @@ export async function addClientV1(payload: any, ctx: EdgeFunctionContext): Promi
     email: insertedClient.email ?? undefined,
     address: insertedClient.address ?? undefined,
     city: insertedClient.city ?? undefined,
+    vatNumber: insertedClient.vat_number ?? undefined,
     vat_number: insertedClient.vat_number ?? undefined,
     notes: insertedClient.notes ?? undefined,
     status: insertedClient.status,
@@ -110,7 +113,9 @@ export async function updateClientV1(payload: any, ctx: EdgeFunctionContext): Pr
   if (payload?.email !== undefined) update.email = payload.email ? validateEmail(payload.email) : null;
   if (payload?.address !== undefined) update.address = optionalTrimmedString(payload.address, 500) ?? null;
   if (payload?.city !== undefined) update.city = optionalTrimmedString(payload.city, 120) ?? null;
-  if (payload?.vat_number !== undefined) update.vat_number = optionalTrimmedString(payload.vat_number, 32) ?? null;
+  if (payload?.vatNumber !== undefined || payload?.vat_number !== undefined) {
+    update.vat_number = optionalTrimmedString(payload.vatNumber ?? payload.vat_number, 32) ?? null;
+  }
   if (payload?.notes !== undefined) update.notes = optionalTrimmedString(payload.notes, 2000) ?? null;
   if (payload?.status !== undefined) {
     if (payload.status !== "active" && payload.status !== "archived") {
@@ -150,6 +155,7 @@ export async function updateClientV1(payload: any, ctx: EdgeFunctionContext): Pr
     email: updatedClient.email ?? undefined,
     address: updatedClient.address ?? undefined,
     city: updatedClient.city ?? undefined,
+    vatNumber: updatedClient.vat_number ?? undefined,
     vat_number: updatedClient.vat_number ?? undefined,
     notes: updatedClient.notes ?? undefined,
     status: updatedClient.status,

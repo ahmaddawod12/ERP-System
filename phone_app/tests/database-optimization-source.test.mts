@@ -1,0 +1,91 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+
+function readRepoFile(...segments: string[]) {
+  return fs.readFileSync(path.resolve(process.cwd(), '..', ...segments), 'utf8');
+}
+
+test('read model supports opt-in clients and inventory pagination', () => {
+  const readModel = readRepoFile('supabase', 'functions', 'read-model', 'index.ts');
+  const sharedData = readRepoFile('supabase', 'functions', 'read-model', 'kinds', 'shared-data.ts');
+  const schema = readRepoFile('website', 'src', 'lib', 'validation', 'schemas.ts');
+
+  assert.match(readModel, /kind === "clients"[\s\S]*nextCursor/);
+  assert.match(readModel, /rpc\("get_clients_page"/);
+  assert.match(readModel, /parseNumberCursor\(body\.afterCursor\)/);
+  assert.match(sharedData, /getCompanyInventoryParts\(internalCompanyId: string, options: InventoryReadOptions = \{\}\)/);
+  assert.match(sharedData, /getUserInventoryParts\(internalCompanyId: string, targetUid: string, options: InventoryReadOptions = \{\}\)/);
+  assert.match(sharedData, /rpc\("get_company_inventory_page"/);
+  assert.match(sharedData, /rpc\("get_member_inventory_page"/);
+  assert.match(schema, /search: optionalText\(80\)/);
+});
+
+test('large mobile archive reads drain read-model pages', () => {
+  const source = readRepoFile('phone_app', 'utils', 'read-model.ts');
+
+  assert.match(source, /fetchAllReadModelPages\('jobs', companyId, options\)/);
+  assert.match(source, /fetchAllReadModelPages\('documents', companyId, options\)/);
+  assert.match(source, /while \(items\.length < targetLimit\)/);
+});
+
+test('inventory and profile cache bumps use atomic sync RPC', () => {
+  const inventory = readRepoFile('supabase', 'handlers', 'inventory.ts');
+  const profile = readRepoFile('supabase', 'handlers', 'profile.ts');
+
+  assert.match(inventory, /bumpCompanySyncVersion\(companyId, "company_inventory_version", ctx\)/);
+  assert.match(profile, /bumpCompanySyncVersion\(/);
+  assert.doesNotMatch(inventory, /select\("company_inventory_version"\)/);
+  assert.doesNotMatch(profile, /\.from\("company_sync_state"\)[\s\S]*\.update\(/);
+});
+
+test('database optimization migration adds indexes, RLS, and RPC execute hardening', () => {
+  const migrationsDir = path.resolve(process.cwd(), '..', 'packages', 'db', 'migrations');
+  const migrationFiles = fs.readdirSync(migrationsDir).filter((name) => name.endsWith('.sql')).sort();
+  const migration = readRepoFile('packages', 'db', 'migrations', '0000_optimized_baseline.sql');
+
+  assert.deepEqual(migrationFiles, ['0000_optimized_baseline.sql']);
+
+  assert.match(migration, /company_memberships_user_active_joined_idx/);
+  assert.match(migration, /jobs_company_assignee_status_finished_cursor_idx/);
+  assert.match(migration, /documents_company_type_status_document_date_cursor_idx/);
+  assert.match(migration, /inventory_parts_company_active_archived_part_no_idx/);
+  assert.match(migration, /jobs_company_idempotency_unique[\s\S]*WHERE idempotency_key IS NOT NULL/);
+  assert.match(migration, /inventory_movements_company_idempotency_unique[\s\S]*WHERE idempotency_key IS NOT NULL/);
+  assert.match(migration, /tax_invoice_reservations_company_status_created_idx/);
+  assert.match(migration, /tax_oauth_callbacks_session_created_idx/);
+  assert.match(migration, /support_conversations_last_message_idx/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION get_clients_page/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION get_company_inventory_page/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION get_member_inventory_page/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION apply_inventory_pick_batch/);
+  assert.match(migration, /ALTER TABLE app_users ENABLE ROW LEVEL SECURITY/);
+  assert.match(migration, /REVOKE EXECUTE ON FUNCTION '\s*\|\| function_signature/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION '\s*\|\| function_signature/);
+  assert.match(migration, /apply_inventory_movement\(UUID, UUID, NUMERIC/);
+  assert.match(migration, /apply_inventory_pick_batch\(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ\)/);
+  assert.match(migration, /bump_company_sync_version\(UUID, TEXT\)/);
+});
+
+test('database profiling checklist covers hot read-model paths', () => {
+  const profiling = readRepoFile('packages', 'db', 'perf', 'profiling.sql');
+
+  assert.match(profiling, /pg_stat_statements/);
+  assert.match(profiling, /index_advisor/);
+  assert.match(profiling, /get_clients_page/);
+  assert.match(profiling, /get_company_inventory_page/);
+  assert.match(profiling, /tax_invoice_reservations/);
+  assert.match(profiling, /tax_oauth_callbacks/);
+  assert.match(profiling, /support_conversations/);
+});
+
+test('client mutations preserve camelCase VAT number payloads', () => {
+  const clients = readRepoFile('supabase', 'handlers', 'clients.ts');
+
+  assert.match(clients, /String\(payload\.email\)\.trim\(\) !== ""/);
+  assert.match(clients, /payload\?\.vatNumber \?\? payload\?\.vat_number/);
+  assert.match(clients, /payload\?\.vatNumber !== undefined \|\| payload\?\.vat_number !== undefined/);
+  assert.match(clients, /vatNumber: insertedClient\.vat_number/);
+  assert.match(clients, /vatNumber: updatedClient\.vat_number/);
+});

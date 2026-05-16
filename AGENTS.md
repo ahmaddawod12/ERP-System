@@ -65,6 +65,12 @@ npm --prefix packages/db run db:generate   # drizzle-kit generate (new migration
 npm --prefix packages/db run db:migrate    # drizzle-kit migrate (apply to DB)
 ```
 
+Database profiling before broad index work:
+```bash
+# Run against local/staging with realistic row counts through psql or Supabase SQL editor
+packages/db/perf/profiling.sql
+```
+
 ### cloudrun-pdf / cloudrun-archiver
 ```bash
 # Tests internally run `npm run build` first — never skip build
@@ -186,12 +192,16 @@ Use SQL counters — never `MAX + 1`. Applies to: `public_company_id`, `member_n
 Composite cursor `(createdAt, id)` — must remain stable; never change to single-field.
 Read-model edge queries must honor `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters without in-memory post-filtering as the primary access control.
 Service-role read-model code must enforce role scoping before returning rows: workers/business users only assigned jobs, basic no jobs, workers no documents, workers list manager/dev only.
+Client and inventory read-model search/pagination are SQL RPC-backed (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`); do not reintroduce full-collection Edge memory filtering.
 
 ### `vat_number` is immutable after onboarding
 `updateBusinessInfoV1` must reject mutations to this field.
 
 ### Invite redemption
 Must consume invite state atomically before finalizing membership (prevents multi-join races).
+
+### Inventory mutations
+Inventory movement writes must use SQL helpers. Multi-part picks use `apply_inventory_pick_batch(...)` so balance changes and movement rows commit or fail together.
 
 ---
 

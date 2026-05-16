@@ -64,7 +64,7 @@ export function getPendingWorkerJobsStorageKey() {
   return scopedKey('pendingWorkerJobs');
 }
 
-// Generate a temporary ID for file upload paths (not used as Firestore doc ID)
+// Generate a temporary ID for file upload paths (not used as the backend record ID)
 export function generateTempId() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 8);
 }

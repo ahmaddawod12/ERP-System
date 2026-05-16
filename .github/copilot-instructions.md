@@ -4,13 +4,14 @@ These instructions apply to the full repository.
 
 ## Current Runtime State
 
-As of April 26, 2026:
+As of May 15, 2026:
 
 - Supabase Auth is the active auth provider for website and mobile sign-in.
 - The in-repo backend runtime and trust boundary are under `supabase/functions/`.
 - PostgreSQL, through `packages/db`, is the primary persistence layer for company-scoped ERP data.
 - Firestore and Cloud Storage still support compatibility reads, operational metadata, rules-backed surfaces, and file storage.
 - Supabase Edge gateway rollout is still in hardening, but repository backend runtime changes target `supabase/functions/` and `supabase/handlers/`.
+- Client and inventory read-model search/pagination is SQL RPC-backed; avoid reintroducing full-collection Edge memory filtering for those paths.
 
 This means backend migration code is live in `supabase/`. Treat `supabase/functions/` and `supabase/handlers/` as the implementation target for backend runtime changes in this repository.
 
@@ -77,6 +78,7 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Firestore transactions must read before they write.
 - Do not weaken create-only semantics for generated document files and records.
 - Keep invite redemption race-safe with atomic state transitions.
+- Inventory movement writes should use SQL transaction helpers; multi-part picks use `apply_inventory_pick_batch(...)`.
 
 ## Mobile Rules (`phone_app/`)
 
@@ -103,6 +105,7 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - `supabase/functions/` is the active backend gateway surface in this workspace.
 - `mutation-gateway`, `mutation-gateway-me-west1`, and `read-model` are active HTTP entry surfaces.
 - Keep `read-model` request/response contracts aligned with website/mobile `kind` payloads.
+- Keep clients and inventory read-model queries backed by service-role SQL RPCs (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`).
 - Keep role and company-scope checks explicit.
 - For multi-step mutations, prefer atomic SQL transaction boundaries; if unavailable in the current handler layer, add explicit compensating cleanup logic.
 - Reuse shared helper logic from `supabase/shared-edge-helpers.ts`.
@@ -114,6 +117,7 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Support flows are SQL-backed now; do not reintroduce Firestore-backed support mutations.
 - Rate limiting is SQL-backed in the current backend; do not reintroduce Firestore-backed rate-limit state for migrated paths.
 - Keep CORS allowlists explicit. Do not rely on empty CORS allowlists as permissive behavior.
+- Use `packages/db/perf/profiling.sql` plus Supabase advisors/`EXPLAIN` before broad index changes.
 
 ## Cloud Run Services
 
@@ -134,6 +138,7 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Prefer importing enums, constants, and suffix maps from `@smart-job/contracts` instead of duplicating literals.
 - Treat `packages/db` as the canonical SQL schema, migration, and access layer.
 - Do not introduce direct client SQL access for protected ERP operations.
+- Keep new database helper functions service-role-only unless a reviewed public RLS/Data API contract explicitly requires otherwise.
 
 ## Supabase Migration Rules
 

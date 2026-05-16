@@ -2,7 +2,7 @@
  * cache-fetchers.ts
  *
  * Centralized read-model fetchers for CacheContext.
- * These no longer read business data directly from Firestore.
+ * These read business data through Supabase Edge read-model endpoints.
  */
 
 import {
@@ -62,7 +62,7 @@ function normalizeWorkersArray(workers: any[] | Record<string, any> | null | und
   }, {});
 }
 
-export async function fetchDataFromFirebase(
+export async function fetchDataFromBackend(
   field: string,
   uid: string,
   companyId: string,

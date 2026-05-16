@@ -39,3 +39,13 @@ test('mobile modules do not import direct firestore SDK writes', () => {
   assert.doesNotMatch(documentHistoryFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
   assert.doesNotMatch(workerJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
 });
+
+test('mobile cache fetchers use backend naming for SQL read-model data', () => {
+  const cacheFetchers = readProjectFile('contexts', 'cache-fetchers.ts');
+  const cacheContext = readProjectFile('contexts', 'CacheContext.tsx');
+
+  assert.match(cacheFetchers, /export async function fetchDataFromBackend/);
+  assert.match(cacheContext, /fetchDataFromBackend as _fetchDataFromBackend/);
+  assert.doesNotMatch(cacheFetchers, /fetchDataFromFirebase/);
+  assert.doesNotMatch(cacheContext, /fetchDataFromFirebase/);
+});

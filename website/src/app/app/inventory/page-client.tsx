@@ -20,7 +20,7 @@ import {
   removeUserInventoryPart,
   toggleCompanyInventoryPart,
   updateUserInventoryPart,
-} from "@/lib/services/firestore-service";
+} from "@/lib/services/backend-service";
 import type { InventoryPart } from "@/lib/types";
 
 interface PartFormState {
@@ -53,8 +53,8 @@ export default function InventoryClient() {
     if (isCompanyInventory && companyId) {
       const inv = await getCompanyInventory(companyId);
       setParts(inv.parts);
-    } else if (uid) {
-      const inv = await getUserInventory(uid);
+    } else if (uid && companyId) {
+      const inv = await getUserInventory(companyId, uid);
       setParts(inv.parts);
     }
     setLoading(false);

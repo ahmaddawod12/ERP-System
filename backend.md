@@ -1,6 +1,6 @@
 # Backend
 
-This document summarizes the active backend boundaries in May 2026.
+This document summarizes the active backend boundaries in May 15, 2026.
 
 ## Current Backend Reality
 
@@ -68,6 +68,8 @@ This package is the SQL persistence layer. It contains:
 - migrations
 - typed access helpers
 - read-model helpers used by backend services
+- read-only profiling helpers under `packages/db/perf/` for advisor and `EXPLAIN` checks before broad index changes
+- optimized baseline RPCs for client pages, inventory pages, and atomic multi-part inventory picks
 
 ### supabase/
 
@@ -134,6 +136,9 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
 - When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
 - Keep read-model filters wired through the edge layer: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
+- Clients and inventory read-model calls may opt into cursor pagination and prefix search; callers that omit those options continue to receive the legacy array/snapshot payloads.
+- Clients and inventory pagination/search are backed by service-role RPCs so filtering and cursors execute in SQL instead of loading full collections into Edge memory.
+- Inventory pick mutations use a batch RPC so multi-part picks commit or fail as one database transaction.
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
 - Keep job file signed URLs bound to persisted attachment rows, not caller-selected prefixes.
 - Accept temporary `attachmentUploadId` references during job creation only long enough to validate and normalize them into canonical attachment rows/storage paths.
@@ -144,10 +149,13 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Validate inventory location ownership against the resolved internal company UUID before applying movement updates.
 - Reject inventory underflow instead of clamping balances to zero during backend mutations.
 - Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
+- Use `apply_inventory_pick_batch(...)` for multi-part picks so all balance updates and movement rows share one SQL transaction.
+- Cache/sync version mutations should use the SQL-side `bump_company_sync_version(...)` helper instead of read-modify-write updates.
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
 - Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.
 - Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.
 - Keep archived month reads behind backend handlers with fixed bucket/path derivation.
+- Run `packages/db/perf/profiling.sql` on local/staging data before broad index changes, and verify advisor output with `EXPLAIN (analyze, buffers)`.
 
 ## Runtime Note
 

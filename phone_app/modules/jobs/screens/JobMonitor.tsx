@@ -285,7 +285,7 @@ export default function JobMonitor() {
         waitingJobsList.sort(sortByDate);
         
         // Get finished jobs using smart date filtering from CacheContext
-        // This automatically handles cache vs Firebase based on date range
+        // This automatically handles cache vs backend/archive based on date range.
         let finishedJobsData = [];
         
         if (isStartInCache) {
@@ -298,9 +298,9 @@ export default function JobMonitor() {
             });
           }
         } else {
-          // Date range extends beyond cache - use smart filtering
-          // This will use cache for recent data + query Firebase for older data
-          console.log('🔥 [FIREBASE READ] JobMonitor - fetching older finished jobs from Firebase');
+          // Date range extends beyond cache - use smart filtering.
+          // This uses local cache for recent data and backend/archive reads for older data.
+          console.log('[BACKEND READ] JobMonitor - fetching older finished jobs');
           finishedJobsData = await getDataForDateRange(
             dateFilter.startDate, 
             dateFilter.endDate, 
@@ -396,7 +396,7 @@ export default function JobMonitor() {
       allJobs = jobs[activeFilter] || [];
     }
     
-    // Date filtering is now handled by Firestore query (dateFilter state)
+    // Date filtering is handled by the backend read-model/archive query (dateFilter state).
     // No need for additional client-side date filtering here
     
     // Sort by date - newest first

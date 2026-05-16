@@ -14,7 +14,7 @@ import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
 import { useLocale } from "@/hooks/use-i18n";
 import { useTheme } from "@/components/providers/theme-provider";
-import { updateProfile as updateProfileSettings } from "@/lib/services/firestore-service";
+import { updateProfile as updateProfileSettings } from "@/lib/services/backend-service";
 import type { Locale } from "@/lib/i18n/translations";
 
 const profileSchema = z.object({

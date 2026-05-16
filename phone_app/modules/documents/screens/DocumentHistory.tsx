@@ -312,8 +312,8 @@ export default function DocumentHistory() {
       filtered = filtered.filter(doc => doc.type === selectedDocType);
     }
 
-    // Check if date range extends beyond cache (90 days)
-    // If both dates are set and startDate is outside cache range, fetch from Firebase
+    // Check if date range extends beyond cache (90 days).
+    // If both dates are set and startDate is outside cache range, fetch from backend/archive.
     if (dateFilter.startDate && dateFilter.endDate) {
       const startInCache = isWithinCacheRange(dateFilter.startDate);
       

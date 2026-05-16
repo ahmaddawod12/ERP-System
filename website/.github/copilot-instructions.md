@@ -10,6 +10,7 @@ Use the root `SETUP.md` for environment setup, deployment guidance, and onboardi
 - The website uses server-side session cookies for protected routing.
 - Protected operations proxy to Supabase Edge endpoints through website API routes.
 - SQL is the primary ERP persistence layer behind backend services.
+- Client and inventory reads go through `/api/read-model`; backend SQL RPCs handle pagination/search.
 
 ## Tech Stack
 
@@ -42,6 +43,7 @@ Use the root `SETUP.md` for environment setup, deployment guidance, and onboardi
 - Keep API routes thin: parse, validate, optional auth check, then proxy.
 - Preserve current operation names and backend mappings unless backend changes first.
 - Keep `read-model` `kind` request schemas aligned with backend-supported kinds.
+- Use `src/lib/services/backend-service.ts` for protected ERP service calls; do not resurrect the legacy `firestore-service` import path.
 - Keep privileged admin flows behind API routes and backend functions.
 - Do not write protected business data directly from browser code.
 
@@ -59,7 +61,8 @@ Use the root `SETUP.md` for environment setup, deployment guidance, and onboardi
 ## Auth Session Rules
 
 - `/api/auth/session` verifies the bearer token server-side and sets the HttpOnly `__session` cookie.
-- `middleware.ts` uses `__session` to protect `/app/*` routes.
+- `/api/auth/session` writes signed metadata to `__session` and the current bearer token to the HttpOnly `__session_access` cookie.
+- `middleware.ts` uses `__session` to protect `/app/*` routes; server proxy auth requires `__session_access` for backend calls.
 - Do not put bearer tokens into JavaScript-readable cookies.
 - Do not replace server verification with JWT-shape-only checks.
 

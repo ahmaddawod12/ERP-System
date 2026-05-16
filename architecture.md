@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current May 2026 Smart-Job ERP architecture. It reflects the active code paths in `website/`, `phone_app/`, `supabase/functions/`, `cloudrun-pdf/`, `cloudrun-archiver/`, `packages/contracts/`, and `packages/db/`.
+This document describes the current May 15, 2026 Smart-Job ERP architecture. It reflects the active code paths in `website/`, `phone_app/`, `supabase/functions/`, `cloudrun-pdf/`, `cloudrun-archiver/`, `packages/contracts/`, and `packages/db/`.
 
 ## Executive Summary
 
@@ -53,6 +53,7 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
 - Invites: `company_invites`
 - Support: `support_conversations`, `support_messages`
 - Operational SQL tables: `notification_deliveries`, `rate_limit_buckets`, `archive_runs`, `auditLogs`, `orphanedUserCleanupMarkers`, `system_counters`
+- SQL helper functions: counters/rate limits, invite and tax idempotency, inventory movement and batch picks, client/inventory paged reads, and sync-version bumps are backend-only RPCs.
 
 ### Firestore-owned operational and compatibility data
 
@@ -88,12 +89,15 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Website server proxy auth uses a split-cookie transport: `__session` stores signed session metadata and a separate HttpOnly `__session_access` cookie stores the current bearer token for server-side Edge proxy calls.
 - Protected web actions go through API proxy routes, then into backend functions.
 - Website read-model calls are kind-based and must remain contract-compatible with backend `read-model` kinds. Service-role read-model code must enforce the runtime role matrix before returning rows.
+- Client and inventory read-model pages are served by SQL RPCs so search and cursor filters execute in the database while preserving website response shapes.
 
 ### Mobile
 
 - The Expo app stores Supabase transport tokens in Expo SecureStore-backed auth helpers.
 - Protected operations go through backend HTTP/gateway helpers.
 - Mobile read-model calls are kind-based and share the same backend contract as website.
+- Read-model clients and inventory endpoints preserve their existing default payloads, with optional cursor pagination/search for large tenants.
+- Client and inventory page helpers use the same SQL RPC-backed read-model contract as website callers.
 - Mobile MMKV cache/draft/outbox keys must stay scoped by active `uid` / `companyId`.
 - Mobile Supabase access and refresh tokens are stored in Expo SecureStore, not MMKV.
 - Mobile cache refresh must drain paginated jobs/documents reads for the active 90-day cache window instead of assuming page one is complete.
@@ -141,6 +145,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Allocate sequential business IDs through SQL counters (`system_counters`, `company_counters`).
 - Do not use `MAX + 1` query patterns for `public_company_id`, `member_no`, `client_no`, or `job_no`.
 - Apply the same SQL counter rule to tax invoice numbering (`doc_305`) and company inventory part numbering (`part_no`).
+- SQL helper RPCs that mutate counters, rate limits, inventory, invites, tax idempotency, or sync versions are backend-only and should not be exposed to anonymous or authenticated client roles.
+- Service-role read RPCs for clients and inventory are also backend-only; website/mobile callers reach them through the read-model gateway.
 
 ### Jobs
 
@@ -165,6 +171,12 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Firestore transactions must read before they write.
 - Inventory mutations must fail on negative resulting balances; they must not silently clamp stock underflow to zero.
 - Inventory movement mutations should be applied atomically through SQL helpers such as `apply_inventory_movement(...)` rather than client-visible read-modify-write sequences.
+- Multi-part inventory picks should use `apply_inventory_pick_batch(...)` so all movements commit or roll back together.
+
+### Performance and profiling
+
+- Use `packages/db/perf/profiling.sql` against local/staging data before broad index changes.
+- Treat Supabase advisors and `EXPLAIN (analyze, buffers)` output as the source of truth for adding or removing indexes beyond the optimized baseline.
 
 ## Migration Direction
 

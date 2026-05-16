@@ -21,6 +21,10 @@ export function makeCursor(createdAt: unknown, id: unknown): string {
   return `${String(createdAt || "")}|${String(id || "")}`;
 }
 
+export function makeNumberCursor(value: unknown, id: unknown): string {
+  return `${String(value || "")}|${String(id || "")}`;
+}
+
 export function parseCursor(cursorRaw: unknown): { createdAt: string; id: string } | null {
   const raw = String(cursorRaw || "").trim();
   if (!raw || !raw.includes("|")) return null;
@@ -31,3 +35,11 @@ export function parseCursor(cursorRaw: unknown): { createdAt: string; id: string
   return { createdAt: normalizedCreatedAt, id: String(id) };
 }
 
+export function parseNumberCursor(cursorRaw: unknown): { value: number; id: string } | null {
+  const raw = String(cursorRaw || "").trim();
+  if (!raw || !raw.includes("|")) return null;
+  const [valueRaw, id] = raw.split("|");
+  const value = Number(valueRaw);
+  if (!Number.isFinite(value) || !isUuidLike(String(id))) return null;
+  return { value, id: String(id) };
+}

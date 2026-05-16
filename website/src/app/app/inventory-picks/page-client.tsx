@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/Badge";
 import { LoadingState } from "@/components/states/loading-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
-import { getCompanyInventory, pickCompanyParts } from "@/lib/services/firestore-service";
+import { getCompanyInventory, pickCompanyParts } from "@/lib/services/backend-service";
 import type { InventoryPart } from "@/lib/types";
 
 export default function InventoryPicksClient() {

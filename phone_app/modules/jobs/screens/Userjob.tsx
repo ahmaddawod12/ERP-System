@@ -319,7 +319,7 @@ export default function Userjob() {
   };
 
   /**
-   * Sync offline-queued jobs. Tries to submit each pending job to Firestore.
+   * Sync offline-queued jobs. Tries to submit each pending job through the backend.
    */
   const syncPendingJobs = async () => {
     try {
@@ -428,7 +428,7 @@ export default function Userjob() {
 
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-      // Beyond 90 days — fetch from archive / Firestore
+      // Beyond 90 days - fetch from archive/backend.
       if (dateFilter.startDate < ninetyDaysAgo) {
         const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs') as UserJobRecord[];
         const filtered = olderJobs

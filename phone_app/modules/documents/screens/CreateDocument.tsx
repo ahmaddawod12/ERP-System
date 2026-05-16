@@ -823,7 +823,7 @@ export default function CreateDocument() {
         return;
       }
 
-      // Business info is fetched by Cloud Functions directly from Firestore for security
+      // Business info is fetched by the backend from SQL for security.
 
       // Build client data - VAT required for all tax invoice customers
       const clientData = {
@@ -835,7 +835,7 @@ export default function CreateDocument() {
         clientVatNumber: formData.clientVatNumber,
       };
 
-      // Build document data - Cloud Functions fetch business_info from Firestore
+      // Build document data - backend fetches business_info from SQL.
       const documentData = {
         type: DOC_TYPE.TAX_INVOICE,
         client: clientData,

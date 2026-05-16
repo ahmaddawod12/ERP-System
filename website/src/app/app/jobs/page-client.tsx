@@ -20,7 +20,7 @@ import {
   listWorkers,
   resolveCompanyScope,
   updateJob,
-} from "@/lib/services/firestore-service";
+} from "@/lib/services/backend-service";
 import {
   buildJobAssignmentPatch,
   buildListJobsOptions,

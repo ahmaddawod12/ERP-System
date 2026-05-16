@@ -4,6 +4,7 @@
  */
 import {
   allocateNextCompanyCounter,
+  bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
   isUuidLike,
@@ -55,6 +56,61 @@ async function resolvePartRecord(
   }
 
   return null;
+}
+
+async function resolvePartRecordsByInput(
+  supabase: ReturnType<typeof createSupabaseClient>,
+  companyId: string,
+  rawPartIds: unknown[],
+): Promise<Map<string, any>> {
+  const uuidIds: string[] = [];
+  const partNos: number[] = [];
+
+  for (const rawPartId of rawPartIds) {
+    if (typeof rawPartId === "number" && Number.isFinite(rawPartId)) {
+      partNos.push(rawPartId);
+      continue;
+    }
+    const normalized = String(rawPartId ?? "").trim();
+    if (!normalized) continue;
+    if (isUuidLike(normalized)) {
+      uuidIds.push(normalized);
+    } else if (/^\d+$/.test(normalized)) {
+      partNos.push(Number(normalized));
+    }
+  }
+
+  const resolved = new Map<string, any>();
+  const uniqueUuidIds = Array.from(new Set(uuidIds));
+  const uniquePartNos = Array.from(new Set(partNos));
+  const [uuidResult, partNoResult] = await Promise.all([
+    uniqueUuidIds.length > 0
+      ? supabase
+        .from("inventory_parts")
+        .select("id, part_no, name, active, low_threshold, unit")
+        .eq("company_id", companyId)
+        .in("id", uniqueUuidIds)
+      : Promise.resolve({ data: [], error: null }),
+    uniquePartNos.length > 0
+      ? supabase
+        .from("inventory_parts")
+        .select("id, part_no, name, active, low_threshold, unit")
+        .eq("company_id", companyId)
+        .in("part_no", uniquePartNos)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (uuidResult.error || partNoResult.error) {
+    throw { code: "internal", message: "Failed to load inventory parts", httpStatus: 500 };
+  }
+
+  for (const row of [...(uuidResult.data || []), ...(partNoResult.data || [])]) {
+    if (!row?.id) continue;
+    resolved.set(String(row.id), row);
+    resolved.set(String(row.part_no), row);
+  }
+
+  return resolved;
 }
 
 async function resolveTargetMembershipId(
@@ -397,29 +453,7 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
   const scope = optionalTrimmedString(payload?.scope, 16) || "company";
   const targetUid = optionalTrimmedString(payload?.targetUid, 200);
 
-  const bumpInventoryVersion = async () => {
-    const { data: syncState, error: syncStateError } = await supabase
-      .from("company_sync_state")
-      .select("company_inventory_version")
-      .eq("company_id", companyId)
-      .maybeSingle();
-
-    if (!syncStateError) {
-      if (!syncState) {
-        await supabase.from("company_sync_state").insert({
-          company_id: companyId,
-          company_inventory_version: 1,
-          updated_at: now,
-        });
-      } else {
-        const nextVersion = Number(syncState.company_inventory_version || 0) + 1;
-        await supabase
-          .from("company_sync_state")
-          .update({ company_inventory_version: nextVersion, updated_at: now })
-          .eq("company_id", companyId);
-      }
-    }
-  };
+  const bumpInventoryVersion = () => bumpCompanySyncVersion(companyId, "company_inventory_version", ctx);
 
   const parseNonNegativeNumber = (value: unknown, fieldName: string) => {
     const numeric = Number(value ?? 0);
@@ -730,39 +764,58 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
         throw { code: "invalid-argument", message: "partsToPick array is required", httpStatus: 400 };
       }
 
-      const insertedMovements: any[] = [];
+      const partsByInput = await resolvePartRecordsByInput(supabase, companyId, picks.map((pick: any) => pick?.id));
+      const normalizedPicks: Array<{ part: any; quantity: number }> = [];
       for (const pick of picks) {
         const pickQty = Number(pick?.quantity);
         if (!Number.isFinite(pickQty) || pickQty <= 0) {
           throw { code: "invalid-argument", message: "picked quantity must be a positive finite number", httpStatus: 400 };
         }
 
-        const part = await resolvePartRecord(supabase, companyId, pick?.id);
+        const part = partsByInput.get(String(pick?.id ?? "").trim());
         if (!part?.id) {
           throw { code: "not-found", message: "Inventory part not found", httpStatus: 404 };
         }
 
-        const movement = await applyInventoryMovement(supabase, {
-          companyId,
-          partId: String(part.id),
-          quantity: pickQty,
-          fromLocationId: companyLocationId,
-          toLocationId: targetLocationId,
-          movementType: "pick",
-          createdByMembershipId: String(membership.id),
-          note: `Picked part #${Number(part.part_no || 0)}`,
-          createdAt: now,
-        });
+        normalizedPicks.push({ part, quantity: pickQty });
+      }
 
-        insertedMovements.push({
-          id: movement.movementId,
-          fromLocationId: companyLocationId ?? undefined,
-          toLocationId: targetLocationId ?? undefined,
-          partId: Number(part.part_no || 0),
-          quantity: pickQty,
-          movementType: "pick",
-          createdAt: now,
-        });
+      const { data: movementRows, error: batchPickError } = await supabase.rpc("apply_inventory_pick_batch", {
+        p_company_id: companyId,
+        p_from_location_id: companyLocationId,
+        p_to_location_id: targetLocationId,
+        p_created_by_membership_id: String(membership.id),
+        p_picks: normalizedPicks.map(({ part, quantity }) => ({
+          part_id: String(part.id),
+          part_no: Number(part.part_no || 0),
+          quantity,
+        })),
+        p_created_at: now,
+      });
+
+      if (batchPickError) {
+        const message = String(batchPickError.message || "");
+        if (message.includes("inventory_invalid_pick") || message.includes("inventory_invalid_quantity")) {
+          throw { code: "invalid-argument", message: "picked quantity must be a positive finite number", httpStatus: 400 };
+        }
+        if (message.includes("inventory_insufficient_stock") || String(batchPickError.code || "") === "23514") {
+          throw { code: "failed-precondition", message: "Insufficient stock for movement", httpStatus: 400 };
+        }
+        throw { code: "internal", message: "Failed to record movement", httpStatus: 500 };
+      }
+
+      const partNoById = new Map(normalizedPicks.map(({ part }) => [String(part.id), Number(part.part_no || 0)]));
+      const insertedMovements = (Array.isArray(movementRows) ? movementRows : []).map((movement: any) => ({
+        id: String(movement.movement_id || ""),
+        fromLocationId: companyLocationId ?? undefined,
+        toLocationId: targetLocationId ?? undefined,
+        partId: partNoById.get(String(movement.part_id || "")) ?? Number(movement.part_no || 0),
+        quantity: Number(movement.quantity || 0),
+        movementType: "pick",
+        createdAt: now,
+      }));
+      if (insertedMovements.length !== normalizedPicks.length) {
+        throw { code: "internal", message: "Failed to record movement", httpStatus: 500 };
       }
 
       await bumpInventoryVersion();
@@ -782,6 +835,11 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
   requireManagerInventoryAccess();
 
   const updatedParts: any[] = [];
+  const existingPartsByInput = await resolvePartRecordsByInput(
+    supabase,
+    companyId,
+    normalizedPayload.parts.map((part: any) => part?.id),
+  );
 
   for (const part of normalizedPayload.parts) {
     const partName = requireNonEmptyString(part?.name, "parts.name", 1, 240);
@@ -799,7 +857,7 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
     const active = part?.active === undefined ? true : Boolean(part.active);
 
     const rawId = part?.id;
-    const existingPart = await resolvePartRecord(supabase, companyId, rawId);
+    const existingPart = existingPartsByInput.get(String(rawId ?? "").trim()) || null;
 
     let targetPart: any;
     if (existingPart) {
@@ -860,6 +918,11 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
 
   const movementTypeAllowed = ["add", "adjust", "pick", "return", "job_consumption"];
   const insertedMovements: any[] = [];
+  const movementPartsByInput = await resolvePartRecordsByInput(
+    supabase,
+    companyId,
+    normalizedPayload.movements.map((movement: any) => movement?.partId),
+  );
 
   for (const movement of normalizedPayload.movements) {
     const movementType = requireNonEmptyString(movement?.movementType, "movements.movementType", 1, 50);
@@ -873,7 +936,7 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
     }
 
     const rawPartId = movement?.partId;
-    const partRecord = await resolvePartRecord(supabase, companyId, rawPartId);
+    const partRecord = movementPartsByInput.get(String(rawPartId ?? "").trim()) || null;
     const resolvedPartId = partRecord?.id ? String(partRecord.id) : null;
 
     if (!resolvedPartId) {

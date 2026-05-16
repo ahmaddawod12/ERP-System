@@ -85,20 +85,20 @@ for (const dir of callerDirs) {
 }
 
 // ─── Check 2: Website listJobs/listDocuments missing limit field ──────────────
-const websiteService = join(ROOT, 'website', 'src', 'lib', 'services', 'firestore-service.ts');
+const websiteService = join(ROOT, 'website', 'src', 'lib', 'services', 'backend-service.ts');
 const wsText = readText(websiteService);
 
 // Look for fetchReadModel calls with kind:"jobs" or kind:"documents" without a limit
 const jobsFetchNoLimit = /fetchReadModel[^}]*kind:\s*["']jobs["'][^}]*\}/.test(wsText) &&
   !/fetchReadModel[^}]*kind:\s*["']jobs["'][^}]*limit[^}]*\}/.test(wsText);
 if (jobsFetchNoLimit) {
-  warn(`website firestore-service.ts: fetchReadModel for 'jobs' has no limit/cursor param — add pagination.`);
+  warn(`website backend-service.ts: fetchReadModel for 'jobs' has no limit/cursor param — add pagination.`);
 }
 
 const docsFetchNoLimit = /fetchReadModel[^}]*kind:\s*["']documents["'][^}]*\}/.test(wsText) &&
   !/fetchReadModel[^}]*kind:\s*["']documents["'][^}]*limit[^}]*\}/.test(wsText);
 if (docsFetchNoLimit) {
-  warn(`website firestore-service.ts: fetchReadModel for 'documents' has no limit/cursor param — add pagination.`);
+  warn(`website backend-service.ts: fetchReadModel for 'documents' has no limit/cursor param — add pagination.`);
 }
 
 // ─── Check 3: Mobile cache-fetchers missing limit on jobs/documents ───────────

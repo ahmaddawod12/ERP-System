@@ -6,7 +6,7 @@
  * resolving historical data across the three cache tiers:
  *
  *   Tier 1 (0–90 days)  — MMKV local in-memory cache
- *   Tier 2 (90–180 days) — Firestore live query (5-min MMKV TTL layer)
+ *   Tier 2 (90-180 days) - backend/archive query (5-min MMKV TTL layer)
  *   Tier 3 (180+ days)  — Cloud Storage JSON archives
  */
 

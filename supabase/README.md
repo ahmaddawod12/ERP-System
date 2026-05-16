@@ -1,6 +1,6 @@
 # Supabase Backend Workspace
 
-Status: Active backend gateway surface (May 1, 2026)
+Status: Active backend gateway surface (May 15, 2026)
 
 This directory is where backend runtime work happens in this repository.
 
@@ -28,6 +28,7 @@ Job-specific contract notes:
 - `workers` lists are manager/dev only; other roles receive an empty list.
 - `jobs` and `documents` support `pageSize`, `limit`, `afterCursor`, `status`, date filters, and stable timestamp-plus-id cursor tokens. `documents` also supports `documentType` and `createdByUid`.
 - `bootstrap` returns first-page `jobsNextCursor` and `documentsNextCursor`; clients must not assume a `null` cursor means the collection was fully fetched unless the first page exhausted.
+- `clients` and `inventory` preserve legacy response shapes while using SQL RPC-backed pagination/search (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`).
 - Job part usage payloads must also expose public inventory part numbers, not internal inventory UUIDs.
 - `createJobV1` / `updateJobV1` must preserve job meta and attachment fields used by website/mobile, including `timeFrom`, `timeTo`, `travelDistance`, `signingPerson`, `photos`, `signature`, and `partsUsed`.
 - `createJobV1` may receive a temporary `attachmentUploadId` before the final public job number exists; handlers must validate that temp upload reference and normalize persisted attachment refs back to canonical company/job storage paths.
@@ -92,6 +93,8 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 - Use SQL-backed counter allocation helpers for sequential IDs (`public_company_id`, `member_no`, `client_no`, `job_no`).
 - Do not use `MAX + 1` allocation patterns in concurrent mutation paths.
 - Use SQL-side atomic inventory helpers such as `apply_inventory_movement(...)` for movement writes and preserve the split uniqueness rules for company-only vs membership-scoped inventory locations.
+- Use `apply_inventory_pick_batch(...)` for multi-part picks so movement rows and balance updates commit or fail together.
+- Keep `packages/db/perf/profiling.sql` as the first stop for database performance work; do not add broad indexes without advisor/`EXPLAIN` evidence.
 
 ## Environment Essentials
 

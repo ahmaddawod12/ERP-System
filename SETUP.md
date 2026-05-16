@@ -2,7 +2,7 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the active May 2026 architecture:
+It reflects the active May 15, 2026 architecture:
 
 - Supabase Auth for website and mobile sign-in
 - Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
@@ -254,21 +254,26 @@ Rules:
 
 `packages/db` is the canonical SQL schema and migration surface.
 
-Current migration tip:
-- Ensure the runtime hardening migrations are applied, including `0008_supabase_auth_rls.sql`, `0011_runtime_hardening.sql`, `0013_support_owner_rls.sql`, and `0014_read_model_cursor_indexes.sql`. These changes include:
-  - corrected `document_tasks` / `support_conversations` RLS references
+Current migration shape:
+- Empty/new databases use the single optimized baseline migration `0000_optimized_baseline.sql`. The historical incremental migrations were intentionally squashed because this database starts empty.
+- The baseline includes:
+  - RLS enabled on all public-schema tables, with client-visible policies only where the app needs direct reads
   - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
   - cursor-covering read-model indexes for timestamp-plus-id jobs/documents pagination
-  - `contact_requests.subject` column
-  - `upgrade_requests.company_id` → UUID
+  - targeted hot-path indexes for active memberships, finished-job archives, assignee/date job cursors, document date filters, clients pagination/search, active inventory catalogs, tax reservations, tax OAuth callbacks, and support queues
+  - `contact_requests.subject` column and UUID `upgrade_requests.company_id`
   - `document_tasks.lock_key` plus active uniqueness on `(company_id, task_type, lock_key)`
   - `redeem_company_invite(...)` atomic invite redemption RPC
   - `claim_tax_invoice_idempotency(...)` atomic tax idempotency claim RPC
-  - `part_no` counter key
-  - `allocate_company_counter`, `allocate_system_counter`, and `increment_rate_limit_bucket` RPCs
-  - active membership uniqueness on `(company_id, user_id)` for non-revoked memberships only
+  - `allocate_company_counter`, `allocate_system_counter`, `increment_rate_limit_bucket`, `apply_inventory_movement(...)`, `apply_inventory_pick_batch(...)`, `get_clients_page(...)`, `get_company_inventory_page(...)`, `get_member_inventory_page(...)`, and `bump_company_sync_version(...)` RPCs
+  - partial idempotency indexes for jobs and inventory movements so empty idempotency keys do not bloat uniqueness indexes
+  - active membership uniqueness on `(company_id, user_id)` for active memberships only
   - split `inventory_locations` uniqueness for company-only rows vs membership-scoped rows
-  - `apply_inventory_movement(...)` atomic inventory movement RPC
+
+Database profiling:
+
+- Use `packages/db/perf/profiling.sql` against local or staging data with realistic row counts before adding broad indexes or dropping unused indexes.
+- The profiling checklist uses `pg_stat_statements`, Supabase `index_advisor`, and representative `EXPLAIN (analyze, buffers)` targets for clients, jobs, documents, inventory, tax, and support paths.
 
 Minimum steps:
 

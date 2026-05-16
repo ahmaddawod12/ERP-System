@@ -11,7 +11,7 @@ import { LoadingState } from "@/components/states/loading-state";
 import { EmptyState } from "@/components/states/empty-state";
 import { useAppContext } from "@/hooks/use-app-context";
 import { useAppToast } from "@/hooks/use-toast";
-import { listWorkers, updateWorkerRole } from "@/lib/services/firestore-service";
+import { listWorkers, updateWorkerRole } from "@/lib/services/backend-service";
 import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
 import { buildAuthedJsonHeaders } from "@/lib/firebase/client-auth";

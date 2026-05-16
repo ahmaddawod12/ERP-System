@@ -99,11 +99,15 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
     }
   }, []);
 
-  const fetchTaskState = useCallback(async (taskIdToRead: string) => {
+  const fetchTaskState = useCallback(async (taskIdToRead: string, companyId?: string) => {
     const response = await fetch("/api/read-model", {
       method: "POST",
       headers: await buildAuthedJsonHeaders(),
-      body: JSON.stringify({ kind: "documentTask", taskId: taskIdToRead }),
+      body: JSON.stringify({
+        kind: "documentTask",
+        taskId: taskIdToRead,
+        ...(companyId ? { companyId } : {}),
+      }),
     });
     const payload = await response.json() as { ok: boolean; data?: TaskData | null; error?: { message?: string } };
     if (!response.ok || !payload.ok) {
@@ -130,7 +134,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
    * Can be called directly (e.g. after getInvoiceApproval returns a taskId).
    */
   const listenToTask = useCallback(
-    (newTaskId: string, type: "preview" | "generate" = "generate") => {
+    (newTaskId: string, type: "preview" | "generate" = "generate", companyId?: string) => {
       // Clean up previous
       stopPolling();
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -186,7 +190,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
 
       const pollOnce = async () => {
         try {
-          const data = await fetchTaskState(newTaskId);
+          const data = await fetchTaskState(newTaskId, companyId);
           handleTaskState(data);
 
           const status = String(data?.status || '').trim().toLowerCase();
@@ -223,7 +227,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
           params,
         );
         if (result.success && result.taskId) {
-          listenToTask(result.taskId, "preview");
+          listenToTask(result.taskId, "preview", params.companyId);
           return result.taskId;
         }
         throw new Error(result.error || "Failed to publish preview task");
@@ -251,7 +255,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
           params,
         );
         if (result.success && result.taskId) {
-          listenToTask(result.taskId, "generate");
+          listenToTask(result.taskId, "generate", params.companyId);
           return result.taskId;
         }
         throw new Error(result.error || "Failed to publish generate task");
@@ -293,7 +297,7 @@ export function useDocumentTask(options: DocumentTaskCallbacks = {}) {
         if (result.success) {
           // Listen for the PDF generation task
           if (result.pdfTaskId) {
-            listenToTask(result.pdfTaskId, "generate");
+            listenToTask(result.pdfTaskId, "generate", params.companyId);
           } else {
             setIsLoading(false);
           }

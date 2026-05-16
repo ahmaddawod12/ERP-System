@@ -27,7 +27,7 @@ import {
   listDocuments,
   listClients,
   resolveCompanyScope,
-} from "@/lib/services/firestore-service";
+} from "@/lib/services/backend-service";
 import type { DocumentRecord, ClientRecord } from "@/lib/types";
 import { DocumentDetail } from "./components/DocumentDetail";
 

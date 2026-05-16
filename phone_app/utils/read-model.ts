@@ -69,6 +69,9 @@ function normalizeListOptions(limitOrOptions?: number | ReadModelListOptions): R
 
 export async function fetchCompanyJobs(companyId: string, limitOrOptions?: number | ReadModelListOptions) {
   const options = normalizeListOptions(limitOrOptions);
+  if (options.limit && options.limit > 200) {
+    return fetchAllReadModelPages('jobs', companyId, options);
+  }
   const result = await callHttpFunction<ReadModelPage>('readModelV1', {
     kind: 'jobs',
     companyId,
@@ -91,6 +94,9 @@ export async function fetchCompanyJobsPage(companyId: string, options: ReadModel
 
 export async function fetchCompanyDocuments(companyId: string, limitOrOptions?: number | ReadModelListOptions) {
   const options = normalizeListOptions(limitOrOptions);
+  if (options.limit && options.limit > 200) {
+    return fetchAllReadModelPages('documents', companyId, options);
+  }
   const result = await callHttpFunction<ReadModelPage>('readModelV1', {
     kind: 'documents',
     companyId,
@@ -109,6 +115,32 @@ export async function fetchCompanyDocumentsPage(companyId: string, options: Read
     items: Array.isArray(result?.items) ? result.items : [],
     nextCursor: result?.nextCursor || null,
   };
+}
+
+async function fetchAllReadModelPages(kind: 'jobs' | 'documents', companyId: string, options: ReadModelListOptions) {
+  const targetLimit = Math.min(Number(options.limit || 10_000), 10_000);
+  const pageSize = Math.min(Number(options.pageSize || 200), 200);
+  const items: any[] = [];
+  let afterCursor = options.afterCursor || undefined;
+
+  while (items.length < targetLimit) {
+    const result = await callHttpFunction<ReadModelPage>('readModelV1', {
+      ...options,
+      kind,
+      companyId,
+      limit: undefined,
+      pageSize: Math.min(pageSize, targetLimit - items.length),
+      ...(afterCursor ? { afterCursor } : {}),
+    });
+    const pageItems = Array.isArray(result?.items) ? result.items : [];
+    items.push(...pageItems);
+    if (!result?.nextCursor || pageItems.length === 0) {
+      break;
+    }
+    afterCursor = result.nextCursor;
+  }
+
+  return items;
 }
 
 export async function fetchRecordById(companyId: string, recordId: string) {

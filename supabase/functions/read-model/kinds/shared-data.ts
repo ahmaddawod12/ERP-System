@@ -10,6 +10,12 @@ import type { CompanyScope, RequesterContext } from "../types.ts";
 
 const env = getEnv();
 
+type InventoryReadOptions = {
+  pageSize?: number;
+  afterCursor?: { value: number; id: string } | null;
+  search?: string | null;
+};
+
 function normalizeJobMeta(meta: unknown): Record<string, unknown> {
   return meta && typeof meta === "object" && !Array.isArray(meta)
     ? { ...(meta as Record<string, unknown>) }
@@ -306,146 +312,48 @@ export async function getRequesterContext(scope: CompanyScope, uid: string): Pro
   };
 }
 
-export async function getCompanyInventoryParts(internalCompanyId: string) {
-  const supabase = createSupabaseClient(env);
-  const { data: location, error: locationError } = await supabase
-    .from("inventory_locations")
-    .select("id")
-    .eq("company_id", internalCompanyId)
-    .eq("location_type", "company")
-    .is("membership_id", null)
-    .maybeSingle();
-
-  if (locationError) {
-    throw { code: "internal", httpStatus: 500, message: "Failed to load company inventory location" };
-  }
-
-  if (!location?.id) {
-    return { parts: [], nextId: 1, lastUpdated: new Date().toISOString() };
-  }
-
-  const [{ data: parts, error: partsError }, { data: balances, error: balancesError }, { data: counterRow }] = await Promise.all([
-    supabase
-      .from("inventory_parts")
-      .select("id, part_no, name, active, low_threshold, created_at")
-      .eq("company_id", internalCompanyId)
-      .order("part_no", { ascending: true }),
-    supabase
-      .from("inventory_balances")
-      .select("part_id, quantity_on_hand, updated_at")
-      .eq("location_id", location.id),
-    supabase
-      .from("company_counters")
-      .select("next_value")
-      .eq("company_id", internalCompanyId)
-      .eq("counter_key", "part_no")
-      .maybeSingle(),
-  ]);
-
-  if (partsError || balancesError) {
-    throw { code: "internal", httpStatus: 500, message: "Failed to load company inventory" };
-  }
-
-  const balancesByPartId = new Map<string, any>();
-  for (const row of balances || []) {
-    balancesByPartId.set(String(row.part_id), row);
-  }
-
-  const normalizedParts = (parts || []).map((part: any) => {
-    const balance = balancesByPartId.get(String(part.id));
-    return {
-      id: Number(part.part_no || 0),
-      name: String(part.name || ""),
-      active: Boolean(part.active),
-      quantity: Number(balance?.quantity_on_hand || 0),
-      lowThreshold: Number(part.low_threshold || 0),
-      dateAdded: part.created_at || null,
-    };
-  });
-
-  const nextId = counterRow ? Number(counterRow.next_value) : 1;
+function normalizeInventoryPageResult(data: unknown) {
+  const payload = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const parts = Array.isArray(payload.parts) ? payload.parts : [];
   return {
-    parts: normalizedParts,
-    nextId,
-    lastUpdated: new Date().toISOString(),
+    parts,
+    nextId: Number(payload.nextId || 1),
+    lastUpdated: typeof payload.lastUpdated === "string" ? payload.lastUpdated : new Date().toISOString(),
+    nextCursor: typeof payload.nextCursor === "string" && payload.nextCursor.trim() ? payload.nextCursor : null,
   };
 }
 
-export async function getUserInventoryParts(internalCompanyId: string, targetUid: string) {
+function inventoryRpcArgs(internalCompanyId: string, options: InventoryReadOptions = {}) {
+  const cursor = options.afterCursor || null;
+  const pageSize = Number(options.pageSize || 0);
+  return {
+    p_company_id: internalCompanyId,
+    p_page_size: Number.isInteger(pageSize) && pageSize > 0 ? pageSize : null,
+    p_after_part_no: cursor ? cursor.value : null,
+    p_after_id: cursor ? cursor.id : null,
+    p_search: optionalTrimmedString(options.search, 80) || null,
+  };
+}
+
+export async function getCompanyInventoryParts(internalCompanyId: string, options: InventoryReadOptions = {}) {
   const supabase = createSupabaseClient(env);
-  const { data: membership, error: membershipError } = await supabase
-    .from("company_memberships")
-    .select("id")
-    .eq("company_id", internalCompanyId)
-    .eq("user_id", targetUid)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (membershipError) {
-    throw { code: "internal", httpStatus: 500, message: "Failed to load member inventory access" };
+  const { data, error } = await supabase.rpc("get_company_inventory_page", inventoryRpcArgs(internalCompanyId, options));
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load company inventory" };
   }
+  return normalizeInventoryPageResult(data);
+}
 
-  if (!membership?.id) {
-    return { parts: [], nextId: 1, lastUpdated: new Date().toISOString() };
-  }
-
-  const { data: location, error: locationError } = await supabase
-    .from("inventory_locations")
-    .select("id")
-    .eq("company_id", internalCompanyId)
-    .eq("location_type", "member")
-    .eq("membership_id", membership.id)
-    .maybeSingle();
-
-  if (locationError) {
-    throw { code: "internal", httpStatus: 500, message: "Failed to load member inventory location" };
-  }
-
-  if (!location?.id) {
-    return { parts: [], nextId: 1, lastUpdated: new Date().toISOString() };
-  }
-
-  const [{ data: balances, error: balancesError }, { data: parts, error: partsError }, { data: userCounterRow }] = await Promise.all([
-    supabase
-      .from("inventory_balances")
-      .select("part_id, quantity_on_hand, updated_at")
-      .eq("location_id", location.id),
-    supabase
-      .from("inventory_parts")
-      .select("id, part_no, name, low_threshold, created_at")
-      .eq("company_id", internalCompanyId),
-    supabase
-      .from("company_counters")
-      .select("next_value")
-      .eq("company_id", internalCompanyId)
-      .eq("counter_key", "part_no")
-      .maybeSingle(),
-  ]);
-
-  if (balancesError || partsError) {
+export async function getUserInventoryParts(internalCompanyId: string, targetUid: string, options: InventoryReadOptions = {}) {
+  const supabase = createSupabaseClient(env);
+  const { data, error } = await supabase.rpc("get_member_inventory_page", {
+    ...inventoryRpcArgs(internalCompanyId, options),
+    p_target_uid: targetUid,
+  });
+  if (error) {
     throw { code: "internal", httpStatus: 500, message: "Failed to load member inventory" };
   }
-
-  const partById = new Map<string, any>();
-  for (const part of parts || []) {
-    partById.set(String(part.id), part);
-  }
-
-  const normalizedParts = (balances || []).map((balance: any) => {
-    const part = partById.get(String(balance.part_id));
-    return {
-      id: Number(part?.part_no || 0),
-      name: String(part?.name || ""),
-      quantity: Number(balance.quantity_on_hand || 0),
-      lowThreshold: Number(part?.low_threshold || 0),
-      dateAdded: part?.created_at || null,
-    };
-  });
-
-  const nextId = userCounterRow ? Number(userCounterRow.next_value) : 1;
-  return {
-    parts: normalizedParts,
-    nextId,
-    lastUpdated: new Date().toISOString(),
-  };
+  return normalizeInventoryPageResult(data);
 }

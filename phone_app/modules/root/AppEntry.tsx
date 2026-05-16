@@ -154,13 +154,13 @@ export default function App() {
       }, 1500);
     };
 
-    // Initialize Firebase auth listener
+    // Initialize native services and auth listener.
     const initializeAuth = async () => {
       console.log('🔐 Initializing auth and notifications...');
       
       try {
-        // Firebase is already initialized in firebase.js
-        // Now set up the auth listener - React Native Firebase Modular API
+        // Native services are initialized in firebase.ts.
+        // Now set up the Supabase-backed auth listener exposed through the compatibility wrapper.
         unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
           if (!isActive) {
             return;
@@ -180,7 +180,7 @@ export default function App() {
             setIsLoading(true);
 
             try {
-              // Initialize cache - it handles profile loading from cache first, then Firebase if needed
+              // Initialize cache - it handles profile loading from cache first, then backend if needed
               // Returns { uid, role, companyId } or null on failure
               const cacheResult = await initializeCache(nextUser.uid);
 
@@ -284,7 +284,7 @@ export default function App() {
     };
   }, [readySessionUid, router]);
 
-  // Show loading screen while Firebase initializes with branded design
+  // Show loading screen while native services initialize with branded design
   if (isLoading || !firebaseInitialized) {
     return (
       <View style={styles.container}>

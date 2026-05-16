@@ -10,6 +10,7 @@
 - Keeps registration and business onboarding on the website.
 - Tracks preview/generate work through backend `document_tasks` polling.
 - Treats public sequential job IDs and member numbers as the client-facing job contract.
+- Uses SQL-backed read-model pages for clients, jobs, documents, and inventory through backend gateway helpers.
 
 ## Architecture Rules
 
@@ -24,6 +25,7 @@
 - Cache refresh logic must drain paginated jobs/documents read-model pages for the active 90-day cache window: open jobs, recently updated closed jobs, and recent documents.
 - Cache refresh must preserve the current role-scoped jobs cache when only document versions bump.
 - Read-model array helpers unwrap `{ items, nextCursor }` for legacy callers; use explicit page helpers when a screen needs cursor-aware pagination.
+- Clients and inventory preserve their existing default payloads while backend SQL RPCs handle search and cursor pagination.
 - Use `utils/logger.ts` for debug output so noisy logs are dev-only; keep warnings/errors visible.
 - Offline queued solo jobs should be replaced by the server-created public job after sync succeeds; do not leave temp local duplicates behind.
 - Solo finished jobs must upload photos/signatures before `createJobV1` so the created record already contains canonical attachment refs.

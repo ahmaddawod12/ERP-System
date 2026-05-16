@@ -1,19 +1,19 @@
 /**
  * CacheContext.js - MMKV-based caching with summary-version sync
  * 
- * Cache Structure (Firestore company cache document):
- * - companies/{companyId}/data/cache:
- *   { jobsVersion, documentsVersion, clientsVersion, workersVersion, updatedAt }
+ * Cache Structure (backend company sync state):
+ * - company_sync_state:
+ *   { jobsVersion, documentsVersion, clientsVersion, workersVersion, companyInventoryVersion, updatedAt }
  * 
  * Sync Strategy:
- * - Snapshot listener on company cache doc
- * - On version mismatch: full re-fetch of the changed collection (within 90-day window)
- * - Constant-size cache doc (no per-document fields)
+ * - Poll backend sync summaries
+ * - On version mismatch: cursor re-fetch of the changed collection within the active cache window
+ * - Constant-size version state, no per-record payload fields
  * 
  * Unified Jobs Collection:
- * - All jobs live in companies/{companyId}/jobs
+ * - All jobs live in SQL `jobs`
  * - Status field distinguishes: pending, waiting, finished, denied
- * - No p_/f_ prefixes on IDs (plain sequential numbers from jid)
+ * - No p_/f_ prefixes on IDs; public job numbers come from SQL counters
  * 
  * Cache Duration: 90 days for finished jobs and documents
  * 
@@ -32,7 +32,7 @@ import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, 
 import { safeJsonParse } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import {
-  fetchDataFromFirebase as _fetchDataFromFirebase,
+  fetchDataFromBackend as _fetchDataFromBackend,
   fetchCompanySyncState as _fetchCompanySyncState,
   fetchUserSyncState as _fetchUserSyncState,
   fetchDocumentById as _fetchDocumentById,
@@ -129,12 +129,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const getWid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_WID), []);
 
   /**
-   * Pause Firestore listeners when app is backgrounded (CRITICAL for Android)
+   * Pause backend sync polling when app is backgrounded.
    */
   const pauseListeners = useCallback(() => {
     if (!listenersActiveRef.current) return; // Already paused
     
-    logger.debug('?? [CACHE] Pausing Firestore listeners to prevent background reads');
+    logger.debug('[CACHE] Pausing backend sync polling to prevent background reads');
     
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -153,12 +153,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Resume Firestore listeners when app becomes active
+   * Resume backend sync polling when app becomes active.
    */
   const resumeListeners = useCallback(() => {
     if (listenersActiveRef.current) return; // Already active
     
-    logger.debug('?? [CACHE] Resuming Firestore listeners');
+    logger.debug('[CACHE] Resuming backend sync polling');
     
     const uid = getUid();
     const role = getUserRole();
@@ -367,9 +367,9 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Stable references to the module-level fetchers, compatible with useCallback dep arrays.
-  const fetchDataFromFirebase = useCallback(
+  const fetchDataFromBackend = useCallback(
     (field: string, uid: string, companyId: string, role: string) =>
-      _fetchDataFromFirebase(field, uid, companyId, role),
+      _fetchDataFromBackend(field, uid, companyId, role),
     [],
   );
 
@@ -568,10 +568,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           if (remoteVersion > localVersion) {
             logger.debug(`User sync mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
             if (field === 'subscription') {
-              const subData = await fetchDataFromFirebase('subscription', uid, companyId || '', role);
+              const subData = await fetchDataFromBackend('subscription', uid, companyId || '', role);
               saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
             } else {
-              const data = await fetchDataFromFirebase(field, uid, companyId || '', role);
+              const data = await fetchDataFromBackend(field, uid, companyId || '', role);
               if (data !== null) {
                 const cacheKey = getCacheKeyForField(field);
                 saveToLocalCache(cacheKey, data);
@@ -689,7 +689,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             logger.debug(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
 
             fetchPromises.push((async () => {
-              const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+              const clientsData = await fetchDataFromBackend('clients', uid, companyId, role);
               if (clientsData !== null) {
                 saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
                 setClients(clientsData);
@@ -706,7 +706,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
               logger.debug(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
 
               fetchPromises.push((async () => {
-                const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+                const workersData = await fetchDataFromBackend('workers', uid, companyId, role);
                 if (workersData !== null) {
                   saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
                 }
@@ -723,7 +723,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
               logger.debug(`Company inventory version changed: local=${localCompanyInventoryVersion}, remote=${remoteCompanyInventoryVersion}`);
 
               fetchPromises.push((async () => {
-                const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
+                const companyInventoryData = await fetchDataFromBackend('companyInventory', uid, companyId, role);
                 if (companyInventoryData !== null) {
                   saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, companyInventoryData);
                   setCompanyInventory(companyInventoryData);
@@ -773,17 +773,17 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     listenersActiveRef.current = true;
     
     logger.debug(`Cache listeners set up for ${role}`);
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
+  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromBackend, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
 
   /**
    * Initialize cache for a user (called on login/app start)
-   * Sets up snapshot listeners on cache docs
+   * Sets up backend sync polling.
    * 
    * Flow:
    * 1. Load from local cache first
    * 2. Check if uid/role/companyId exists in local cache
-   * 3. If not, try to get from cached profile or fetch from Firebase (first login)
-   * 4. Setup snapshot listeners (they handle version sync automatically on connect)
+   * 3. If not, try to get from cached profile or fetch from backend (first login)
+   * 4. Setup sync polling for version changes
    */
   const initializeCache = useCallback(async (userId: string) => {
     logger.debug(`?? Initializing cache...`);
@@ -813,10 +813,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       let shouldForceFreshBootstrap = !cachedData.hasCache;
 
       if (uid && cachedData.hasCache && !cachedData.identityMismatch) {
-        const resolvedProfile = await fetchDataFromFirebase('profile', uid, '', role || '');
+        const resolvedProfile = await fetchDataFromBackend('profile', uid, '', role || '');
 
         if (!resolvedProfile) {
-          console.error('? Could not resolve profile from Firebase');
+          console.error('Could not resolve profile from backend');
           setIsLoading(false);
           return null;
         }
@@ -858,18 +858,18 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           companyId = profileData.companyId;
         }
         
-        // Use Firebase UID directly (no email-to-uid derivation)
+        // Use authenticated UID directly (no email-to-uid derivation)
         if (!uid && userId) {
           uid = userId;
         }
         
-        // If still no profile, this is first login - fetch from Firebase
+        // If still no profile, this is first login - fetch from backend.
         if (!profileData) {
-          logger.debug('?? No cached profile, fetching from Firebase (first login)...');
-          profileData = await fetchDataFromFirebase('profile', uid || '', companyId || '', role || '');
+          logger.debug('No cached profile, fetching from backend (first login)...');
+          profileData = await fetchDataFromBackend('profile', uid || '', companyId || '', role || '');
           
           if (!profileData) {
-            console.error('? Could not fetch profile from Firebase');
+            console.error('Could not fetch profile from backend');
             setIsLoading(false);
             return null;
           }
@@ -905,15 +905,14 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       if (shouldForceFreshBootstrap) {
         logger.debug('?? No local cache found, performing full fresh fetch...');
         await fetchAllFresh(uid || '', role || '', companyId || '');
-        // Check if business_info exists in Firestore (don't cache the data itself)
+        // Check if business_info exists through the backend (don't cache the data itself).
         const hasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO) === 'true';
         return { uid, role, companyId, hasBusinessInfo };
       }
       
-      // STEP 4: Set up real-time snapshot listeners
-      // The listeners will automatically sync versions and fetch any missing/outdated data
-      // when they first connect (onSnapshot fires immediately with current state)
-      logger.debug('?? Setting up cache listeners (will sync versions automatically)...');
+      // STEP 4: Set up backend sync polling.
+      // Polling syncs versions and fetches missing/outdated data.
+      logger.debug('Setting up backend sync polling...');
       setupCacheListeners(uid || '', role || '', companyId);
       
       setIsInitialized(true);
@@ -930,24 +929,24 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [loadFromLocalCache, fetchDataFromFirebase, resetCacheState, saveToLocalCache, setupCacheListeners]);
+  }, [loadFromLocalCache, fetchDataFromBackend, resetCacheState, saveToLocalCache, setupCacheListeners]);
 
   /**
-   * Fetch all data fresh from Firebase (first-time login)
-   * Also fetches remote cache doc versions to store correct version numbers
+   * Fetch all data fresh from backend (first-time login).
+   * Also fetches remote sync versions to store correct version numbers.
    */
   const fetchAllFresh = useCallback(async (uid: string, role: string, companyId: string) => {
-    logger.debug('?? Fetching all data fresh from Firebase (first login)...');
+    logger.debug('Fetching all data fresh from backend (first login)...');
     
     try {
       // Fetch profile for all roles
-      const profileData = await fetchDataFromFirebase('profile', uid, companyId, role);
+      const profileData = await fetchDataFromBackend('profile', uid, companyId, role);
       if (profileData) saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
       
       // Fetch subscription for all roles
       if (companyId) {
         try {
-          const subData = await fetchDataFromFirebase('subscription', uid, companyId, role);
+          const subData = await fetchDataFromBackend('subscription', uid, companyId, role);
           if (subData) {
             setSubscription(subData);
             saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
@@ -959,7 +958,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch inventory for all roles EXCEPT basic and dev (they have no inventory)
       if (role !== 'basic' && role !== 'dev') {
-        const inventoryData = await fetchDataFromFirebase('inventory', uid, companyId, role);
+        const inventoryData = await fetchDataFromBackend('inventory', uid, companyId, role);
         if (inventoryData) saveToLocalCache(CACHE_KEYS.INVENTORY, inventoryData);
       } else {
         // Basic and dev roles: ensure inventory is empty
@@ -967,7 +966,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       }
 
       if (role !== 'dev' && companyId) {
-        const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
+        const companyInventoryData = await fetchDataFromBackend('companyInventory', uid, companyId, role);
         if (companyInventoryData) saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, companyInventoryData);
       } else {
         saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, []);
@@ -975,7 +974,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch role-specific standard fields
       if (role === 'manager') {
-        const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+        const workersData = await fetchDataFromBackend('workers', uid, companyId, role);
         if (workersData) saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
       } else if (role === 'dev') {
         // Dev role doesn't need workers
@@ -983,10 +982,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       }
       
       // Check if business_info exists through the read model so SQL-backed
-      // companies do not depend on direct Firestore reads for registration state.
+      // companies do not depend on direct legacy database reads for registration state.
       if (role !== 'worker' && role !== 'dev' && companyId) {
         try {
-          const businessInfo = await fetchDataFromFirebase('business_info', uid, companyId, role);
+          const businessInfo = await fetchDataFromBackend('business_info', uid, companyId, role);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, businessInfo ? 'true' : 'false');
         } catch (e) {
           console.warn('Could not check business_info existence:', (e as Error).message);
@@ -994,7 +993,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         }
       }
       
-      // Fetch all recent jobs from Firebase
+      // Fetch all recent jobs through the backend read model.
       logger.debug('Fetching all recent jobs for initial cache...');
       let { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
       if (companyId) {
@@ -1026,7 +1025,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       // Fetch clients for all roles (shared company collection)
       if (companyId) {
         logger.debug('?? Fetching clients for initial cache...');
-        const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+        const clientsData = await fetchDataFromBackend('clients', uid, companyId, role);
         if (Array.isArray(clientsData)) {
           saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
           setClients(clientsData);
@@ -1069,7 +1068,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
     }
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchCompanySyncState, fetchDataFromFirebase, fetchAllRecentJobs, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
+  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchCompanySyncState, fetchDataFromBackend, fetchAllRecentJobs, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
 
   /**
    * Pre-increment a summary version field locally.
@@ -1148,7 +1147,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     
     const newDocuments = [...documents, document];
     saveToLocalCache(CACHE_KEYS.DOCUMENTS, newDocuments);
-    // Pre-increment local documentsVersion (CF handles Firebase bump)
+    // Pre-increment local documentsVersion; backend handles the remote version bump.
     preIncrementVersion('documentsVersion', true);
   }, [documents, saveToLocalCache, preIncrementVersion]);
 
@@ -1205,12 +1204,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     const role = getUserRole() || '';
     const companyId = getCompanyId() || '';
     
-    const data = await fetchDataFromFirebase(field, uid, companyId, role);
+    const data = await fetchDataFromBackend(field, uid, companyId, role);
     if (data !== null) {
       const cacheKey = getCacheKeyForField(field);
       saveToLocalCache(cacheKey, data);
     }
-  }, [getUid, getUserRole, getCompanyId, fetchDataFromFirebase, saveToLocalCache]);
+  }, [getUid, getUserRole, getCompanyId, fetchDataFromBackend, saveToLocalCache]);
 
   // Context value — memoized to avoid unnecessary re-renders of consumers
   // that don't depend on the changed state slice.

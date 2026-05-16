@@ -228,7 +228,8 @@ async function listCompanyClients(companyId, options: any = {}) {
       updatedAt: clients.updatedAt,
     })
     .from(clients)
-    .where(eq(clients.companyId, company.id));
+    .where(eq(clients.companyId, company.id))
+    .orderBy(clients.clientNo);
 
   return rows
     .map((row) => ({
@@ -243,8 +244,7 @@ async function listCompanyClients(companyId, options: any = {}) {
       vatNumber: row.vatNumber || undefined,
       createdAt: toIsoString(row.createdAt),
       updatedAt: row.updatedAt ? toIsoString(row.updatedAt) : undefined,
-    }))
-    .sort((left, right) => (left.numericId || 0) - (right.numericId || 0));
+    }));
 }
 
 async function listCompanyJobs(companyId, profile, options: any = {}) {

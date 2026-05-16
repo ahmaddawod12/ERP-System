@@ -279,7 +279,7 @@ export default function WorkerInventory() {
     }
   }, [cachedCompanyInventory]);
 
-  // ─── Save inventory to Firestore & cache ─────────────────────
+  // ─── Save inventory through backend & cache ─────────────────────
   const saveInventory = async (updatedInventory) => {
     const user = auth.currentUser;
     if (!user) return;

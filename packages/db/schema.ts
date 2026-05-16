@@ -145,6 +145,7 @@ const companyMemberships = pgTable('company_memberships', {
     .where(sql`${table.status} = 'active'`),
   membershipNoPerCompanyUnique: uniqueIndex('company_memberships_company_member_no_unique').on(table.companyId, table.memberNo),
   companyRoleIdx: index('company_memberships_company_role_idx').on(table.companyId, table.role, table.status),
+  userActiveJoinedIdx: index('company_memberships_user_active_joined_idx').on(table.userId, table.status, table.joinedAt, table.createdAt),
 }));
 
 const companyCounters = pgTable('company_counters', {
@@ -176,6 +177,8 @@ const clients = pgTable('clients', {
   clientNoPerCompanyUnique: uniqueIndex('clients_company_client_no_unique').on(table.companyId, table.clientNo),
   companyNameIdx: index('clients_company_name_idx').on(table.companyId, table.name),
   companyPhoneIdx: index('clients_company_phone_idx').on(table.companyId, table.phone),
+  companyEmailIdx: index('clients_company_email_idx').on(table.companyId, table.email),
+  companyClientNoCursorIdx: index('clients_company_client_no_cursor_idx').on(table.companyId, table.clientNo, table.id),
 }));
 
 const jobs = pgTable('jobs', {
@@ -210,7 +213,9 @@ const jobs = pgTable('jobs', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   jobNoPerCompanyUnique: uniqueIndex('jobs_company_job_no_unique').on(table.companyId, table.jobNo),
-  jobIdempotencyUnique: uniqueIndex('jobs_company_idempotency_unique').on(table.companyId, table.idempotencyKey),
+  jobIdempotencyUnique: uniqueIndex('jobs_company_idempotency_unique')
+    .on(table.companyId, table.idempotencyKey)
+    .where(sql`${table.idempotencyKey} IS NOT NULL`),
   companyCreatedIdx: index('jobs_company_created_idx').on(table.companyId, table.createdAt),
   companyAssigneeCreatedIdx: index('jobs_company_assignee_created_idx').on(table.companyId, table.assignedMembershipId, table.createdAt),
   companyStatusCreatedIdx: index('jobs_company_status_created_idx').on(table.companyId, table.status, table.createdAt),
@@ -223,6 +228,10 @@ const jobs = pgTable('jobs', {
   companyUpdatedCursorIdx: index('jobs_company_updated_cursor_idx').on(table.companyId, table.updatedAt, table.id),
   companyAssigneeCreatedCursorIdx: index('jobs_company_assignee_created_cursor_idx').on(table.companyId, table.assignedMembershipId, table.createdAt, table.id),
   companyAssigneeUpdatedCursorIdx: index('jobs_company_assignee_updated_cursor_idx').on(table.companyId, table.assignedMembershipId, table.updatedAt, table.id),
+  companyFinishedCursorIdx: index('jobs_company_finished_cursor_idx').on(table.companyId, table.finishedAt, table.id),
+  companyAssigneeFinishedCursorIdx: index('jobs_company_assignee_finished_cursor_idx').on(table.companyId, table.assignedMembershipId, table.finishedAt, table.id),
+  companyAssigneeDueCursorIdx: index('jobs_company_assignee_due_cursor_idx').on(table.companyId, table.assignedMembershipId, table.dueAt, table.id),
+  companyAssigneeStatusFinishedCursorIdx: index('jobs_company_assignee_status_finished_cursor_idx').on(table.companyId, table.assignedMembershipId, table.status, table.finishedAt, table.id),
   companyStatusCreatedCursorIdx: index('jobs_company_status_created_cursor_idx').on(table.companyId, table.status, table.createdAt, table.id),
   companyStatusUpdatedCursorIdx: index('jobs_company_status_updated_cursor_idx').on(table.companyId, table.status, table.updatedAt, table.id),
 }));
@@ -281,6 +290,8 @@ const inventoryParts = pgTable('inventory_parts', {
 }, (table) => ({
   companyPartNoUnique: uniqueIndex('inventory_parts_company_part_no_unique').on(table.companyId, table.partNo),
   companyActiveIdx: index('inventory_parts_company_active_idx').on(table.companyId, table.active),
+  companyArchivedPartNoIdx: index('inventory_parts_company_archived_part_no_idx').on(table.companyId, table.archivedAt, table.partNo),
+  companyActiveArchivedPartNoIdx: index('inventory_parts_company_active_archived_part_no_idx').on(table.companyId, table.active, table.archivedAt, table.partNo),
   lowThresholdNonNegative: check('inventory_parts_low_threshold_non_negative_check', sql`${table.lowThreshold} >= 0`),
 }));
 
@@ -309,7 +320,9 @@ const inventoryMovements = pgTable('inventory_movements', {
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
-  companyIdempotencyUnique: uniqueIndex('inventory_movements_company_idempotency_unique').on(table.companyId, table.idempotencyKey),
+  companyIdempotencyUnique: uniqueIndex('inventory_movements_company_idempotency_unique')
+    .on(table.companyId, table.idempotencyKey)
+    .where(sql`${table.idempotencyKey} IS NOT NULL`),
   companyPartCreatedIdx: index('inventory_movements_company_part_created_idx').on(table.companyId, table.partId, table.createdAt),
   quantityPositive: check('inventory_movements_quantity_positive_check', sql`${table.quantity} > 0`),
 }));
@@ -360,6 +373,10 @@ const documents = pgTable('documents', {
   companyStatusCreatedCursorIdx: index('documents_company_status_created_cursor_idx').on(table.companyId, table.generationStatus, table.createdAt, table.id),
   companyTypeCreatedCursorIdx: index('documents_company_type_created_cursor_idx').on(table.companyId, table.documentType, table.createdAt, table.id),
   companyCreatorCreatedCursorIdx: index('documents_company_creator_created_cursor_idx').on(table.companyId, table.createdByMembershipId, table.createdAt, table.id),
+  companyStatusDocumentDateCursorIdx: index('documents_company_status_document_date_cursor_idx').on(table.companyId, table.generationStatus, table.documentDate, table.id),
+  companyTypeDocumentDateCursorIdx: index('documents_company_type_document_date_cursor_idx').on(table.companyId, table.documentType, table.documentDate, table.id),
+  companyCreatorDocumentDateCursorIdx: index('documents_company_creator_document_date_cursor_idx').on(table.companyId, table.createdByMembershipId, table.documentDate, table.id),
+  companyTypeStatusDocumentDateCursorIdx: index('documents_company_type_status_document_date_cursor_idx').on(table.companyId, table.documentType, table.generationStatus, table.documentDate, table.id),
   totalBeforeVatNonNegative: check('documents_total_before_vat_non_negative_check', sql`${table.totalBeforeVat} >= 0`),
   vatAmountNonNegative: check('documents_vat_amount_non_negative_check', sql`${table.vatAmount} >= 0`),
   totalWithVatNonNegative: check('documents_total_with_vat_non_negative_check', sql`${table.totalWithVat} >= 0`),
@@ -430,6 +447,7 @@ const taxInvoiceReservations = pgTable('tax_invoice_reservations', {
 }, (table) => ({
   documentUnique: uniqueIndex('tax_invoice_reservations_document_unique').on(table.documentId),
   companyNumberUnique: uniqueIndex('tax_invoice_reservations_company_number_unique').on(table.companyId, table.documentNumber),
+  companyStatusCreatedIdx: index('tax_invoice_reservations_company_status_created_idx').on(table.companyId, table.status, table.createdAt),
 }));
 
 const taxInvoiceIdempotency = pgTable('tax_invoice_idempotency', {
@@ -512,7 +530,9 @@ const taxOauthCallbacks = pgTable('tax_oauth_callbacks', {
   tokenExchangeError: text('token_exchange_error'),
   tokenExchangeAttemptedAt: timestamp('token_exchange_attempted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => ({
+  sessionCreatedIdx: index('tax_oauth_callbacks_session_created_idx').on(table.oauthSessionId, table.createdAt),
+}));
 
 const supportConversations = pgTable('support_conversations', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -529,6 +549,7 @@ const supportConversations = pgTable('support_conversations', {
 }, (table) => ({
   userStatusIdx: index('support_conversations_user_status_idx').on(table.userId, table.status, table.lastMessageAt),
   statusQueueIdx: index('support_conversations_status_queue_idx').on(table.status, table.lastMessageAt),
+  lastMessageIdx: index('support_conversations_last_message_idx').on(table.lastMessageAt),
 }));
 
 const supportMessages = pgTable('support_messages', {

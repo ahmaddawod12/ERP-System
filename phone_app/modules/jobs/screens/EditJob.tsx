@@ -123,7 +123,7 @@ export default function EditJob() {
       if (workerId && editingJob.partsUsed) {
         const currentJobData = await fetchRecordById(companyId, editingJob.id);
         if (currentJobData) {
-          const originalPartsInFirestore = currentJobData.partsUsed || [];
+          const originalPartsInStoredJob = currentJobData.partsUsed || [];
           
           // Calculate inventory changes
           const inventoryParts = await fetchUserInventoryParts(companyId, workerId);
@@ -131,7 +131,7 @@ export default function EditJob() {
             let parts = [...inventoryParts];
 
             // First, add back quantities for parts that were removed
-            originalPartsInFirestore.forEach(originalPart => {
+            originalPartsInStoredJob.forEach(originalPart => {
               const stillInJob = editingJob.partsUsed.find(p => p.id === originalPart.id || p.name === originalPart.name);
               if (!stillInJob) {
                 // Part was removed from job, add it back to inventory
@@ -153,7 +153,7 @@ export default function EditJob() {
 
             // Then, handle quantity changes for parts still in the job
             editingJob.partsUsed.forEach(currentPart => {
-              const originalPart = originalPartsInFirestore.find(p => p.id === currentPart.id || p.name === currentPart.name);
+              const originalPart = originalPartsInStoredJob.find(p => p.id === currentPart.id || p.name === currentPart.name);
               const originalQty = originalPart ? (parseInt(originalPart.quantity) || 0) : 0;
               const currentQty = parseInt(currentPart.quantity) || 0;
               const difference = currentQty - originalQty;

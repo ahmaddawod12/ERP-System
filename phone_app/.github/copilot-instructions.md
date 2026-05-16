@@ -10,6 +10,7 @@ Use the root `SETUP.md` for environment setup, native app registration, push con
 - protected operations are routed through Supabase Edge gateway endpoints
 - SQL is the primary ERP persistence layer behind backend services
 - business registration remains website-only
+- clients, jobs, documents, and inventory reads use backend read-model helpers; client/inventory search and pagination are SQL RPC-backed behind the gateway
 
 ## Version Targets
 
@@ -59,6 +60,7 @@ Write code compatible with these versions.
 - Never use `Alert.alert()` or `RNAlert.alert()`.
 - Use MMKV-backed storage helpers for local persistence.
 - Do not reintroduce `AsyncStorage` for MMKV-owned preference or cache surfaces.
+- Store Supabase access and refresh tokens only in Expo SecureStore-backed auth helpers, never in MMKV.
 
 ## Data Rules
 
@@ -66,10 +68,12 @@ Write code compatible with these versions.
 - `companyId` is backend-provided and must never fall back to `uid`.
 - Never derive identifiers from email.
 - Keep mobile read-model `kind` requests aligned with backend-supported kinds.
+- Use page-aware read-model helpers when a screen needs cursors; legacy array helpers may unwrap `{ items, nextCursor }` only where the caller intentionally wants an array.
 - Saved documents and job attachments persist canonical `storagePath` refs.
 - Resolve document PDFs and job-file access through backend-issued short-lived URLs.
 - Valid job statuses remain `pending`, `waiting`, `finished`, and `denied`.
 - All protected job, support, client, document, and inventory mutations go through backend endpoints.
+- Inventory pick mutations are backend-only and SQL-transactional through `apply_inventory_pick_batch(...)`.
 - Closed support conversations are terminal.
 
 ## Registration Rule

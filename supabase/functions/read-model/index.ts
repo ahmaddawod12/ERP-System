@@ -29,6 +29,7 @@ import {
 import {
   makeCursor,
   parseCursor,
+  parseNumberCursor,
   parseReadLimit,
 } from "./pagination.ts";
 import type { CompanyScope, RequesterContext } from "./types.ts";
@@ -60,7 +61,26 @@ const READ_MODEL_KINDS = new Set([
   "userSyncState",
 ]);
 
-async function buildReadModelResponse(body: Record<string, unknown>, uid: string): Promise<any> {
+function hasOptionalPaging(body: Record<string, unknown>): boolean {
+  return body.pageSize != null || body.limit != null || Boolean(optionalTrimmedString(body.afterCursor, 200));
+}
+
+function normalizePrefixSearch(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .replace(/[%,*().]/g, "")
+    .slice(0, 80);
+}
+
+async function buildReadModelResponse(
+  body: Record<string, unknown>,
+  uid: string,
+  preloaded: {
+    supabase?: ReturnType<typeof createSupabaseClient>;
+    scope?: CompanyScope;
+    requester?: RequesterContext;
+  } = {},
+): Promise<any> {
   const kind = optionalTrimmedString(body.kind, 64);
   if (!kind || !READ_MODEL_KINDS.has(kind)) {
     throw {
@@ -70,7 +90,7 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     };
   }
 
-  const supabase = createSupabaseClient(env);
+  const supabase = preloaded.supabase || createSupabaseClient(env);
 
   if (kind === "userSyncState") {
     const { data: userRow } = await supabase
@@ -86,15 +106,21 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
     };
   }
 
-  const scope = await resolveCompanyScope(uid, body.companyId);
-  await assertCompanyAccess(uid, scope.publicCompanyId, [], {
-    correlationId: "read-model",
-    logger: console as any,
-    auth: { uid, claims: {} },
-    env,
-    corsHeaders: {},
-  } as any);
-  const requester = await getRequesterContext(scope, uid);
+  let scope: CompanyScope;
+  if (preloaded.scope) {
+    scope = preloaded.scope;
+  } else {
+    scope = await resolveCompanyScope(uid, body.companyId);
+    await assertCompanyAccess(uid, scope.publicCompanyId, [], {
+      correlationId: "read-model",
+      logger: console as any,
+      auth: { uid, claims: {} },
+      env,
+      corsHeaders: {},
+    } as any);
+  }
+  const requester = preloaded.requester || await getRequesterContext(scope, uid);
+  const scopedContext = { supabase, scope, requester };
 
   if (kind === "companySyncState") {
     const { data } = await supabase
@@ -139,25 +165,32 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   }
 
   if (kind === "clients") {
-    const { data } = await supabase
-      .from("clients")
-      .select("id, client_no, name, email, phone, address, notes, city, vat_number, created_at, updated_at")
-      .eq("company_id", scope.internalCompanyId)
-      .order("client_no", { ascending: false });
+    const wantsPage = hasOptionalPaging(body) || Boolean(optionalTrimmedString(body.search, 80));
+    const pageSize = wantsPage ? parseReadLimit(body) : 10_000;
+    const cursor = parseNumberCursor(body.afterCursor);
+    const search = normalizePrefixSearch(body.search);
+    const { data, error } = await supabase.rpc("get_clients_page", {
+      p_company_id: scope.internalCompanyId,
+      p_page_size: wantsPage ? pageSize : null,
+      p_after_client_no: cursor ? cursor.value : null,
+      p_after_id: cursor ? cursor.id : null,
+      p_search: search || null,
+    });
+    if (error) {
+      throw { code: "internal", httpStatus: 500, message: "Failed to load clients" };
+    }
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      numericId: row.client_no,
-      name: row.name,
-      email: row.email || "",
-      phone: row.phone || "",
-      address: row.address || "",
-      notes: row.notes || "",
-      city: row.city || "",
-      vatNumber: row.vat_number || "",
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    const payload = data && typeof data === "object" && !Array.isArray(data)
+      ? data as { items?: unknown; nextCursor?: unknown }
+      : {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    if (!wantsPage) {
+      return items;
+    }
+    return {
+      items,
+      nextCursor: typeof payload.nextCursor === "string" && payload.nextCursor.trim() ? payload.nextCursor : null,
+    };
   }
 
   if (kind === "inventory") {
@@ -173,9 +206,17 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
           };
         }
       }
-      return getUserInventoryParts(scope.internalCompanyId, targetUid);
+      return getUserInventoryParts(scope.internalCompanyId, targetUid, {
+        pageSize: body.pageSize || body.limit ? parseReadLimit(body) : undefined,
+        afterCursor: parseNumberCursor(body.afterCursor),
+        search: optionalTrimmedString(body.search, 80) || null,
+      });
     }
-    return getCompanyInventoryParts(scope.internalCompanyId);
+    return getCompanyInventoryParts(scope.internalCompanyId, {
+      pageSize: body.pageSize || body.limit ? parseReadLimit(body) : undefined,
+      afterCursor: parseNumberCursor(body.afterCursor),
+      search: optionalTrimmedString(body.search, 80) || null,
+    });
   }
 
   if (kind === "documentTask") {
@@ -608,10 +649,14 @@ async function buildReadModelResponse(body: Record<string, unknown>, uid: string
   let documentsNextCursor: string | null = null;
 
   if (includeCollections) {
-    workers = await buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid);
-    clients = await buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId }, uid);
-    const jobsResult = await buildReadModelResponse({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 200 }, uid);
-    const docsResult = await buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 200 }, uid);
+    const [workersResult, clientsResult, jobsResult, docsResult] = await Promise.all([
+      buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid, scopedContext),
+      buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId }, uid, scopedContext),
+      buildReadModelResponse({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
+      buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
+    ]);
+    workers = workersResult;
+    clients = Array.isArray(clientsResult) ? clientsResult : (clientsResult.items || []);
     jobs = jobsResult.items || [];
     documents = docsResult.items || [];
     jobsNextCursor = jobsResult.nextCursor || null;

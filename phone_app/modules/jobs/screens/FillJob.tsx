@@ -462,13 +462,13 @@ export default function FillJob() {
         return;
       }
 
-      // Use cached inventory instead of fetching from Firebase (cachedInventory is an array)
+      // Use cached inventory before falling back to the backend read model.
       console.log('📦 Using cached inventory to deduct parts');
       let partsArray = Array.isArray(cachedInventory) ? [...cachedInventory] : [];
 
-      // If cache is empty, fetch from Firebase as fallback
+      // If cache is empty, fetch from backend as fallback.
       if (partsArray.length === 0) {
-        console.warn('⚠️ Cached inventory is empty, fetching from Firebase...');
+        console.warn('Cached inventory is empty, fetching from backend...');
         const companyId = getCompanyId();
         if (companyId) {
           partsArray = await fetchUserInventoryParts(companyId, uid);
@@ -679,13 +679,13 @@ export default function FillJob() {
       } else {
         console.log('💾 FillJob: Updating worker pending job via Cloud Function...', jobId);
         
-        // Worker mode: update existing job via Cloud Function (P2-2)
-        // Note: Firestore trigger will automatically send push notification to manager when status changes to 'waiting'
+        // Worker mode: update existing job through the backend mutation gateway.
+        // Backend notification logic handles manager push notifications when status changes to 'waiting'.
         const updateJobFn = httpsCallable(functions, 'updateJobV1');
         await updateJobFn({ companyId, jobId, ...jobToSave });
         jobPersisted = true;
         
-        console.log('✅ FillJob: Worker job updated in Firestore');
+        console.log('FillJob: Worker job updated through backend');
         
         // Update local cache and increment versions
         console.log('📦 FillJob: Updating job in local cache...');

@@ -222,7 +222,7 @@ export default function Workerjob() {
   /**
    * Sync offline-queued jobs. These were saved when the worker submitted a job
    * while offline. Each entry contains the full jobData that was already built
-   * by FillJob (or the inline modal). We re-submit them to Firestore.
+   * by FillJob (or the inline modal). We re-submit them through the backend.
    */
   const syncPendingJobs = async () => {
     try {
@@ -313,7 +313,7 @@ export default function Workerjob() {
 
       const ninetyDaysAgoMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
 
-      // Beyond 90 days — fetch from archive / Firestore
+      // Beyond 90 days - fetch from archive/backend.
       if (dateFilter.startDate.getTime() < ninetyDaysAgoMs) {
         const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs') as WorkerJobRecord[];
         const filtered = olderJobs

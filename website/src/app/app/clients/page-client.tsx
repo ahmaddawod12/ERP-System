@@ -19,7 +19,7 @@ import {
   listClients,
   resolveCompanyScope,
   updateClient,
-} from "@/lib/services/firestore-service";
+} from "@/lib/services/backend-service";
 import { createClientSchema } from "@/lib/validation/schemas";
 import type { ClientRecord } from "@/lib/types";
 

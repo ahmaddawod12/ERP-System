@@ -262,7 +262,7 @@ export function useTaxInvoiceSubmission({
         },
       });
 
-      // Firestore listener in useDocumentTask will handle the completion
+      // useDocumentTask polls the backend read model until the task completes.
       console.log('Preview task published, waiting for completion...');
     } catch (error) {
       console.error('Error previewing invoice:', error);
@@ -330,7 +330,7 @@ export function useTaxInvoiceSubmission({
   const handleSubmitInvoice = async () => {
     if (!validateInvoiceForm()) return;
 
-    // Business info is fetched by Cloud Functions directly from Firestore
+    // Business info is fetched by the backend from SQL.
 
     setPreviewLoading(true);
 
@@ -343,7 +343,7 @@ export function useTaxInvoiceSubmission({
         return;
       }
 
-      // Get next invoice number - Cloud Functions will fetch from Firestore directly
+      // Get next invoice number - backend allocates it through SQL counters.
       // We no longer use cached business info for security
       console.log('📄 Submitting tax invoice (business info fetched by Cloud Functions)...');
 
@@ -357,7 +357,7 @@ export function useTaxInvoiceSubmission({
         customerVatNumber: invoiceData.customerVatNumber, // Always included for Tax Invoice
       };
 
-      // Build document data - Cloud Functions will fetch business_info from Firestore
+      // Build document data - backend fetches business_info from SQL.
       const documentData = {
         type: 305,
         client: clientData,

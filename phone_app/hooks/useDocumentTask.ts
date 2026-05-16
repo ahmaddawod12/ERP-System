@@ -60,7 +60,7 @@ export interface UseDocumentTaskOptions {
 export interface UseDocumentTaskResult {
   publishPreview: (params: DocumentTaskParams) => Promise<string>;
   publishGenerate: (params: DocumentTaskParams) => Promise<string>;
-  listenToTask: (taskId: string, type?: 'preview' | 'generate') => void;
+  listenToTask: (taskId: string, type?: 'preview' | 'generate', companyId?: string) => void;
   reset: () => void;
   taskId: string | null;
   taskType: TaskType;
@@ -122,7 +122,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
    * @param {string} newTaskId - Task ID to listen to
    * @param {string} [type] - Task type ('preview' or 'generate') for callbacks
    */
-  const listenToTask = useCallback((newTaskId: string, type: 'preview' | 'generate' = 'generate') => {
+  const listenToTask = useCallback((newTaskId: string, type: 'preview' | 'generate' = 'generate', companyId?: string) => {
     // Clean up previous listener
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -164,6 +164,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
         const data = await callHttpFunction<TaskData>('readModelV1', {
           kind: 'documentTask',
           taskId: newTaskId,
+          ...(companyId ? { companyId } : {}),
         });
 
         if (stopped) return;
@@ -225,12 +226,12 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       setIsLoading(true);
       setError(null);
       
-      // React Native Firebase functions - modular API
+      // Compatibility callable wrapper routes through the backend mutation gateway.
       const publishPreviewTask = httpsCallable(functions, 'publishPreviewTask');
       const result = await publishPreviewTask(params) as { data: { success?: boolean; taskId?: string; error?: string } };
       
       if (result.data.success && result.data.taskId) {
-        listenToTask(result.data.taskId, 'preview');
+        listenToTask(result.data.taskId, 'preview', params.companyId);
         return result.data.taskId;
       } else {
         throw new Error(result.data.error || 'Failed to publish preview task');
@@ -254,12 +255,12 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       setIsLoading(true);
       setError(null);
       
-      // React Native Firebase functions - modular API
+      // Compatibility callable wrapper routes through the backend mutation gateway.
       const publishGenerateTask = httpsCallable(functions, 'publishGenerateTask');
       const result = await publishGenerateTask(params) as { data: { success?: boolean; taskId?: string; error?: string } };
       
       if (result.data.success && result.data.taskId) {
-        listenToTask(result.data.taskId, 'generate');
+        listenToTask(result.data.taskId, 'generate', params.companyId);
         return result.data.taskId;
       } else {
         throw new Error(result.data.error || 'Failed to publish generate task');

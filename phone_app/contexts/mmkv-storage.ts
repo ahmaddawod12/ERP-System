@@ -7,6 +7,7 @@
 
 import type { DateLike, MmkvHelpers } from '../types';
 import { safeJsonParse } from '../utils/helpers';
+import { logger } from '../utils/logger';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
 import { createMMKV } from 'react-native-mmkv';
@@ -16,7 +17,7 @@ export const storage = createMMKV({
   id: 'smart-job-cache'
 });
 
-console.log('🗄 MMKV initialized successfully');
+logger.debug('MMKV initialized successfully');
 
 /** For backwards compatibility */
 export const getStorage = () => storage;

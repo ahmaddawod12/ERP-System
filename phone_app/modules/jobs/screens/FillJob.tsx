@@ -27,6 +27,7 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { scopedKey, storage } from '../../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../../utils/helpers';
+import { logger } from '../../../utils/logger';
 import { fetchUserInventoryParts } from '../../../utils/read-model';
 import type { Client, InventoryPart, Job, JobFileRef, JobItem } from '../../../types';
 import {
@@ -235,7 +236,7 @@ export default function FillJob() {
 
   const refreshSignatureURL = async (signatureRef: string | JobFileRef | null) => {
     if (!signatureRef) {
-      console.log('No signature URL to refresh');
+      logger.debug('No signature URL to refresh');
       setRefreshedSignatureURL(null);
       return null;
     }
@@ -246,7 +247,7 @@ export default function FillJob() {
       const currentJobId = editingJob?.id || null;
       const freshURL = await resolveJobFileUri(signatureRef, companyId, currentJobId);
       
-      console.log('✅ Fresh signature URL obtained');
+      logger.debug('Fresh signature URL obtained');
       setRefreshedSignatureURL(freshURL);
       return freshURL;
     } catch (error) {
@@ -283,11 +284,11 @@ export default function FillJob() {
     }
     
     // Debug: Log signature data
-    console.log('=== FillJob Component Loaded ===');
-    console.log('editingJob:', editingJob);
-    console.log('editingJob?.signature:', editingJob?.signature);
-    console.log('jobData.signature:', jobData.signature);
-    console.log('==============================');
+    logger.debug('FillJob component loaded', {
+      editingJob,
+      editingSignature: editingJob?.signature,
+      jobSignature: jobData.signature,
+    });
     
     // Check if returning from parts selection
     if (partsSelectionCallback && params.returnFromParts) {
@@ -309,7 +310,7 @@ export default function FillJob() {
 
   // Watch for cached inventory changes and re-sync local state
   useEffect(() => {
-    console.log('📦 FillJob: cached inventory updated - re-syncing local inventory');
+    logger.debug('FillJob: cached inventory updated; re-syncing local inventory');
     loadInventory();
   }, [cachedInventory]);
 
@@ -317,7 +318,7 @@ export default function FillJob() {
     try {
       // Use cached inventory from CacheContext (cachedInventory is an array)
       if (cachedInventory && Array.isArray(cachedInventory)) {
-        console.log('📦 [CACHE READ] FillJob - Loading inventory from cache:', cachedInventory.length, 'parts');
+        logger.debug('FillJob: loading inventory from cache', cachedInventory.length, 'parts');
         setInventory(cachedInventory);
       } else {
         setInventory([]);
@@ -458,12 +459,12 @@ export default function FillJob() {
   const decreaseInventoryParts = async (uid: string) => {
     try {
       if (!selectedParts || selectedParts.length === 0) {
-        console.log('No parts to deduct from inventory');
+        logger.debug('No parts to deduct from inventory');
         return;
       }
 
       // Use cached inventory before falling back to the backend read model.
-      console.log('📦 Using cached inventory to deduct parts');
+      logger.debug('Using cached inventory to deduct parts');
       let partsArray = Array.isArray(cachedInventory) ? [...cachedInventory] : [];
 
       // If cache is empty, fetch from backend as fallback.
@@ -487,7 +488,7 @@ export default function FillJob() {
             ...partsArray[partIndex],
             quantity: newQty
           };
-          console.log(`📦 Deducting ${usedQty} of ${partsArray[partIndex].name} from inventory. New qty: ${newQty}`);
+          logger.debug(`Deducting ${usedQty} of ${partsArray[partIndex].name} from inventory. New qty: ${newQty}`);
         }
       });
 
@@ -496,7 +497,7 @@ export default function FillJob() {
       const updateInvFn = httpsCallable(functions, 'updateInventoryV1');
       await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: uid, parts: partsArray });
       
-      console.log('✅ Inventory deducted via CF, cache version incremented by server');
+      logger.debug('Inventory deducted via backend; cache version incremented by server');
     } catch (error) {
       console.error('❌ Error decreasing inventory:', error);
       throw error;
@@ -558,10 +559,10 @@ export default function FillJob() {
           if (jobData.cphone?.trim() && jobData.cphone.trim() !== (selectedClientObj.phone || '')) updates.phone = jobData.cphone.trim();
           if (Object.keys(updates).length > 0) {
             await updateClient(selectedClientObj.id, updates);
-            console.log('✅ Updated existing client with new fields:', Object.keys(updates));
+            logger.debug('Updated existing client with new fields:', Object.keys(updates));
           }
         } catch (e) {
-          console.log('Update client failed (non-critical):', e);
+          logger.debug('Update client failed (non-critical):', e);
         }
       } else if (!selectedClientObj && jobData.cname.trim()) {
         // Save as new client
@@ -571,7 +572,7 @@ export default function FillJob() {
           const savedClient = await addClient(clientToSave);
           if (savedClient) clientId = savedClient.id;
         } catch (e) {
-          console.log('Auto-save client failed (non-critical):', e);
+          logger.debug('Auto-save client failed (non-critical):', e);
         }
       }
 
@@ -637,7 +638,7 @@ export default function FillJob() {
 
       // Save to appropriate location
       if (mode === 'user') {
-        console.log('💾 FillJob: Creating user finished job via Cloud Function...');
+        logger.debug('FillJob: creating user finished job via backend');
         const attachmentUploadId = `pending-${crypto.randomUUID()}`;
         const userUploadResult = await uploadJobFilesForStorage(
           companyId,
@@ -666,18 +667,17 @@ export default function FillJob() {
         signatureRef = userUploadResult.signatureRef;
         
         // Update local cache with the server-generated ID
-        console.log('📦 FillJob: Adding to local cache...');
+        logger.debug('FillJob: adding created job to local cache');
         addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: createdServerJobId });
         
-        console.log('✅ FillJob: Job saved successfully');
+        logger.debug('FillJob: job saved successfully');
         
         // Decrease inventory after job is successfully saved
         if (selectedParts && selectedParts.length > 0) {
-          console.log('📦 FillJob: Deducting parts from inventory...');
-          console.log('Solo inventory deduction is handled by createJobV1.');
+          logger.debug('Solo inventory deduction is handled by createJobV1.');
         }
       } else {
-        console.log('💾 FillJob: Updating worker pending job via Cloud Function...', jobId);
+        logger.debug('FillJob: updating worker pending job via backend', jobId);
         
         // Worker mode: update existing job through the backend mutation gateway.
         // Backend notification logic handles manager push notifications when status changes to 'waiting'.
@@ -685,13 +685,13 @@ export default function FillJob() {
         await updateJobFn({ companyId, jobId, ...jobToSave });
         jobPersisted = true;
         
-        console.log('FillJob: Worker job updated through backend');
+        logger.debug('FillJob: worker job updated through backend');
         
         // Update local cache and increment versions
-        console.log('📦 FillJob: Updating job in local cache...');
+        logger.debug('FillJob: updating job in local cache');
         updateJob(jobId, jobToSave);
         
-        console.log('✅ FillJob: Cache updated successfully');
+        logger.debug('FillJob: cache updated successfully');
         // Note: Inventory is deducted when manager ACCEPTS the job in ManageJobs.js
       }
 
@@ -1092,10 +1092,10 @@ export default function FillJob() {
                     onError={(error) => {
                       console.error('=== Signature Image Load Error (Refreshed URL) ===');
                       console.error('Error details:', error?.nativeEvent || error);
-                      console.log('Refreshed Signature URI:', refreshedSignatureURL);
+                      logger.debug('Refreshed signature URI:', refreshedSignatureURL);
                     }}
                     onLoad={() => {
-                      console.log('✅ Signature image loaded successfully from refreshed URL');
+                      logger.debug('Signature image loaded successfully from refreshed URL');
                     }}
                   />
                 ) : (

@@ -30,6 +30,13 @@ test('large mobile archive reads drain read-model pages', () => {
   assert.match(source, /while \(items\.length < targetLimit\)/);
 });
 
+test('mobile initial cache does not bootstrap broad job/document collections', () => {
+  const fetchers = readRepoFile('phone_app', 'contexts', 'cache-fetchers.ts');
+
+  assert.doesNotMatch(fetchers, /readBootstrap\([^)]*,\s*true\s*\)/);
+  assert.match(fetchers, /Initial jobs\/documents are loaded through cursor pages/);
+});
+
 test('inventory and profile cache bumps use atomic sync RPC', () => {
   const inventory = readRepoFile('supabase', 'handlers', 'inventory.ts');
   const profile = readRepoFile('supabase', 'handlers', 'profile.ts');
@@ -44,8 +51,12 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
   const migrationsDir = path.resolve(process.cwd(), '..', 'packages', 'db', 'migrations');
   const migrationFiles = fs.readdirSync(migrationsDir).filter((name) => name.endsWith('.sql')).sort();
   const migration = readRepoFile('packages', 'db', 'migrations', '0000_optimized_baseline.sql');
+  const hardeningMigration = readRepoFile('packages', 'db', 'migrations', '0001_supabase_cost_perf_security_hardening.sql');
 
-  assert.deepEqual(migrationFiles, ['0000_optimized_baseline.sql']);
+  assert.deepEqual(migrationFiles, [
+    '0000_optimized_baseline.sql',
+    '0001_supabase_cost_perf_security_hardening.sql',
+  ]);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);
   assert.match(migration, /jobs_company_assignee_status_finished_cursor_idx/);
@@ -66,6 +77,14 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
   assert.match(migration, /apply_inventory_movement\(UUID, UUID, NUMERIC/);
   assert.match(migration, /apply_inventory_pick_batch\(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ\)/);
   assert.match(migration, /bump_company_sync_version\(UUID, TEXT\)/);
+  assert.match(hardeningMigration, /CREATE SCHEMA IF NOT EXISTS private/);
+  assert.match(hardeningMigration, /ALTER FUNCTION public\.apply_inventory_movement[\s\S]*SET SCHEMA private/);
+  assert.match(hardeningMigration, /CREATE OR REPLACE FUNCTION public\.apply_inventory_movement[\s\S]*SECURITY INVOKER/);
+  assert.match(hardeningMigration, /REVOKE EXECUTE ON FUNCTION '\s*\|\| public_signature/);
+  assert.match(hardeningMigration, /GRANT EXECUTE ON FUNCTION '\s*\|\| public_signature[\s\S]*TO service_role/);
+  assert.match(hardeningMigration, /documents_company_visible_created_cursor_idx/);
+  assert.match(hardeningMigration, /tax_invoice_reservations_idempotency_lookup_idx/);
+  assert.match(hardeningMigration, /cleanup_expired_operational_rows/);
 });
 
 test('database profiling checklist covers hot read-model paths', () => {

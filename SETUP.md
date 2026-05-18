@@ -255,7 +255,7 @@ Rules:
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration shape:
-- Empty/new databases use the single optimized baseline migration `0000_optimized_baseline.sql`. The historical incremental migrations were intentionally squashed because this database starts empty.
+- Empty/new databases apply the optimized baseline migration `0000_optimized_baseline.sql`, then forward hardening migrations such as `0001_supabase_cost_perf_security_hardening.sql`. The historical incremental migrations were intentionally squashed because this database starts empty.
 - The baseline includes:
   - RLS enabled on all public-schema tables, with client-visible policies only where the app needs direct reads
   - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
@@ -266,6 +266,11 @@ Current migration shape:
   - `redeem_company_invite(...)` atomic invite redemption RPC
   - `claim_tax_invoice_idempotency(...)` atomic tax idempotency claim RPC
   - `allocate_company_counter`, `allocate_system_counter`, `increment_rate_limit_bucket`, `apply_inventory_movement(...)`, `apply_inventory_pick_batch(...)`, `get_clients_page(...)`, `get_company_inventory_page(...)`, `get_member_inventory_page(...)`, and `bump_company_sync_version(...)` RPCs
+  - `apply_job_inventory_consumption_batch(...)` for atomic finished-job inventory consumption
+  - role-sensitive RLS for jobs, documents, and membership lists so direct table reads do not rely only on Edge code
+  - private-schema privileged RPC implementations with public service-role-only compatibility wrappers
+  - `get_inventory_counts(...)` for lightweight dashboard/count-only reads
+  - `cleanup_expired_operational_rows(...)` for scheduled cleanup of expired operational rows
   - partial idempotency indexes for jobs and inventory movements so empty idempotency keys do not bloat uniqueness indexes
   - active membership uniqueness on `(company_id, user_id)` for active memberships only
   - split `inventory_locations` uniqueness for company-only rows vs membership-scoped rows
@@ -273,7 +278,8 @@ Current migration shape:
 Database profiling:
 
 - Use `packages/db/perf/profiling.sql` against local or staging data with realistic row counts before adding broad indexes or dropping unused indexes.
-- The profiling checklist uses `pg_stat_statements`, Supabase `index_advisor`, and representative `EXPLAIN (analyze, buffers)` targets for clients, jobs, documents, inventory, tax, and support paths.
+- The profiling checklist uses `pg_stat_statements`, Supabase `index_advisor`, Supabase Security/Performance Advisors, and representative `EXPLAIN (analyze, buffers)` targets for clients, jobs, documents, inventory, tax, and support paths.
+- Schedule `cleanup_expired_operational_rows()` daily through Supabase Scheduled Functions, pg_cron, or an external trusted job if the project accumulates rate-limit, document task, notification, contact, or failed idempotency rows.
 
 Minimum steps:
 

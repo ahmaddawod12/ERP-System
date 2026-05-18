@@ -36,3 +36,12 @@ test('website personal inventory read remains company scoped', () => {
   assert.match(service, /kind: "inventory",[\s\S]*companyId,[\s\S]*scope: "user",[\s\S]*targetUid: uid/);
   assert.match(inventoryPage, /getUserInventory\(companyId, uid\)/);
 });
+
+test('website overview count loader unwraps bootstrap count payloads', () => {
+  const service = readProjectFile('src', 'lib', 'services', 'backend-service.ts');
+
+  assert.match(service, /export async function loadOverviewCounts/);
+  assert.match(service, /countOnly: true/);
+  assert.match(service, /if \("counts" in payload && payload\.counts\)/);
+  assert.match(service, /return payload\.counts/);
+});

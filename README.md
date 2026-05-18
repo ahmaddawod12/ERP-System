@@ -73,6 +73,8 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Public job API boundaries use sequential job numbers; internal UUIDs are resolved only inside backend handlers.
 - Keep `read-model` `kind` contracts synchronized across website, mobile, and backend handlers.
 - Clients and inventory read-model calls use SQL RPC-backed pagination/search; do not reintroduce full-collection in-memory filtering for those paths.
+- Document read-model calls exclude unapproved tax invoices and return the same rich document shape used by website/mobile history screens.
+- Finished solo jobs consume member inventory through the SQL `apply_job_inventory_consumption_batch(...)` helper.
 
 ## Recent Hardening (April 26-May 15, 2026)
 
@@ -80,7 +82,8 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Supabase mutation handlers normalize incoming `companyId` to internal company UUID before SQL queries.
 - `resolveCompanyIdentifiers` now resolves public numeric IDs and internal UUIDs with separate queries so public company IDs are never OR-filtered against UUID columns.
 - SQL counter RPCs (`allocate_company_counter`, `allocate_system_counter`) cover all sequential IDs: `public_company_id`, `member_no`, `client_no`, `job_no`, tax invoice numbers (`doc_305`), and inventory part numbers (`part_no`).
-- New empty databases start from a single optimized SQL baseline instead of the old incremental migration chain. The baseline includes RLS hardening, support-owner policies, document task locks, atomic inventory/invite/idempotency RPCs, read-model indexes for jobs/documents/clients/memberships/inventory, and service-role RPCs for client/inventory pages.
+- New empty databases start from the optimized SQL baseline plus forward hardening migrations. The baseline includes RLS hardening, support-owner policies, document task locks, atomic inventory/invite/idempotency RPCs, read-model indexes for jobs/documents/clients/memberships/inventory, and service-role RPCs for client/inventory pages.
+- Privileged RPC implementations live behind the private schema after `0001_supabase_cost_perf_security_hardening.sql`; public RPC names are compatibility wrappers granted to `service_role` only.
 - `packages/db/perf/profiling.sql` contains the read-only profiling checklist for Supabase advisors, `pg_stat_statements`, and `EXPLAIN` before broader index changes.
 
 ## Optimizations (May 1-May 15, 2026)
@@ -118,6 +121,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Read-model cursor pagination for jobs/documents uses composite timestamp-plus-id cursors via PostgREST `.or()` and honors `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters.
 - Client and inventory read-model pagination/search now execute through service-role SQL RPCs (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`) while preserving the website/mobile response shapes.
 - `bootstrap` returns `jobsNextCursor` and `documentsNextCursor` from the first read-model page instead of hardcoded `null`.
+- `bootstrap` count-only calls use SQL counts instead of loading full inventory payloads, and collection bootstrap includes `clientsNextCursor` for compatible pagination.
 - `userSyncState` kind now returns `app_users.updated_at` instead of hardcoded zeros.
 - Inventory part listing attaches the next sequential part ID from the SQL counter.
 - Invite redemption consumes invite state atomically before membership finalization (prevents multi-join races).
@@ -137,6 +141,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Inventory mutation helpers now fail closed on negative balances instead of clamping underflow to zero.
 - Inventory movement writes now use the SQL `apply_inventory_movement(...)` RPC, and active company-membership / inventory-location uniqueness is enforced with runtime-safe partial indexes.
 - Multi-part inventory picks now use `apply_inventory_pick_batch(...)` so the pick operation commits or fails as one database transaction.
+- Finished job inventory consumption now uses `apply_job_inventory_consumption_batch(...)`, and direct table RLS mirrors the backend role matrix for jobs, documents, and membership lists.
 - Invite join responses now return the public membership number as `wid` and no longer leak the internal membership UUID.
 
 ### Website

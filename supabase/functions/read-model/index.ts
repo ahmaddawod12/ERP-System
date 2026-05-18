@@ -61,6 +61,188 @@ const READ_MODEL_KINDS = new Set([
   "userSyncState",
 ]);
 
+function normalizeDocumentPayload(payload: unknown): Record<string, unknown> {
+  return payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+}
+
+function emptyInventoryPayload() {
+  return {
+    parts: [],
+    nextId: 1,
+    lastUpdated: new Date().toISOString(),
+    nextCursor: null,
+  };
+}
+
+async function getInventoryCounts(
+  supabase: ReturnType<typeof createSupabaseClient>,
+  internalCompanyId: string,
+  membershipId: string | null,
+): Promise<{ inventoryParts: number; companyInventoryParts: number }> {
+  const { data, error } = await supabase.rpc("get_inventory_counts", {
+    p_company_id: internalCompanyId,
+    p_membership_id: membershipId,
+  });
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load inventory counts" };
+  }
+
+  const payload = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  return {
+    inventoryParts: Number(payload.inventoryParts || 0),
+    companyInventoryParts: Number(payload.companyInventoryParts || 0),
+  };
+}
+
+function numericOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function roundCurrency(value: unknown): number {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+async function getDocumentDetailMaps(documentIds: string[]) {
+  const normalizedDocumentIds = Array.from(new Set(
+    (documentIds || []).map((value) => String(value || "").trim()).filter(Boolean),
+  ));
+  const itemsByDocumentId = new Map<string, Array<Record<string, unknown>>>();
+  const jobsByDocumentId = new Map<string, Array<{ jobId: string }>>();
+  if (normalizedDocumentIds.length === 0) {
+    return { itemsByDocumentId, jobsByDocumentId };
+  }
+
+  const supabase = createSupabaseClient(env);
+  const [itemResult, jobLinkResult] = await Promise.all([
+    supabase
+      .from("document_items")
+      .select("document_id, line_no, description, quantity, unit_price, metadata")
+      .in("document_id", normalizedDocumentIds)
+      .order("line_no", { ascending: true }),
+    supabase
+      .from("document_job_links")
+      .select("document_id, jobs(job_no)")
+      .in("document_id", normalizedDocumentIds),
+  ]);
+
+  if (itemResult.error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load document items" };
+  }
+  if (jobLinkResult.error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load document job links" };
+  }
+
+  for (const row of itemResult.data || []) {
+    const key = String(row.document_id || "");
+    if (!key) continue;
+    const next = itemsByDocumentId.get(key) || [];
+    const metadata = normalizeDocumentPayload(row.metadata);
+    next.push({
+      description: row.description || "",
+      quantity: Number(row.quantity || 0),
+      price: Number(row.unit_price || 0),
+      partId: numericOrNull(metadata.partId),
+    });
+    itemsByDocumentId.set(key, next);
+  }
+
+  for (const row of jobLinkResult.data || []) {
+    const key = String(row.document_id || "");
+    const jobNo = Number((row as any).jobs?.job_no || 0);
+    if (!key || !Number.isFinite(jobNo) || jobNo <= 0) continue;
+    const next = jobsByDocumentId.get(key) || [];
+    next.push({ jobId: String(jobNo) });
+    jobsByDocumentId.set(key, next);
+  }
+
+  return { itemsByDocumentId, jobsByDocumentId };
+}
+
+async function getDocumentCreatorMap(internalCompanyId: string, membershipIds: string[]) {
+  const normalizedMembershipIds = Array.from(new Set(
+    (membershipIds || []).map((value) => String(value || "").trim()).filter(Boolean),
+  ));
+  const result = new Map<string, { uid: string | null; name: string | null }>();
+  if (normalizedMembershipIds.length === 0) return result;
+
+  const supabase = createSupabaseClient(env);
+  const { data, error } = await supabase
+    .from("company_memberships")
+    .select("id, user_id, display_name, app_users(display_name, email)")
+    .eq("company_id", internalCompanyId)
+    .in("id", normalizedMembershipIds);
+
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load document creators" };
+  }
+
+  for (const row of data || []) {
+    result.set(String(row.id), {
+      uid: row.user_id ? String(row.user_id) : null,
+      name: row.display_name || (row as any).app_users?.display_name || (row as any).app_users?.email || null,
+    });
+  }
+  return result;
+}
+
+async function mapDocumentRows(internalCompanyId: string, rows: any[]) {
+  const documentRows = rows || [];
+  const documentIds = documentRows.map((row) => String(row.id || "")).filter(Boolean);
+  const creatorIds = documentRows.map((row) => String(row.created_by_membership_id || "")).filter(Boolean);
+  const [{ itemsByDocumentId, jobsByDocumentId }, creatorByMembershipId] = await Promise.all([
+    getDocumentDetailMaps(documentIds),
+    getDocumentCreatorMap(internalCompanyId, creatorIds),
+  ]);
+
+  return documentRows.map((doc: any) => {
+    const payload = normalizeDocumentPayload(doc.payload);
+    const payloadClient = normalizeDocumentPayload(payload.client);
+    const items = itemsByDocumentId.get(String(doc.id)) || [];
+    const jobsData = jobsByDocumentId.get(String(doc.id)) || (Array.isArray(payload.jobsData) ? payload.jobsData : []);
+    const creator = creatorByMembershipId.get(String(doc.created_by_membership_id || ""));
+    const confirmationNumber = doc.confirmation_number || payload.taxAuthorityConfirmationNumber || undefined;
+    return {
+      id: String(doc.document_code || doc.id),
+      type: Number(doc.document_type),
+      documentType: Number(doc.document_type),
+      documentNumber: doc.document_number,
+      documentId: doc.document_code,
+      clientId: doc.client_id || null,
+      cname: doc.client_name_snapshot || payloadClient.name || "",
+      cphone: doc.client_phone_snapshot || payloadClient.phone || "",
+      clientCity: doc.client_city_snapshot || payloadClient.city || "",
+      clientVatNumber: doc.client_vat_snapshot || payloadClient.clientVatNumber || payloadClient.vatNumber || "",
+      cid: payloadClient.clientId || payloadClient.id || undefined,
+      language: doc.language || payload.language || "he",
+      notes: doc.notes || payload.notes || "",
+      storagePath: doc.storage_path || null,
+      confirmationNumber: confirmationNumber || null,
+      taxAuthorityConfirmationNumber: confirmationNumber || undefined,
+      items,
+      totalBeforeVat: roundCurrency(doc.total_before_vat),
+      vatAmount: roundCurrency(doc.vat_amount),
+      totalWithVat: roundCurrency(doc.total_with_vat),
+      documentData: payload,
+      paymentMethod: payload.paymentMethod || undefined,
+      paymentInfo: payload.paymentInfo || undefined,
+      createdByUid: creator?.uid || undefined,
+      createdByName: creator?.name || undefined,
+      date: doc.document_date || payload.date || undefined,
+      jobsData,
+      status: doc.generation_status || undefined,
+      taxAuthorityResponseData: doc.tax_authority_response || null,
+      createdAt: doc.created_at,
+      updatedAt: doc.updated_at,
+    };
+  });
+}
+
 function hasOptionalPaging(body: Record<string, unknown>): boolean {
   return body.pageSize != null || body.limit != null || Boolean(optionalTrimmedString(body.afterCursor, 200));
 }
@@ -268,16 +450,18 @@ async function buildReadModelResponse(
       .eq("company_id", scope.internalCompanyId);
     const documentByCodeQuery = supabase
       .from("documents")
-      .select("id, document_type, document_number, document_code, client_name_snapshot, client_phone_snapshot, created_at, storage_path")
+      .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
       .eq("company_id", scope.internalCompanyId)
       .eq("document_code", normalizedRecordId)
+      .or("document_type.neq.305,tax_authority_status.eq.approved")
       .maybeSingle();
     const documentByIdQuery = isUuidLike(normalizedRecordId)
       ? supabase
         .from("documents")
-        .select("id, document_type, document_number, document_code, client_name_snapshot, client_phone_snapshot, created_at, storage_path")
+        .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
         .eq("company_id", scope.internalCompanyId)
         .eq("id", normalizedRecordId)
+        .or("document_type.neq.305,tax_authority_status.eq.approved")
         .maybeSingle()
       : Promise.resolve({ data: null });
 
@@ -315,17 +499,8 @@ async function buildReadModelResponse(
       if (!canReadCompanyDocuments(requester)) {
         return null;
       }
-      return {
-        id: document.id,
-        type: document.document_type,
-        documentType: document.document_type,
-        documentNumber: document.document_number,
-        documentId: document.document_code,
-        cname: document.client_name_snapshot,
-        cphone: document.client_phone_snapshot,
-        createdAt: document.created_at,
-        storagePath: document.storage_path,
-      };
+      const mapped = await mapDocumentRows(scope.internalCompanyId, [document]);
+      return mapped[0] || null;
     }
 
     return null;
@@ -415,8 +590,9 @@ async function buildReadModelResponse(
 
     let query = supabase
       .from("documents")
-      .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, created_at, updated_at, document_date")
+      .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
       .eq("company_id", scope.internalCompanyId)
+      .or("document_type.neq.305,tax_authority_status.eq.approved")
       .order(dateField, { ascending: false })
       .order("id", { ascending: false })
       .limit(pageSize + 1);
@@ -449,28 +625,8 @@ async function buildReadModelResponse(
       throw { code: "internal", httpStatus: 500, message: "Failed to load documents" };
     }
     const hasMore = (data || []).length > pageSize;
-    const items = (data || []).slice(0, pageSize).map((doc: any) => ({
-      id: String(doc.document_code || doc.id),
-      type: doc.document_type,
-      documentType: doc.document_type,
-      documentNumber: doc.document_number,
-      documentId: doc.document_code,
-      clientId: doc.client_id || null,
-      cname: doc.client_name_snapshot || "",
-      cphone: doc.client_phone_snapshot || "",
-      clientCity: doc.client_city_snapshot || "",
-      clientVatNumber: doc.client_vat_snapshot || "",
-      language: doc.language || "he",
-      notes: doc.notes || "",
-      storagePath: doc.storage_path || null,
-      confirmationNumber: doc.confirmation_number || null,
-      totalBeforeVat: Number(doc.total_before_vat || 0),
-      vatAmount: Number(doc.vat_amount || 0),
-      totalWithVat: Number(doc.total_with_vat || 0),
-      documentData: doc.payload || {},
-      status: doc.generation_status || undefined,
-      createdAt: doc.created_at,
-    }));
+    const slicedRows = (data || []).slice(0, pageSize);
+    const items = await mapDocumentRows(scope.internalCompanyId, slicedRows);
 
     const nextCursor = hasMore && items.length > 0
       ? makeCursor(getRowDateValue((data || [])[pageSize - 1], dateField), (data || [])[pageSize - 1]?.id)
@@ -577,19 +733,17 @@ async function buildReadModelResponse(
     last_updated: companyProfileResult.data?.last_updated_at || "",
   };
 
-  const userInventory = await getUserInventoryParts(scope.internalCompanyId, uid);
-  const companyInventory = await getCompanyInventoryParts(scope.internalCompanyId);
-
   const counts = {
     jobs: 0,
     clients: 0,
     documents: 0,
-    inventoryParts: userInventory.parts.length,
-    companyInventoryParts: companyInventory.parts.length,
+    inventoryParts: 0,
+    companyInventoryParts: 0,
     workers: 0,
   };
 
   if (countOnly) {
+    const inventoryCounts = await getInventoryCounts(supabase, scope.internalCompanyId, String(membershipResult.data.id || ""));
     let jobsCountQuery = supabase.from("jobs").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId);
     if (!canReadCompanyJobs(requester)) {
       jobsCountQuery = jobsCountQuery.eq("id", NEVER_UUID);
@@ -599,7 +753,11 @@ async function buildReadModelResponse(
         : jobsCountQuery.eq("id", NEVER_UUID);
     }
     const documentsCountQuery = canReadCompanyDocuments(requester)
-      ? supabase.from("documents").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId)
+      ? supabase
+        .from("documents")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", scope.internalCompanyId)
+        .or("document_type.neq.305,tax_authority_status.eq.approved")
       : supabase.from("documents").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
     const workersCountQuery = canReadCompanyWorkers(requester)
       ? supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId).eq("status", "active").in("role", ["worker", "user", "basic"])
@@ -615,16 +773,19 @@ async function buildReadModelResponse(
     counts.jobs = Number(jobsCount || 0);
     counts.clients = Number(clientsCount || 0);
     counts.documents = Number(documentsCount || 0);
+    counts.inventoryParts = inventoryCounts.inventoryParts;
+    counts.companyInventoryParts = inventoryCounts.companyInventoryParts;
     counts.workers = Number(workersCount || 0);
 
     return {
       profile,
       subscription,
       businessInfo,
-      inventory: userInventory,
-      companyInventory,
+      inventory: emptyInventoryPayload(),
+      companyInventory: emptyInventoryPayload(),
       workers: [],
       clients: [],
+      clientsNextCursor: null,
       jobs: [],
       documents: [],
       jobsNextCursor: null,
@@ -641,8 +802,16 @@ async function buildReadModelResponse(
     };
   }
 
+  const [userInventory, companyInventory] = await Promise.all([
+    getUserInventoryParts(scope.internalCompanyId, uid),
+    getCompanyInventoryParts(scope.internalCompanyId),
+  ]);
+  counts.inventoryParts = userInventory.parts.length;
+  counts.companyInventoryParts = companyInventory.parts.length;
+
   let workers: any[] = [];
   let clients: any[] = [];
+  let clientsNextCursor: string | null = null;
   let jobs: any[] = [];
   let documents: any[] = [];
   let jobsNextCursor: string | null = null;
@@ -651,12 +820,13 @@ async function buildReadModelResponse(
   if (includeCollections) {
     const [workersResult, clientsResult, jobsResult, docsResult] = await Promise.all([
       buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid, scopedContext),
-      buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId }, uid, scopedContext),
+      buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
       buildReadModelResponse({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
       buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
     ]);
     workers = workersResult;
     clients = Array.isArray(clientsResult) ? clientsResult : (clientsResult.items || []);
+    clientsNextCursor = Array.isArray(clientsResult) ? null : (clientsResult.nextCursor || null);
     jobs = jobsResult.items || [];
     documents = docsResult.items || [];
     jobsNextCursor = jobsResult.nextCursor || null;
@@ -675,6 +845,7 @@ async function buildReadModelResponse(
     companyInventory,
     workers,
     clients,
+    clientsNextCursor,
     jobs,
     documents,
     jobsNextCursor,

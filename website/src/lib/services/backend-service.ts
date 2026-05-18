@@ -23,6 +23,7 @@ interface BootstrapReadModel {
   companyInventory: InventoryDoc;
   workers: WorkerProfile[];
   clients: ClientRecord[];
+  clientsNextCursor?: string | null;
   jobs: JobRecord[];
   documents: DocumentRecord[];
   jobsNextCursor?: string | null;
@@ -95,12 +96,16 @@ export async function loadBootstrapReadModel(companyId?: string | null, includeC
 }
 
 export async function loadOverviewCounts(companyId: string) {
-  return fetchReadModel<NonNullable<BootstrapReadModel["counts"]>>({
+  const payload = await fetchReadModel<BootstrapReadModel | NonNullable<BootstrapReadModel["counts"]>>({
     kind: "bootstrap",
     companyId,
     includeCollections: false,
     countOnly: true,
   });
+  if ("counts" in payload && payload.counts) {
+    return payload.counts;
+  }
+  return payload as NonNullable<BootstrapReadModel["counts"]>;
 }
 
 export async function listWorkers(companyId: string): Promise<WorkerProfile[]> {

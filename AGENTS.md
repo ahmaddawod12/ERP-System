@@ -193,6 +193,8 @@ Composite cursor `(createdAt, id)` — must remain stable; never change to singl
 Read-model edge queries must honor `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters without in-memory post-filtering as the primary access control.
 Service-role read-model code must enforce role scoping before returning rows: workers/business users only assigned jobs, basic no jobs, workers no documents, workers list manager/dev only.
 Client and inventory read-model search/pagination are SQL RPC-backed (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`); do not reintroduce full-collection Edge memory filtering.
+Count-only/bootstrap reads must stay lightweight; do not fetch full inventory or collection payloads for dashboard counts.
+Privileged RPC implementations belong behind the private schema, with public RPC names kept only as service-role wrappers for Edge code.
 
 ### `vat_number` is immutable after onboarding
 `updateBusinessInfoV1` must reject mutations to this field.
@@ -202,6 +204,7 @@ Must consume invite state atomically before finalizing membership (prevents mult
 
 ### Inventory mutations
 Inventory movement writes must use SQL helpers. Multi-part picks use `apply_inventory_pick_batch(...)` so balance changes and movement rows commit or fail together.
+Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(...)` so all consumed parts commit or fail together.
 
 ---
 

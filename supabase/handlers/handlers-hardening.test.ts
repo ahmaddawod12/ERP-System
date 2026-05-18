@@ -33,20 +33,22 @@ test('document task publishing dispatches Cloud Run only for newly created tasks
 test('read-model task access is restricted to task owner or manager/dev', () => {
   const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
 
-  assert.match(readModelHandler, /const requester = await getRequesterContext\(scope, uid\)/);
+  assert.match(readModelHandler, /preloaded\.requester \|\| await getRequesterContext\(scope, uid\)/);
   assert.match(readModelHandler, /const isTaskOwner = String\(task\.user_id\) === uid/);
   assert.match(readModelHandler, /const canReadCompanyTask = requester\.isDev \|\| requester\.role === "manager"/);
 });
 
 test('read-model service-role list queries enforce role scoping before returning data', () => {
   const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
+  const readModelTypes = readFile('supabase', 'functions', 'read-model', 'types.ts');
+  const readModelAuthScope = readFile('supabase', 'functions', 'read-model', 'auth-scope.ts');
 
-  assert.match(readModelHandler, /type RequesterContext = \{/);
-  assert.match(readModelHandler, /membershipId: string \| null/);
-  assert.match(readModelHandler, /accountType: string/);
-  assert.match(readModelHandler, /function shouldScopeJobsToMembership/);
-  assert.match(readModelHandler, /requester\.role === "worker"/);
-  assert.match(readModelHandler, /requester\.role === "user" && requester\.accountType !== "solo"/);
+  assert.match(readModelTypes, /export type RequesterContext = \{/);
+  assert.match(readModelTypes, /membershipId: string \| null/);
+  assert.match(readModelTypes, /accountType: string/);
+  assert.match(readModelAuthScope, /function shouldScopeJobsToMembership/);
+  assert.match(readModelAuthScope, /requester\.role === "worker"/);
+  assert.match(readModelAuthScope, /requester\.role === "user" && requester\.accountType !== "solo"/);
   assert.match(readModelHandler, /if \(!canReadCompanyJobs\(requester\)\) \{/);
   assert.match(readModelHandler, /\.eq\("assigned_membership_id", requester\.membershipId\)/);
   assert.match(readModelHandler, /if \(!canReadCompanyDocuments\(requester\)\) \{/);
@@ -55,10 +57,12 @@ test('read-model service-role list queries enforce role scoping before returning
 
 test('read-model list filters and cursors are wired into service-role queries', () => {
   const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
+  const readModelPagination = readFile('supabase', 'functions', 'read-model', 'pagination.ts');
+  const readModelFilters = readFile('supabase', 'functions', 'read-model', 'filters.ts');
 
-  assert.match(readModelHandler, /function parseReadLimit/);
-  assert.match(readModelHandler, /function resolveJobDateField/);
-  assert.match(readModelHandler, /function resolveDocumentDateField/);
+  assert.match(readModelPagination, /function parseReadLimit/);
+  assert.match(readModelFilters, /function resolveJobDateField/);
+  assert.match(readModelFilters, /function resolveDocumentDateField/);
   assert.match(readModelHandler, /normalizeStringList\(body\.status\)/);
   assert.match(readModelHandler, /\.in\("status", statuses\)/);
   assert.match(readModelHandler, /\.gte\(dateField, dateFrom\)/);
@@ -150,4 +154,29 @@ test('support RLS only exposes personal support threads to owner or dev', () => 
   assert.match(migration, /support_messages_owner_read_policy/);
   assert.match(migration, /c\.user_id = app_auth_uid\(\)/);
   assert.doesNotMatch(migration, /company_id IS NULL OR app_has_company_access/);
+});
+
+test('supabase hardening migration moves privileged RPC implementations behind private schema', () => {
+  const hardeningMigration = readFile('packages', 'db', 'migrations', '0001_supabase_cost_perf_security_hardening.sql');
+
+  assert.match(hardeningMigration, /CREATE SCHEMA IF NOT EXISTS private/);
+  assert.match(hardeningMigration, /REVOKE CREATE ON SCHEMA public FROM PUBLIC/);
+  assert.match(hardeningMigration, /ALTER FUNCTION public\.app_is_dev\(\) SET SCHEMA private/);
+  assert.match(hardeningMigration, /ALTER POLICY jobs_company_read_policy[\s\S]*private\.app_auth_uid\(\)/);
+  assert.match(hardeningMigration, /CREATE OR REPLACE FUNCTION public\.get_clients_page[\s\S]*SECURITY INVOKER/);
+  assert.match(hardeningMigration, /REVOKE EXECUTE ON FUNCTION '\s*\|\| public_signature[\s\S]*FROM authenticated/);
+  assert.match(hardeningMigration, /CREATE OR REPLACE FUNCTION private\.get_inventory_counts/);
+});
+
+test('read-model countOnly uses lightweight inventory counts', () => {
+  const readModelHandler = readFile('supabase', 'functions', 'read-model', 'index.ts');
+
+  assert.match(readModelHandler, /async function getInventoryCounts/);
+  assert.match(readModelHandler, /rpc\("get_inventory_counts"/);
+  assert.match(readModelHandler, /inventory: emptyInventoryPayload\(\)/);
+  assert.ok(
+    readModelHandler.indexOf('if (countOnly)') <
+      readModelHandler.indexOf('const [userInventory, companyInventory] = await Promise.all'),
+    'countOnly branch should return before full inventory payloads are fetched',
+  );
 });

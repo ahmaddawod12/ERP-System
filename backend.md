@@ -138,7 +138,9 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep read-model filters wired through the edge layer: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
 - Clients and inventory read-model calls may opt into cursor pagination and prefix search; callers that omit those options continue to receive the legacy array/snapshot payloads.
 - Clients and inventory pagination/search are backed by service-role RPCs so filtering and cursors execute in SQL instead of loading full collections into Edge memory.
+- Dashboard/count-only read-model paths use lightweight SQL count helpers and must not fetch full inventory payloads.
 - Inventory pick mutations use a batch RPC so multi-part picks commit or fail as one database transaction.
+- Finished solo-job inventory consumption uses a SQL batch RPC so all consumed parts commit or fail together.
 - Keep signed URL issuance server-controlled: fixed buckets and canonical storage path validation.
 - Keep job file signed URLs bound to persisted attachment rows, not caller-selected prefixes.
 - Accept temporary `attachmentUploadId` references during job creation only long enough to validate and normalize them into canonical attachment rows/storage paths.
@@ -150,6 +152,8 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Reject inventory underflow instead of clamping balances to zero during backend mutations.
 - Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
 - Use `apply_inventory_pick_batch(...)` for multi-part picks so all balance updates and movement rows share one SQL transaction.
+- Use `apply_job_inventory_consumption_batch(...)` for finished-job part consumption so job-related stock deductions are atomic.
+- Keep privileged RPC implementations in the private schema and expose only service-role public wrappers needed by Edge code.
 - Cache/sync version mutations should use the SQL-side `bump_company_sync_version(...)` helper instead of read-modify-write updates.
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
 - Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.

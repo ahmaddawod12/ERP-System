@@ -5,7 +5,6 @@ const {
   companyMemberships,
   inventoryBalances,
   inventoryLocations,
-  inventoryMovements,
   inventoryParts,
 } = require('./schema');
 const {
@@ -217,34 +216,6 @@ async function upsertLocationBalance(tx, locationId, partId, quantity, now) {
       quantity_on_hand = EXCLUDED.quantity_on_hand,
       updated_at = EXCLUDED.updated_at
   `);
-}
-
-async function incrementLocationBalance(tx, locationId, partId, quantity, now) {
-  await tx.execute(sql`
-    INSERT INTO inventory_balances (location_id, part_id, quantity_on_hand, updated_at)
-    VALUES (${locationId}, ${partId}, ${String(quantity)}, ${now})
-    ON CONFLICT (location_id, part_id)
-    DO UPDATE SET
-      quantity_on_hand = inventory_balances.quantity_on_hand + EXCLUDED.quantity_on_hand,
-      updated_at = EXCLUDED.updated_at
-  `);
-}
-
-async function createInventoryMovement(tx, input) {
-  await tx.insert(inventoryMovements).values({
-    companyId: input.companyId,
-    partId: input.partId,
-    quantity: String(input.quantity),
-    fromLocationId: input.fromLocationId || null,
-    toLocationId: input.toLocationId || null,
-    movementType: input.movementType,
-    jobId: input.jobId || null,
-    documentId: input.documentId || null,
-    createdByMembershipId: input.createdByMembershipId || null,
-    idempotencyKey: input.idempotencyKey || null,
-    note: input.note || null,
-    createdAt: input.createdAt,
-  });
 }
 
 async function addCompanyInventoryPart(input, options: any = {}) {
@@ -730,30 +701,25 @@ async function pickCompanyParts(input, options: any = {}) {
       throw error;
     }
 
-    for (const pick of normalizedPicks) {
+    const pickPayload = normalizedPicks.map((pick) => {
       const available = availableByPartNo.get(pick.id);
-      const remaining = Number(available.quantity_on_hand || 0) - pick.quantity;
-      await tx.update(inventoryBalances).set({
-        quantityOnHand: String(remaining),
-        updatedAt: now,
-      }).where(and(
-        eq(inventoryBalances.locationId, companyLocation.id),
-        eq(inventoryBalances.partId, available.id),
-      ));
-
-      await incrementLocationBalance(tx, memberLocation.locationId, available.id, pick.quantity, now);
-      await createInventoryMovement(tx, {
-        companyId: company.id,
-        partId: available.id,
+      return {
+        part_id: available.id,
+        part_no: pick.id,
         quantity: pick.quantity,
-        fromLocationId: companyLocation.id,
-        toLocationId: memberLocation.locationId,
-        movementType: 'pick',
-        createdByMembershipId: actorMembership?.id || null,
-        createdAt: now,
-        note: `Picked part #${pick.id}`,
-      });
-    }
+      };
+    });
+    await tx.execute(sql`
+      SELECT *
+      FROM apply_inventory_pick_batch(
+        ${company.id},
+        ${companyLocation.id},
+        ${memberLocation.locationId},
+        ${actorMembership?.id || null},
+        ${JSON.stringify(pickPayload)}::jsonb,
+        ${now}
+      )
+    `);
 
     return { picked: normalizedPicks.length };
   });
@@ -798,29 +764,36 @@ async function deductUserInventoryPartsInTransaction(tx, companyInternalId, inpu
     availableByPartNo.set(Number(row.part_no), row);
   }
 
-  let deducted = 0;
-  for (const { partNo, qty } of normalizedEntries) {
-    const available = availableByPartNo.get(partNo);
-    if (!available) continue;
+  const consumptionPayload = normalizedEntries
+    .map(({ partNo, qty }) => {
+      const available = availableByPartNo.get(partNo);
+      return available
+        ? {
+          part_id: available.id,
+          part_no: partNo,
+          quantity: qty,
+        }
+        : null;
+    })
+    .filter(Boolean);
 
-    const availableQty = Number(available.quantity_on_hand || 0);
-    if (availableQty < qty) {
-      const error = new Error(`Insufficient stock for part #${partNo}`);
-      (error as any).code = 'failed-precondition';
-      throw error;
-    }
-    const newQty = availableQty - qty;
-    await tx
-      .update(inventoryBalances)
-      .set({ quantityOnHand: String(newQty), updatedAt: now })
-      .where(and(
-        eq(inventoryBalances.locationId, memberLocation.locationId),
-        eq(inventoryBalances.partId, available.id),
-      ));
-    deducted++;
+  if (consumptionPayload.length === 0) {
+    return { deducted: 0 };
   }
 
-  return { deducted };
+  const result = await tx.execute(sql`
+    SELECT *
+    FROM apply_job_inventory_consumption_batch(
+      ${companyInternalId},
+      ${memberLocation.membershipId},
+      ${input.jobId || null},
+      ${memberLocation.membershipId},
+      ${JSON.stringify(consumptionPayload)}::jsonb,
+      ${now}
+    )
+  `);
+
+  return { deducted: Number(result.rows?.length || 0) };
 }
 
 /**

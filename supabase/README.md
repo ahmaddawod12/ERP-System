@@ -94,7 +94,11 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 - Do not use `MAX + 1` allocation patterns in concurrent mutation paths.
 - Use SQL-side atomic inventory helpers such as `apply_inventory_movement(...)` for movement writes and preserve the split uniqueness rules for company-only vs membership-scoped inventory locations.
 - Use `apply_inventory_pick_batch(...)` for multi-part picks so movement rows and balance updates commit or fail together.
+- Use `apply_job_inventory_consumption_batch(...)` for finished-job part consumption so member stock deductions are atomic.
+- Privileged SQL implementations must live in the private schema. Public RPC names are compatibility wrappers for service-role Edge callers, not direct client APIs.
+- `bootstrap` count-only reads must use lightweight count helpers and must not fetch full inventory or collection payloads.
 - Keep `packages/db/perf/profiling.sql` as the first stop for database performance work; do not add broad indexes without advisor/`EXPLAIN` evidence.
+- Use `cleanup_expired_operational_rows()` from a trusted schedule to trim expired rate-limit, task, notification, contact, and failed idempotency rows.
 
 ## Environment Essentials
 

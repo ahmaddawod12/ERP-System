@@ -1011,6 +1011,116 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION apply_job_inventory_consumption_batch(
+  p_company_id UUID,
+  p_membership_id UUID,
+  p_job_id UUID,
+  p_created_by_membership_id UUID,
+  p_parts JSONB,
+  p_created_at TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TABLE (
+  movement_id UUID,
+  part_id UUID,
+  part_no INTEGER,
+  quantity NUMERIC
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_from_location_id UUID;
+  v_consumed_location_id UUID;
+  v_pick RECORD;
+  v_part RECORD;
+  v_movement RECORD;
+BEGIN
+  IF p_parts IS NULL OR jsonb_typeof(p_parts) <> 'array' OR jsonb_array_length(p_parts) = 0 THEN
+    RETURN;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM jobs j
+    WHERE j.id = p_job_id
+      AND j.company_id = p_company_id
+  ) THEN
+    RAISE EXCEPTION 'inventory_job_not_found';
+  END IF;
+
+  SELECT id
+  INTO v_from_location_id
+  FROM inventory_locations
+  WHERE company_id = p_company_id
+    AND location_type = 'member'
+    AND membership_id = p_membership_id
+  LIMIT 1;
+
+  IF v_from_location_id IS NULL THEN
+    RAISE EXCEPTION 'inventory_member_location_missing';
+  END IF;
+
+  INSERT INTO inventory_locations (company_id, location_type, membership_id, name, created_at)
+  VALUES (p_company_id, 'consumed', NULL, 'Consumed Inventory', p_created_at)
+  ON CONFLICT DO NOTHING;
+
+  SELECT id
+  INTO v_consumed_location_id
+  FROM inventory_locations
+  WHERE company_id = p_company_id
+    AND location_type = 'consumed'
+    AND membership_id IS NULL
+  LIMIT 1;
+
+  IF v_consumed_location_id IS NULL THEN
+    RAISE EXCEPTION 'inventory_consumed_location_missing';
+  END IF;
+
+  FOR v_pick IN
+    SELECT *
+    FROM jsonb_to_recordset(p_parts) AS pick(part_id UUID, part_no INTEGER, quantity NUMERIC)
+  LOOP
+    IF v_pick.part_id IS NULL OR v_pick.quantity IS NULL OR v_pick.quantity <= 0 THEN
+      RAISE EXCEPTION 'inventory_invalid_consumption';
+    END IF;
+
+    SELECT id, part_no
+    INTO v_part
+    FROM inventory_parts
+    WHERE id = v_pick.part_id
+      AND company_id = p_company_id
+      AND archived_at IS NULL
+    LIMIT 1;
+
+    IF v_part.id IS NULL THEN
+      RAISE EXCEPTION 'inventory_part_not_found';
+    END IF;
+
+    SELECT *
+    INTO v_movement
+    FROM apply_inventory_movement(
+      p_company_id,
+      v_part.id,
+      v_pick.quantity,
+      v_from_location_id,
+      v_consumed_location_id,
+      'job_consumption',
+      p_created_by_membership_id,
+      p_job_id,
+      NULL,
+      'Consumed for job #' || COALESCE(v_pick.part_no::text, v_part.part_no::text, ''),
+      p_created_at
+    );
+
+    movement_id := v_movement.movement_id;
+    part_id := v_part.id;
+    part_no := v_part.part_no;
+    quantity := v_pick.quantity;
+    RETURN NEXT;
+  END LOOP;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION get_clients_page(
   p_company_id UUID,
   p_page_size INTEGER DEFAULT NULL,
@@ -1626,7 +1736,18 @@ ALTER TABLE archive_runs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY company_memberships_company_read_policy
   ON company_memberships
   FOR SELECT
-  USING (app_has_company_access(company_id) OR user_id = app_auth_uid());
+  USING (
+    app_is_dev()
+    OR user_id = app_auth_uid()
+    OR EXISTS (
+      SELECT 1
+      FROM company_memberships requester
+      WHERE requester.company_id = company_memberships.company_id
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND requester.role = 'manager'
+    )
+  );
 
 CREATE POLICY company_profiles_company_read_policy
   ON company_profiles
@@ -1651,17 +1772,60 @@ CREATE POLICY clients_company_read_policy
 CREATE POLICY jobs_company_read_policy
   ON jobs
   FOR SELECT
-  USING (app_has_company_access(company_id));
+  USING (
+    app_is_dev()
+    OR EXISTS (
+      SELECT 1
+      FROM company_memberships requester
+      INNER JOIN companies c ON c.id = requester.company_id
+      WHERE requester.company_id = jobs.company_id
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND (
+          requester.role = 'manager'
+          OR (
+            requester.role = 'user'
+            AND (
+              c.account_type = 'solo'
+              OR jobs.assigned_membership_id = requester.id
+            )
+          )
+          OR (
+            requester.role = 'worker'
+            AND jobs.assigned_membership_id = requester.id
+          )
+        )
+    )
+  );
 
 CREATE POLICY job_attachments_company_read_policy
   ON job_attachments
   FOR SELECT
   USING (
-    EXISTS (
+    app_is_dev()
+    OR EXISTS (
       SELECT 1
       FROM jobs j
+      INNER JOIN company_memberships requester
+        ON requester.company_id = j.company_id
+      INNER JOIN companies c ON c.id = requester.company_id
       WHERE j.id = job_attachments.job_id
-        AND app_has_company_access(j.company_id)
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND (
+          requester.role = 'manager'
+          OR (
+            requester.role = 'user'
+            AND (
+              c.account_type = 'solo'
+              OR j.assigned_membership_id = requester.id
+            )
+          )
+          OR (
+            requester.role = 'worker'
+            AND j.assigned_membership_id = requester.id
+          )
+        )
     )
   );
 
@@ -1669,11 +1833,30 @@ CREATE POLICY job_part_usages_company_read_policy
   ON job_part_usages
   FOR SELECT
   USING (
-    EXISTS (
+    app_is_dev()
+    OR EXISTS (
       SELECT 1
       FROM jobs j
+      INNER JOIN company_memberships requester
+        ON requester.company_id = j.company_id
+      INNER JOIN companies c ON c.id = requester.company_id
       WHERE j.id = job_part_usages.job_id
-        AND app_has_company_access(j.company_id)
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND (
+          requester.role = 'manager'
+          OR (
+            requester.role = 'user'
+            AND (
+              c.account_type = 'solo'
+              OR j.assigned_membership_id = requester.id
+            )
+          )
+          OR (
+            requester.role = 'worker'
+            AND j.assigned_membership_id = requester.id
+          )
+        )
     )
   );
 
@@ -1707,17 +1890,40 @@ CREATE POLICY inventory_movements_company_read_policy
 CREATE POLICY documents_company_read_policy
   ON documents
   FOR SELECT
-  USING (app_has_company_access(company_id));
+  USING (
+    app_is_dev()
+    OR EXISTS (
+      SELECT 1
+      FROM company_memberships requester
+      WHERE requester.company_id = documents.company_id
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND requester.role IN ('manager', 'user', 'basic')
+        AND NOT (
+          documents.document_type = 305
+          AND documents.tax_authority_status <> 'approved'
+        )
+    )
+  );
 
 CREATE POLICY document_items_company_read_policy
   ON document_items
   FOR SELECT
   USING (
-    EXISTS (
+    app_is_dev()
+    OR EXISTS (
       SELECT 1
       FROM documents d
+      INNER JOIN company_memberships requester
+        ON requester.company_id = d.company_id
       WHERE d.id = document_items.document_id
-        AND app_has_company_access(d.company_id)
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND requester.role IN ('manager', 'user', 'basic')
+        AND NOT (
+          d.document_type = 305
+          AND d.tax_authority_status <> 'approved'
+        )
     )
   );
 
@@ -1725,11 +1931,20 @@ CREATE POLICY document_job_links_company_read_policy
   ON document_job_links
   FOR SELECT
   USING (
-    EXISTS (
+    app_is_dev()
+    OR EXISTS (
       SELECT 1
       FROM documents d
+      INNER JOIN company_memberships requester
+        ON requester.company_id = d.company_id
       WHERE d.id = document_job_links.document_id
-        AND app_has_company_access(d.company_id)
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND requester.role IN ('manager', 'user', 'basic')
+        AND NOT (
+          d.document_type = 305
+          AND d.tax_authority_status <> 'approved'
+        )
     )
   );
 
@@ -1737,11 +1952,20 @@ CREATE POLICY proposal_usage_company_read_policy
   ON proposal_usage
   FOR SELECT
   USING (
-    EXISTS (
+    app_is_dev()
+    OR EXISTS (
       SELECT 1
       FROM documents d
+      INNER JOIN company_memberships requester
+        ON requester.company_id = d.company_id
       WHERE d.id = proposal_usage.proposal_document_id
-        AND app_has_company_access(d.company_id)
+        AND requester.user_id = app_auth_uid()
+        AND requester.status = 'active'
+        AND requester.role IN ('manager', 'user', 'basic')
+        AND NOT (
+          d.document_type = 305
+          AND d.tax_authority_status <> 'approved'
+        )
     )
   );
 
@@ -1784,6 +2008,7 @@ DECLARE
     'claim_tax_invoice_idempotency(UUID, TEXT, VARCHAR, VARCHAR, TIMESTAMPTZ)',
     'apply_inventory_movement(UUID, UUID, NUMERIC, UUID, UUID, inventory_movement_type, UUID, UUID, UUID, TEXT, TIMESTAMPTZ)',
     'apply_inventory_pick_batch(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ)',
+    'apply_job_inventory_consumption_batch(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ)',
     'get_clients_page(UUID, INTEGER, INTEGER, UUID, TEXT)',
     'get_company_inventory_page(UUID, INTEGER, INTEGER, UUID, TEXT)',
     'get_member_inventory_page(UUID, TEXT, INTEGER, INTEGER, UUID, TEXT)',

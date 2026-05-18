@@ -20,6 +20,7 @@ interface BootstrapPayload {
   companyInventory: { parts: any[]; nextId: number; lastUpdated: string };
   workers: any[] | Record<string, any>;
   clients: any[];
+  clientsNextCursor?: string | null;
   jobs: any[];
   documents: any[];
   jobsNextCursor?: string | null;
@@ -160,23 +161,13 @@ export async function fetchAllRecentJobs(
   companyId: string,
   role: string,
 ): Promise<{ jobsData: any[]; documentsData: any[] }> {
-  if (role === 'dev') {
-    logger.debug('Dev role: skipping all jobs/documents fetch (early return)');
+  if (!companyId || role === 'dev') {
+    logger.debug('Skipping legacy bootstrap job/document fetch');
     return { jobsData: [], documentsData: [] };
   }
 
-  logger.debug('[READ MODEL] Fetching bootstrap jobs/documents from backend...');
-
-  try {
-    const bootstrap = await readBootstrap(companyId, true);
-    return {
-      jobsData: Array.isArray(bootstrap.jobs) ? bootstrap.jobs : [],
-      documentsData: Array.isArray(bootstrap.documents) ? bootstrap.documents : [],
-    };
-  } catch (error) {
-    console.error('Error fetching bootstrap jobs/documents:', error);
-    return { jobsData: [], documentsData: [] };
-  }
+  logger.debug('[READ MODEL] Initial jobs/documents are loaded through cursor pages');
+  return { jobsData: [], documentsData: [] };
 }
 
 export async function fetchCompanySyncState(companyId: string): Promise<CompanySyncStatePayload> {

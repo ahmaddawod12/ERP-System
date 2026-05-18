@@ -535,6 +535,7 @@ async function createJob(input, options: any = {}) {
       await deductUserInventoryPartsInTransaction(tx, company.id, {
         targetUid: input.inventoryDeductionTargetUid,
         partsUsed: input.partsUsed || [],
+        jobId: jobRow.id,
       }, now);
     }
 
@@ -702,6 +703,7 @@ async function acceptJob(input, options: any = {}) {
       await deductUserInventoryPartsInTransaction(tx, company.id, {
         targetUid: assignmentIdentity.userId,
         partsUsed: partUsageRows,
+        jobId: jobRow.id,
       }, now);
     }
 

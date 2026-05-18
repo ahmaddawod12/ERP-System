@@ -197,6 +197,63 @@ async function resolveJobPartRows(
   });
 }
 
+async function consumeFinishedJobInventory(
+  companyId: string,
+  membership: MembershipContext,
+  jobId: string,
+  partRows: Array<{ inventory_part_id: string | null; part_name_snapshot: string | null; quantity: number; created_at: string }>,
+  now: string,
+  ctx: EdgeFunctionContext,
+): Promise<number> {
+  const consumableParts = partRows
+    .filter((part) => part.inventory_part_id && Number(part.quantity || 0) > 0)
+    .map((part) => ({
+      part_id: String(part.inventory_part_id),
+      quantity: Number(part.quantity || 0),
+    }));
+
+  if (consumableParts.length === 0) {
+    return 0;
+  }
+
+  const supabase = createSupabaseClient(ctx.env);
+  const { data, error } = await supabase.rpc("apply_job_inventory_consumption_batch", {
+    p_company_id: companyId,
+    p_membership_id: membership.id,
+    p_job_id: jobId,
+    p_created_by_membership_id: membership.id,
+    p_parts: consumableParts,
+    p_created_at: now,
+  });
+
+  if (error) {
+    const message = String(error.message || "");
+    if (
+      message.includes("inventory_invalid_consumption") ||
+      message.includes("inventory_invalid_quantity")
+    ) {
+      throw { code: "invalid-argument", message: "Job parts contain an invalid quantity", httpStatus: 400 };
+    }
+    if (message.includes("inventory_part_not_found")) {
+      throw { code: "not-found", message: "Inventory part not found", httpStatus: 404 };
+    }
+    if (message.includes("inventory_member_location_missing")) {
+      throw { code: "failed-precondition", message: "Member inventory location is missing", httpStatus: 400 };
+    }
+    if (message.includes("inventory_insufficient_stock") || String(error.code || "") === "23514") {
+      throw { code: "failed-precondition", message: "Insufficient stock for job parts", httpStatus: 400 };
+    }
+    ctx.logger.error("Finished job inventory consumption failed", {
+      companyId,
+      jobId,
+      error: error.message,
+    });
+    throw { code: "internal", message: "Failed to consume job inventory", httpStatus: 500 };
+  }
+
+  return Array.isArray(data) ? data.length : 0;
+}
+
 async function resolveCompanyJob<T extends Record<string, unknown>>(
   companyId: string,
   jobIdentifier: string,
@@ -639,6 +696,25 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
         }
         throw { code: "internal", message: "Failed to save job attachments", httpStatus: 500 };
       }
+    }
+  }
+
+  if (status === "finished" && membership.role === "user") {
+    try {
+      const consumed = await consumeFinishedJobInventory(companyId, membership, String(inserted.id), resolvedPartRows, now, ctx);
+      if (consumed > 0) {
+        await bumpCompanySyncVersion(companyId, "company_inventory_version", ctx);
+      }
+    } catch (inventoryError) {
+      const { error: rollbackError } = await supabase.from("jobs").delete().eq("id", inserted.id).eq("company_id", companyId);
+      if (rollbackError) {
+        ctx.logger.error("Failed to roll back finished job after inventory consumption failure", {
+          jobId: inserted.id,
+          companyId,
+          rollbackError: rollbackError.message,
+        });
+      }
+      throw inventoryError;
     }
   }
 

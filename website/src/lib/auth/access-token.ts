@@ -88,7 +88,6 @@ async function verifySupabaseToken(token: string): Promise<VerifiedAccessToken> 
     id?: unknown;
     email?: unknown;
     app_metadata?: { role?: unknown };
-    user_metadata?: { role?: unknown; companyId?: unknown; company_id?: unknown };
   } | null;
 
   const uid = String(user?.id ?? "").trim();
@@ -97,15 +96,7 @@ async function verifySupabaseToken(token: string): Promise<VerifiedAccessToken> 
   }
 
   const authTime = Number.isFinite(Number(claims?.iat)) ? Number(claims?.iat) : null;
-  const roleFromClaims = typeof claims?.role === "string" ? claims.role : null;
   const roleFromAppMetadata = typeof user?.app_metadata?.role === "string" ? user.app_metadata.role : null;
-  const roleFromUserMetadata = typeof user?.user_metadata?.role === "string" ? user.user_metadata.role : null;
-  const companyFromClaims = typeof claims?.companyId === "string"
-    ? claims.companyId
-    : (typeof claims?.company_id === "string" ? claims.company_id : null);
-  const companyFromUserMetadata = typeof user?.user_metadata?.companyId === "string"
-    ? user.user_metadata.companyId
-    : (typeof user?.user_metadata?.company_id === "string" ? user.user_metadata.company_id : null);
 
   return {
     uid,
@@ -114,8 +105,8 @@ async function verifySupabaseToken(token: string): Promise<VerifiedAccessToken> 
     claims,
     authTime,
     email: typeof user?.email === "string" ? user.email : null,
-    role: roleFromClaims || roleFromAppMetadata || roleFromUserMetadata,
-    companyId: companyFromClaims || companyFromUserMetadata,
+    role: roleFromAppMetadata,
+    companyId: null,
     accessToken: token,
   };
 }

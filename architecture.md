@@ -53,7 +53,7 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
 - Invites: `company_invites`
 - Support: `support_conversations`, `support_messages`
 - Operational SQL tables: `notification_deliveries`, `rate_limit_buckets`, `archive_runs`, `auditLogs`, `orphanedUserCleanupMarkers`, `system_counters`
-- SQL helper functions: counters/rate limits, invite and tax idempotency, inventory movement and batch picks, client/inventory paged reads, and sync-version bumps are backend-only RPCs.
+- SQL helper functions: counters/rate limits, invite and tax idempotency, inventory movement, batch picks, finished-job inventory consumption, client/inventory paged reads, lightweight inventory counts, cleanup, and sync-version bumps are backend-only RPCs.
 
 ### Firestore-owned operational and compatibility data
 
@@ -147,6 +147,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Apply the same SQL counter rule to tax invoice numbering (`doc_305`) and company inventory part numbering (`part_no`).
 - SQL helper RPCs that mutate counters, rate limits, inventory, invites, tax idempotency, or sync versions are backend-only and should not be exposed to anonymous or authenticated client roles.
 - Service-role read RPCs for clients and inventory are also backend-only; website/mobile callers reach them through the read-model gateway.
+- Privileged RPC implementations live in the private schema; public RPC names are service-role-only compatibility wrappers for Edge Functions.
+- Count-only dashboard/bootstrap reads use SQL count helpers instead of loading full inventories or collections.
 
 ### Jobs
 
@@ -172,6 +174,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Inventory mutations must fail on negative resulting balances; they must not silently clamp stock underflow to zero.
 - Inventory movement mutations should be applied atomically through SQL helpers such as `apply_inventory_movement(...)` rather than client-visible read-modify-write sequences.
 - Multi-part inventory picks should use `apply_inventory_pick_batch(...)` so all movements commit or roll back together.
+- Finished-job inventory consumption should use `apply_job_inventory_consumption_batch(...)` so all part deductions commit or roll back together.
 
 ### Performance and profiling
 

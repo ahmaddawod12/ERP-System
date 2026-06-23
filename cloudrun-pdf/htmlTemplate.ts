@@ -22,12 +22,16 @@ function sanitizeInput(input) {
 
 /**
  * Sanitize a URL to prevent XSS via javascript: or data: schemes.
- * Only allows https://, http://, and root-relative (/) URLs.
+ * Allows https://, http://, root-relative (/), and inline image data URIs
+ * (data:image/png;base64, data:image/jpeg;base64) used for embedded logos.
  */
 function sanitizeUrl(url: unknown): string {
   if (typeof url !== 'string' || url.trim() === '') return '';
   const trimmed = url.trim();
   if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')) {
+    return trimmed;
+  }
+  if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(trimmed)) {
     return trimmed;
   }
   return '';
@@ -235,6 +239,7 @@ function generateDocumentHTML(documentData) {
   
   const sanitizedNotes = sanitizeInput(notes || '');
   const sanitizedDocNumber = sanitizeInput(documentNumber || 'N/A');
+  const sanitizedDate = sanitizeInput(date || new Date().toLocaleDateString('he-IL'));
 
   // Calculate totals using integer cents arithmetic to avoid floating point errors
   // Delivery notes now include prices (same as other documents)
@@ -244,11 +249,11 @@ function generateDocumentHTML(documentData) {
     const priceCents = parseAmountToCents(item.price || 0, 'price');
     const itemTotalCents = Math.round((quantityCents / 100) * priceCents);
     subtotalCents += itemTotalCents;
-    
+
     return {
       description: sanitizeInput(item.description),
-      quantity: item.quantity,
-      price: item.price || 0,
+      quantity: sanitizeInput(String(item.quantity ?? '')),
+      price: sanitizeInput(String(item.price ?? 0)),
       priceCents: priceCents,
       totalCents: itemTotalCents,
       partId: item.partId ? sanitizeInput(item.partId) : null,
@@ -629,7 +634,7 @@ function generateDocumentHTML(documentData) {
         <strong>מספר הקצאה:</strong> ${sanitizedConfirmationNumber || ''}
       </div>` : ''}
       <div class="document-date">
-        <strong>תאריך:</strong> ${date || new Date().toLocaleDateString('he-IL')}
+        <strong>תאריך:</strong> ${sanitizedDate}
       </div>
     </div>
     
@@ -664,7 +669,7 @@ function generateDocumentHTML(documentData) {
           ${sanitizedItems.some(i => i.partId) ? `<td>${item.partId || '-'}</td>` : ''}
           <td>${item.description}</td>
           <td>${item.quantity}</td>
-          <td>${currencySymbol}${Number(item.price).toFixed(2)}</td>
+          <td>${currencySymbol}${Number(item.price || 0).toFixed(2)}</td>
           <td>${currencySymbol}${formatCentsToAmount(item.totalCents)}</td>
         </tr>
         `).join('')}

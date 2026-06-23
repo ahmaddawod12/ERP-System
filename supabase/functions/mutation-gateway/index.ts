@@ -139,9 +139,9 @@ async function handleMutationRequest(req: Request): Promise<Response> {
       };
     }
 
-    // Require authentication for most operations
-    // (Some operations like registerBusinessV1 may not require auth - handled per-handler)
-    if (!ctx.auth && operation !== "registerBusinessV1") {
+    // Require authentication for all operations. Business registration must be
+    // performed by an authenticated user during onboarding (website-only).
+    if (!ctx.auth) {
       throw {
         code: "unauthenticated",
         httpStatus: 401,

@@ -11,6 +11,7 @@
 - Tracks preview/generate work through backend `document_tasks` polling.
 - Treats public sequential job IDs and member numbers as the client-facing job contract.
 - Uses SQL-backed read-model pages for clients, jobs, documents, and inventory through backend gateway helpers.
+- Edge function caller URLs use flattened dash names for nested paths (e.g., `contact-request`, `invites-create`) to match Supabase deploy names.
 
 ## Architecture Rules
 
@@ -27,6 +28,7 @@
 - Read-model array helpers unwrap `{ items, nextCursor }` for legacy callers; use explicit page helpers when a screen needs cursor-aware pagination.
 - Clients and inventory preserve their existing default payloads while backend SQL RPCs handle search and cursor pagination.
 - Use `utils/logger.ts` for debug output so noisy logs are dev-only; keep warnings/errors visible.
+- Native config files (`google-services.json`, `GoogleService-Info.plist`) and `.env` files must not be committed; they are listed in `phone_app/.gitignore`.
 - Offline queued solo jobs should be replaced by the server-created public job after sync succeeds; do not leave temp local duplicates behind.
 - Solo finished jobs must upload photos/signatures before `createJobV1` so the created record already contains canonical attachment refs.
 - Attachment uploads should use canonical company-scoped storage paths and may carry a temporary `attachmentUploadId` until the server allocates the final public job number.

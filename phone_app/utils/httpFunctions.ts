@@ -23,12 +23,12 @@ function getEdgePath(functionName: string): string {
     readModelV1: 'read-model',
     mutationGatewayV1: 'mutation-gateway',
     mutationGatewayMeWest1V1: 'mutation-gateway-me-west1',
-    createInviteV1: 'invites/create',
-    joinCompanyV1: 'invites/join',
-    requestUpgradeV1: 'upgrades/request',
-    listUpgradeRequestsV1: 'upgrades/list',
-    moderateUpgradeRequestV1: 'upgrades/moderate',
-    contactRequestV1: 'contact/request',
+    createInviteV1: 'invites-create',
+    joinCompanyV1: 'invites-join',
+    requestUpgradeV1: 'upgrades-request',
+    listUpgradeRequestsV1: 'upgrades-list',
+    moderateUpgradeRequestV1: 'upgrades-moderate',
+    contactRequestV1: 'contact-request',
   };
   return mapping[functionName] || functionName;
 }

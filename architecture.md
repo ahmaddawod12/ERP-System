@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current May 15, 2026 Smart-Job ERP architecture. It reflects the active code paths in `website/`, `phone_app/`, `supabase/functions/`, `cloudrun-pdf/`, `cloudrun-archiver/`, `packages/contracts/`, and `packages/db/`.
+This document describes the current June 22, 2026 Smart-Job ERP architecture. It reflects the active code paths in `website/`, `phone_app/`, `supabase/functions/`, `cloudrun-pdf/`, `cloudrun-archiver/`, `packages/contracts/`, and `packages/db`.
 
 ## Executive Summary
 
@@ -35,6 +35,7 @@ website/mobile
 - Backend handlers must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes. Public numeric IDs and internal UUIDs are resolved with separate SQL filters.
 - Public job API boundaries use sequential `job_no` values; internal SQL UUIDs are resolved only inside backend handlers.
 - Read-model job cursors remain based on the internal stable tuple `(created_at, jobs.id)` even when item payloads expose public sequential job IDs.
+- Module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) is enforced for both mutations and read-model kinds based on `company_subscriptions.enabled_modules`.
 
 ### SQL-owned runtime data
 
@@ -53,7 +54,8 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
 - Invites: `company_invites`
 - Support: `support_conversations`, `support_messages`
 - Operational SQL tables: `notification_deliveries`, `rate_limit_buckets`, `archive_runs`, `auditLogs`, `orphanedUserCleanupMarkers`, `system_counters`
-- SQL helper functions: counters/rate limits, invite and tax idempotency, inventory movement, batch picks, finished-job inventory consumption, client/inventory paged reads, lightweight inventory counts, cleanup, and sync-version bumps are backend-only RPCs.
+- SQL helper functions: counters/rate limits, invite and tax idempotency, inventory movement, batch picks, finished-job inventory consumption, client/inventory paged reads, lightweight inventory counts, cleanup, sync-version bumps, atomic job creation, and atomic business registration are backend-only RPCs.
+- Privileged RPC implementations live in the `private` schema with `SECURITY DEFINER`; public RPC names are thin `SECURITY INVOKER` wrappers granted to the `service_role` only.
 
 ### Firestore-owned operational and compatibility data
 
@@ -128,7 +130,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Archive export must drain paginated SQL reads; it cannot assume one page contains a full month.
 - Archive payload generation should stream JSON to disk/storage rather than holding the full month in memory.
 - Archive deletion must use the exact verified document ID list, not a rerun query.
-- Archive manifests must stay in `uploaded_not_deleted` state when deletion counts are partial.
+- Archive manifests remain resumable: `uploaded_not_deleted` retries verify the archive and can be marked `deleted` when the records are already gone, instead of failing on exact-count mismatches.
 - Archive retrieval stays backend-controlled; callers provide `(companyId, year, month, dataType)` and receive JSON payloads from the edge runtime.
 
 ## Canonical Rules
@@ -149,6 +151,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Service-role read RPCs for clients and inventory are also backend-only; website/mobile callers reach them through the read-model gateway.
 - Privileged RPC implementations live in the private schema; public RPC names are service-role-only compatibility wrappers for Edge Functions.
 - Count-only dashboard/bootstrap reads use SQL count helpers instead of loading full inventories or collections.
+- Module entitlement is checked before returning read-model rows for `jobs`, `clients`, `inventory`, `documents`, and `workers`.
 
 ### Jobs
 

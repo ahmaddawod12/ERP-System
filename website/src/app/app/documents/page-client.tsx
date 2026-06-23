@@ -162,7 +162,8 @@ export default function DocumentsClient() {
       return;
     }
     try {
-      const { clients: nextClients } = await listClients(companyScopeId);
+      // TODO: Replace full client load with searchable/autocomplete client picker.
+      const { clients: nextClients } = await listClients(companyScopeId, { loadAll: true });
       setClients(nextClients);
     } catch {
       // silent

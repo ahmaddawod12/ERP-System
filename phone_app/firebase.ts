@@ -292,23 +292,23 @@ function getSupabaseEdgeBaseUrl(): string {
 
 function getMutationGatewayTarget(operation: string): { edgePath: string } {
   if (operation === 'createInviteV1') {
-    return { edgePath: 'invites/create' };
+    return { edgePath: 'invites-create' };
   }
 
   if (operation === 'joinCompanyV1') {
-    return { edgePath: 'invites/join' };
+    return { edgePath: 'invites-join' };
   }
 
   if (operation === 'requestUpgradeV1') {
-    return { edgePath: 'upgrades/request' };
+    return { edgePath: 'upgrades-request' };
   }
 
   if (operation === 'listUpgradeRequestsV1') {
-    return { edgePath: 'upgrades/list' };
+    return { edgePath: 'upgrades-list' };
   }
 
   if (operation === 'moderateUpgradeRequestV1') {
-    return { edgePath: 'upgrades/moderate' };
+    return { edgePath: 'upgrades-moderate' };
   }
 
   if (operation === 'getInvoiceApproval') {

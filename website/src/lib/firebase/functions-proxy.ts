@@ -10,12 +10,12 @@ const EDGE_FUNCTION_NAME_MAP: Record<string, string> = {
   mutationGatewayV1: "mutation-gateway",
   mutationGatewayMeWest1V1: "mutation-gateway-me-west1",
   readModelV1: "read-model",
-  createInviteV1: "invites/create",
-  joinCompanyV1: "invites/join",
-  requestUpgradeV1: "upgrades/request",
-  listUpgradeRequestsV1: "upgrades/list",
-  moderateUpgradeRequestV1: "upgrades/moderate",
-  contactRequestV1: "contact/request",
+  createInviteV1: "invites-create",
+  joinCompanyV1: "invites-join",
+  requestUpgradeV1: "upgrades-request",
+  listUpgradeRequestsV1: "upgrades-list",
+  moderateUpgradeRequestV1: "upgrades-moderate",
+  contactRequestV1: "contact-request",
 };
 
 function getEdgeFunctionsBaseUrl() {

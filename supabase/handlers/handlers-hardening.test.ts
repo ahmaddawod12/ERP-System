@@ -97,11 +97,11 @@ test('job part usage resolves public part numbers before insert', () => {
   assert.match(jobsHandler, /async function resolveJobPartRows/);
   assert.match(jobsHandler, /\.from\("inventory_parts"\)/);
   assert.match(jobsHandler, /\.in\("part_no", numericPartNos\)/);
-  const jobInsertIndex = jobsHandler.search(/\.from\("jobs"\)\s*\.insert\(\{/);
+  const createJobRpcIndex = jobsHandler.search(/supabase\.rpc\("create_job_with_details"/);
   assert.ok(
     jobsHandler.indexOf('const resolvedPartRows = parts.length > 0') <
-      jobInsertIndex,
-    'createJobV1 should resolve job parts before inserting the job row',
+      createJobRpcIndex,
+    'createJobV1 should resolve job parts before creating the job',
   );
 });
 
@@ -176,7 +176,7 @@ test('read-model countOnly uses lightweight inventory counts', () => {
   assert.match(readModelHandler, /inventory: emptyInventoryPayload\(\)/);
   assert.ok(
     readModelHandler.indexOf('if (countOnly)') <
-      readModelHandler.indexOf('const [userInventory, companyInventory] = await Promise.all'),
+      readModelHandler.indexOf('const [userInventoryResult, companyInventoryResult] = await Promise.all'),
     'countOnly branch should return before full inventory payloads are fetched',
   );
 });

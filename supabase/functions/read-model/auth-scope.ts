@@ -18,3 +18,13 @@ export function canReadCompanyWorkers(requester: RequesterContext): boolean {
   return requester.isDev || requester.role === "manager";
 }
 
+export function canReadCompanyInventory(requester: RequesterContext): boolean {
+  if (requester.isDev) return true;
+  return requester.role !== "basic" && requester.role !== "worker";
+}
+
+export function canReadUserInventory(requester: RequesterContext): boolean {
+  if (requester.isDev) return true;
+  return requester.role !== "basic";
+}
+

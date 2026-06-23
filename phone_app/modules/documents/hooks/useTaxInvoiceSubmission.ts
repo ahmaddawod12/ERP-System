@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { middleEastFunctions, httpsCallable } from '../../../firebase';
 import { useDocumentTask } from '../../../hooks';
+import { generateUuid } from '../../../utils/helpers';
 import type { AlertButton, AlertContextValue } from '../../../types';
 
 interface InvoiceData {
@@ -374,7 +375,7 @@ export function useTaxInvoiceSubmission({
         })) : undefined,
         // Price proposal reference (to mark as used)
         priceProposalId: selectedPriceProposal?.id || null,
-        idempotencyKey: `tax_${Date.now()}_${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`,
+        idempotencyKey: `tax_${Date.now()}_${generateUuid().replace(/-/g, '').slice(0, 10)}`,
       };
 
       // STEP 1: Call getInvoiceApproval to save document and submit to Tax Authority

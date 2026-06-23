@@ -28,10 +28,12 @@ RUN npm --prefix cloudrun-archiver ci --omit=dev
 # Stage 3: Production image
 FROM node:22-slim
 
-WORKDIR /cloudrun-archiver
+# Preserve the /workspace layout so the file: symlink to @smart-job/db remains valid.
+WORKDIR /workspace/cloudrun-archiver
 
 ENV HOME=/tmp
 
+COPY --from=deps /workspace/packages /workspace/packages
 COPY --from=deps /workspace/cloudrun-archiver/node_modules ./node_modules
 COPY --from=build /workspace/cloudrun-archiver/dist ./dist
 

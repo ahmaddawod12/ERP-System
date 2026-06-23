@@ -59,6 +59,18 @@ function normalizePartList(value) {
     }));
 }
 
+const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
+  pending: ['waiting', 'finished', 'denied'],
+  waiting: ['pending', 'finished', 'denied'],
+  finished: [],
+  denied: [],
+};
+
+function isValidStatusTransition(currentStatus: string | null | undefined, nextStatus: string) {
+  const current = currentStatus || 'pending';
+  return VALID_STATUS_TRANSITIONS[current]?.includes(nextStatus) || false;
+}
+
 function normalizeAttachmentRefs(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -571,7 +583,14 @@ async function updateJob(input, options: any = {}) {
     if (Object.prototype.hasOwnProperty.call(input, 'category')) updateData.category = input.category || null;
     if (Object.prototype.hasOwnProperty.call(input, 'priority')) updateData.priority = input.priority || null;
     if (Object.prototype.hasOwnProperty.call(input, 'dueDate')) updateData.dueAt = resolveDueAt(input.dueDate);
-    if (Object.prototype.hasOwnProperty.call(input, 'status') && input.status) updateData.status = input.status;
+    if (Object.prototype.hasOwnProperty.call(input, 'status') && input.status) {
+      if (!isValidStatusTransition(jobRow.status, input.status)) {
+        const error = new Error(`Invalid status transition from ${jobRow.status || 'pending'} to ${input.status}`);
+        (error as any).code = 'failed-precondition';
+        throw error;
+      }
+      updateData.status = input.status;
+    }
     if (Object.prototype.hasOwnProperty.call(input, 'finishedAt')) updateData.finishedAt = input.finishedAt ? asDate(input.finishedAt, now) : null;
     if (Object.prototype.hasOwnProperty.call(input, 'deniedAt')) updateData.deniedAt = input.deniedAt ? asDate(input.deniedAt, now) : null;
     if (Object.prototype.hasOwnProperty.call(input, 'cid')) {

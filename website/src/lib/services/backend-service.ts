@@ -316,7 +316,7 @@ export async function pickCompanyParts(
 
 export async function listClients(
   companyId: string,
-  opts?: { pageSize?: number; afterCursor?: string | null; lastDoc?: string | null; search?: string },
+  opts?: { pageSize?: number; afterCursor?: string | null; lastDoc?: string | null; search?: string; loadAll?: boolean },
 ): Promise<{
   clients: ClientRecord[];
   items: ClientRecord[];
@@ -324,12 +324,15 @@ export async function listClients(
   lastDoc: string | null;
   hasMore: boolean;
 }> {
-  const wantsSinglePage = Boolean(opts?.pageSize || opts?.afterCursor || opts?.lastDoc || opts?.search);
+  const wantsSinglePage = Boolean(
+    opts?.pageSize || opts?.afterCursor || opts?.lastDoc || opts?.search || opts?.loadAll === false,
+  );
+  const pageSize = opts?.pageSize ?? 50;
   const fetchClientPage = async (afterCursor?: string | null) => {
     const body: Record<string, unknown> = {
       kind: "clients",
       companyId,
-      pageSize: opts?.pageSize ?? 200,
+      pageSize,
     };
     const cursor = afterCursor || opts?.afterCursor || opts?.lastDoc || null;
     if (cursor) body.afterCursor = cursor;
@@ -350,15 +353,20 @@ export async function listClients(
     return fetchClientPage();
   }
 
+  // TODO: Replace full-collection draining with paginated UI. This path is
+  // retained for backward compatibility but bounded to avoid runaway memory use.
   const clients: ClientRecord[] = [];
   let afterCursor: string | null = null;
   const seenCursors = new Set<string>();
+  const MAX_PAGES = 50;
+  let pagesFetched = 0;
 
   do {
     const page = await fetchClientPage(afterCursor);
+    pagesFetched++;
     clients.push(...page.clients);
     const nextCursor = page.nextCursor && page.nextCursor.trim() ? page.nextCursor.trim() : null;
-    if (!nextCursor || seenCursors.has(nextCursor)) {
+    if (!nextCursor || seenCursors.has(nextCursor) || pagesFetched >= MAX_PAGES) {
       afterCursor = null;
       continue;
     }

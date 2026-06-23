@@ -13,6 +13,18 @@ dist-ssr
 *.local
 .expo
 
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Firebase / mobile native config (inject at build time)
+phone_app/google-services.json
+phone_app/GoogleService-Info.plist
+phone_app/ios/
+phone_app/android/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

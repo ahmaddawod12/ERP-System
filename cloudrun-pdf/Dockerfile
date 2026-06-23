@@ -1,5 +1,5 @@
 # Stage 1: Install dependencies and build
-FROM ghcr.io/puppeteer/puppeteer:24.2.1 AS build
+FROM ghcr.io/puppeteer/puppeteer:24.40.0 AS build
 
 USER root
 WORKDIR /cloudrun-pdf
@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Production dependencies only
-FROM ghcr.io/puppeteer/puppeteer:24.2.1 AS deps
+FROM ghcr.io/puppeteer/puppeteer:24.40.0 AS deps
 
 USER root
 WORKDIR /cloudrun-pdf
@@ -24,11 +24,12 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 # Stage 2: Production image
-FROM ghcr.io/puppeteer/puppeteer:24.2.1
+FROM ghcr.io/puppeteer/puppeteer:24.40.0
 
 USER root
 WORKDIR /cloudrun-pdf
 
+ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 ENV HOME=/tmp

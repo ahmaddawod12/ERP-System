@@ -19,7 +19,7 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { scopedKey, storage } from '../../../contexts/mmkv-storage';
-import { safeJsonParse } from '../../../utils/helpers';
+import { generateUuid, safeJsonParse } from '../../../utils/helpers';
 import { uploadJobFilesForStorage } from '../lib/job-file-utils';
 import type { DateLike, Job, JobItem } from '../../../types';
 import type { DateFilterRange } from '../../../components/forms/DateFilter';
@@ -345,7 +345,7 @@ export default function Userjob() {
 
           const attachmentUploadId = typeof jobPayload.attachmentUploadId === 'string' && jobPayload.attachmentUploadId.trim()
             ? jobPayload.attachmentUploadId.trim()
-            : `pending-${crypto.randomUUID()}`;
+            : `pending-${generateUuid()}`;
 
           const uploadResult = await uploadJobFilesForStorage(
             companyId,

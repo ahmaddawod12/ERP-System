@@ -6,8 +6,15 @@
  */
 
 import {
+  AccountType,
+  normalizeAccountType as normalizeAccountTypeContract,
+  Role,
+  getSubscriptionTierForRole,
+} from "@smart-job/contracts";
+import {
   allocateNextCompanyCounter,
   allocateNextSystemCounter,
+  assertModuleEnabled,
   bumpCompanySyncVersion,
   enabledModulesForTier,
   EdgeFunctionContext,
@@ -19,22 +26,22 @@ import {
   validateEmail,
 } from "../shared-edge-helpers.ts";
 
+const ROLE_VALUES = Object.values(Role);
+const ACCOUNT_TYPE_VALUES = Object.values(AccountType);
+
 function normalizeRole(roleRaw: unknown): string | null {
   const role = String(roleRaw || "").trim().toLowerCase();
-  if (["manager", "worker", "user", "basic", "dev"].includes(role)) return role;
+  if (ROLE_VALUES.includes(role)) return role;
   return null;
 }
 
 function normalizeAccountType(value: unknown): string | null {
-  const accountType = String(value || "").trim().toLowerCase();
-  if (["solo", "business"].includes(accountType)) return accountType;
-  return null;
+  const accountType = normalizeAccountTypeContract(String(value || ""));
+  return accountType || null;
 }
 
 function tierForRole(role: string, accountType: string): string {
-  if (role === "manager" && accountType === "business") return "Team";
-  if (role === "user" && accountType === "solo") return "Solo";
-  return "Basic";
+  return getSubscriptionTierForRole(role, accountType);
 }
 
 async function requireManagerOrDev(
@@ -85,6 +92,7 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "workers", ctx);
   await requireManagerOrDev(companyId, ctx);
 
   const workerUid = optionalTrimmedString(payload?.workerUid || payload?.uid, 128);
@@ -146,7 +154,13 @@ export async function manageWorker(payload: any, ctx: EdgeFunctionContext): Prom
       .select("id, member_no")
       .single();
 
-    if (insertError || !membership) {
+    if (insertError) {
+      if (insertError.code === "23505") {
+        throw { code: "already-exists", message: "Worker already exists in company", httpStatus: 409 };
+      }
+      throw { code: "internal", message: "Failed to create worker membership", httpStatus: 500 };
+    }
+    if (!membership) {
       throw { code: "internal", message: "Failed to create worker membership", httpStatus: 500 };
     }
 
@@ -297,99 +311,48 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
     1001,
   );
 
-  let companyIdInternal: string | null = null;
-  try {
-    const { data: company, error: companyError } = await supabase
-      .from("companies")
-      .insert({
-        public_company_id: publicCompanyId,
-        account_type: accountType,
-        status: "active",
-        created_by_user_id: ctx.auth.uid,
-        created_at: now,
-        updated_at: now,
-      })
-      .select("id, public_company_id")
-      .single();
+  const { data: registeredRows, error: registerError } = await supabase.rpc("register_business_account", {
+    p_public_company_id: publicCompanyId,
+    p_account_type: accountType,
+    p_created_by_user_id: ctx.auth.uid,
+    p_he_name: heName || null,
+    p_en_name: enName,
+    p_vat_number: vatNumber || null,
+    p_business_type: businessType || null,
+    p_city,
+    p_address,
+    p_business_email: businessEmail,
+    p_business_phone: businessPhone,
+    p_business_fax: businessFax,
+    p_accountant_name: accountantName,
+    p_accountant_email: accountantEmail,
+    p_accountant_phone: accountantPhone,
+    p_tier: tier,
+    p_enabled_modules: enabledModules,
+    p_user_id: ctx.auth.uid,
+    p_role: role,
+    p_display_name: name || null,
+    p_phone_number: phoneNumber,
+    p_created_at: now,
+  });
 
-    if (companyError || !company) {
-      throw { code: "internal", message: "Failed to create company", httpStatus: 500 };
+  if (registerError) {
+    if (registerError.code === "23505" || String(registerError.message || "").includes("duplicate key")) {
+      throw { code: "already-exists", message: "Company already registered", httpStatus: 409 };
     }
-    companyIdInternal = company.id;
-
-    const { error: companyProfileError } = await supabase.from("company_profiles").insert({
-      company_id: company.id,
-      he_name: heName || null,
-      en_name: enName,
-      vat_number: vatNumber || null,
-      business_type: businessType || null,
-      city,
-      address,
-      business_email: businessEmail,
-      business_phone: businessPhone,
-      business_fax: businessFax,
-      accountant_name: accountantName,
-      accountant_email: accountantEmail,
-      accountant_phone: accountantPhone,
-      registered_at: now,
-      registered_by_user_id: ctx.auth.uid,
-      last_updated_at: now,
-    });
-    if (companyProfileError) {
-      throw { code: "internal", message: "Failed to create company profile", httpStatus: 500 };
-    }
-
-    const { error: subscriptionError } = await supabase.from("company_subscriptions").insert({
-      company_id: company.id,
-      tier,
-      status: "active",
-      enabled_modules: enabledModules,
-      updated_at: now,
-    });
-    if (subscriptionError) {
-      throw { code: "internal", message: "Failed to create company subscription", httpStatus: 500 };
-    }
-
-    const { error: syncStateError } = await supabase.from("company_sync_state").insert({
-      company_id: company.id,
-      jobs_version: 0,
-      documents_version: 0,
-      clients_version: 0,
-      workers_version: 1,
-      company_inventory_version: 0,
-      updated_at: now,
-    });
-    if (syncStateError) {
-      throw { code: "internal", message: "Failed to initialize company sync state", httpStatus: 500 };
-    }
-
-    const memberNo = await nextMemberNo(company.id, ctx);
-    const { error: membershipError } = await supabase.from("company_memberships").insert({
-      company_id: company.id,
-      user_id: ctx.auth.uid,
-      member_no: memberNo,
-      role,
-      status: "active",
-      display_name: name || null,
-      phone_number: phoneNumber,
-      joined_at: now,
-      created_at: now,
-      updated_at: now,
-    });
-    if (membershipError) {
-      throw { code: "internal", message: "Failed to create owner membership", httpStatus: 500 };
-    }
-
-    return {
-      success: true,
-      companyId: String(company.public_company_id),
-      role,
-      tier,
-    };
-  } catch (error) {
-    if (companyIdInternal) {
-      await supabase.from("companies").delete().eq("id", companyIdInternal).throwOnError();
-    }
-    throw error;
+    ctx.logger.error("register_business_account failed", { error: registerError.message });
+    throw { code: "internal", message: "Failed to create company", httpStatus: 500 };
   }
+
+  const registeredRow = Array.isArray(registeredRows) ? registeredRows[0] : registeredRows;
+  if (!registeredRow?.public_company_id) {
+    throw { code: "internal", message: "Failed to create company", httpStatus: 500 };
+  }
+
+  return {
+    success: true,
+    companyId: String(registeredRow.public_company_id),
+    role,
+    tier,
+  };
 }

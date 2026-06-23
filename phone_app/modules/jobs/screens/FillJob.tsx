@@ -26,7 +26,7 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { scopedKey, storage } from '../../../contexts/mmkv-storage';
-import { safeJsonParse } from '../../../utils/helpers';
+import { generateUuid, safeJsonParse } from '../../../utils/helpers';
 import { logger } from '../../../utils/logger';
 import { fetchUserInventoryParts } from '../../../utils/read-model';
 import type { Client, InventoryPart, Job, JobFileRef, JobItem } from '../../../types';
@@ -639,7 +639,7 @@ export default function FillJob() {
       // Save to appropriate location
       if (mode === 'user') {
         logger.debug('FillJob: creating user finished job via backend');
-        const attachmentUploadId = `pending-${crypto.randomUUID()}`;
+        const attachmentUploadId = `pending-${generateUuid()}`;
         const userUploadResult = await uploadJobFilesForStorage(
           companyId,
           attachmentUploadId,

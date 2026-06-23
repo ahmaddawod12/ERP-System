@@ -1,5 +1,230 @@
 # AGENTS.md
 
+> For a concise project overview, see [`PROJECT_SUMMARY.md`](./PROJECT_SUMMARY.md) first.
+
+## Project Context
+
+This repository is a development environment. You are allowed to make normal code changes without asking for permission first.
+
+You may:
+- edit existing files
+- create new files
+- refactor code
+- improve structure
+- fix bugs
+- add or update tests
+- run install, build, lint, format, and test commands
+- make reasonable performance and quality improvements while working
+
+Do not treat the current state as production. The goal is to improve the project safely and efficiently.
+
+---
+
+## Core Rule
+
+Before making changes, understand the request, inspect the relevant files, and make a short plan.
+
+While working, think about:
+- correctness
+- simplicity
+- performance
+- maintainability
+- security
+- user experience
+- edge cases
+- future scalability
+
+Prefer clean, minimal changes over large rewrites.
+
+---
+
+## Planning Instructions
+
+For any non-trivial task, create a plan before editing.
+
+The plan should include:
+1. What needs to be changed
+2. Which files or areas are likely involved
+3. Possible risks
+4. Tests or checks to run after the change
+5. Any performance, optimization, or cleanup opportunities
+
+Do not over-plan small fixes. For tiny changes, inspect the file and make the edit directly.
+
+---
+
+## When Implementing a Feature
+
+When adding a new feature:
+
+1. Understand the existing architecture first.
+2. Find the closest existing pattern and follow it.
+3. Keep the implementation simple and consistent.
+4. Add or update types, validation, and error handling.
+5. Update UI states if relevant:
+   - loading
+   - success
+   - empty state
+   - error state
+   - disabled state
+6. Add tests when a test structure exists.
+7. Update documentation or comments only when helpful.
+8. Run relevant checks before finishing.
+9. Summarize exactly what changed.
+
+Do not add unnecessary abstractions. Only generalize code when there is a clear repeated pattern.
+
+---
+
+## When Fixing a Bug
+
+When fixing a bug:
+
+1. Reproduce or reason through the issue.
+2. Identify the root cause, not just the symptom.
+3. Make the smallest reliable fix.
+4. Check for similar bugs nearby.
+5. Add a regression test if possible.
+6. Run the relevant test/build command.
+7. Explain the cause and the fix in the final response.
+
+---
+
+## Optimization and Performance Guidelines
+
+Always consider performance while editing, especially in frequently used paths.
+
+Look for:
+- unnecessary re-renders
+- repeated network requests
+- expensive loops
+- duplicated calculations
+- large bundle impact
+- blocking async work
+- inefficient database queries
+- missing memoization where useful
+- avoidable client-side work
+- unnecessary dependency additions
+
+Only optimize when it is useful and justified. Do not make code harder to understand for tiny performance gains.
+
+When making performance changes, explain:
+- what was slow or inefficient
+- what changed
+- why it improves performance
+- any tradeoffs
+
+---
+
+## Code Quality Guidelines
+
+Prefer:
+- readable code
+- clear names
+- small functions
+- predictable data flow
+- strong typing when available
+- explicit error handling
+- simple interfaces
+- consistent formatting
+- project conventions over personal preference
+
+Avoid:
+- large rewrites without need
+- hidden side effects
+- duplicate logic
+- overly clever code
+- unnecessary dependencies
+- changing public behavior accidentally
+- mixing unrelated changes into one task
+
+---
+
+## Safety Rules
+
+You do not need to ask before normal development edits.
+
+Ask before:
+- deleting major files or folders
+- changing database schemas or migrations
+- adding large dependencies
+- changing authentication or authorization logic
+- changing payment, billing, or security-sensitive code
+- rewriting the project architecture
+- removing tests
+- modifying deployment configuration
+- performing irreversible actions
+
+Never:
+- delete user data
+- wipe the repository
+- force-push
+- commit secrets
+- expose API keys
+- disable security checks just to make tests pass
+- ignore failing tests without mentioning them
+
+---
+
+## Dependencies
+
+Before adding a dependency:
+1. Check if the project already has a tool/library that solves the problem.
+2. Prefer built-in platform features when reasonable.
+3. Avoid large dependencies for small utilities.
+4. If adding a dependency, explain why it is needed.
+
+---
+
+## Testing and Validation
+
+After changes, run the most relevant available checks.
+
+Common checks may include:
+- install/build command
+- unit tests
+- integration tests
+- lint
+- formatter
+- typecheck
+- app-specific validation scripts
+
+If checks cannot be run, explain why.
+
+If a check fails:
+1. Try to fix it if it is related to your changes.
+2. If unrelated, mention it clearly.
+3. Do not hide failing results.
+
+---
+
+## Final Response Format
+
+At the end of the task, respond with:
+
+1. Summary of changes
+2. Files changed
+3. Tests/checks run
+4. Performance or improvement notes, if relevant
+5. Anything that still needs review
+
+Keep the final response concise but complete.
+
+---
+
+## Preferred Working Style
+
+Work like a careful senior developer:
+- inspect before editing
+- plan before large changes
+- keep changes focused
+- improve nearby code when it clearly helps
+- test before finishing
+- explain tradeoffs
+- avoid unnecessary questions
+- make progress with reasonable assumptions
+
+When uncertain, choose the safest reasonable approach and mention the assumption in the final response.
 Smart-Job ERP — multi-tenant field-service platform.  
 **No root workspace.** Each sub-package is installed and run independently.
 
@@ -80,13 +305,16 @@ npm --prefix cloudrun-archiver run test
 
 ### supabase/ (Deno — no npm scripts)
 ```bash
-deno check supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+# Bash: enable globstar so nested function paths (e.g., tax/callback) are included
+shopt -s globstar
+deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
 supabase functions serve mutation-gateway --env-file supabase/.env
 ```
 
 ### Repo-level CI scripts
 ```bash
 node scripts/check-no-ts-nocheck.mjs   # blocks CI; run before pushing
+node scripts/check-js-syntax.mjs scripts  # quick syntax sweep of repo scripts
 node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
 ```
 
@@ -94,19 +322,20 @@ node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
 
 ## CI (`.github/workflows/ci.yml`)
 
-All jobs run in parallel on every push/PR with **Node 22**:
+All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group with `cancel-in-progress: true` avoids redundant runs.
 
-- `repo_guards` → `check-no-ts-nocheck.mjs`
+- `repo_guards` → `check-no-ts-nocheck.mjs` + `check-js-syntax.mjs scripts`
 - `packages_contracts` → `npm ci` → typecheck → build
 - `packages_db` → `npm ci` → typecheck → build
-- `website` → `npm ci` → **test → typecheck → lint → build** (order matters)
-- `phone_app` → `npm ci` → test → typecheck
-- `cloudrun_pdf` / `cloudrun_archiver` → `npm ci` → test (build is embedded in test)
-- `supabase_edge` → `deno check` on all edge `.ts` files
+- `website` → builds `packages/contracts` → `npm ci` → **test → typecheck → lint → build** (order matters)
+- `phone_app` → builds `packages/contracts` → `npm ci` → test → typecheck
+- `cloudrun_pdf` → `npm ci` → typecheck → test
+- `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
+- `supabase_edge` → `deno check` on all edge `.ts` files (uses `shopt -s globstar` to include nested paths)
 - `perf_budget` → `continue-on-error: true` (never blocks)
 - `cloudrun_images` → Docker build (no push)
 
-Edge deploy (`supabase-edge-deploy.yml`) is **manual `workflow_dispatch` only**. Nested function paths (e.g. `contact/request`) are flattened to `contact-request` before deploy.
+Edge deploy (`supabase-edge-deploy.yml`) is **manual `workflow_dispatch` only**. Nested function paths (e.g. `contact/request`) are flattened to `contact-request` before deploy; website/mobile callers must use the same dashed names.
 
 ---
 
@@ -152,6 +381,7 @@ SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ALLOW_FIREBASE_AUTH_FALLBACK=false
+JWT_SECRET=                                       # required for edge JWT verification
 TAX_AUTH_URL=, TAX_TOKEN_URL=, TAX_CLIENT_ID=, TAX_CLIENT_SECRET=, ...
 APP_SCHEME=erpsystem
 ```
@@ -162,6 +392,8 @@ EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_ANON_KEY=
 ```
 Also requires: `phone_app/google-services.json`, `phone_app/GoogleService-Info.plist`
+
+> Native config files and `.env` files must not be committed. They are listed in `.gitignore` and `phone_app/.gitignore`.
 
 ---
 
@@ -206,6 +438,12 @@ Must consume invite state atomically before finalizing membership (prevents mult
 Inventory movement writes must use SQL helpers. Multi-part picks use `apply_inventory_pick_batch(...)` so balance changes and movement rows commit or fail together.
 Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(...)` so all consumed parts commit or fail together.
 
+### Job creation
+`createJobV1` uses the `create_job_with_details(...)` SQL RPC so the job row, part usages, attachments, and finished-job inventory consumption are inserted in a single transaction.
+
+### Business registration
+`registerBusinessV1` uses the `register_business_account(...)` SQL RPC so the company, profile, subscription, sync state, and owner membership are created in a single transaction.
+
 ---
 
 ## Per-package conventions
@@ -240,10 +478,3 @@ Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(.
 
 ---
 
-## Existing instruction sources
-
-More detailed domain rules live in:
-- `.github/copilot-instructions.md` — repo-wide domain, identity, counter, doc/job rules
-- `website/.github/copilot-instructions.md` — website auth, route, API proxy, doc flow rules
-- `phone_app/.github/copilot-instructions.md` — mobile structure, design system, data rules
-- `architecture.md`, `backend.md`, `SETUP.md`, `SUPABASE-MIGRATION-GUIDE.md`

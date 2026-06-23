@@ -263,7 +263,9 @@ async function listCompanyDocuments(companyId, profile, options: any = {}) {
 }
 
 async function getBootstrapReadModel(uid, companyId = null, options: any = {}) {
-  const includeCollections = options.includeCollections !== false;
+  // Bootstrap is count-only / lightweight by default. Callers that need full
+  // collections must opt in explicitly and should prefer paginated RPCs.
+  const includeCollections = options.includeCollections === true;
   const profile: any = companyId
     ? await getUserProfileByFirebaseUidForCompany(uid, companyId, options)
     : await getUserProfileByFirebaseUid(uid, options);

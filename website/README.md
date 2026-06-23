@@ -21,6 +21,7 @@
 - `/login`, `/register`, `/forgot-password`, `/onboarding`
 - Protected app routes under `/app/*`
 - API proxy routes (`/api/callable`, `/api/read-model`, `/api/contact/request`)
+- Edge function caller URLs use flattened dash names for nested paths (e.g., `contact-request`, `invites-create`) to match Supabase deploy names.
 - Client list workflows drain paginated read-model pages through `src/lib/services/backend-service.ts`.
 - Tax invoice creation delegates to backend draft-document reservation and async PDF scheduling.
 - Website document and job-file access rely on backend-issued short-lived URLs; protected storage paths are not read directly by the browser.

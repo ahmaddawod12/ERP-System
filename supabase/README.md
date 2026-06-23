@@ -1,6 +1,6 @@
 # Supabase Backend Workspace
 
-Status: Active backend gateway surface (May 15, 2026)
+Status: Active backend gateway surface (June 22, 2026)
 
 This directory is where backend runtime work happens in this repository.
 
@@ -26,6 +26,7 @@ Job-specific contract notes:
 - `jobs` must enforce service-role read scoping in code: `basic` sees no jobs, `worker` and business `user` see only jobs assigned to their active membership, and `manager` / solo `user` / `dev` may read company jobs.
 - `documents` must return no rows for `worker`; `manager`, `user`, `basic`, and `dev` may read company documents.
 - `workers` lists are manager/dev only; other roles receive an empty list.
+- All list kinds (`jobs`, `documents`, `workers`, `clients`, `inventory`) must also enforce module entitlement from `company_subscriptions.enabled_modules`; disabled modules return empty lists or `failed-precondition` errors.
 - `jobs` and `documents` support `pageSize`, `limit`, `afterCursor`, `status`, date filters, and stable timestamp-plus-id cursor tokens. `documents` also supports `documentType` and `createdByUid`.
 - `bootstrap` returns first-page `jobsNextCursor` and `documentsNextCursor`; clients must not assume a `null` cursor means the collection was fully fetched unless the first page exhausted.
 - `clients` and `inventory` preserve legacy response shapes while using SQL RPC-backed pagination/search (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`).
@@ -44,7 +45,7 @@ Supported `kind` values:
 - `inventory`
 - `companySyncState`
 - `recordById`
-- `documentTask`
+- `documentTask` (filtered by `company_id`)
 - `userSyncState`
 
 ## Local Development
@@ -53,7 +54,11 @@ Run these from the repository root:
 
 ```bash
 supabase start
+
+# Bash: enable globstar so nested function paths (e.g., tax/callback) are included
+shopt -s globstar
 deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+
 supabase functions serve mutation-gateway --env-file supabase/.env
 supabase functions serve mutation-gateway-me-west1 --env-file supabase/.env
 supabase functions serve read-model --env-file supabase/.env
@@ -63,6 +68,7 @@ Notes:
 
 - Do not use `--no-verify-jwt` in shared or production environments.
 - Shared edge JWT verification should enforce the configured Supabase issuer/audience and reject empty `uid` claims.
+- `getEnv()` throws at startup when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or `JWT_SECRET` are missing.
 - Keep `CORS_ALLOWED_ORIGINS` explicitly configured; empty origin lists fail closed.
 
 Smoke test:
@@ -95,7 +101,9 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 - Use SQL-side atomic inventory helpers such as `apply_inventory_movement(...)` for movement writes and preserve the split uniqueness rules for company-only vs membership-scoped inventory locations.
 - Use `apply_inventory_pick_batch(...)` for multi-part picks so movement rows and balance updates commit or fail together.
 - Use `apply_job_inventory_consumption_batch(...)` for finished-job part consumption so member stock deductions are atomic.
-- Privileged SQL implementations must live in the private schema. Public RPC names are compatibility wrappers for service-role Edge callers, not direct client APIs.
+- Privileged SQL implementations must live in the private schema. Public RPC names are compatibility wrappers for service-role Edge callers, not direct client APIs; public wrappers should use `SECURITY INVOKER` and explicit `search_path = ''`.
+- `createJobV1` uses the `create_job_with_details(...)` SQL RPC so job row, part usages, attachments, and finished-job inventory consumption commit in one transaction.
+- `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so company, profile, subscription, sync state, and owner membership commit in one transaction.
 - `bootstrap` count-only reads must use lightweight count helpers and must not fetch full inventory or collection payloads.
 - Keep `packages/db/perf/profiling.sql` as the first stop for database performance work; do not add broad indexes without advisor/`EXPLAIN` evidence.
 - Use `cleanup_expired_operational_rows()` from a trusted schedule to trim expired rate-limit, task, notification, contact, and failed idempotency rows.
@@ -107,6 +115,7 @@ Required in local or deployed environments:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `JWT_SECRET`
 - `DATABASE_URL`
 - `CORS_ALLOWED_ORIGINS`
 - `CLOUD_RUN_PDF_SERVICE_URL`
@@ -138,6 +147,7 @@ Domain-specific vars such as tax credentials and callback URLs should match `SET
 3. Validate payload rules and auth behavior.
 4. Run tests and targeted smoke checks.
 5. Verify no schema drift or contract drift.
+6. If the operation touches a module-gated surface (`jobs`, `clients`, `inventory`, `documents`, `workers`), verify `assertModuleEnabled` is called before side effects and before read-model rows are returned.
 
 ## Related Docs
 

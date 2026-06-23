@@ -1,5 +1,6 @@
 import type { Job, JobFileRef, JobItem } from '../../../types';
 import { scopedKey } from '../../../contexts/mmkv-storage';
+import { generateUuid } from '../../../utils/helpers';
 
 export type FillJobMode = 'user' | 'worker';
 
@@ -66,5 +67,5 @@ export function getPendingWorkerJobsStorageKey() {
 
 // Generate a temporary ID for file upload paths (not used as the backend record ID)
 export function generateTempId() {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+  return generateUuid().replace(/-/g, '').slice(0, 8);
 }

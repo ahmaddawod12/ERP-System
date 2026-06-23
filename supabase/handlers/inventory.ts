@@ -4,6 +4,7 @@
  */
 import {
   allocateNextCompanyCounter,
+  assertModuleEnabled,
   bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
@@ -261,17 +262,6 @@ async function setBalanceQuantity(
   }
 }
 
-async function incrementBalanceQuantity(
-  supabase: ReturnType<typeof createSupabaseClient>,
-  locationId: string,
-  partId: string,
-  delta: number,
-  now: string,
-): Promise<number> {
-  const nextQuantity = await getBalanceQuantity(supabase, locationId, partId) + delta;
-  await setBalanceQuantity(supabase, locationId, partId, nextQuantity, now);
-  return nextQuantity;
-}
 
 async function applyInventoryMovement(
   supabase: ReturnType<typeof createSupabaseClient>,
@@ -367,6 +357,7 @@ export async function updateInventoryV1(payload: any, ctx: EdgeFunctionContext):
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "inventory", ctx);
   const partsInput = Array.isArray(payload?.parts) ? payload.parts : [];
   const movementsInput = Array.isArray(payload?.movements) ? payload.movements : [];
   if (partsInput.length > MAX_PARTS_UPDATES) {

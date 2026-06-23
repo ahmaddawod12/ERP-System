@@ -239,7 +239,6 @@ export async function updateCacheV1(payload: any, ctx: EdgeFunctionContext): Pro
 
   const requestedField = requireNonEmptyString(payload?.field, "field", 3, 64).toLowerCase();
   const aliasMap: Record<string, string> = {
-    profile: "workers",
     inventory: "company_inventory",
     company_inventory: "company_inventory",
     workers: "workers",
@@ -253,7 +252,7 @@ export async function updateCacheV1(payload: any, ctx: EdgeFunctionContext): Pro
     throw {
       code: "invalid-argument",
       httpStatus: 400,
-      message: "field must be one of profile, inventory, company_inventory, workers, clients, jobs, documents",
+      message: "field must be one of inventory, company_inventory, workers, clients, jobs, documents",
     };
   }
 

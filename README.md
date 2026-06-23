@@ -2,7 +2,7 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (May 15, 2026)
+## Runtime Snapshot (June 22, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
@@ -60,6 +60,9 @@ npm --prefix phone_app run typecheck
 npm --prefix website run test
 npm --prefix phone_app run test
 deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+# In bash, enable globstar so nested function paths are included:
+# shopt -s globstar
+# deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
 ```
 
 ## Core Rules
@@ -74,9 +77,12 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Keep `read-model` `kind` contracts synchronized across website, mobile, and backend handlers.
 - Clients and inventory read-model calls use SQL RPC-backed pagination/search; do not reintroduce full-collection in-memory filtering for those paths.
 - Document read-model calls exclude unapproved tax invoices and return the same rich document shape used by website/mobile history screens.
+- Approved tax invoices cannot be deleted.
 - Finished solo jobs consume member inventory through the SQL `apply_job_inventory_consumption_batch(...)` helper.
+- `deleteJobV1` and `deleteClientV1` reject requests when linked documents, inventory movements, or jobs exist.
+- Module entitlement is enforced for both mutations and read-model kinds (`jobs`, `clients`, `inventory`, `documents`, `workers`).
 
-## Recent Hardening (April 26-May 15, 2026)
+## Recent Hardening (April 26-June 22, 2026)
 
 ### Backend / SQL (optimized baseline `0000_optimized_baseline.sql`)
 - Supabase mutation handlers normalize incoming `companyId` to internal company UUID before SQL queries.
@@ -85,6 +91,7 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - New empty databases start from the optimized SQL baseline plus forward hardening migrations. The baseline includes RLS hardening, support-owner policies, document task locks, atomic inventory/invite/idempotency RPCs, read-model indexes for jobs/documents/clients/memberships/inventory, and service-role RPCs for client/inventory pages.
 - Privileged RPC implementations live behind the private schema after `0001_supabase_cost_perf_security_hardening.sql`; public RPC names are compatibility wrappers granted to `service_role` only.
 - `packages/db/perf/profiling.sql` contains the read-only profiling checklist for Supabase advisors, `pg_stat_statements`, and `EXPLAIN` before broader index changes.
+- New migrations: `0002_phase1_read_caps.sql`, `0003_phase1_atomic_jobs.sql`, `0004_phase1_atomic_business_registration.sql`, `0005_phase2_trigger_search_path.sql`.
 
 ## Optimizations (May 1-May 15, 2026)
 
@@ -117,8 +124,18 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 
 ### Supabase Edge Functions
 - Shared edge JWT verification now enforces the expected Supabase issuer and audience and rejects tokens with an empty `uid`.
+- `getEnv()` fails closed when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or `JWT_SECRET` are missing.
+- Edge handlers validate date fields before converting to ISO strings.
+- `updateCacheV1` correctly accepts `profile`, `documents`, `clients`, `inventory`, and `workers` field names.
+- `loadCompanyDocumentContext` handles dev users without a membership.
+- Document generation and tax flows bump `documents_version` after side effects; invite join bumps `workers_version`.
+- `deleteJobV1` / `deleteClientV1` check for dependent records before deletion.
+- `updateJobV1` blocks reverting `finished` or `denied` jobs to other statuses.
+- `manageWorker` add handles unique-conflict races gracefully.
 - Read-model service-role queries enforce the runtime role matrix before returning rows: workers/business users only get assigned jobs, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
+- Read-model additionally enforces module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) per `company_subscriptions.enabled_modules`.
 - Read-model cursor pagination for jobs/documents uses composite timestamp-plus-id cursors via PostgREST `.or()` and honors `status`, date range, document type, creator, `pageSize`, `limit`, and `afterCursor` filters.
+- `documentTask` lookup is filtered by `company_id`.
 - Client and inventory read-model pagination/search now execute through service-role SQL RPCs (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`) while preserving the website/mobile response shapes.
 - `bootstrap` returns `jobsNextCursor` and `documentsNextCursor` from the first read-model page instead of hardcoded `null`.
 - `bootstrap` count-only calls use SQL counts instead of loading full inventory payloads, and collection bootstrap includes `clientsNextCursor` for compatible pagination.
@@ -173,18 +190,25 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 ### `cloudrun-pdf`
 - `buildStoredDocumentRecord` no longer writes forbidden field names (`clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `createdBy`) to stored document records.
 - `htmlTemplate.ts` now sanitizes `logoUrl` through `sanitizeUrl()` which rejects `javascript:` and `data:` schemes before insertion into the `<img src>` attribute.
+- Template rendering also sanitizes `item.quantity`, `item.price`, and `date` values to prevent injection through document line items.
+- Email template variables are HTML-escaped before message composition.
 - Email service is now a true singleton; the non-singleton `getEmailService()` export has been removed.
 - Generated PDF finalization now stays create-only in both Storage and SQL document finalization for all document types.
 - `cloudrun-pdf` trusted dispatch verification now supports the Supabase edge self-signed service-account JWT path in addition to Google OIDC verification.
+- Dockerfile pins Puppeteer to `24.40.0` and sets `NODE_ENV=production`.
 
 ### `cloudrun-archiver`
 - Monthly archives now drain paginated SQL reads and stream JSON payloads through temporary disk files before upload, which removes the old single-page and whole-month-in-memory failure mode.
 - Archive verification now checks stored metadata and re-hashes the uploaded object via stream before deletion.
-- Archive manifests now remain resumable when delete counts are partial instead of being marked fully deleted early.
+- Archive manifests remain resumable: `uploaded_not_deleted` retries verify the archive and mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches.
 - The archiver Docker image now builds from repo-root context so local `file:` dependencies on `packages/db` and `packages/contracts` resolve in the documented build order.
 
 ### CI / Scripts
 - `check-no-ts-nocheck.mjs` stale `functions/src` / `functions/tests` paths replaced with the correct protected path set from `AGENTS.md`.
 - `check-perf-budget.mjs` scan path corrected from `functions/src` to `supabase/functions`.
-- CI now enforces the documented shared-package build order by making app/service jobs depend on `packages_contracts` and `packages_db` as needed.
+- `check-js-syntax.mjs` is now invoked in CI for a quick syntax sweep of repo scripts.
+- CI jobs use `concurrency.group` + `cancel-in-progress: true` to avoid redundant runs.
+- CI now enforces the documented shared-package build order by making app/service jobs depend on `packages_contracts` and `packages_db` as needed, and builds shared packages inline where required.
+- `cloudrun_pdf` and `cloudrun_archiver` CI now run `npm run typecheck` before test.
 - `cloudrun_archiver` CI now builds `packages/contracts` and `packages/db` before installing/testing the archiver, and the image build now uses `docker build -f cloudrun-archiver/Dockerfile .`.
+- Edge function caller URLs in website/mobile use flattened dash names (e.g., `invites-create`, `upgrades-request`) so they match Supabase deploy names for nested paths.

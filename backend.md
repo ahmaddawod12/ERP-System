@@ -1,13 +1,14 @@
 # Backend
 
-This document summarizes the active backend boundaries in May 15, 2026.
+This document summarizes the active backend boundaries in June 22, 2026.
 
 ## Current Backend Reality
 
 - The top-level `functions/` package is not present in this repository.
 - Active in-repo backend entry surfaces are implemented under `supabase/functions/` plus Cloud Run services.
 - Supabase Auth is the active bearer-token provider.
-- Shared edge auth verification is expected to enforce the Supabase JWT issuer/audience and reject empty `uid` claims.
+- Shared edge auth verification enforces the Supabase JWT issuer/audience and rejects empty `uid` claims.
+- `getEnv()` fails closed when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or `JWT_SECRET` are missing.
 - SQL is the primary persistence layer for company-scoped ERP data.
 - Firestore is still used for selected operational paths, compatibility mirrors, rules-backed reads, and residual legacy surfaces.
 - Supabase Edge Functions in `supabase/functions/` are the maintained gateway surface in this workspace.
@@ -32,6 +33,7 @@ The `supabase/functions/` package is the active trust boundary in this workspace
 Read-model calls are kind-based and must preserve compatibility with website/mobile `kind` payload contracts.
 Job contracts must expose public sequential IDs and full attachment/meta fields at that boundary, while resolving internal UUID rows only inside handlers.
 Because read-model edge code uses the Supabase service role, it must explicitly apply the runtime role matrix in code before returning rows: worker/business-user job reads are membership-scoped, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
+Read-model handlers also enforce module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) from `company_subscriptions.enabled_modules` before returning rows.
 
 Important active entry surfaces include:
 
@@ -136,6 +138,7 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
 - When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
 - Keep read-model filters wired through the edge layer: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
+- Enforce module entitlement in read-model kinds before returning rows; disabled modules return empty lists or appropriate `failed-precondition` errors.
 - Clients and inventory read-model calls may opt into cursor pagination and prefix search; callers that omit those options continue to receive the legacy array/snapshot payloads.
 - Clients and inventory pagination/search are backed by service-role RPCs so filtering and cursors execute in SQL instead of loading full collections into Edge memory.
 - Dashboard/count-only read-model paths use lightweight SQL count helpers and must not fetch full inventory payloads.
@@ -153,11 +156,19 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
 - Use `apply_inventory_pick_batch(...)` for multi-part picks so all balance updates and movement rows share one SQL transaction.
 - Use `apply_job_inventory_consumption_batch(...)` for finished-job part consumption so job-related stock deductions are atomic.
-- Keep privileged RPC implementations in the private schema and expose only service-role public wrappers needed by Edge code.
+- Keep privileged RPC implementations in the private schema and expose only service-role public wrappers needed by Edge code; public wrappers should use `SECURITY INVOKER` and explicit `search_path = ''`.
+- `createJobV1` uses the `create_job_with_details(...)` SQL RPC so job row, part usages, attachments, and finished-job inventory consumption commit in one transaction.
+- `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so company, profile, subscription, sync state, and owner membership commit in one transaction.
 - Cache/sync version mutations should use the SQL-side `bump_company_sync_version(...)` helper instead of read-modify-write updates.
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
+- Validate date fields before converting to ISO strings in tax and document handlers.
+- Block deletion of approved tax invoices.
+- `deleteJobV1` and `deleteClientV1` must check for dependent documents, inventory movements, or linked jobs and reject the request when dependents exist.
+- `updateJobV1` must block reverting terminal (`finished`/`denied`) jobs to other statuses.
+- `manageWorker` add must handle unique-conflict races gracefully.
 - Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.
-- Keep archive manifests in a resumable state until delete counts match the archived ID set exactly.
+- Sanitize `item.quantity`, `item.price`, and `date` values in PDF templates; HTML-escape email template variables.
+- Keep archive manifests resumable: `uploaded_not_deleted` retries verify the archive and may mark the manifest `deleted` when the records are already gone.
 - Keep archived month reads behind backend handlers with fixed bucket/path derivation.
 - Run `packages/db/perf/profiling.sql` on local/staging data before broad index changes, and verify advisor output with `EXPLAIN (analyze, buffers)`.
 

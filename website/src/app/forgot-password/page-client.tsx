@@ -26,29 +26,21 @@ export default function ForgotPasswordClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      const supabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/+$/, "");
-      const supabaseAnonKey = String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
       const redirectTo = typeof window !== "undefined"
         ? `${window.location.origin}/reset-password`
         : "";
-      if (!supabaseUrl || !supabaseAnonKey) {
-        throw new Error("Supabase auth is not configured");
-      }
 
-      const response = await fetch(`${supabaseUrl}/auth/v1/recover`, {
+      const response = await fetch("/api/auth/forgot-password", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseAnonKey,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: values.email,
-          ...(redirectTo ? { redirect_to: redirectTo } : {}),
+          redirectTo,
         }),
       });
-      const payload = (await response.json().catch(() => ({}))) as { error_description?: unknown; msg?: unknown };
-      if (!response.ok) {
-        throw new Error(String(payload.error_description || payload.msg || "Failed to send reset email"));
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "Failed to send reset email");
       }
 
       toast({

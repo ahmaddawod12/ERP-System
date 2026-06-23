@@ -4,6 +4,7 @@
  */
 import {
   allocateNextCompanyCounter,
+  assertModuleEnabled,
   bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
@@ -13,8 +14,9 @@ import {
   resolveCompanyIdentifiers,
   validateCompanyId,
 } from "../shared-edge-helpers.ts";
+import { JobStatus } from "@smart-job/contracts";
 
-const VALID_STATUSES = ["pending", "waiting", "finished", "denied"];
+const VALID_STATUSES = Object.values(JobStatus);
 
 type MembershipContext = {
   id: string;
@@ -197,62 +199,6 @@ async function resolveJobPartRows(
   });
 }
 
-async function consumeFinishedJobInventory(
-  companyId: string,
-  membership: MembershipContext,
-  jobId: string,
-  partRows: Array<{ inventory_part_id: string | null; part_name_snapshot: string | null; quantity: number; created_at: string }>,
-  now: string,
-  ctx: EdgeFunctionContext,
-): Promise<number> {
-  const consumableParts = partRows
-    .filter((part) => part.inventory_part_id && Number(part.quantity || 0) > 0)
-    .map((part) => ({
-      part_id: String(part.inventory_part_id),
-      quantity: Number(part.quantity || 0),
-    }));
-
-  if (consumableParts.length === 0) {
-    return 0;
-  }
-
-  const supabase = createSupabaseClient(ctx.env);
-  const { data, error } = await supabase.rpc("apply_job_inventory_consumption_batch", {
-    p_company_id: companyId,
-    p_membership_id: membership.id,
-    p_job_id: jobId,
-    p_created_by_membership_id: membership.id,
-    p_parts: consumableParts,
-    p_created_at: now,
-  });
-
-  if (error) {
-    const message = String(error.message || "");
-    if (
-      message.includes("inventory_invalid_consumption") ||
-      message.includes("inventory_invalid_quantity")
-    ) {
-      throw { code: "invalid-argument", message: "Job parts contain an invalid quantity", httpStatus: 400 };
-    }
-    if (message.includes("inventory_part_not_found")) {
-      throw { code: "not-found", message: "Inventory part not found", httpStatus: 404 };
-    }
-    if (message.includes("inventory_member_location_missing")) {
-      throw { code: "failed-precondition", message: "Member inventory location is missing", httpStatus: 400 };
-    }
-    if (message.includes("inventory_insufficient_stock") || String(error.code || "") === "23514") {
-      throw { code: "failed-precondition", message: "Insufficient stock for job parts", httpStatus: 400 };
-    }
-    ctx.logger.error("Finished job inventory consumption failed", {
-      companyId,
-      jobId,
-      error: error.message,
-    });
-    throw { code: "internal", message: "Failed to consume job inventory", httpStatus: 500 };
-  }
-
-  return Array.isArray(data) ? data.length : 0;
-}
 
 async function resolveCompanyJob<T extends Record<string, unknown>>(
   companyId: string,
@@ -551,6 +497,7 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "jobs", ctx);
   const membership = await requireMembership(companyId, ctx, ["manager", "user", "dev"]);
 
   const jobType = optionalTrimmedString(payload?.type, 20) || "pending";
@@ -607,118 +554,99 @@ export async function createJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     String(nextJobNo),
     attachmentUploadId,
   );
-  const { data: inserted, error: insertError } = await supabase
-    .from("jobs")
-    .insert({
-      company_id: companyId,
-      job_no: nextJobNo,
-      status,
-      title: title || null,
-      description: description || null,
-      notes: notes || null,
-      location: location || null,
-      address: address || null,
-      category: category || null,
-      priority: priority || null,
-      due_at: dueAt,
-      client_id: client.clientId,
-      assigned_membership_id: assignee.assignedMembershipId,
-      created_by_membership_id: membership.id,
-      created_by_name_snapshot: membership.displayName,
-      client_name_snapshot: client.cname,
-      client_phone_snapshot: client.cphone,
-      assigned_member_name_snapshot: assignee.wname,
-      accepted_by_user_id: status === "finished" ? ctx.auth?.uid : null,
-      accepted_at: status === "finished" ? now : null,
-      finished_at: status === "finished" ? now : null,
-      is_cert: false,
-      idempotency_key: idempotencyKey,
-      meta: buildJobMetaPatch(payload),
-      created_at: now,
-      updated_at: now,
-    })
-    .select()
-    .single();
+  const consumeInventory = status === "finished" && membership.role === "user";
+  const consumeParts = consumeInventory
+    ? resolvedPartRows
+      .filter((part) => part.inventory_part_id && Number(part.quantity || 0) > 0)
+      .map((part) => ({
+        part_id: String(part.inventory_part_id),
+        quantity: Number(part.quantity || 0),
+      }))
+    : [];
 
-  if (insertError || !inserted) {
-    if (insertError?.code === "23505") {
-      throw { code: "already-exists", message: "Duplicate idempotency key", httpStatus: 409 };
-    }
-    throw { code: "internal", message: "Failed to create job", httpStatus: 500 };
-  }
-
-  if (parts.length > 0) {
-    const partRows = resolvedPartRows.map((part) => ({
-      job_id: inserted.id,
-      ...part,
-    }));
-    const { error: partsError } = await supabase.from("job_part_usages").insert(partRows);
-    if (partsError) {
-      const { error: rollbackError } = await supabase.from("jobs").delete().eq("id", inserted.id).eq("company_id", companyId);
-      if (rollbackError) {
-        ctx.logger.error("Failed to roll back job after parts insert failure", {
-          jobId: inserted.id,
-          companyId,
-          rollbackError: rollbackError.message,
-        });
-      }
-      throw { code: "internal", message: "Failed to save job parts", httpStatus: 500 };
-    }
-  }
-
-  if (validatedAttachments.photos !== undefined || validatedAttachments.signature !== undefined) {
-    const attachmentRows = [
+  const { data: createdRows, error: createError } = await supabase.rpc("create_job_with_details", {
+    p_company_id: companyId,
+    p_job_no: nextJobNo,
+    p_status: status,
+    p_title: title || null,
+    p_description: description || null,
+    p_notes: notes || null,
+    p_location: location || null,
+    p_address: address || null,
+    p_category: category || null,
+    p_priority: priority || null,
+    p_due_at: dueAt,
+    p_client_id: client.clientId,
+    p_assigned_membership_id: assignee.assignedMembershipId,
+    p_created_by_membership_id: membership.id,
+    p_accepted_by_user_id: status === "finished" ? ctx.auth?.uid : null,
+    p_accepted_at: status === "finished" ? now : null,
+    p_finished_at: status === "finished" ? now : null,
+    p_client_name_snapshot: client.cname,
+    p_client_phone_snapshot: client.cphone,
+    p_assigned_member_name_snapshot: assignee.wname,
+    p_created_by_name_snapshot: membership.displayName,
+    p_idempotency_key: idempotencyKey,
+    p_meta: buildJobMetaPatch(payload),
+    p_created_at: now,
+    p_parts: resolvedPartRows.map((part) => ({
+      inventory_part_id: part.inventory_part_id,
+      part_name_snapshot: part.part_name_snapshot,
+      quantity: part.quantity,
+    })),
+    p_attachments: [
       ...(validatedAttachments.photos || []).map((photo) => ({
-        job_id: inserted.id,
         storage_path: photo.storagePath,
         kind: "photo",
         uploaded_by_user_id: ctx.auth?.uid || null,
-        created_at: now,
       })),
       ...(validatedAttachments.signature?.storagePath ? [{
-        job_id: inserted.id,
         storage_path: validatedAttachments.signature.storagePath,
         kind: "signature",
         uploaded_by_user_id: ctx.auth?.uid || null,
-        created_at: now,
       }] : []),
-    ];
-    if (attachmentRows.length > 0) {
-      const { error: attachmentError } = await supabase.from("job_attachments").insert(attachmentRows);
-      if (attachmentError) {
-        const { error: rollbackError } = await supabase.from("jobs").delete().eq("id", inserted.id).eq("company_id", companyId);
-        if (rollbackError) {
-          ctx.logger.error("Failed to roll back job after attachment insert failure", {
-            jobId: inserted.id,
-            companyId,
-            rollbackError: rollbackError.message,
-          });
-        }
-        throw { code: "internal", message: "Failed to save job attachments", httpStatus: 500 };
-      }
+    ],
+    p_consume_inventory: consumeInventory,
+    p_consumer_membership_id: membership.id,
+    p_consume_parts: consumeParts,
+  });
+
+  if (createError) {
+    const message = String(createError.message || "");
+    if (createError.code === "23505" || message.includes("unique constraint") || message.includes("duplicate key")) {
+      throw { code: "already-exists", message: "Duplicate idempotency key", httpStatus: 409 };
     }
+    if (message.includes("inventory_invalid_consumption") || message.includes("inventory_invalid_quantity")) {
+      throw { code: "invalid-argument", message: "Job parts contain an invalid quantity", httpStatus: 400 };
+    }
+    if (message.includes("inventory_part_not_found")) {
+      throw { code: "not-found", message: "Inventory part not found", httpStatus: 404 };
+    }
+    if (message.includes("inventory_member_location_missing")) {
+      throw { code: "failed-precondition", message: "Member inventory location is missing", httpStatus: 400 };
+    }
+    if (message.includes("inventory_insufficient_stock")) {
+      throw { code: "failed-precondition", message: "Insufficient stock for job parts", httpStatus: 400 };
+    }
+    ctx.logger.error("create_job_with_details failed", { companyId, error: createError.message });
+    throw { code: "internal", message: "Failed to create job", httpStatus: 500 };
   }
 
-  if (status === "finished" && membership.role === "user") {
-    try {
-      const consumed = await consumeFinishedJobInventory(companyId, membership, String(inserted.id), resolvedPartRows, now, ctx);
-      if (consumed > 0) {
-        await bumpCompanySyncVersion(companyId, "company_inventory_version", ctx);
-      }
-    } catch (inventoryError) {
-      const { error: rollbackError } = await supabase.from("jobs").delete().eq("id", inserted.id).eq("company_id", companyId);
-      if (rollbackError) {
-        ctx.logger.error("Failed to roll back finished job after inventory consumption failure", {
-          jobId: inserted.id,
-          companyId,
-          rollbackError: rollbackError.message,
-        });
-      }
-      throw inventoryError;
-    }
+  const createdRow = Array.isArray(createdRows) ? createdRows[0] : createdRows;
+  if (!createdRow?.job_id) {
+    throw { code: "internal", message: "Failed to create job", httpStatus: 500 };
+  }
+
+  if (consumeInventory && consumeParts.length > 0) {
+    await bumpCompanySyncVersion(companyId, "company_inventory_version", ctx);
   }
 
   await bumpCompanySyncVersion(companyId, "jobs_version", ctx);
+
+  const inserted = await resolveCompanyJob<any>(companyId, String(createdRow.job_id), "*", ctx);
+  if (!inserted) {
+    throw { code: "internal", message: "Failed to load created job", httpStatus: 500 };
+  }
   return await mapJobRecordForResponse(inserted, ctx, resolvedCompany.publicCompanyId);
 }
 
@@ -726,6 +654,7 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "jobs", ctx);
   const requestedJobId = requireNonEmptyString(payload?.jobId, "jobId", 1, 128);
   const membership = await requireMembership(companyId, ctx, ["manager", "worker", "user", "dev"]);
 
@@ -757,6 +686,13 @@ export async function updateJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   }
   if (nextStatus === "finished" && String(existingJob.status || "") !== "finished") {
     throw { code: "failed-precondition", message: "Cannot transition directly to finished. Use acceptJobV1.", httpStatus: 400 };
+  }
+  if (
+    nextStatus &&
+    String(existingJob.status || "") === "finished" &&
+    nextStatus !== "finished"
+  ) {
+    throw { code: "failed-precondition", message: "Finished jobs cannot be reverted to another status", httpStatus: 400 };
   }
   if (payload?.isCert !== undefined) {
     throw { code: "permission-denied", message: "isCert is server-managed and cannot be updated directly", httpStatus: 403 };
@@ -917,6 +853,7 @@ export async function deleteJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "jobs", ctx);
   const requestedJobId = requireNonEmptyString(payload?.jobId, "jobId", 1, 128);
   const membership = await requireMembership(companyId, ctx, ["manager", "worker", "user", "dev"]);
 
@@ -938,6 +875,17 @@ export async function deleteJobV1(payload: any, ctx: EdgeFunctionContext): Promi
     throw { code: "permission-denied", message: "You can only delete your own jobs", httpStatus: 403 };
   }
 
+  const [{ data: linkedDocuments }, { data: linkedMovements }] = await Promise.all([
+    supabase.from("documents").select("id").eq("company_id", companyId).eq("job_id", jobId).limit(1),
+    supabase.from("inventory_movements").select("id").eq("company_id", companyId).eq("job_id", jobId).limit(1),
+  ]);
+  if ((linkedDocuments || []).length > 0) {
+    throw { code: "failed-precondition", message: "Cannot delete a job that has linked documents", httpStatus: 400 };
+  }
+  if ((linkedMovements || []).length > 0) {
+    throw { code: "failed-precondition", message: "Cannot delete a job that has linked inventory movements", httpStatus: 400 };
+  }
+
   const { error: deleteError } = await supabase
     .from("jobs")
     .delete()
@@ -956,6 +904,7 @@ export async function acceptJobV1(payload: any, ctx: EdgeFunctionContext): Promi
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "jobs", ctx);
   const requestedJobId = requireNonEmptyString(payload?.jobId, "jobId", 1, 128);
   await requireMembership(companyId, ctx, ["manager", "dev"]);
 
@@ -992,14 +941,26 @@ export async function createJobFileDownloadUrlV1(payload: any, ctx: EdgeFunction
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "jobs", ctx);
   const requestedJobId = requireNonEmptyString(payload?.jobId, "jobId", 1, 128);
-  const storagePath = requireNonEmptyString(payload?.storagePath, "storagePath", 4, 1024).replace(/^\/+/, "");
-  await requireMembership(companyId, ctx, ["manager", "worker", "user", "dev"]);
+  const storagePath = requireNonEmptyString(payload?.storagePath, "storagePath", 4, 1024).replace(/^\/+, "");
+  const membership = await requireMembership(companyId, ctx, ["manager", "worker", "user", "dev"]);
 
   const supabase = createSupabaseClient(ctx.env);
-  const job = await resolveCompanyJob<any>(companyId, requestedJobId, "id, job_no", ctx);
+  const job = await resolveCompanyJob<any>(companyId, requestedJobId, "id, job_no, assigned_membership_id", ctx);
   if (!job?.id) {
     throw { code: "not-found", message: "Job not found", httpStatus: 404 };
+  }
+
+  if (["worker", "user"].includes(membership.role)) {
+    const assignedMembershipId = String(job.assigned_membership_id || "");
+    if (!assignedMembershipId || assignedMembershipId !== membership.id) {
+      throw {
+        code: "permission-denied",
+        message: "You can only download attachments for jobs assigned to you",
+        httpStatus: 403,
+      };
+    }
   }
 
   const normalizedPublicJobId = String(job.job_no || requestedJobId);

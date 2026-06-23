@@ -4,7 +4,7 @@ These instructions apply to the full repository.
 
 ## Current Runtime State
 
-As of May 15, 2026:
+As of June 22, 2026:
 
 - Supabase Auth is the active auth provider for website and mobile sign-in.
 - The in-repo backend runtime and trust boundary are under `supabase/functions/`.
@@ -12,6 +12,10 @@ As of May 15, 2026:
 - Firestore and Cloud Storage still support compatibility reads, operational metadata, rules-backed surfaces, and file storage.
 - Supabase Edge gateway rollout is still in hardening, but repository backend runtime changes target `supabase/functions/` and `supabase/handlers/`.
 - Client and inventory read-model search/pagination is SQL RPC-backed; avoid reintroducing full-collection Edge memory filtering for those paths.
+- Module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) is enforced for both mutations and read-model kinds based on `company_subscriptions.enabled_modules`.
+- Edge function caller URLs in website/mobile use flattened dash names for nested paths (e.g., `contact-request`, `invites-create`) to match Supabase deploy names.
+- Privileged SQL RPC implementations live in the `private` schema with `SECURITY DEFINER`; public RPC names are thin `SECURITY INVOKER` wrappers for service-role Edge callers.
+- `getEnv()` fails closed when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or `JWT_SECRET` are missing.
 
 This means backend migration code is live in `supabase/`. Treat `supabase/functions/` and `supabase/handlers/` as the implementation target for backend runtime changes in this repository.
 
@@ -61,6 +65,9 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Tax invoice submissions must include an `idempotencyKey`.
 - `updateBusinessInfoV1` must reject `vat_number` updates after onboarding.
 - Document task URL fields are canonicalized by task type: `preview_url` for preview tasks and `generate_url` for generate tasks.
+- Approved tax invoices cannot be deleted.
+- `deleteJobV1` and `deleteClientV1` must check for dependent records before deletion.
+- `updateJobV1` must block reverting terminal (`finished`/`denied`) jobs to other statuses.
 
 ### Files and storage
 
@@ -79,6 +86,9 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Do not weaken create-only semantics for generated document files and records.
 - Keep invite redemption race-safe with atomic state transitions.
 - Inventory movement writes should use SQL transaction helpers; multi-part picks use `apply_inventory_pick_batch(...)`.
+- Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(...)`.
+- `createJobV1` uses the `create_job_with_details(...)` SQL RPC for atomic job creation.
+- `registerBusinessV1` uses the `register_business_account(...)` SQL RPC for atomic business registration.
 
 ## Mobile Rules (`phone_app/`)
 
@@ -107,7 +117,8 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Keep `read-model` request/response contracts aligned with website/mobile `kind` payloads.
 - Keep clients and inventory read-model queries backed by service-role SQL RPCs (`get_clients_page`, `get_company_inventory_page`, `get_member_inventory_page`).
 - Keep role and company-scope checks explicit.
-- For multi-step mutations, prefer atomic SQL transaction boundaries; if unavailable in the current handler layer, add explicit compensating cleanup logic.
+- Enforce module entitlement before returning read-model rows for `jobs`, `clients`, `inventory`, `documents`, and `workers`.
+- For multi-step mutations, prefer atomic SQL transaction boundaries; `createJobV1` and `registerBusinessV1` already use atomic SQL RPCs.
 - Reuse shared helper logic from `supabase/shared-edge-helpers.ts`.
 - Preserve trusted-proxy and verification behavior where already enforced.
 - Prefer focused domain modules under `supabase/handlers/` rather than growing unrelated inline logic.
@@ -126,12 +137,14 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Preserve requester validation, Pub/Sub OIDC verification, and canonical `storagePath` persistence.
 - Keep create-only semantics for new generated files and records.
 - If finalization fails after a PDF write, attempt orphan cleanup before marking failure.
+- Sanitize `item.quantity`, `item.price`, and `date` values in PDF templates; HTML-escape email template variables.
 
 ### `cloudrun-archiver/`
 
 - Preserve idempotent archive runs.
 - Treat date fields as ISO strings where the service expects string comparison.
 - Delete only the exact IDs captured in the verified archive.
+- Manifests remain resumable: `uploaded_not_deleted` retries verify the archive and can mark the manifest `deleted` when records are already gone.
 
 ## Shared Contracts And SQL
 

@@ -66,26 +66,17 @@ export default function RegisterClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      const supabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/+$/, "");
-      const supabaseAnonKey = String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "").trim();
-      if (!supabaseUrl || !supabaseAnonKey) {
-        throw new Error("Supabase auth is not configured");
-      }
-
-      const response = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+      const response = await fetch("/api/auth/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseAnonKey,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: values.email,
           password: values.password,
         }),
       });
-      const payload = (await response.json().catch(() => ({}))) as { error_description?: unknown; msg?: unknown };
-      if (!response.ok) {
-        throw new Error(String(payload.error_description || payload.msg || "Registration failed"));
+      const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "Registration failed");
       }
 
       await signInWithConfiguredProvider(values.email, values.password);

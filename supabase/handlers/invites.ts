@@ -4,6 +4,7 @@
  */
 import {
   EdgeFunctionContext,
+  bumpCompanySyncVersion,
   createSupabaseClient,
   optionalTrimmedString,
   requireNonEmptyString,
@@ -165,6 +166,11 @@ export async function joinCompanyV1(payload: any, ctx: EdgeFunctionContext): Pro
   const membership = Array.isArray(data) ? data[0] : data;
   if (!membership?.membership_id || !membership?.public_company_id) {
     throw { code: "internal", message: "Failed to join company", httpStatus: 500 };
+  }
+
+  const internalCompanyId = String(membership.company_id || "");
+  if (internalCompanyId) {
+    await bumpCompanySyncVersion(internalCompanyId, "workers_version", ctx);
   }
 
   return {

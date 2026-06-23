@@ -25,9 +25,15 @@ async function getCompanyBusinessInfoByPublicId(companyId, options: any = {}) {
 async function updateCompanyBusinessInfo(input, options: any = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
-  const changes = input.changes && typeof input.changes === 'object' ? input.changes : {};
+    const changes = input.changes && typeof input.changes === 'object' ? input.changes : {};
 
-  return db.transaction(async (tx) => {
+    if (Object.prototype.hasOwnProperty.call(changes, 'vat_number')) {
+      const error = new Error('vat_number is immutable after onboarding');
+      (error as any).code = 'failed-precondition';
+      throw error;
+    }
+
+    return db.transaction(async (tx) => {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');

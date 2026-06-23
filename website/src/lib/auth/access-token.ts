@@ -29,74 +29,48 @@ export function parseBearerToken(header: string | null) {
   return token.length > 0 ? token : null;
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
-
-  try {
-    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = payload + "=".repeat((4 - (payload.length % 4 || 4)) % 4);
-    return JSON.parse(Buffer.from(padded, "base64").toString("utf8")) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
 async function verifySupabaseToken(token: string): Promise<VerifiedAccessToken> {
-  const supabaseUrl = String(
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  )
-    .trim()
-    .replace(/\/+$/, "");
-  const supabaseApiKey = String(
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-      "",
-  ).trim();
-
-  if (!supabaseUrl || !supabaseApiKey) {
-    throw new ApiRouteError(500, "supabase_not_configured", "Supabase auth is not configured on server");
-  }
-
+  const supabaseUrl = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
   const jwtSecret = String(process.env.JWT_SECRET || process.env.SUPABASE_JWT_SECRET || "").trim();
-  let claims = decodeJwtPayload(token);
-  if (jwtSecret) {
-    try {
-      const secret = new TextEncoder().encode(jwtSecret);
-      const verified = await jwtVerify(token, secret);
-      claims = (verified.payload as Record<string, unknown>) || claims;
-    } catch {
-      // Fall back to server-side introspection for token validity.
-    }
+  const jwtIssuer = String(
+    process.env.SUPABASE_JWT_ISSUER ||
+      (supabaseUrl ? `${supabaseUrl}/auth/v1` : ""),
+  ).trim();
+  const jwtAudiences = (process.env.SUPABASE_JWT_AUDIENCE || "authenticated")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (!jwtSecret) {
+    throw new ApiRouteError(500, "jwt_secret_missing", "JWT_SECRET is required for server-side token verification");
+  }
+  if (!jwtIssuer) {
+    throw new ApiRouteError(500, "jwt_issuer_missing", "SUPABASE_JWT_ISSUER is required for server-side token verification");
   }
 
-  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      apikey: supabaseApiKey,
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
+  let claims: Record<string, unknown> | null;
+  try {
+    const secret = new TextEncoder().encode(jwtSecret);
+    const verified = await jwtVerify(token, secret, {
+      algorithms: ["HS256"],
+      issuer: jwtIssuer,
+      audience: jwtAudiences.length > 0 ? jwtAudiences : ["authenticated"],
+    });
+    claims = (verified.payload as Record<string, unknown>) || null;
+  } catch {
     throw new ApiRouteError(401, "invalid_token", "Invalid or expired auth token");
   }
 
-  const user = (await response.json().catch(() => null)) as {
-    id?: unknown;
-    email?: unknown;
-    app_metadata?: { role?: unknown };
-  } | null;
-
-  const uid = String(user?.id ?? "").trim();
+  const uid = typeof claims?.sub === "string" ? claims.sub.trim() : "";
   if (!uid) {
     throw new ApiRouteError(401, "invalid_token", "Invalid auth token payload");
   }
 
   const authTime = Number.isFinite(Number(claims?.iat)) ? Number(claims?.iat) : null;
-  const roleFromAppMetadata = typeof user?.app_metadata?.role === "string" ? user.app_metadata.role : null;
+  const roleFromAppMetadata =
+    typeof (claims?.app_metadata as Record<string, unknown> | undefined)?.role === "string"
+      ? String((claims.app_metadata as Record<string, unknown>).role)
+      : null;
 
   return {
     uid,
@@ -104,7 +78,7 @@ async function verifySupabaseToken(token: string): Promise<VerifiedAccessToken> 
     decodedToken: null,
     claims,
     authTime,
-    email: typeof user?.email === "string" ? user.email : null,
+    email: typeof claims?.email === "string" ? claims.email : null,
     role: roleFromAppMetadata,
     companyId: null,
     accessToken: token,

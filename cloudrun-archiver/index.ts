@@ -403,8 +403,9 @@ async function deleteArchiveRecords(companyId, kind, recordIds) {
     : await deleteArchivedDocumentsByIds(companyId, recordIds);
 }
 
-function buildDeletedManifestEntry(existingEntry, deletedCount, expectedCount) {
-  if (deletedCount !== expectedCount) {
+function buildDeletedManifestEntry(existingEntry, deletedCount, expectedCount, verified = false) {
+  const allGone = deletedCount === expectedCount || (verified && deletedCount === 0);
+  if (!allGone) {
     return {
       ...existingEntry,
       deletedCount,
@@ -416,12 +417,11 @@ function buildDeletedManifestEntry(existingEntry, deletedCount, expectedCount) {
   return {
     archivedAt: existingEntry.archivedAt,
     docCount: expectedCount,
-    deletedCount,
+    deletedCount: verified ? expectedCount : deletedCount,
     status: 'deleted',
     deletedAt: new Date().toISOString(),
   };
 }
-
 
 // ============================================================================
 // PROCESS ONE COMPANY
@@ -446,8 +446,9 @@ async function processCompany(companyId, target) {
     console.log(`⏭️ ${finishedKey} already archived (${manifest[finishedKey].docCount} docs on ${manifest[finishedKey].archivedAt})`);
   } else {
     if (manifest[finishedKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[finishedKey].docIds)) {
+      const archiveVerified = await verifyArchive(companyId, finishedKey, manifest[finishedKey].docCount);
       const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', manifest[finishedKey].docIds);
-      manifest[finishedKey] = buildDeletedManifestEntry(manifest[finishedKey], deleted, manifest[finishedKey].docIds.length);
+      manifest[finishedKey] = buildDeletedManifestEntry(manifest[finishedKey], deleted, manifest[finishedKey].docIds.length, archiveVerified);
       manifestUpdated = true;
     } else {
       const archive = await uploadArchive(companyId, finishedKey, target, 'finishedJobs');
@@ -488,8 +489,9 @@ async function processCompany(companyId, target) {
     console.log(`⏭️ ${documentsKey} already archived (${manifest[documentsKey].docCount} docs on ${manifest[documentsKey].archivedAt})`);
   } else {
     if (manifest[documentsKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[documentsKey].docIds)) {
+      const archiveVerified = await verifyArchive(companyId, documentsKey, manifest[documentsKey].docCount);
       const deleted = await deleteArchiveRecords(companyId, 'documents', manifest[documentsKey].docIds);
-      manifest[documentsKey] = buildDeletedManifestEntry(manifest[documentsKey], deleted, manifest[documentsKey].docIds.length);
+      manifest[documentsKey] = buildDeletedManifestEntry(manifest[documentsKey], deleted, manifest[documentsKey].docIds.length, archiveVerified);
       manifestUpdated = true;
     } else {
       const archive = await uploadArchive(companyId, documentsKey, target, 'documents');

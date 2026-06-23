@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   repo_guards:
     runs-on: ubuntu-latest
@@ -13,6 +17,7 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-no-ts-nocheck.mjs
+      - run: node scripts/check-js-syntax.mjs scripts
 
   packages_contracts:
     runs-on: ubuntu-latest
@@ -51,7 +56,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - packages_contracts
-      - packages_db
     defaults:
       run:
         working-directory: website
@@ -61,7 +65,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: website/package-lock.json
+          cache-dependency-path: |
+            website/package-lock.json
+            packages/contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
@@ -80,7 +88,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: phone_app/package-lock.json
+          cache-dependency-path: |
+            phone_app/package-lock.json
+            packages/contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
@@ -89,7 +101,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - packages_contracts
-      - packages_db
     defaults:
       run:
         working-directory: cloudrun-pdf
@@ -101,6 +112,7 @@ jobs:
           cache: npm
           cache-dependency-path: cloudrun-pdf/package-lock.json
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
 
   cloudrun_archiver:
@@ -123,6 +135,7 @@ jobs:
       - run: npm --prefix packages/db ci
       - run: npm --prefix packages/db run build
       - run: npm --prefix cloudrun-archiver ci
+      - run: npm --prefix cloudrun-archiver run typecheck
       - run: npm --prefix cloudrun-archiver test
 
   supabase_edge:
@@ -133,7 +146,9 @@ jobs:
         with:
           deno-version: v2.x
       - name: Type-check Supabase edge runtime
-        run: deno check supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+        run: |
+          shopt -s globstar
+          deno check supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
 
   perf_budget:
     runs-on: ubuntu-latest

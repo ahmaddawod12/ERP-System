@@ -188,10 +188,10 @@ async function markDocumentTaskCompleted(taskId, options: any = {}) {
   await db.execute(require('drizzle-orm').sql`
     UPDATE document_tasks
     SET status = 'completed',
-        preview_url = ${previewUrl},
-        generate_url = ${generateUrl},
-        storage_path = ${options.storagePath || null},
-        pdf_size = ${options.pdfSize ?? null},
+        preview_url = COALESCE(preview_url, ${previewUrl}),
+        generate_url = COALESCE(generate_url, ${generateUrl}),
+        storage_path = COALESCE(storage_path, ${options.storagePath || null}),
+        pdf_size = COALESCE(pdf_size, ${options.pdfSize ?? null}),
         error = NULL,
         completed_at = NOW(),
         request_payload = COALESCE(request_payload, '{}'::jsonb) || ${patchJson}::jsonb

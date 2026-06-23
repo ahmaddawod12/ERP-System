@@ -5,6 +5,7 @@
 import {
   claimIdempotency,
   recordIdempotencyResult,
+  bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
   allocateNextCompanyCounter,
@@ -14,9 +15,20 @@ import {
   resolveCompanyIdentifiers,
   validateCompanyId,
 } from "../shared-edge-helpers.ts";
+import { DocType, VAT_RATE } from "@smart-job/contracts";
 import { buildPublicDocumentId, createOrReuseDocumentTask } from "./documents.ts";
 
-const TAX_INVOICE_TYPE = 305;
+const TAX_INVOICE_TYPE = DocType.TaxInvoice;
+
+function parseDocumentDate(value: unknown, fieldName: string): string | null {
+  const raw = optionalTrimmedString(value, 64);
+  if (!raw) return null;
+  const ts = Date.parse(raw);
+  if (Number.isNaN(ts)) {
+    throw { code: "invalid-argument", message: `${fieldName} must be a valid ISO date`, httpStatus: 400 };
+  }
+  return new Date(ts).toISOString();
+}
 
 async function requireTaxManagerOrDev(
   companyId: string,
@@ -136,7 +148,7 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
       const price = Number(lineItem.price || 0);
       return sum + (Number.isFinite(quantity) ? quantity : 0) * (Number.isFinite(price) ? price : 0);
     }, 0);
-    const vatAmount = Math.round(totalBeforeVat * 0.18 * 100) / 100;
+    const vatAmount = Math.round(totalBeforeVat * VAT_RATE * 100) / 100;
     const totalWithVat = Math.round((totalBeforeVat + vatAmount) * 100) / 100;
 
     const existingReservation = await findExistingReservedTaxInvoice(companyId, idempotencyKey, ctx);
@@ -174,7 +186,7 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
           tax_authority_status: "reserved",
           created_by_membership_id: taxAccess.membershipId,
           language: documentPayload.language,
-          document_date: documentDate ? new Date(documentDate).toISOString() : null,
+          document_date: parseDocumentDate(documentDate, "documentDate"),
           notes: documentPayload.notes,
           total_before_vat: totalBeforeVat,
           vat_amount: vatAmount,
@@ -220,6 +232,8 @@ export async function getInvoiceApproval(payload: any, ctx: EdgeFunctionContext)
         throw { code: "internal", message: "Failed to create tax reservation", httpStatus: 500 };
       }
     }
+
+    await bumpCompanySyncVersion(companyId, "documents_version", ctx);
 
     const task = await createOrReuseDocumentTask(
       companyId,

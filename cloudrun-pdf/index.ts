@@ -664,9 +664,34 @@ app.get('/health', async (req, res) => {
 // START SERVER
 // ============================================================================
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`PDF Service listening on port ${PORT}`);
   console.log(`Endpoints: POST /preview, POST /generate, GET /health`);
   console.log(`Max concurrent tabs: ${MAX_CONCURRENT_TABS} (shared between preview & generate)`);
   console.log(`Tab wait timeout: ${TAB_WAIT_TIMEOUT}ms, max queued waiters: ${MAX_TAB_WAITERS}`);
 });
+
+// Graceful shutdown: drain in-flight work and close the browser before exiting.
+function shutdown(signal: string) {
+  return () => {
+    console.log(`Received ${signal}, shutting down gracefully...`);
+    server.close(async () => {
+      try {
+        await browserPool.close();
+        console.log('Browser pool closed');
+      } catch (error) {
+        console.error('Error during browser pool shutdown:', error);
+      }
+      process.exit(0);
+    });
+
+    // Force exit if graceful shutdown takes too long.
+    setTimeout(() => {
+      console.error('Graceful shutdown timed out, forcing exit');
+      process.exit(1);
+    }, Number(process.env.SHUTDOWN_TIMEOUT_MS || 30000));
+  };
+}
+
+process.on('SIGTERM', shutdown('SIGTERM'));
+process.on('SIGINT', shutdown('SIGINT'));

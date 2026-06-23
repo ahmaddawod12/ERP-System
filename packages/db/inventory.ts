@@ -476,6 +476,7 @@ async function toggleUserInventoryPart(input, options: any = {}) {
 
 async function removeUserInventoryPart(input, options: any = {}) {
   const db = options.db || getDb(options.env);
+  const now = asDate(input.now, new Date());
 
   return db.transaction(async (tx) => {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
@@ -487,7 +488,7 @@ async function removeUserInventoryPart(input, options: any = {}) {
 
     const memberLocation = await getMemberInventoryLocation(tx, company.id, input.targetUid);
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
-    if (!part) {
+    if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
       (error as any).code = 'not-found';
       throw error;
@@ -497,6 +498,12 @@ async function removeUserInventoryPart(input, options: any = {}) {
       eq(inventoryBalances.locationId, memberLocation.locationId),
       eq(inventoryBalances.partId, part.id),
     ));
+
+    await tx.update(inventoryParts).set({
+      archivedAt: now,
+      updatedAt: now,
+      active: false,
+    }).where(eq(inventoryParts.id, part.id));
 
     return { removed: Number(part.part_no) };
   });

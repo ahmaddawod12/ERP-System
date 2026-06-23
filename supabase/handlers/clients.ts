@@ -4,6 +4,7 @@
  */
 import {
   allocateNextCompanyCounter,
+  assertModuleEnabled,
   bumpCompanySyncVersion,
   EdgeFunctionContext,
   createSupabaseClient,
@@ -42,6 +43,7 @@ export async function addClientV1(payload: any, ctx: EdgeFunctionContext): Promi
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "clients", ctx);
   const name = requireNonEmptyString(payload?.name, "name", 1, 240);
   const phone = optionalTrimmedString(payload?.phone, 40);
   const email = payload?.email !== undefined && String(payload.email).trim() !== ""
@@ -104,6 +106,7 @@ export async function updateClientV1(payload: any, ctx: EdgeFunctionContext): Pr
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "clients", ctx);
   const clientId = requireNonEmptyString(payload?.clientId, "clientId", 1, 120);
   await requireActiveMembership(companyId, ctx);
 
@@ -168,10 +171,23 @@ export async function deleteClientV1(payload: any, ctx: EdgeFunctionContext): Pr
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "clients", ctx);
   const clientId = requireNonEmptyString(payload?.clientId, "clientId", 1, 120);
   await requireActiveMembership(companyId, ctx);
 
   const supabase = createSupabaseClient(ctx.env);
+
+  const [{ data: linkedJobs }, { data: linkedDocuments }] = await Promise.all([
+    supabase.from("jobs").select("id").eq("company_id", companyId).eq("client_id", clientId).limit(1),
+    supabase.from("documents").select("id").eq("company_id", companyId).eq("client_id", clientId).limit(1),
+  ]);
+  if ((linkedJobs || []).length > 0) {
+    throw { code: "failed-precondition", message: "Cannot delete a client that has linked jobs", httpStatus: 400 };
+  }
+  if ((linkedDocuments || []).length > 0) {
+    throw { code: "failed-precondition", message: "Cannot delete a client that has linked documents", httpStatus: 400 };
+  }
+
   const { data: deletedClient, error: deleteError } = await supabase
     .from("clients")
     .delete()

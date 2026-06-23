@@ -105,6 +105,29 @@ export const deepClone = <T>(obj: T): T => {
 };
 
 /**
+ * Generate a UUID v4 suitable for React Native.
+ * Uses expo-crypto when available; falls back to a Math.random-based v4
+ * for environments where the native module is not linked yet.
+ */
+export const generateUuid = (): string => {
+  try {
+    // Dynamic import so projects that have not yet installed expo-crypto do not crash at import time.
+    const Crypto = require('expo-crypto');
+    if (Crypto && typeof Crypto.randomUUID === 'function') {
+      return Crypto.randomUUID();
+    }
+  } catch {
+    // Fall through to JS implementation.
+  }
+
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const rand = Math.random() * 16 | 0;
+    const value = char === 'x' ? rand : (rand & 0x3) | 0x8;
+    return value.toString(16);
+  });
+};
+
+/**
  * Safely parse a JSON string, returning a fallback value on failure.
  * Prevents crashes from malformed navigation params or corrupted storage data.
  */

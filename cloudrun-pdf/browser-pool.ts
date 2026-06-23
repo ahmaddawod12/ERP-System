@@ -132,5 +132,22 @@ export function createBrowserPool(options: {
     return browserGeneration;
   }
 
-  return { getBrowser, acquireTab, releaseTab, getStats, getGeneration };
+  async function close() {
+    while (tabWaiters.length > 0) {
+      const waiter = tabWaiters.shift();
+      waiter.reject(new Error('Browser pool is closing'));
+    }
+    if (browserInstance) {
+      const instance = browserInstance;
+      browserInstance = null;
+      activeTabs = 0;
+      try {
+        await instance.close();
+      } catch (closeError) {
+        console.warn('Error closing browser instance:', closeError);
+      }
+    }
+  }
+
+  return { getBrowser, acquireTab, releaseTab, getStats, getGeneration, close };
 }

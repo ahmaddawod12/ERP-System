@@ -56,6 +56,10 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
   assert.deepEqual(migrationFiles, [
     '0000_optimized_baseline.sql',
     '0001_supabase_cost_perf_security_hardening.sql',
+    '0002_phase1_read_caps.sql',
+    '0003_phase1_atomic_jobs.sql',
+    '0004_phase1_atomic_business_registration.sql',
+    '0005_phase2_trigger_search_path.sql',
   ]);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);

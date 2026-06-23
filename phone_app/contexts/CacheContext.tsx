@@ -419,14 +419,23 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       pageSize = 200,
       baseOpts: Record<string, unknown> = {},
     ) => {
+      const MAX_PAGES = 50;
+      const MAX_ITEMS = 10_000;
       const allItems: any[] = [];
       const seenCursors = new Set<string>();
       let nextCursor: string | null = null;
+      let pagesFetched = 0;
 
       do {
+        pagesFetched++;
         const page = await fetchPage(companyId, { ...baseOpts, pageSize, afterCursor: nextCursor || undefined });
         if (Array.isArray(page.items) && page.items.length > 0) {
           allItems.push(...page.items);
+        }
+
+        if (allItems.length >= MAX_ITEMS || pagesFetched >= MAX_PAGES) {
+          logger.warn(`fetchAllCursorPages capped for ${companyId} (pages=${pagesFetched}, items=${allItems.length})`);
+          break;
         }
 
         const candidateCursor = typeof page.nextCursor === 'string' && page.nextCursor.trim()

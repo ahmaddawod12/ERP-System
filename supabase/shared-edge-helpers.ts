@@ -7,52 +7,66 @@ import { jwtVerify } from "jose";
 // ─────────────────────────────────────────────────────────────────────────
 
 // ── Environment and Secrets ───────────────────────────────────────────────
-export const getEnv = () => ({
-  // Core
-  supabaseUrl: Deno.env.get("SUPABASE_URL") || "",
-  supabaseAnonKey: Deno.env.get("SUPABASE_ANON_KEY") || "",
-  supabaseServiceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
-  supabaseJwtIssuer: Deno.env.get("SUPABASE_JWT_ISSUER")
-    || `${String(Deno.env.get("SUPABASE_URL") || "").replace(/\/+$/, "")}/auth/v1`,
-  supabaseJwtAudiences: (Deno.env.get("SUPABASE_JWT_AUDIENCE") || "authenticated")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
+function requireEnv(name: string): string {
+  const value = Deno.env.get(name);
+  if (!value || !value.trim()) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value.trim();
+}
 
-  // JWT Secret for Supabase
-  jwtSecret: Deno.env.get("JWT_SECRET") || "",
+export const getEnv = () => {
+  const supabaseUrl = requireEnv("SUPABASE_URL");
+  const supabaseServiceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const jwtSecret = requireEnv("JWT_SECRET");
 
-  // SQL / Database
-  databaseUrl: Deno.env.get("DATABASE_URL") || "",
+  return {
+    // Core
+    supabaseUrl,
+    supabaseAnonKey: Deno.env.get("SUPABASE_ANON_KEY") || "",
+    supabaseServiceRoleKey,
+    supabaseJwtIssuer: Deno.env.get("SUPABASE_JWT_ISSUER")
+      || `${supabaseUrl.replace(/\/+$/, "")}/auth/v1`,
+    supabaseJwtAudiences: (Deno.env.get("SUPABASE_JWT_AUDIENCE") || "authenticated")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
 
-  // Cloud Run Integration
-  cloudRunPdfService: Deno.env.get("CLOUD_RUN_PDF_SERVICE_URL") || "",
-  cloudRunArchiverService: Deno.env.get("CLOUD_RUN_ARCHIVER_SERVICE_URL") || "",
+    // JWT Secret for Supabase
+    jwtSecret,
 
-  // Tax Authority
-  taxOAuthClientId: Deno.env.get("TAX_CLIENT_ID") || Deno.env.get("TAX_OAUTH_CLIENT_ID") || "",
-  taxOAuthClientSecret: Deno.env.get("TAX_CLIENT_SECRET") || Deno.env.get("TAX_OAUTH_CLIENT_SECRET") || "",
-  taxAuthorityApiUrl: Deno.env.get("TAX_AUTH_URL") || Deno.env.get("TAX_AUTHORITY_API_URL") || "",
-  taxTokenUrl: Deno.env.get("TAX_TOKEN_URL") || "",
-  taxApprovalUrl: Deno.env.get("TAX_APPROVAL_URL") || "",
+    // SQL / Database
+    databaseUrl: Deno.env.get("DATABASE_URL") || "",
 
-  // Notifications
-  pubSubProjectId: Deno.env.get("GCP_PROJECT_ID") || "",
-  pubSubTopic: Deno.env.get("PUBSUB_TOPIC") || "document-generate",
+    // Cloud Run Integration
+    cloudRunPdfService: Deno.env.get("CLOUD_RUN_PDF_SERVICE_URL") || "",
+    cloudRunArchiverService: Deno.env.get("CLOUD_RUN_ARCHIVER_SERVICE_URL") || "",
 
-  // CORS and Runtime
-  corsAllowedOrigins: (Deno.env.get("CORS_ALLOWED_ORIGINS") || "")
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean),
+    // Tax Authority
+    taxOAuthClientId: Deno.env.get("TAX_CLIENT_ID") || Deno.env.get("TAX_OAUTH_CLIENT_ID") || "",
+    taxOAuthClientSecret: Deno.env.get("TAX_CLIENT_SECRET") || Deno.env.get("TAX_OAUTH_CLIENT_SECRET") || "",
+    taxAuthorityApiUrl: Deno.env.get("TAX_AUTH_URL") || Deno.env.get("TAX_AUTHORITY_API_URL") || "",
+    taxTokenUrl: Deno.env.get("TAX_TOKEN_URL") || "",
+    taxApprovalUrl: Deno.env.get("TAX_APPROVAL_URL") || "",
 
-  // Feature Flags
-  enableSqlPersistence:
-    String(Deno.env.get("SMART_JOB_PERSISTENCE_BACKEND") || Deno.env.get("PERSISTENCE_BACKEND") || "")
-      .trim()
-      .toLowerCase() === "sql",
-  logLevel: Deno.env.get("LOG_LEVEL") || "info",
-});
+    // Notifications
+    pubSubProjectId: Deno.env.get("GCP_PROJECT_ID") || "",
+    pubSubTopic: Deno.env.get("PUBSUB_TOPIC") || "document-generate",
+
+    // CORS and Runtime
+    corsAllowedOrigins: (Deno.env.get("CORS_ALLOWED_ORIGINS") || "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean),
+
+    // Feature Flags
+    enableSqlPersistence:
+      String(Deno.env.get("SMART_JOB_PERSISTENCE_BACKEND") || Deno.env.get("PERSISTENCE_BACKEND") || "")
+        .trim()
+        .toLowerCase() === "sql",
+    logLevel: Deno.env.get("LOG_LEVEL") || "info",
+  };
+};
 
 // ── Structured Logging with Correlation ID ────────────────────────────────
 export class StructuredLogger {
@@ -116,14 +130,21 @@ export async function verifySupabaseJwt(
   token: string,
   env: ReturnType<typeof getEnv>
 ): Promise<{ uid: string; email?: string; [key: string]: any } | null> {
-  if (!token || !env.jwtSecret) {
+  if (!token) {
     return null;
+  }
+  if (!env.jwtSecret) {
+    throw new Error("JWT_SECRET is required for Supabase JWT verification");
+  }
+  if (!env.supabaseJwtIssuer) {
+    throw new Error("SUPABASE_JWT_ISSUER is required for Supabase JWT verification");
   }
 
   try {
     const secret = new TextEncoder().encode(env.jwtSecret);
     const verified = await jwtVerify(token, secret, {
-      issuer: String(env.supabaseJwtIssuer || "").trim() || undefined,
+      algorithms: ["HS256"],
+      issuer: String(env.supabaseJwtIssuer).trim(),
       audience: env.supabaseJwtAudiences.length > 0 ? env.supabaseJwtAudiences : ["authenticated"],
     });
     const claims = verified.payload as any;
@@ -189,6 +210,7 @@ export function getCorsHeaders(
 export function httpStatusFromErrorCode(code: string): number {
   const mapping: Record<string, number> = {
     "invalid-argument": 400,
+    "failed-precondition": 400,
     "permission-denied": 403,
     "not-found": 404,
     "already-exists": 409,
@@ -917,6 +939,39 @@ export async function bumpCompanySyncVersion(
   });
   if (error) {
     ctx.logger.warn("Failed to bump company sync version", { companyId, field, error: error.message });
+  }
+}
+
+// ── Module Entitlement Check ──────────────────────────────────────────────
+export async function assertModuleEnabled(
+  companyId: string,
+  module: string,
+  ctx: EdgeFunctionContext,
+): Promise<void> {
+  const supabase = createSupabaseClient(ctx.env);
+  const { data, error } = await supabase
+    .from("company_subscriptions")
+    .select("tier, enabled_modules")
+    .eq("company_id", companyId)
+    .maybeSingle();
+
+  if (error || !data) {
+    throw {
+      code: "failed-precondition",
+      message: "Company subscription not found",
+      httpStatus: 400,
+    };
+  }
+
+  const tierModules = enabledModulesForTier(data.tier);
+  const enabledModules = { ...tierModules, ...(data.enabled_modules || {}) };
+
+  if (!enabledModules[module]) {
+    throw {
+      code: "permission-denied",
+      message: `Module '${module}' is not enabled for this company`,
+      httpStatus: 403,
+    };
   }
 }
 

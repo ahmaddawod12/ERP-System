@@ -8,14 +8,17 @@ import {
   parseJsonBody,
   validateCompanyId,
   assertCompanyAccess,
+  assertModuleEnabled,
   createSupabaseClient,
   resolveCompanyIdentifiers,
   optionalTrimmedString,
 } from "../../shared-edge-helpers.ts";
 import {
   canReadCompanyDocuments,
+  canReadCompanyInventory,
   canReadCompanyJobs,
   canReadCompanyWorkers,
+  canReadUserInventory,
   shouldScopeJobsToMembership,
 } from "./auth-scope.ts";
 import {
@@ -322,6 +325,7 @@ async function buildReadModelResponse(
   }
 
   if (kind === "workers") {
+    await assertModuleEnabled(scope.internalCompanyId, "workers", ctx);
     if (!canReadCompanyWorkers(requester)) {
       return [];
     }
@@ -347,13 +351,13 @@ async function buildReadModelResponse(
   }
 
   if (kind === "clients") {
-    const wantsPage = hasOptionalPaging(body) || Boolean(optionalTrimmedString(body.search, 80));
-    const pageSize = wantsPage ? parseReadLimit(body) : 10_000;
+    await assertModuleEnabled(scope.internalCompanyId, "clients", ctx);
+    const pageSize = parseReadLimit(body);
     const cursor = parseNumberCursor(body.afterCursor);
     const search = normalizePrefixSearch(body.search);
     const { data, error } = await supabase.rpc("get_clients_page", {
       p_company_id: scope.internalCompanyId,
-      p_page_size: wantsPage ? pageSize : null,
+      p_page_size: pageSize,
       p_after_client_no: cursor ? cursor.value : null,
       p_after_id: cursor ? cursor.id : null,
       p_search: search || null,
@@ -366,9 +370,6 @@ async function buildReadModelResponse(
       ? data as { items?: unknown; nextCursor?: unknown }
       : {};
     const items = Array.isArray(payload.items) ? payload.items : [];
-    if (!wantsPage) {
-      return items;
-    }
     return {
       items,
       nextCursor: typeof payload.nextCursor === "string" && payload.nextCursor.trim() ? payload.nextCursor : null,
@@ -376,8 +377,16 @@ async function buildReadModelResponse(
   }
 
   if (kind === "inventory") {
+    await assertModuleEnabled(scope.internalCompanyId, "inventory", ctx);
     const scopeKind = optionalTrimmedString(body.scope, 16) || "company";
     if (scopeKind === "user") {
+      if (!canReadUserInventory(requester)) {
+        throw {
+          code: "permission-denied",
+          httpStatus: 403,
+          message: "Inventory is not available for this role or subscription tier",
+        };
+      }
       const targetUid = optionalTrimmedString(body.targetUid, 200) || uid;
       if (targetUid !== uid) {
         if (!requester.isDev && requester.role !== "manager") {
@@ -389,19 +398,27 @@ async function buildReadModelResponse(
         }
       }
       return getUserInventoryParts(scope.internalCompanyId, targetUid, {
-        pageSize: body.pageSize || body.limit ? parseReadLimit(body) : undefined,
+        pageSize: parseReadLimit(body),
         afterCursor: parseNumberCursor(body.afterCursor),
         search: optionalTrimmedString(body.search, 80) || null,
       });
     }
+    if (!canReadCompanyInventory(requester)) {
+      throw {
+        code: "permission-denied",
+        httpStatus: 403,
+        message: "Company inventory is not available for this role or subscription tier",
+      };
+    }
     return getCompanyInventoryParts(scope.internalCompanyId, {
-      pageSize: body.pageSize || body.limit ? parseReadLimit(body) : undefined,
+      pageSize: parseReadLimit(body),
       afterCursor: parseNumberCursor(body.afterCursor),
       search: optionalTrimmedString(body.search, 80) || null,
     });
   }
 
   if (kind === "documentTask") {
+    await assertModuleEnabled(scope.internalCompanyId, "documents", ctx);
     const taskId = optionalTrimmedString(body.taskId, 160);
     if (!taskId) {
       throw { code: "invalid-argument", httpStatus: 400, message: "taskId is required" };
@@ -410,6 +427,7 @@ async function buildReadModelResponse(
     const { data: task } = await supabase
       .from("document_tasks")
       .select("id, company_id, user_id, task_type, status, preview_url, generate_url, request_payload, storage_path, pdf_size, error, document_id")
+      .eq("company_id", scope.internalCompanyId)
       .eq("task_key", taskId)
       .maybeSingle();
 
@@ -507,6 +525,7 @@ async function buildReadModelResponse(
   }
 
   if (kind === "jobs") {
+    await assertModuleEnabled(scope.internalCompanyId, "jobs", ctx);
     if (!canReadCompanyJobs(requester)) {
       return { items: [], nextCursor: null };
     }
@@ -568,6 +587,7 @@ async function buildReadModelResponse(
   }
 
   if (kind === "documents") {
+    await assertModuleEnabled(scope.internalCompanyId, "documents", ctx);
     if (!canReadCompanyDocuments(requester)) {
       return { items: [], nextCursor: null };
     }
@@ -743,39 +763,51 @@ async function buildReadModelResponse(
   };
 
   if (countOnly) {
-    const inventoryCounts = await getInventoryCounts(supabase, scope.internalCompanyId, String(membershipResult.data.id || ""));
-    let jobsCountQuery = supabase.from("jobs").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId);
-    if (!canReadCompanyJobs(requester)) {
-      jobsCountQuery = jobsCountQuery.eq("id", NEVER_UUID);
-    } else if (shouldScopeJobsToMembership(requester)) {
-      jobsCountQuery = requester.membershipId
-        ? jobsCountQuery.eq("assigned_membership_id", requester.membershipId)
-        : jobsCountQuery.eq("id", NEVER_UUID);
+    const moduleEnabled = (name: string) => Boolean(enabledModules[name]);
+
+    if (moduleEnabled("inventory")) {
+      const inventoryCounts = await getInventoryCounts(supabase, scope.internalCompanyId, String(membershipResult.data.id || ""));
+      counts.inventoryParts = inventoryCounts.inventoryParts;
+      counts.companyInventoryParts = inventoryCounts.companyInventoryParts;
     }
-    const documentsCountQuery = canReadCompanyDocuments(requester)
-      ? supabase
-        .from("documents")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", scope.internalCompanyId)
-        .or("document_type.neq.305,tax_authority_status.eq.approved")
-      : supabase.from("documents").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
-    const workersCountQuery = canReadCompanyWorkers(requester)
-      ? supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId).eq("status", "active").in("role", ["worker", "user", "basic"])
-      : supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
 
-    const [{ count: jobsCount }, { count: clientsCount }, { count: documentsCount }, { count: workersCount }] = await Promise.all([
-      jobsCountQuery,
-      supabase.from("clients").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId),
-      documentsCountQuery,
-      workersCountQuery,
-    ]);
+    if (moduleEnabled("jobs")) {
+      let jobsCountQuery = supabase.from("jobs").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId);
+      if (!canReadCompanyJobs(requester)) {
+        jobsCountQuery = jobsCountQuery.eq("id", NEVER_UUID);
+      } else if (shouldScopeJobsToMembership(requester)) {
+        jobsCountQuery = requester.membershipId
+          ? jobsCountQuery.eq("assigned_membership_id", requester.membershipId)
+          : jobsCountQuery.eq("id", NEVER_UUID);
+      }
+      const { count } = await jobsCountQuery;
+      counts.jobs = Number(count || 0);
+    }
 
-    counts.jobs = Number(jobsCount || 0);
-    counts.clients = Number(clientsCount || 0);
-    counts.documents = Number(documentsCount || 0);
-    counts.inventoryParts = inventoryCounts.inventoryParts;
-    counts.companyInventoryParts = inventoryCounts.companyInventoryParts;
-    counts.workers = Number(workersCount || 0);
+    if (moduleEnabled("documents")) {
+      const documentsCountQuery = canReadCompanyDocuments(requester)
+        ? supabase
+          .from("documents")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", scope.internalCompanyId)
+          .or("document_type.neq.305,tax_authority_status.eq.approved")
+        : supabase.from("documents").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
+      const { count } = await documentsCountQuery;
+      counts.documents = Number(count || 0);
+    }
+
+    if (moduleEnabled("workers")) {
+      const workersCountQuery = canReadCompanyWorkers(requester)
+        ? supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId).eq("status", "active").in("role", ["worker", "user", "basic"])
+        : supabase.from("company_memberships").select("id", { count: "exact", head: true }).eq("id", NEVER_UUID);
+      const { count } = await workersCountQuery;
+      counts.workers = Number(count || 0);
+    }
+
+    if (moduleEnabled("clients")) {
+      const { count: clientsCount } = await supabase.from("clients").select("id", { count: "exact", head: true }).eq("company_id", scope.internalCompanyId);
+      counts.clients = Number(clientsCount || 0);
+    }
 
     return {
       profile,
@@ -802,12 +834,8 @@ async function buildReadModelResponse(
     };
   }
 
-  const [userInventory, companyInventory] = await Promise.all([
-    getUserInventoryParts(scope.internalCompanyId, uid),
-    getCompanyInventoryParts(scope.internalCompanyId),
-  ]);
-  counts.inventoryParts = userInventory.parts.length;
-  counts.companyInventoryParts = companyInventory.parts.length;
+  let userInventory = emptyInventoryPayload();
+  let companyInventory = emptyInventoryPayload();
 
   let workers: any[] = [];
   let clients: any[] = [];
@@ -818,23 +846,50 @@ async function buildReadModelResponse(
   let documentsNextCursor: string | null = null;
 
   if (includeCollections) {
-    const [workersResult, clientsResult, jobsResult, docsResult] = await Promise.all([
-      buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid, scopedContext),
-      buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
-      buildReadModelResponse({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
-      buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 200 }, uid, scopedContext),
-    ]);
-    workers = workersResult;
-    clients = Array.isArray(clientsResult) ? clientsResult : (clientsResult.items || []);
-    clientsNextCursor = Array.isArray(clientsResult) ? null : (clientsResult.nextCursor || null);
-    jobs = jobsResult.items || [];
-    documents = docsResult.items || [];
-    jobsNextCursor = jobsResult.nextCursor || null;
-    documentsNextCursor = docsResult.nextCursor || null;
-    counts.workers = workers.length;
-    counts.clients = clients.length;
-    counts.jobs = jobs.length;
-    counts.documents = documents.length;
+    const moduleEnabled = (name: string) => Boolean(enabledModules[name]);
+
+    if (moduleEnabled("inventory")) {
+      const [userInventoryResult, companyInventoryResult] = await Promise.all([
+        getUserInventoryParts(scope.internalCompanyId, uid),
+        getCompanyInventoryParts(scope.internalCompanyId),
+      ]);
+      userInventory = userInventoryResult;
+      companyInventory = companyInventoryResult;
+      counts.inventoryParts = userInventory.parts.length;
+      counts.companyInventoryParts = companyInventory.parts.length;
+    }
+
+    const collectionPromises: Promise<any>[] = [];
+    if (moduleEnabled("workers")) {
+      collectionPromises.push(
+        buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid, scopedContext)
+          .then((result) => { workers = result; counts.workers = workers.length; }),
+      );
+    }
+    if (moduleEnabled("clients")) {
+      collectionPromises.push(
+        buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId, pageSize: 50 }, uid, scopedContext)
+          .then((result) => {
+            clients = Array.isArray(result) ? result : (result.items || []);
+            clientsNextCursor = Array.isArray(result) ? null : (result.nextCursor || null);
+            counts.clients = clients.length;
+          }),
+      );
+    }
+    if (moduleEnabled("jobs")) {
+      collectionPromises.push(
+        buildReadModelResponse({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 50 }, uid, scopedContext)
+          .then((result) => { jobs = result.items || []; jobsNextCursor = result.nextCursor || null; counts.jobs = jobs.length; }),
+      );
+    }
+    if (moduleEnabled("documents")) {
+      collectionPromises.push(
+        buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 50 }, uid, scopedContext)
+          .then((result) => { documents = result.items || []; documentsNextCursor = result.nextCursor || null; counts.documents = documents.length; }),
+      );
+    }
+
+    await Promise.all(collectionPromises);
   }
 
   return {

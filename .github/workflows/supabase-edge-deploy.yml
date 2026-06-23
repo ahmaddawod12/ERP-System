@@ -41,7 +41,8 @@ jobs:
           node-version: 22
 
       - name: Install Supabase CLI
-        run: npm install -g supabase
+        # Pin CLI for reproducible deploys. Update intentionally after testing.
+        run: npm install -g supabase@2.220.4
 
       - name: Prepare flattened function folders
         run: |

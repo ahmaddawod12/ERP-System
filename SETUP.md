@@ -2,7 +2,7 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the active May 15, 2026 architecture:
+It reflects the active June 22, 2026 architecture:
 
 - Supabase Auth for website and mobile sign-in
 - Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
@@ -241,6 +241,8 @@ Rules:
 - Do not use `*` for CORS when sending credentials; use explicit origins in `CORS_ALLOWED_ORIGINS`.
 - Keep `CORS_ALLOWED_ORIGINS` non-empty in real environments. Empty origin lists are treated as fail-closed.
 - Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
+- `JWT_SECRET` is required for edge JWT verification; the edge runtime throws at startup if it is missing.
+- `SUPABASE_SERVICE_ROLE_KEY` is required for service-role database access; the edge runtime throws at startup if it is missing.
 - Shared edge auth verification derives the expected JWT issuer/audience from the configured Supabase project and fails closed on empty `uid` claims.
 - Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
 - `GCP_SERVICE_ACCOUNT_EMAIL` / `GCP_SERVICE_ACCOUNT_PRIVATE_KEY` allow edge handlers to mint OIDC tokens for trusted `cloudrun-pdf` dispatch.
@@ -255,7 +257,7 @@ Rules:
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration shape:
-- Empty/new databases apply the optimized baseline migration `0000_optimized_baseline.sql`, then forward hardening migrations such as `0001_supabase_cost_perf_security_hardening.sql`. The historical incremental migrations were intentionally squashed because this database starts empty.
+- Empty/new databases apply the optimized baseline migration `0000_optimized_baseline.sql`, then forward hardening migrations in order: `0001_supabase_cost_perf_security_hardening.sql`, `0002_phase1_read_caps.sql`, `0003_phase1_atomic_jobs.sql`, `0004_phase1_atomic_business_registration.sql`, `0005_phase2_trigger_search_path.sql`. The historical incremental migrations before the baseline were intentionally squashed because this database starts empty.
 - The baseline includes:
   - RLS enabled on all public-schema tables, with client-visible policies only where the app needs direct reads
   - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
@@ -267,8 +269,11 @@ Current migration shape:
   - `claim_tax_invoice_idempotency(...)` atomic tax idempotency claim RPC
   - `allocate_company_counter`, `allocate_system_counter`, `increment_rate_limit_bucket`, `apply_inventory_movement(...)`, `apply_inventory_pick_batch(...)`, `get_clients_page(...)`, `get_company_inventory_page(...)`, `get_member_inventory_page(...)`, and `bump_company_sync_version(...)` RPCs
   - `apply_job_inventory_consumption_batch(...)` for atomic finished-job inventory consumption
+  - `create_job_with_details(...)` for atomic job creation
+  - `register_business_account(...)` for atomic business registration
   - role-sensitive RLS for jobs, documents, and membership lists so direct table reads do not rely only on Edge code
   - private-schema privileged RPC implementations with public service-role-only compatibility wrappers
+  - explicit `search_path = ''` on trigger functions that execute privileged logic
   - `get_inventory_counts(...)` for lightweight dashboard/count-only reads
   - `cleanup_expired_operational_rows(...)` for scheduled cleanup of expired operational rows
   - partial idempotency indexes for jobs and inventory movements so empty idempotency keys do not bloat uniqueness indexes
@@ -345,7 +350,7 @@ Preserve these invariants:
 - archive payloads should be streamed to disk/storage instead of loading a full month into memory
 - date filtering respects ISO-string date storage
 - deletion uses only the exact IDs captured in the verified archive
-- manifests must remain resumable when deletion counts are partial instead of being marked fully deleted
+- manifests must remain resumable: `uploaded_not_deleted` retries verify the archive and can mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches
 
 ## 12. Supabase Migration Workspace
 
@@ -365,7 +370,7 @@ Recommended high-level order:
 1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
 2. Apply SQL migrations.
 3. Configure website and Supabase edge secrets and envs.
-4. Deploy `supabase/functions`.
+4. Deploy `supabase/functions`. Verify nested paths flatten to dashed names (e.g., `contact/request` → `contact-request`) and update website/mobile caller URLs to match.
 5. Deploy `cloudrun-pdf`.
 6. Deploy `cloudrun-archiver`.
 7. Configure website hosting.
@@ -386,6 +391,7 @@ Verify:
 - backend SQL connectivity
 - document preview and generate flows
 - tax invoice approval creates a draft SQL document and schedules the async generate task
+- approved tax invoices cannot be deleted
 - signed URL flows for documents and job files
 - solo mobile job creation uploads attachments first and succeeds with temp `attachmentUploadId` references before the final job number exists
 - push-token updates and notification paths

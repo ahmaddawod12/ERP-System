@@ -82,7 +82,7 @@ async function verifyPubSubOidcToken(req: Request): Promise<boolean> {
 
   const expectedAudience = String(
     Deno.env.get("TAX_CALLBACK_OIDC_AUDIENCE") ||
-    `${String(env.supabaseUrl || "").replace(/\/+$/, "")}/functions/v1/tax/callback`,
+    `${String(env.supabaseUrl || "").replace(/\/+$/, "")}/functions/v1/tax-callback`,
   ).trim();
 
   const allowedServiceAccounts = String(Deno.env.get("PUBSUB_ALLOWED_SERVICE_ACCOUNTS") || "")

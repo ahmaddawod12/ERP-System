@@ -40,6 +40,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
 import { useAuth, useDocumentTask } from '../../../hooks';
+import { generateUuid } from '../../../utils/helpers';
 import { middleEastFunctions, httpsCallable } from '../../../firebase';
 import { DOC_TYPE } from '@smart-job/contracts';
 import { DOCUMENT_CONFIGS, getPaymentMethods } from '../lib/document-config';
@@ -844,7 +845,7 @@ export default function CreateDocument() {
         language: language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en',
         date: formData.documentDate,
         notes: formData.notes || '',
-      idempotencyKey: `tax_${Date.now()}_${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`,
+      idempotencyKey: `tax_${Date.now()}_${generateUuid().replace(/-/g, '').slice(0, 10)}`,
       };
 
       // Call getInvoiceApproval to submit to Tax Authority

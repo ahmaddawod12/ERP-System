@@ -11,7 +11,7 @@ test('website backend service drains clients through paginated read-model pages'
   const source = readProjectFile('src', 'lib', 'services', 'backend-service.ts');
 
   assert.match(source, /export async function listClients/);
-  assert.match(source, /pageSize: opts\?\.pageSize \?\? 200/);
+  assert.match(source, /const pageSize = opts\?\.pageSize \?\? 50;/);
   assert.match(source, /if \(opts\?\.search\) body\.search = opts\.search/);
   assert.match(source, /do \{[\s\S]*fetchClientPage\(afterCursor\)[\s\S]*\} while \(afterCursor\)/);
 });

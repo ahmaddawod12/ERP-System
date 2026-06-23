@@ -4,6 +4,7 @@
  */
 import {
   allocateNextCompanyCounter,
+  assertModuleEnabled,
   bumpCompanySyncVersion,
   dispatchCloudRunPdfTask,
   EdgeFunctionContext,
@@ -20,6 +21,7 @@ import { DOC_SUFFIX, type DocTypeCode } from "@smart-job/contracts";
 async function requireDocumentAccess(
   companyId: string,
   ctx: EdgeFunctionContext,
+  allowedRoles: string[] = ["manager", "user", "basic", "dev"],
 ): Promise<{ id: string; role: string }> {
   if (!ctx.auth?.uid) {
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
@@ -45,7 +47,7 @@ async function requireDocumentAccess(
     throw { code: "permission-denied", message: "Not allowed for this company", httpStatus: 403 };
   }
 
-  if (!["manager", "user", "basic", "dev"].includes(String(membership.role))) {
+  if (!allowedRoles.includes(String(membership.role))) {
     throw { code: "permission-denied", message: "Role cannot access documents", httpStatus: 403 };
   }
 
@@ -223,17 +225,21 @@ async function readArchiveJson(companyId: string, archiveKey: string): Promise<u
 
 async function loadCompanyDocumentContext(companyId: string, membershipId: string, ctx: EdgeFunctionContext) {
   const supabase = createSupabaseClient(ctx.env);
+  const isDev = membershipId === "dev";
+
   const [{ data: companyProfile, error: companyProfileError }, { data: membership, error: membershipError }] = await Promise.all([
     supabase
       .from("company_profiles")
       .select("he_name, en_name, business_email, business_phone, address, city, vat_number")
       .eq("company_id", companyId)
       .maybeSingle(),
-    supabase
-      .from("company_memberships")
-      .select("member_no, display_name")
-      .eq("id", membershipId)
-      .maybeSingle(),
+    isDev
+      ? Promise.resolve({ data: null, error: null })
+      : supabase
+        .from("company_memberships")
+        .select("member_no, display_name")
+        .eq("id", membershipId)
+        .maybeSingle(),
   ]);
 
   if (companyProfileError) {
@@ -258,6 +264,16 @@ async function loadCompanyDocumentContext(companyId: string, membershipId: strin
       name: membership?.display_name || null,
     },
   };
+}
+
+function parseDocumentDate(value: unknown, fieldName: string): string | null {
+  const raw = optionalTrimmedString(value, 64);
+  if (!raw) return null;
+  const ts = Date.parse(raw);
+  if (Number.isNaN(ts)) {
+    throw { code: "invalid-argument", message: `${fieldName} must be a valid ISO date`, httpStatus: 400 };
+  }
+  return new Date(ts).toISOString();
 }
 
 const MAX_ITEMS_PER_DOCUMENT = 100;
@@ -398,7 +414,7 @@ async function createDraftDocumentRecord(
       tax_authority_status: documentType === 305 ? "reserved" : "none",
       created_by_membership_id: membershipId,
       language: optionalTrimmedString(documentData.language, 8) || "he",
-      document_date: payloadDate ? new Date(payloadDate).toISOString() : null,
+      document_date: parseDocumentDate(payloadDate, "documentDate"),
       notes: optionalTrimmedString(documentData.notes, 4000) || null,
       total_before_vat: Number(documentData.totalBeforeVat || 0),
       vat_amount: Number(documentData.vatAmount || 0),
@@ -481,6 +497,7 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "documents", ctx);
   const membership = await requireDocumentAccess(companyId, ctx);
 
   const documentType = Number(payload?.documentType ?? payload?.type);
@@ -507,10 +524,11 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
       id?: string;
       document_number?: number;
       document_code?: string;
+      document_type?: number;
     }>(
       companyId,
       requestedDocumentId,
-      "id, document_number, document_code",
+      "id, document_number, document_code, document_type",
       ctx,
     );
     documentId = documentRow?.id ? String(documentRow.id) : null;
@@ -518,6 +536,13 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
     documentNumber = Number(documentRow?.document_number || 0) || null;
     if (!documentId) {
       throw { code: "not-found", message: "Document not found", httpStatus: 404 };
+    }
+    if (documentRow.document_type !== undefined && Number(documentRow.document_type) !== documentType) {
+      throw {
+        code: "failed-precondition",
+        message: `Document type mismatch: requested ${documentType} but existing document is ${documentRow.document_type}`,
+        httpStatus: 400,
+      };
     }
   } else {
     const createdDocument = await createDraftDocumentRecord(
@@ -567,6 +592,8 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
     }
   }
 
+  await bumpCompanySyncVersion(companyId, "documents_version", ctx);
+
   return {
     success: true,
     taskId: task.task_key,
@@ -580,23 +607,38 @@ export async function deleteDocumentV1(payload: any, ctx: EdgeFunctionContext): 
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "documents", ctx);
   const documentId = requireNonEmptyString(payload?.documentId, "documentId", 3, 128);
-  await requireDocumentAccess(companyId, ctx);
+  await requireDocumentAccess(companyId, ctx, ["manager", "dev"]);
 
   const supabase = createSupabaseClient(ctx.env);
   const existingDocument = await resolveCompanyDocument<{
     id?: string;
     document_code?: string;
     storage_path?: string;
+    document_type?: number;
+    tax_authority_status?: string;
   }>(
     companyId,
     documentId,
-    "id, document_code, storage_path",
+    "id, document_code, storage_path, document_type, tax_authority_status",
     ctx,
   );
 
   if (!existingDocument) {
     throw { code: "not-found", message: "Document not found", httpStatus: 404 };
+  }
+
+  const TAX_INVOICE_TYPE = 305;
+  if (
+    Number(existingDocument.document_type) === TAX_INVOICE_TYPE &&
+    String(existingDocument.tax_authority_status || "").toLowerCase() === "approved"
+  ) {
+    throw {
+      code: "failed-precondition",
+      message: "Approved tax invoices cannot be deleted",
+      httpStatus: 400,
+    };
   }
 
   const { error: deleteError } = await supabase
@@ -620,6 +662,7 @@ export async function createDocumentDownloadUrlV1(payload: any, ctx: EdgeFunctio
   const requestedCompanyId = validateCompanyId(payload?.companyId);
   const resolvedCompany = await resolveCompanyIdentifiers(requestedCompanyId, ctx.env);
   const companyId = resolvedCompany.internalCompanyId;
+  await assertModuleEnabled(companyId, "documents", ctx);
   const documentId = requireNonEmptyString(payload?.documentId, "documentId", 3, 128);
   await requireDocumentAccess(companyId, ctx);
 

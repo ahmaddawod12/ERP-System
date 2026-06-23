@@ -1,6 +1,19 @@
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 
 /**
+ * Escape a string for safe interpolation into HTML text content.
+ */
+function escapeHtml(input: unknown): string {
+  const raw = String(input ?? '');
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Email Service Module for Smart-Job PDF Service
  * 
  * Uses Amazon SES (Simple Email Service) for document email delivery.
@@ -162,10 +175,15 @@ class AmazonSESEmailService {
    * Supports Hebrew, English, and Arabic
    */
   generateEmailContent({ recipientName, documentTitle, documentUrl, language, businessName }) {
+    const safeRecipientName = escapeHtml(recipientName);
+    const safeBusinessName = escapeHtml(businessName);
+    const safeDocumentTitle = escapeHtml(documentTitle);
+    const safeDocumentUrl = escapeHtml(documentUrl);
+
     const greetings = {
-      he: recipientName ? `שלום ${recipientName}` : 'שלום',
-      en: recipientName ? `Hello ${recipientName}` : 'Hello',
-      ar: recipientName ? `مرحبا ${recipientName}` : 'مرحبا'
+      he: safeRecipientName ? `שלום ${safeRecipientName}` : 'שלום',
+      en: safeRecipientName ? `Hello ${safeRecipientName}` : 'Hello',
+      ar: safeRecipientName ? `مرحبا ${safeRecipientName}` : 'مرحبا'
     };
 
     const messages = {
@@ -181,9 +199,9 @@ class AmazonSESEmailService {
     };
 
     const footers = {
-      he: `תודה שבחרת ב-${businessName}`,
-      en: `Thank you for choosing ${businessName}`,
-      ar: `شكرا لاختيارك ${businessName}`
+      he: `תודה שבחרת ב-${safeBusinessName}`,
+      en: `Thank you for choosing ${safeBusinessName}`,
+      ar: `شكرا لاختيارك ${safeBusinessName}`
     };
 
     const greeting = greetings[language] || greetings.he;
@@ -200,7 +218,7 @@ class AmazonSESEmailService {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${documentTitle}</title>
+  <title>${safeDocumentTitle}</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -282,13 +300,13 @@ class AmazonSESEmailService {
       <h1>📄 Smart-Job</h1>
     </div>
     <div class="email-body">
-      <p class="greeting">${greeting},</p>
-      <p class="message">${message}</p>
-      <p class="document-title">${documentTitle}</p>
-      <a href="${documentUrl}" class="download-button">${downloadButton}</a>
+      <p class="greeting">${escapeHtml(greeting)},</p>
+      <p class="message">${escapeHtml(message)}</p>
+      <p class="document-title">${safeDocumentTitle}</p>
+      <a href="${safeDocumentUrl}" class="download-button">${escapeHtml(downloadButton)}</a>
     </div>
     <div class="email-footer">
-      <p>${footer}</p>
+      <p>${escapeHtml(footer)}</p>
       <p style="margin-top: 10px; font-size: 12px; opacity: 0.8;">Smart-Job © ${new Date().getFullYear()}</p>
     </div>
   </div>
@@ -302,9 +320,9 @@ ${greeting},
 
 ${message}
 
-${documentTitle}
+${safeDocumentTitle}
 
-${downloadButton}: ${documentUrl}
+${downloadButton}: ${safeDocumentUrl}
 
 ---
 ${footer}

@@ -63,7 +63,8 @@ export default function ClientsClient() {
       return;
     }
     setLoading(true);
-    const { clients: nextClients } = await listClients(scopeId);
+    // TODO: Implement paginated client list UI instead of loading all clients.
+    const { clients: nextClients } = await listClients(scopeId, { loadAll: true });
     setClients(nextClients);
     setLoading(false);
   }, [scopeId]);

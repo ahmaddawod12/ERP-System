@@ -1,6 +1,5 @@
-// @ts-nocheck
 import React, { useMemo, useState } from 'react';
-import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FlatList, ListRenderItem, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -56,7 +55,15 @@ const translations = {
   },
 };
 
-const docDefinitions = [
+interface DocDefinition {
+  id: number;
+  title: string;
+  description: string;
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  color: string;
+}
+
+const docDefinitions: DocDefinition[] = [
   {
     id: DOC_TYPE.TAX_INVOICE,
     title: 'Tax Invoice',
@@ -121,7 +128,7 @@ export default function GeneralDocuments() {
     });
   }, [searchQuery]);
 
-  const renderDocument = ({ item }) => (
+  const renderDocument: ListRenderItem<DocDefinition> = ({ item }) => (
     <AppCard style={styles.documentCard}>
       <View style={styles.documentHeader}>
         <View style={[styles.iconWrap, { backgroundColor: `${item.color}20` }]}>

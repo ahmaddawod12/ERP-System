@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { ROUTES } from '../../../navigation/routes';
 /**
  * DevInbox module - Dev Support Inbox screen logic
@@ -9,7 +8,7 @@ import { ROUTES } from '../../../navigation/routes';
  * Extracted from app/DevInbox.js to follow the thin-wrapper pattern.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -34,13 +33,23 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../../theme';
 import { AppText, GlobalHeader, AppInput } from '../../../components';
-import { loadConversationThread } from '../lib/support-message-store';
+import { loadConversationThread, type ConversationMessage } from '../lib/support-message-store';
 import {
   appendSupportMessage,
   closeSupportConversation,
   listSupportConversations,
   markSupportConversationRead,
 } from '../lib/support-api';
+
+interface SupportConversation {
+  id: string;
+  userId?: string;
+  userName?: string;
+  category?: string;
+  lastMessage?: string;
+  lastMessageAt?: Date | null;
+  unreadForDev?: number;
+}
 
 export default function DevInbox() {
   const router = useRouter();
@@ -53,14 +62,14 @@ export default function DevInbox() {
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [conversations, setConversations] = useState([]);
-  const [selectedConversation, setSelectedConversation] = useState(null);
-  const [messages, setMessages] = useState([]);
+  const [conversations, setConversations] = useState<SupportConversation[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<SupportConversation | null>(null);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  
-  const flatListRef = useRef(null);
+
+  const flatListRef = useRef<FlatList<ConversationMessage> | null>(null);
 
   const t = language === 'en' ? {
     inboxTitle: 'Dev Inbox',
@@ -125,7 +134,7 @@ export default function DevInbox() {
   }, []);
 
   // Load messages for a specific conversation (one-time fetch)
-  const loadConversationMessages = async (convId) => {
+  const loadConversationMessages = async (convId: string) => {
     try {
       const msgs = await loadConversationThread(convId);
       setMessages(msgs);
@@ -139,7 +148,7 @@ export default function DevInbox() {
     }
   };
 
-  const openConversation = async (conv) => {
+  const openConversation = async (conv: SupportConversation) => {
     setSelectedConversation(conv);
     setLoadingMessages(true);
     
@@ -248,17 +257,17 @@ export default function DevInbox() {
     );
   };
 
-  const formatTime = (date) => {
+  const formatTime = (date: Date | null | undefined) => {
     if (!date) return '';
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const formatDate = (date) => {
+  const formatDate = (date: Date | null | undefined) => {
     if (!date) return '';
     const now = new Date();
-    const diff = now - date;
+    const diff = now.getTime() - date.getTime();
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    
+
     if (days === 0) {
       return formatTime(date);
     } else if (days === 1) {
@@ -268,7 +277,7 @@ export default function DevInbox() {
     }
   };
 
-  const renderConversation = ({ item }) => {
+  const renderConversation = ({ item }: { item: SupportConversation }) => {
     // Use userName if available, otherwise fall back to userId
     const displayName = item.userName || item.userId || 'Unknown User';
     
@@ -309,15 +318,15 @@ export default function DevInbox() {
           <View style={styles.conversationHeader}>
             <View style={styles.categoryIconContainer}>
               {categoryIcon.type === 'Ionicons' ? (
-                <Ionicons name={categoryIcon.icon} size={18} color={categoryIcon.color} />
+                <Ionicons name={categoryIcon.icon as unknown as keyof typeof Ionicons.glyphMap} size={18} color={categoryIcon.color} />
               ) : (
-                <MaterialCommunityIcons name={categoryIcon.icon} size={18} color={categoryIcon.color} />
+                <MaterialCommunityIcons name={categoryIcon.icon as unknown as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={categoryIcon.color} />
               )}
             </View>
             <AppText style={[styles.conversationUserName, { color: colors.textPrimary }]} numberOfLines={1}>
               {displayName}
             </AppText>
-            {item.unreadForDev > 0 && (
+            {(item.unreadForDev ?? 0) > 0 && (
               <View style={[styles.unreadBadge, { backgroundColor: colors.error }]}>
                 <AppText style={styles.unreadBadgeText}>{item.unreadForDev}</AppText>
               </View>
@@ -335,9 +344,9 @@ export default function DevInbox() {
     );
   };
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = ({ item }: { item: ConversationMessage }) => {
     const isDev = item.senderUid === 'dev';
-    
+
     return (
       <View style={[
         styles.messageContainer,

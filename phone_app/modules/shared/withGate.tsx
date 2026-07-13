@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * withGate - Higher-Order Component for subscription-based feature gating.
  *

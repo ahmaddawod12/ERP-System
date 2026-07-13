@@ -1,3 +1,4 @@
+import { getEdgeFunctionPath } from '@smart-job/contracts';
 import { app, getSupabaseAuthTransportToken } from '../firebase';
 import type { HttpFunctionOptions } from '../types';
 
@@ -18,23 +19,10 @@ function getEdgeBaseUrl(): string {
   return `${trimTrailingSlash(supabaseUrl)}/functions/v1`;
 }
 
-function getEdgePath(functionName: string): string {
-  const mapping: Record<string, string> = {
-    readModelV1: 'read-model',
-    mutationGatewayV1: 'mutation-gateway',
-    mutationGatewayMeWest1V1: 'mutation-gateway-me-west1',
-    createInviteV1: 'invites-create',
-    joinCompanyV1: 'invites-join',
-    requestUpgradeV1: 'upgrades-request',
-    listUpgradeRequestsV1: 'upgrades-list',
-    moderateUpgradeRequestV1: 'upgrades-moderate',
-    contactRequestV1: 'contact-request',
-  };
-  return mapping[functionName] || functionName;
-}
+
 
 function getFunctionUrl(functionName: string): string {
-  return `${getEdgeBaseUrl()}/${getEdgePath(functionName)}`;
+  return `${getEdgeBaseUrl()}/${getEdgeFunctionPath(functionName)}`;
 }
 
 export async function callHttpFunction<T = unknown>(

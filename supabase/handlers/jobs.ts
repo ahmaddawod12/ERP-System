@@ -51,6 +51,23 @@ function normalizeAttachmentRef(value: unknown): JobAttachmentRef | null {
   return { storagePath };
 }
 
+const SAFE_STORAGE_PATH_RE = /^[a-zA-Z0-9._\-/]+$/;
+const NULL_BYTE_RE = /\x00/;
+
+function assertSafeStoragePath(storagePath: string): string {
+  const normalized = storagePath.replace(/^\/+/, "").trim();
+  if (
+    !normalized ||
+    NULL_BYTE_RE.test(normalized) ||
+    !SAFE_STORAGE_PATH_RE.test(normalized) ||
+    normalized.includes("..") ||
+    normalized.includes("//")
+  ) {
+    throw { code: "invalid-argument", message: "Job attachment storagePath is invalid", httpStatus: 400 };
+  }
+  return normalized;
+}
+
 function validateJobAttachmentStoragePath(
   storagePath: string,
   companyPublicId: string,
@@ -58,10 +75,7 @@ function validateJobAttachmentStoragePath(
   publicJobId: string,
   attachmentUploadId?: string | null,
 ): string {
-  const normalized = storagePath.replace(/^\/+/, "").trim();
-  if (!normalized || normalized.includes("..") || normalized.includes("?")) {
-    throw { code: "invalid-argument", message: "Job attachment storagePath is invalid", httpStatus: 400 };
-  }
+  const normalized = assertSafeStoragePath(storagePath);
 
   const validPrefixes = [
     `companies/${companyPublicId}/jobs/${publicJobId}/`,

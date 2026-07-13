@@ -1,5 +1,3 @@
-// @ts-nocheck
-import React from 'react';
 import {
   View,
   TouchableOpacity,
@@ -10,7 +8,38 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AppInput, AppText, ScrollableContainer } from '../../../components';
-import { spacing, borderRadius, typography, shadows } from '../../../theme';
+import { spacing, borderRadius, typography, shadows, type ColorPalette } from '../../../theme';
+
+export interface TaxInvoiceJob {
+  id: string;
+  title?: string;
+  description?: string;
+  wname?: string;
+  cname?: string;
+  cphone?: string;
+  location?: string;
+  timeWorked?: string;
+  finishedAt?: string | Date;
+  partsUsed?: unknown[];
+  clientId?: string;
+  isCert?: boolean;
+  status?: string;
+}
+
+interface TaxInvoiceJobListProps {
+  filteredJobs: TaxInvoiceJob[];
+  selectedJobs: TaxInvoiceJob[];
+  setSelectedJobs: (jobs: TaxInvoiceJob[]) => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  toggleJobSelection: (job: TaxInvoiceJob) => void;
+  formatDate: (value?: string | Date | null) => string;
+  handleOpenModal: (jobs: TaxInvoiceJob[]) => void;
+  colors: ColorPalette;
+  t: Record<string, string>;
+  insets: { bottom: number };
+  loading?: boolean;
+}
 
 /**
  * Job list sub-component for the Generate Tax Invoice screen.
@@ -29,7 +58,7 @@ export default function TaxInvoiceJobList({
   t,
   insets,
   loading,
-}) {
+}: TaxInvoiceJobListProps) {
   return (
     <>
       {/* Search Bar */}

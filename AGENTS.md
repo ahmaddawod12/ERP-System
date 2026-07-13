@@ -298,7 +298,9 @@ packages/db/perf/profiling.sql
 
 ### cloudrun-pdf / cloudrun-archiver
 ```bash
+# cloudrun-pdf depends on a built packages/contracts (file: dependency).
 # Tests internally run `npm run build` first — never skip build
+npm --prefix packages/contracts run build
 npm --prefix cloudrun-pdf run test
 npm --prefix cloudrun-archiver run test
 ```
@@ -329,7 +331,7 @@ All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group 
 - `packages_db` → `npm ci` → typecheck → build
 - `website` → builds `packages/contracts` → `npm ci` → **test → typecheck → lint → build** (order matters)
 - `phone_app` → builds `packages/contracts` → `npm ci` → test → typecheck
-- `cloudrun_pdf` → `npm ci` → typecheck → test
+- `cloudrun_pdf` → builds `packages/contracts` → `npm ci` → typecheck → test
 - `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
 - `supabase_edge` → `deno check` on all edge `.ts` files (uses `shopt -s globstar` to include nested paths)
 - `perf_budget` → `continue-on-error: true` (never blocks)
@@ -363,6 +365,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 ALLOW_FIREBASE_AUTH_FALLBACK=false
 SESSION_COOKIE_SECRET=
 WEBSITE_SESSION_SECRET=
+CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
 BACKEND_PROJECT_ID=
 BACKEND_EDGE_FUNCTIONS_BASE_URL=   # optional; defaults to ${SUPABASE_URL}/functions/v1
 NEXT_PUBLIC_FIREBASE_*=            # all Firebase public vars

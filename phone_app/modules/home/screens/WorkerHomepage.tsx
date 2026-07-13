@@ -1,6 +1,4 @@
-// @ts-nocheck
 import { ROUTES } from '../../../navigation/routes';
-import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +13,7 @@ import {
   DashboardShell,
   GlobalHeader,
 } from '../../../components';
+import type { IconLibrary } from '../../../components/primitives/AppIcon';
 
 const translations = {
   en: {
@@ -90,18 +89,27 @@ export default function WorkerHomepage() {
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
 
-  const hasTeam = isModuleEnabled(subscription, 'team');
-  const hasInventory = isModuleEnabled(subscription, 'teaminventory');
-  const subActive = isSubscriptionActive(subscription);
+  const hasTeam = isModuleEnabled(subscription ?? null, 'team');
+  const hasInventory = isModuleEnabled(subscription ?? null, 'teaminventory');
+  const subActive = isSubscriptionActive(subscription ?? null);
 
-  const cards = [
+  const cards: Array<{
+    key: string;
+    title: string;
+    description: string;
+    icon: string;
+    iconLibrary: IconLibrary;
+    accentColor: string;
+    badge: string;
+    onPress: () => void;
+  }> = [
     ...(hasTeam
       ? [{
           key: 'my-jobs',
           title: t.myJobs,
           description: t.myJobsDesc,
           icon: 'clipboard-text-multiple',
-          iconLibrary: 'material',
+          iconLibrary: 'material' as IconLibrary,
           accentColor: colors.boxBlue,
           badge: t.workBadge,
           onPress: () => router.push(ROUTES.workerJobs),
@@ -113,7 +121,7 @@ export default function WorkerHomepage() {
           title: t.inventory,
           description: t.inventoryDesc,
           icon: 'package-variant',
-          iconLibrary: 'material',
+          iconLibrary: 'material' as IconLibrary,
           accentColor: colors.boxOrange,
           badge: t.workBadge,
           onPress: () => router.push(ROUTES.inventory),

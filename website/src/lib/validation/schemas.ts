@@ -122,6 +122,7 @@ export const contactRequestSchema = z
     company: requiredText(2, 140, "company"),
     message: requiredText(8, 2000, "message"),
     challenge: requiredText(1, 8, "challenge"),
+    challengeToken: requiredText(1, 2048, "challengeToken"),
     website: z.string().max(0).optional(),
   })
   .strict();

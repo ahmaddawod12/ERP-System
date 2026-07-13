@@ -1,8 +1,7 @@
-// @ts-nocheck
 import { styles } from './ClientBook.styles';
 /**
  * ClientBook.js - Client management screen
- * 
+ *
  * Allows users to view, search, add, edit, and delete clients.
  * When pressing a client card, shows 3 options:
  *   1. Show Finished Jobs for this client (monthly filter)
@@ -11,7 +10,7 @@ import { styles } from './ClientBook.styles';
  * Uses getDataForMonth from CacheContext for cache-first monthly data retrieval.
  */
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -35,52 +34,55 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { AppInput, AppText, GlobalHeader, ScrollableContainer } from '../../../components';
-import { DOC_TYPE } from '@smart-job/contracts';
+import { DOC_TYPE, DOC_COLORS, getDocumentLabel } from '@smart-job/contracts';
+import type { Client } from '../../../types';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+type Translations = {
+  title: string;
+  subtitle: string;
+  searchPlaceholder: string;
+  addClient: string;
+  editClient: string;
+  noClients: string;
+  noClientsDesc: string;
+  noResults: string;
+  noResultsDesc: string;
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+  city: string;
+  vatNumber: string;
+  save: string;
+  cancel: string;
+  delete: string;
+  deleteConfirm: string;
+  deleteMessage: string;
+  clientSaved: string;
+  clientUpdated: string;
+  clientDeleted: string;
+  required: string;
+  totalClients: string;
+  clientOptions: string;
+  finishedJobs: string;
+  documents: string;
+  editOrRemove: string;
+  noDataFound: string;
+  jobsFor: string;
+  docsFor: string;
+  jobTitle: string;
+  completedOn: string;
+  status: string;
+  docType: string;
+  docNumber: string;
+  amount: string;
+  createdOn: string;
+  close: string;
+  partsUsed: string;
+};
 
-export default function ClientBook() {
-  const { language } = useLanguageContext();
-  const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
-  const insets = useSafeAreaInsets();
-  const colors = getColors(isDarkMode);
-  const {
-    clients: cachedClients,
-    addClient,
-    updateClient,
-    deleteClient,
-    fetchClients,
-    getDataForMonth,
-    getUserRole,
-  } = useCache();
-
-  // --- Existing state ---
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [editingClient, setEditingClient] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    address: '',
-    city: '',
-    vatNumber: '',
-  });
-
-  // --- New state for client options & data viewer ---
-  const [selectedClient, setSelectedClient] = useState(null);
-  const [showOptionsModal, setShowOptionsModal] = useState(false);
-  const [showDataModal, setShowDataModal] = useState(false);
-  const [dataViewType, setDataViewType] = useState('finishedJobs'); // 'finishedJobs' | 'documents'
-  const [dataItems, setDataItems] = useState([]);
-  const [dataLoading, setDataLoading] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(new Date());
-
-  const isRTL = language === 'he' || language === 'ar';
-
-  const t = language === 'en' ? {
+const translateMap: Record<string, Translations> = {
+  en: {
     title: 'Client Book',
     subtitle: 'Manage your clients',
     searchPlaceholder: 'Search clients...',
@@ -106,7 +108,6 @@ export default function ClientBook() {
     clientDeleted: 'Client deleted successfully',
     required: 'Client name is required',
     totalClients: 'clients',
-    // New translations
     clientOptions: 'Client Options',
     finishedJobs: 'Finished Jobs',
     documents: 'Documents',
@@ -121,15 +122,10 @@ export default function ClientBook() {
     docNumber: 'Doc #',
     amount: 'Amount',
     createdOn: 'Created',
-    taxInvoice: 'Tax Invoice',
-    priceProposal: 'Price Proposal',
-    refund: 'Refund',
-    returnCertificate: 'Return Certificate',
-    receipt: 'Receipt',
-    deliveryNote: 'Delivery Note',
     close: 'Close',
     partsUsed: 'Parts Used',
-  } : language === 'he' ? {
+  },
+  he: {
     title: 'ספר לקוחות',
     subtitle: 'ניהול הלקוחות שלך',
     searchPlaceholder: 'חיפוש לקוחות...',
@@ -155,7 +151,6 @@ export default function ClientBook() {
     clientDeleted: 'הלקוח נמחק בהצלחה',
     required: 'שם לקוח נדרש',
     totalClients: 'לקוחות',
-    // New translations
     clientOptions: 'אפשרויות לקוח',
     finishedJobs: 'עבודות שהושלמו',
     documents: 'מסמכים',
@@ -170,15 +165,10 @@ export default function ClientBook() {
     docNumber: 'מס\' מסמך',
     amount: 'סכום',
     createdOn: 'נוצר',
-    taxInvoice: 'חשבונית מס',
-    priceProposal: 'הצעת מחיר',
-    refund: 'זיכוי',
-    returnCertificate: 'תעודת החזרה',
-    receipt: 'קבלה',
-    deliveryNote: 'תעודת משלוח',
     close: 'סגור',
     partsUsed: 'חלקים שנעשה בהם שימוש',
-  } : {
+  },
+  ar: {
     title: 'دفتر العملاء',
     subtitle: 'إدارة عملائك',
     searchPlaceholder: 'البحث عن عملاء...',
@@ -204,7 +194,6 @@ export default function ClientBook() {
     clientDeleted: 'تم حذف العميل بنجاح',
     required: 'اسم العميل مطلوب',
     totalClients: 'عملاء',
-    // New translations
     clientOptions: 'خيارات العميل',
     finishedJobs: 'الأعمال المكتملة',
     documents: 'المستندات',
@@ -219,20 +208,60 @@ export default function ClientBook() {
     docNumber: 'رقم المستند',
     amount: 'المبلغ',
     createdOn: 'تم الإنشاء',
-    taxInvoice: 'فاتورة ضريبية',
-    priceProposal: 'عرض سعر',
-    refund: 'استرداد',
-    returnCertificate: 'شهادة إرجاع',
-    receipt: 'إيصال',
-    deliveryNote: 'إشعار تسليم',
     close: 'إغلاق',
     partsUsed: 'الأجزاء المستخدمة',
-  };
+  },
+};
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+export default function ClientBook() {
+  const { language } = useLanguageContext();
+  const { isDarkMode } = useThemeContext();
+  const alert = useAlert();
+  const insets = useSafeAreaInsets();
+  const colors = getColors(isDarkMode);
+  const {
+    clients: cachedClients,
+    addClient,
+    updateClient,
+    deleteClient,
+    fetchClients,
+    getDataForMonth,
+    getUserRole,
+  } = useCache();
+
+  // --- Existing state ---
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<Record<string, string>>({
+    name: '',
+    phone: '',
+    email: '',
+    address: '',
+    city: '',
+    vatNumber: '',
+  });
+
+  // --- New state for client options & data viewer ---
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [showDataModal, setShowDataModal] = useState(false);
+  const [dataViewType, setDataViewType] = useState<'finishedJobs' | 'documents'>('finishedJobs');
+  const [dataItems, setDataItems] = useState<any[]>([]);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
+
+  const isRTL = language === 'he' || language === 'ar';
+
+  const t = translateMap[language] || translateMap.en;
 
   // --- Helpers ---
 
   /** Format a Date to month/year display string */
-  const formatMonth = useCallback((date) => {
+  const formatMonth = useCallback((date: Date) => {
     const monthNames = language === 'en'
       ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
       : language === 'he'
@@ -242,7 +271,7 @@ export default function ClientBook() {
   }, [language]);
 
   /** Format a date field (handles ISO strings and Firestore Timestamps) */
-  const formatDate = useCallback((dateInput) => {
+  const formatDate = useCallback((dateInput: any) => {
     if (!dateInput) return '—';
     let d;
     if (dateInput.toDate && typeof dateInput.toDate === 'function') {
@@ -259,35 +288,20 @@ export default function ClientBook() {
   }, [language]);
 
   /** Get document type label */
-  const getDocTypeLabel = useCallback((type) => {
+  const getDocTypeLabel = useCallback((type: string | number | undefined) => {
     const numType = typeof type === 'string' ? parseInt(type, 10) : type;
-    switch (numType) {
-      case DOC_TYPE.TAX_INVOICE: return t.taxInvoice;
-      case DOC_TYPE.PRICE_PROPOSAL: return t.priceProposal;
-      case DOC_TYPE.REFUND: return t.refund;
-      case DOC_TYPE.RETURN_CERTIFICATE: return t.returnCertificate;
-      case DOC_TYPE.RECEIPT: return t.receipt;
-      case DOC_TYPE.DELIVERY_NOTE: return t.deliveryNote;
-      default: return `${type}`;
-    }
-  }, [t]);
+    if (numType === undefined || Number.isNaN(numType)) return `${type}`;
+    return getDocumentLabel(numType, language) || `${type}`;
+  }, [language]);
 
   /** Get document type color */
-  const getDocTypeColor = useCallback((type) => {
+  const getDocTypeColor = useCallback((type: string | number | undefined) => {
     const numType = typeof type === 'string' ? parseInt(type, 10) : type;
-    switch (numType) {
-      case DOC_TYPE.TAX_INVOICE: return '#10B981';
-      case DOC_TYPE.PRICE_PROPOSAL: return '#3B82F6';
-      case DOC_TYPE.REFUND: return '#F59E0B';
-      case DOC_TYPE.RETURN_CERTIFICATE: return '#8B5CF6';
-      case DOC_TYPE.RECEIPT: return '#06B6D4';
-      case DOC_TYPE.DELIVERY_NOTE: return '#8B5CF6';
-      default: return colors.textSecondary;
-    }
+    return DOC_COLORS[numType as keyof typeof DOC_COLORS] ?? colors.textSecondary;
   }, [colors]);
 
   /** Calculate total from income/items array */
-  const calculateTotal = useCallback((income) => {
+  const calculateTotal = useCallback((income: any) => {
     if (!income || !Array.isArray(income)) return 0;
     return income.reduce((sum, item) => {
       const price = parseFloat(item.price) || 0;
@@ -336,7 +350,7 @@ export default function ClientBook() {
     setShowModal(true);
   };
 
-  const openEditModal = (client) => {
+  const openEditModal = (client: Client) => {
     setEditingClient(client);
     setFormData({
       name: client.name || '',
@@ -353,32 +367,32 @@ export default function ClientBook() {
   // --- New: Client options flow ---
 
   /** Open options modal when pressing a client card */
-  const openClientOptions = (client) => {
+  const openClientOptions = (client: Client) => {
     setSelectedClient(client);
     setShowOptionsModal(true);
   };
 
   /** Fetch finished jobs or documents for the selected client & month */
-  const fetchClientData = useCallback(async (client, type, monthDate) => {
+  const fetchClientData = useCallback(async (client: Client | null, type: 'finishedJobs' | 'documents', monthDate: Date) => {
     if (!client) return;
     setDataLoading(true);
     try {
       const allData = await getDataForMonth(monthDate, type);
 
-      // Filter by client — match on clientId (primary) or clientName (fallback)
+      // Filter by client — match on clientId (primary) or cname (fallback)
       const clientId = client.id?.toString();
-      const clientName = client.name?.toLowerCase()?.trim();
+      const normalizedClientName = client.name?.toLowerCase()?.trim();
 
       const matched = (allData || []).filter(item => {
         if (clientId && (item.cid || item.clientId)?.toString() === clientId) return true;
-        if (clientName && (item.cname || item.clientName || item.customerName)?.toLowerCase()?.trim() === clientName) return true;
+        if (normalizedClientName && (item.cname || item.customerName)?.toLowerCase()?.trim() === normalizedClientName) return true;
         return false;
       });
 
       // Sort by date descending
       const dateField = type === 'documents' ? 'createdAt' : 'finishedAt';
       matched.sort((a, b) => {
-        const getTime = (d) => {
+        const getTime = (d: any) => {
           if (!d) return 0;
           if (d.toDate && typeof d.toDate === 'function') return d.toDate().getTime();
           return new Date(d).getTime();
@@ -396,7 +410,7 @@ export default function ClientBook() {
   }, [getDataForMonth]);
 
   /** Open data viewer modal (finished jobs or documents) */
-  const openDataViewer = useCallback((type) => {
+  const openDataViewer = useCallback((type: 'finishedJobs' | 'documents') => {
     setDataViewType(type);
     setSelectedMonth(new Date());
     setDataItems([]);
@@ -407,7 +421,7 @@ export default function ClientBook() {
   }, [selectedClient, fetchClientData]);
 
   /** Navigate to previous/next month */
-  const handleMonthChange = useCallback((direction) => {
+  const handleMonthChange = useCallback((direction: number) => {
     setSelectedMonth(prev => {
       const newMonth = new Date(prev.getFullYear(), prev.getMonth() + direction, 1);
       // Don't go into the future
@@ -429,7 +443,7 @@ export default function ClientBook() {
     setLoading(true);
 
     try {
-      const clientData = {};
+      const clientData: Record<string, string> = {};
       if (formData.name.trim()) clientData.name = formData.name.trim();
       if (formData.phone.trim()) clientData.phone = formData.phone.trim();
       if (formData.email.trim()) clientData.email = formData.email.trim();
@@ -447,7 +461,7 @@ export default function ClientBook() {
 
       setShowModal(false);
       resetForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving client:', error);
       alert.error('Error', error.message);
     } finally {
@@ -455,7 +469,7 @@ export default function ClientBook() {
     }
   };
 
-  const handleDelete = (client) => {
+  const handleDelete = (client: Client) => {
     alert.confirm(
       t.deleteConfirm,
       t.deleteMessage,
@@ -472,7 +486,7 @@ export default function ClientBook() {
                 setShowModal(false);
                 resetForm();
               }
-            } catch (error) {
+            } catch (error: any) {
               console.error('Error deleting client:', error);
               alert.error('Error', error.message);
             }
@@ -485,7 +499,7 @@ export default function ClientBook() {
   // --- Renderers ---
 
   /** Render a single finished job card in the data viewer */
-  const renderJobItem = ({ item }) => (
+  const renderJobItem = ({ item }: { item: any }) => (
     <View style={[styles.dataCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <View style={styles.dataCardHeader}>
         <View style={{ flex: 1 }}>
@@ -521,7 +535,7 @@ export default function ClientBook() {
           <View style={styles.dataDetailRow}>
             <Ionicons name="construct-outline" size={14} color={colors.textSecondary} />
             <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {t.partsUsed}: {item.parts.map(p => p.partName || p.name).filter(Boolean).join(', ')}
+              {t.partsUsed}: {item.parts.map((p: any) => p.partName || p.name).filter(Boolean).join(', ')}
             </AppText>
           </View>
         )}
@@ -530,7 +544,7 @@ export default function ClientBook() {
   );
 
   /** Render a single document card in the data viewer */
-  const renderCertItem = ({ item }) => {
+  const renderCertItem = ({ item }: { item: any }) => {
     const total = item.totals?.grandTotal ?? calculateTotal(item.income || item.items);
     const typeColor = getDocTypeColor(item.type);
     return (
@@ -564,11 +578,11 @@ export default function ClientBook() {
               {t.createdOn}: {formatDate(item.createdAt)}
             </AppText>
           </View>
-          {(item.cname || item.clientName) && (
+          {item.cname && (
             <View style={styles.dataDetailRow}>
               <Ionicons name="person-outline" size={14} color={colors.textSecondary} />
               <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.cname || item.clientName}
+                {item.cname}
               </AppText>
             </View>
           )}
@@ -578,7 +592,7 @@ export default function ClientBook() {
   };
 
   /** Render client card in main list */
-  const renderClientCard = ({ item: client }) => (
+  const renderClientCard = ({ item: client }: { item: Client }) => (
     <TouchableOpacity
       style={[styles.clientCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
       onPress={() => openClientOptions(client)}
@@ -795,7 +809,7 @@ export default function ClientBook() {
                   {/* Option 3: Edit / Remove */}
                   <TouchableOpacity
                     style={[styles.optionButton, { borderColor: colors.border }]}
-                    onPress={() => openEditModal(selectedClient)}
+                    onPress={() => selectedClient && openEditModal(selectedClient)}
                     activeOpacity={0.7}
                   >
                     <View style={[styles.optionIconBox, { backgroundColor: '#F59E0B' + '15' }]}>

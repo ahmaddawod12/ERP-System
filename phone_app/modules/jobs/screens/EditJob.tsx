@@ -1,13 +1,10 @@
-// @ts-nocheck
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { View,
   TouchableOpacity,
   StyleSheet,
-  ScrollView,
   SafeAreaView,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
  } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +19,7 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { safeJsonParse } from '../../../utils/helpers';
 import { fetchRecordById, fetchUserInventoryParts } from '../../../utils/read-model';
+import type { Job, InventoryPart } from '../../../types';
 
 export default function EditJob() {
   const router = useRouter();
@@ -32,14 +30,15 @@ export default function EditJob() {
   const { getCompanyId, updateJob, workers: cachedWorkersList } = useCache();
   const colors = getColors(isDarkMode);
 
-  const job = safeJsonParse(params.job);
-  
+  const job = safeJsonParse(params.job) as Job | null;
+
   const [isSaving, setIsSaving] = useState(false);
-  const [editingJob, setEditingJob] = useState(job || {
+  const [editingJob, setEditingJob] = useState<Job>(job || {
+    id: '',
     title: '',
     description: '',
     location: '',
-    status: '',
+    status: 'pending',
     timeFrom: '',
     timeTo: '',
     cname: '',
@@ -116,37 +115,38 @@ export default function EditJob() {
 
       // Get worker uid from wid for inventory access
       const workerWid = editingJob.wid;
-      const workerEntry = cachedWorkersList ? cachedWorkersList[workerWid] : null;
-      const workerId = workerEntry?.uid || null;
+      const workerEntry = workerWid && cachedWorkersList ? cachedWorkersList[workerWid as keyof typeof cachedWorkersList] : null;
+      const workerUid = workerEntry?.uid || null;
       
       // Fetch the current job/inventory state through the read model before mutating.
-      if (workerId && editingJob.partsUsed) {
-        const currentJobData = await fetchRecordById(companyId, editingJob.id);
+      if (workerUid && editingJob.partsUsed) {
+        const currentJobData = await fetchRecordById(companyId, editingJob.id) as Job | null;
         if (currentJobData) {
           const originalPartsInStoredJob = currentJobData.partsUsed || [];
-          
+
           // Calculate inventory changes
-          const inventoryParts = await fetchUserInventoryParts(companyId, workerId);
+          const inventoryParts = await fetchUserInventoryParts(companyId, workerUid);
           if (Array.isArray(inventoryParts)) {
-            let parts = [...inventoryParts];
+            const parts: InventoryPart[] = [...inventoryParts];
+
+            const getQty = (value?: number | string): number => {
+              if (typeof value === 'number') return value;
+              const parsed = parseInt(value || '', 10);
+              return Number.isNaN(parsed) ? 0 : parsed;
+            };
+
+            const findPartIndex = (target: { id?: string | number; name?: string }) =>
+              parts.findIndex(p => p.id === target.id || (p.name && p.name === target.name));
 
             // First, add back quantities for parts that were removed
             originalPartsInStoredJob.forEach(originalPart => {
-              const stillInJob = editingJob.partsUsed.find(p => p.id === originalPart.id || p.name === originalPart.name);
+              const stillInJob = editingJob.partsUsed?.find(p => p.id === originalPart.id || p.name === originalPart.name);
               if (!stillInJob) {
                 // Part was removed from job, add it back to inventory
-                const originalQty = parseInt(originalPart.quantity) || 0;
-                
-                if (Array.isArray(parts)) {
-                  const partIndex = parts.findIndex(p => p.id === originalPart.id || p.name === originalPart.name);
-                  if (partIndex !== -1) {
-                    parts[partIndex].quantity = (parts[partIndex].quantity || 0) + originalQty;
-                  }
-                } else if (typeof parts === 'object') {
-                  const partKey = originalPart.name;
-                  if (parts[partKey]) {
-                    parts[partKey].quantity = (parts[partKey].quantity || 0) + originalQty;
-                  }
+                const originalQty = getQty(originalPart.quantity);
+                const partIndex = findPartIndex(originalPart);
+                if (partIndex !== -1) {
+                  parts[partIndex].quantity = (parts[partIndex].quantity || 0) + originalQty;
                 }
               }
             });
@@ -154,45 +154,27 @@ export default function EditJob() {
             // Then, handle quantity changes for parts still in the job
             editingJob.partsUsed.forEach(currentPart => {
               const originalPart = originalPartsInStoredJob.find(p => p.id === currentPart.id || p.name === currentPart.name);
-              const originalQty = originalPart ? (parseInt(originalPart.quantity) || 0) : 0;
-              const currentQty = parseInt(currentPart.quantity) || 0;
+              const originalQty = originalPart ? getQty(originalPart.quantity) : 0;
+              const currentQty = getQty(currentPart.quantity);
               const difference = currentQty - originalQty;
 
               if (difference !== 0) {
-                // Handle both array and object formats
-                if (Array.isArray(parts)) {
-                  const partIndex = parts.findIndex(p => p.id === currentPart.id || p.name === currentPart.name);
-                  if (partIndex !== -1) {
-                    parts[partIndex].quantity = Math.max(0, (parts[partIndex].quantity || 0) - difference);
-                  }
-                } else if (typeof parts === 'object') {
-                  const partKey = currentPart.name;
-                  if (parts[partKey]) {
-                    parts[partKey].quantity = Math.max(0, (parts[partKey].quantity || 0) - difference);
-                  }
+                const partIndex = findPartIndex(currentPart);
+                if (partIndex !== -1) {
+                  parts[partIndex].quantity = Math.max(0, (parts[partIndex].quantity || 0) - difference);
                 }
               }
             });
 
             // Clean up: remove parts with NaN or invalid quantities before saving
-            if (Array.isArray(parts)) {
-              parts = parts.filter(part => {
-                const qty = parseInt(part.quantity);
-                return !isNaN(qty) && qty >= 0;
-              });
-            } else if (typeof parts === 'object') {
-              // Remove keys with NaN values
-              Object.keys(parts).forEach(key => {
-                const qty = parseInt(parts[key].quantity);
-                if (isNaN(qty) || qty < 0) {
-                  delete parts[key];
-                }
-              });
-            }
+            const cleanedParts = parts.filter(part => {
+              const qty = getQty(part.quantity);
+              return qty >= 0;
+            });
 
             // P2-2: Route inventory mutation through Cloud Function
             const updateInvFn = httpsCallable(functions, 'updateInventoryV1');
-            await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: workerId, parts });
+            await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: workerUid, parts: cleanedParts });
           }
         }
       }
@@ -215,9 +197,7 @@ export default function EditJob() {
       await updateJobFn({ companyId, jobId: editingJob.id, ...jobUpdates });
       
       // Update cache with document-level versioning
-      const statusLower = String(editingJob.status || '').toLowerCase();
-      const isPending = statusLower !== 'finished';
-      await updateJob(editingJob.id, jobUpdates, isPending);
+      await updateJob(editingJob.id, jobUpdates);
 
       // Success! Reset saving state and hide loading
       setIsSaving(false);
@@ -237,7 +217,7 @@ export default function EditJob() {
       alert.hideLoading();
       
       // Show error alert
-      alert.error('Error', 'Failed to update job: ' + error.message);
+      alert.error('Error', 'Failed to update job: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 

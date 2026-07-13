@@ -43,6 +43,7 @@ import {
   AuthorizationStatus,
 } from '@react-native-firebase/messaging';
 import { storage as mmkvStorage } from './contexts/mmkv-storage';
+import { getEdgeFunctionPath } from '@smart-job/contracts';
 
 // Get the default app instance (modular API)
 export const app = getApp();
@@ -291,26 +292,20 @@ function getSupabaseEdgeBaseUrl(): string {
 }
 
 function getMutationGatewayTarget(operation: string): { edgePath: string } {
-  if (operation === 'createInviteV1') {
-    return { edgePath: 'invites-create' };
+  const directPayloadOps = new Set([
+    'createInviteV1',
+    'joinCompanyV1',
+    'requestUpgradeV1',
+    'listUpgradeRequestsV1',
+    'moderateUpgradeRequestV1',
+  ]);
+
+  // Direct-to-function operations use the shared edge-function name map.
+  if (directPayloadOps.has(operation)) {
+    return { edgePath: getEdgeFunctionPath(operation) };
   }
 
-  if (operation === 'joinCompanyV1') {
-    return { edgePath: 'invites-join' };
-  }
-
-  if (operation === 'requestUpgradeV1') {
-    return { edgePath: 'upgrades-request' };
-  }
-
-  if (operation === 'listUpgradeRequestsV1') {
-    return { edgePath: 'upgrades-list' };
-  }
-
-  if (operation === 'moderateUpgradeRequestV1') {
-    return { edgePath: 'upgrades-moderate' };
-  }
-
+  // Tax invoice approval is routed to the regional mutation gateway.
   if (operation === 'getInvoiceApproval') {
     return { edgePath: 'mutation-gateway-me-west1' };
   }

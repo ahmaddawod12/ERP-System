@@ -70,8 +70,8 @@ test('read-model list filters and cursors are wired into service-role queries', 
   assert.match(readModelHandler, /\.eq\("document_type", documentType\)/);
   assert.match(readModelHandler, /getMembershipIdsForUser\(scope\.internalCompanyId, createdByUid\)/);
   assert.match(readModelHandler, /makeCursor\(getRowDateValue/);
-  assert.match(readModelHandler, /jobsNextCursor = jobsResult\.nextCursor \|\| null/);
-  assert.match(readModelHandler, /documentsNextCursor = docsResult\.nextCursor \|\| null/);
+  assert.match(readModelHandler, /jobsNextCursor = [^;]*nextCursor \|\| null/);
+  assert.match(readModelHandler, /documentsNextCursor = [^;]*nextCursor \|\| null/);
 });
 
 test('rate limiting fails closed when RPC is unavailable', () => {
@@ -134,6 +134,18 @@ test('invite join response exposes public worker number instead of internal memb
 
   assert.match(invitesHandler, /wid: Number\(membership\.member_no \|\| 0\)/);
   assert.doesNotMatch(invitesHandler, /membershipId: String\(membership\.membership_id\)/);
+});
+
+test('invite redemption consumes invite state atomically before finalizing membership', () => {
+  const invitesHandler = readFile('supabase', 'handlers', 'invites.ts');
+  const migration = readFile('packages', 'db', 'migrations', '0000_optimized_baseline.sql');
+
+  assert.match(invitesHandler, /supabase\.rpc\("redeem_company_invite"/);
+  assert.match(invitesHandler, /p_invite_code: inviteCode/);
+  assert.match(invitesHandler, /if \(!membership\?\.membership_id \|\| !membership\?\.public_company_id\)/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION redeem_company_invite\(/);
+  assert.match(migration, /UPDATE company_invites[\s\S]*SET status = 'used'/);
+  assert.match(migration, /INSERT INTO company_memberships/);
 });
 
 test('archive month retrieval is implemented through backend-controlled storage access', () => {

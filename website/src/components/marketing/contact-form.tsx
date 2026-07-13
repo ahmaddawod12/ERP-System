@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useAppToast } from "@/hooks/use-toast";
@@ -15,6 +16,7 @@ const schema = z.object({
   company: z.string().min(2, "Company is required"),
   message: z.string().min(8, "Message should be at least 8 characters"),
   challenge: z.string().trim().regex(/^7$/, "Answer the anti-spam challenge correctly"),
+  challengeToken: z.string().min(1, "Challenge token is missing"),
   website: z.string().max(0),
 });
 
@@ -22,10 +24,12 @@ type ContactFormValues = z.infer<typeof schema>;
 
 export function ContactForm() {
   const { toast } = useAppToast();
+  const [challengeQuestion, setChallengeQuestion] = useState<string>("3 + 4");
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<ContactFormValues>({
     resolver: zodResolver(schema),
@@ -33,6 +37,24 @@ export function ContactForm() {
       website: "",
     },
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/contact/challenge")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as { question?: string; token?: string };
+        if (cancelled) return;
+        if (data.question) setChallengeQuestion(data.question);
+        if (data.token) setValue("challengeToken", data.token, { shouldValidate: false });
+      })
+      .catch(() => {
+        // Silent fail: the user can still see the static question, but submission will fail without a token.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setValue]);
 
   const onSubmit = async (values: ContactFormValues) => {
     try {
@@ -56,6 +78,12 @@ export function ContactForm() {
         variant: "success",
       });
       reset();
+      // Refresh the challenge token after a successful submission.
+      const refresh = await fetch("/api/contact/challenge");
+      if (refresh.ok) {
+        const data = (await refresh.json()) as { token?: string };
+        if (data.token) setValue("challengeToken", data.token, { shouldValidate: false });
+      }
     } catch (error) {
       toast({
         title: "Message failed",
@@ -76,7 +104,7 @@ export function ContactForm() {
         error={errors.email?.message}
       />
       <Input label="Company" placeholder="Company name" {...register("company")} error={errors.company?.message} />
-      <Input label="Anti-spam: 3 + 4" placeholder="7" {...register("challenge")} error={errors.challenge?.message} />
+      <Input label={`Anti-spam: ${challengeQuestion}`} placeholder="7" {...register("challenge")} error={errors.challenge?.message} />
       <input type="text" tabIndex={-1} autoComplete="off" className="hidden" {...register("website")} />
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Message</span>

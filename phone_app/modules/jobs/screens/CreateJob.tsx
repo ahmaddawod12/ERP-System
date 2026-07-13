@@ -1,9 +1,7 @@
-// @ts-nocheck
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { View,
   TouchableOpacity,
   StyleSheet,
-  ScrollView,
   Platform,
  } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -18,41 +16,41 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { fetchCompanyWorkers } from '../../../utils/read-model';
+import type { Worker, Client } from '../../../types';
 
-export default function CreateJob() {
-  const router = useRouter();
-  const { language } = useLanguageContext();
-  const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
-  const {
-    getCompanyId,
-    getUid,
-    profile,
-    workers: cachedWorkersList,
-    addJob,
-    updateWorkers,
-    clients: cachedClients,
-    addClient,
-    updateClient,
-    fetchClients,
-  } = useCache();
-  const themeColors = getColors(isDarkMode);
-  const [workers, setWorkers] = useState([]);
-  const [selectedWorker, setSelectedWorker] = useState(null);
-  const [selectedWorkerWid, setSelectedWorkerWid] = useState(null);
-  const [selectedWorkerName, setSelectedWorkerName] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedClientObj, setSelectedClientObj] = useState(null);
-  const [newJob, setNewJob] = useState({
-    title: '',
-    description: '',
-    location: '',
-    cname: '',
-    cphone: '',
-  });
+type NewJobForm = {
+  title: string;
+  description: string;
+  location: string;
+  cname: string;
+  cphone: string;
+};
 
-  const t = language === 'en' ? {
+type Translations = {
+  title: string;
+  subtitle: string;
+  back: string;
+  selectWorker: string;
+  searchWorker: string;
+  jobDetails: string;
+  jobTitle: string;
+  description: string;
+  location: string;
+  clientName: string;
+  clientPhone: string;
+  submit: string;
+  cancel: string;
+  assignedTo: string;
+  workersMetric: string;
+  selectedMetric: string;
+  none: string;
+  fillAllFields: string;
+  selectWorkerFirst: string;
+  jobCreated: string;
+};
+
+const translateMap: Record<string, Translations> = {
+  en: {
     title: 'Create Job',
     subtitle: 'Assign a new job to a worker',
     back: 'Back',
@@ -73,7 +71,8 @@ export default function CreateJob() {
     fillAllFields: 'Please fill all fields',
     selectWorkerFirst: 'Please select a worker first',
     jobCreated: 'Job created successfully',
-  } : language === 'he' ? {
+  },
+  he: {
     title: 'יצירת משימה',
     subtitle: 'הקצה משימה חדשה לעובד',
     back: 'חזרה',
@@ -94,7 +93,8 @@ export default function CreateJob() {
     fillAllFields: 'אנא מלא את כל השדות',
     selectWorkerFirst: 'אנא בחר עובד תחילה',
     jobCreated: 'המשימה נוצרה בהצלחה',
-  } : {
+  },
+  ar: {
     title: 'إنشاء مهمة',
     subtitle: 'تعيين مهمة جديدة للعامل',
     back: 'رجوع',
@@ -115,7 +115,43 @@ export default function CreateJob() {
     fillAllFields: 'يرجى ملء جميع الحقول',
     selectWorkerFirst: 'يرجى اختيار عامل أولاً',
     jobCreated: 'تم إنشاء المهمة بنجاح',
-  };
+  },
+};
+
+export default function CreateJob() {
+  const router = useRouter();
+  const { language } = useLanguageContext();
+  const { isDarkMode } = useThemeContext();
+  const alert = useAlert();
+  const {
+    getCompanyId,
+    getUid,
+    profile,
+    workers: cachedWorkersList,
+    addJob,
+    updateWorkers,
+    clients: cachedClients,
+    addClient,
+    updateClient,
+    fetchClients,
+  } = useCache();
+  const themeColors = getColors(isDarkMode);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [selectedWorker, setSelectedWorker] = useState<string | null>(null);
+  const [selectedWorkerWid, setSelectedWorkerWid] = useState<string | null>(null);
+  const [selectedWorkerName, setSelectedWorkerName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedClientObj, setSelectedClientObj] = useState<Client | null>(null);
+  const [newJob, setNewJob] = useState<NewJobForm>({
+    title: '',
+    description: '',
+    location: '',
+    cname: '',
+    cphone: '',
+  });
+
+  const t = translateMap[language] || translateMap.en;
 
   useEffect(() => {
     const user = auth.currentUser;
@@ -152,8 +188,8 @@ export default function CreateJob() {
 
       // Use cached workers list if available (keyed by wid or uid)
       if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
-        const workersArray = Object.keys(cachedWorkersList).map((key) => {
-          const workerData = cachedWorkersList[key] || {};
+        const workersArray = Object.keys(cachedWorkersList as Record<string, Worker>).map((key) => {
+          const workerData = (cachedWorkersList as Record<string, Worker>)[key] || {};
           return {
             uid: workerData.uid || key,
             wid: workerData.wid || key,
@@ -169,11 +205,11 @@ export default function CreateJob() {
 
       const fetchedWorkers = await fetchCompanyWorkers(companyId);
       if (fetchedWorkers.length > 0) {
-        const workersData = {};
-        fetchedWorkers.forEach((workerData) => {
+        const workersData: Record<string, Worker> = {};
+        (fetchedWorkers as Worker[]).forEach((workerData) => {
           const wid = workerData.wid || workerData.uid;
           if (!wid) return;
-          workersData[wid] = workerData;
+          workersData[String(wid)] = workerData;
         });
         
         // Save to cache for next time
@@ -219,11 +255,11 @@ export default function CreateJob() {
       }
 
       // Auto-save new client or update existing client with missing fields
-      let clientCid = selectedClientObj?.id || null;
+      let clientCid: string | number | null = selectedClientObj?.id || null;
       if (selectedClientObj && newJob.cname.trim()) {
         // Update existing client with any newly filled fields
         try {
-          const updates = {};
+          const updates: Record<string, string> = {};
           if (newJob.cname.trim() && newJob.cname.trim() !== (selectedClientObj.cname || selectedClientObj.name || '')) updates.name = newJob.cname.trim();
           if (newJob.cphone.trim() && newJob.cphone.trim() !== (selectedClientObj.cphone || selectedClientObj.phone || '')) updates.phone = newJob.cphone.trim();
           if (Object.keys(updates).length > 0) {
@@ -236,7 +272,7 @@ export default function CreateJob() {
       } else if (!selectedClientObj && newJob.cname.trim()) {
         // Save as new client
         try {
-          const clientToSave = { name: newJob.cname.trim() };
+          const clientToSave: Record<string, string> = { name: newJob.cname.trim() };
           if (newJob.cphone.trim()) clientToSave.phone = newJob.cphone.trim();
           const savedClient = await addClient(clientToSave);
           if (savedClient) clientCid = savedClient.id;
@@ -272,11 +308,12 @@ export default function CreateJob() {
         ...jobData,
       });
 
-      const serverJobId = result.data?.jobId || result.jobId;
+      const resultData = (result as any).data || result || {};
+      const serverJobId = resultData.jobId;
       const createdJob = { ...jobData, id: serverJobId, createdAt: new Date().toISOString() };
 
       // Update local cache with the server-generated ID
-      await addJob(createdJob, true, selectedWorker);
+      await addJob(createdJob);
 
       alert.success('Success', t.jobCreated);
       setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
@@ -378,9 +415,9 @@ export default function CreateJob() {
                         setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
                       } else {
                         // Select new worker, clear form, and hide other workers
-                        setSelectedWorker(worker.uid);
-                        setSelectedWorkerName(worker.name || worker.email);
-                        setSelectedWorkerWid(worker.wid);
+                        setSelectedWorker(worker.uid || null);
+                        setSelectedWorkerName(String(worker.name || worker.email || ''));
+                        setSelectedWorkerWid(worker.wid ? String(worker.wid) : null);
                         setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
                       }
                     }}

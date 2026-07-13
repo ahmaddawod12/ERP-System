@@ -1,5 +1,4 @@
-// @ts-nocheck
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -10,10 +9,33 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { GlobalHeader, LoadingOverlay } from '../../../components';
-import TaxInvoiceJobList from '../components/TaxInvoiceJobList';
+import TaxInvoiceJobList, { type TaxInvoiceJob } from '../components/TaxInvoiceJobList';
 import TaxInvoiceFormModal from '../components/TaxInvoiceFormModal';
 import { useTaxInvoiceSubmission } from '../hooks/useTaxInvoiceSubmission';
 import { fetchCompanyInventoryParts, fetchCompanyJobs } from '../../../utils/read-model';
+import type { AppDocument, Client, InventoryPart, DocumentItem } from '../../../types';
+
+interface InvoicePart {
+  name: string;
+  quantity: string;
+  price: string;
+  partId?: string;
+  id?: string;
+}
+
+
+
+interface InvoiceData {
+  customerName: string;
+  customerVatNumber: string;
+  customerEmail: string;
+  customerId: string;
+  customerAddress: string;
+  customerCity: string;
+  customerPhone: string;
+  serviceDescription: string;
+  invoiceDate: string;
+}
 
 export default function GenerateTaxInvoice() {
   const router = useRouter();
@@ -36,33 +58,33 @@ export default function GenerateTaxInvoice() {
     [companyJobs]
   );
 
-  const [finishedJobs, setFinishedJobs] = useState([]);
-  const [filteredJobs, setFilteredJobs] = useState([]);
+  const [finishedJobs, setFinishedJobs] = useState<TaxInvoiceJob[]>([]);
+  const [filteredJobs, setFilteredJobs] = useState<TaxInvoiceJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
-  const [selectedJobs, setSelectedJobs] = useState([]); // Multi-select: array of selected job objects
+  const [selectedJobs, setSelectedJobs] = useState<TaxInvoiceJob[]>([]); // Multi-select: array of selected job objects
   const [companyId, setCompanyId] = useState('');
-  
+
   // 2-step flow state
   const [currentStep, setCurrentStep] = useState(1); // 1 = Client, 2 = Items
-  const [selectedPriceProposal, setSelectedPriceProposal] = useState(null);
-  const [matchingProposals, setMatchingProposals] = useState([]);
-  const [companyInventoryParts, setCompanyInventoryParts] = useState([]);
-  const [selectedClientObj, setSelectedClientObj] = useState(null);
-  
+  const [selectedPriceProposal, setSelectedPriceProposal] = useState<AppDocument | null>(null);
+  const [matchingProposals, setMatchingProposals] = useState<AppDocument[]>([]);
+  const [companyInventoryParts, setCompanyInventoryParts] = useState<InventoryPart[]>([]);
+  const [selectedClientObj, setSelectedClientObj] = useState<Client | null>(null);
+
   // Helper functions for alerts — using useAlert() for consistent cross-platform behavior.
   // Note: useAlert() already handles iOS/Android differences internally.
-  const showValidationError = (title, message) => {
+  const showValidationError = (title: string, message: string) => {
     alert.error(title, message);
   };
 
-  const showErrorMessage = (title, message) => {
+  const showErrorMessage = (title: string, message: string) => {
     alert.error(title, message);
   };
-  
+
   // Tax Invoice form data
-  const [invoiceData, setInvoiceData] = useState({
+  const [invoiceData, setInvoiceData] = useState<InvoiceData>({
     // Customer Details - Necessary
     customerName: '',
     customerVatNumber: '', // Required for ALL customers (Tax Invoice)
@@ -79,10 +101,10 @@ export default function GenerateTaxInvoice() {
   });
 
   // Parts from the job
-  const [jobParts, setJobParts] = useState([]); // [{ name, quantity, price }]
-  
+  const [jobParts, setJobParts] = useState<InvoicePart[]>([]); // [{ name, quantity, price }]
+
   // Custom parts (not in inventory)
-  const [customParts, setCustomParts] = useState([]); // [{ name, quantity, price }]
+  const [customParts, setCustomParts] = useState<InvoicePart[]>([]); // [{ name, quantity, price }]
 
   const t = language === 'en' ? {
     title: 'Generate Tax Invoice',
@@ -351,16 +373,17 @@ export default function GenerateTaxInvoice() {
             .map(job => ({
               ...job,
               wname: job.wname || 'Unknown',
-            }));
+            })) as TaxInvoiceJob[];
 
           // Sort by finishedAt (newest first)
           jobsData.sort((a, b) => {
-            const getTime = (dateInput) => {
+            const getTime = (dateInput?: unknown) => {
               if (!dateInput) return 0;
-              if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-                return dateInput.toDate().getTime();
+              if (typeof dateInput === 'object' && dateInput !== null && 'toDate' in dateInput && typeof (dateInput as { toDate?: () => Date }).toDate === 'function') {
+                return (dateInput as { toDate: () => Date }).toDate().getTime();
               }
-              return new Date(dateInput).getTime();
+              const d = new Date(String(dateInput));
+              return Number.isNaN(d.getTime()) ? 0 : d.getTime();
             };
             return getTime(b.finishedAt) - getTime(a.finishedAt);
           });
@@ -377,7 +400,7 @@ export default function GenerateTaxInvoice() {
             .map((job) => ({
               ...job,
               wname: job.wname || 'Unknown',
-            })));
+            })) as TaxInvoiceJob[]);
 
         // Sort by finishedAt (newest first) - Already ordered by query but sort again for safety
         jobsData.sort((a, b) => {
@@ -412,7 +435,7 @@ export default function GenerateTaxInvoice() {
   }, [searchQuery, finishedJobs]);
 
   // Toggle job selection (multi-select)
-  const toggleJobSelection = (job) => {
+  const toggleJobSelection = (job: TaxInvoiceJob) => {
     setSelectedJobs(prev => {
       const isAlreadySelected = prev.some(j => j.id === job.id);
       if (isAlreadySelected) {
@@ -424,27 +447,27 @@ export default function GenerateTaxInvoice() {
   };
 
   // Merge parts from multiple jobs: same id => add quantities, different id => separate entries
-  const mergePartsFromJobs = (jobs) => {
-    const partsMap = new Map(); // key: partId or name, value: { id, name, quantity }
-    
+  const mergePartsFromJobs = (jobs: TaxInvoiceJob[]) => {
+    const partsMap = new Map<string, InvoicePart>(); // key: partId or name, value: { id, name, quantity }
+
     jobs.forEach(job => {
       if (job.partsUsed && Array.isArray(job.partsUsed) && job.partsUsed.length > 0) {
-        job.partsUsed.forEach(part => {
-          const partId = part.id ? String(part.id) : null;
-          const partName = part.name || part;
+        (job.partsUsed as Array<{ id?: string | number; name?: string; quantity?: number }>).forEach((part) => {
+          const partId = part.id ? String(part.id) : undefined;
+          const partName = part.name || String(part);
           const partQuantity = part.quantity || 1;
-          
+
           // Use partId as key if available, otherwise use name
           const key = partId || partName;
-          
+
           if (partsMap.has(key)) {
-            const existing = partsMap.get(key);
-            existing.quantity += partQuantity;
+            const existing = partsMap.get(key)!;
+            existing.quantity = String(Number(existing.quantity) + partQuantity);
           } else {
             partsMap.set(key, {
               id: partId,
               name: partName,
-              quantity: partQuantity,
+              quantity: String(partQuantity),
               price: '', // Will be filled from price proposal or manually
             });
           }
@@ -456,9 +479,9 @@ export default function GenerateTaxInvoice() {
   };
 
   // Open receipt form with multiple selected jobs
-  const openReceiptForm = (jobs) => {
+  const openReceiptForm = (jobs: TaxInvoiceJob[]) => {
     if (!jobs || jobs.length === 0) return;
-    
+
     // Use the first job as primary for client info
     const primaryJob = jobs[0];
     
@@ -470,17 +493,16 @@ export default function GenerateTaxInvoice() {
     let invoiceDateStr = new Date().toISOString().split('T')[0];
     try {
       if (primaryJob.finishedAt) {
-        let dateValue;
-        if (primaryJob.finishedAt.seconds && typeof primaryJob.finishedAt.seconds === 'number') {
-          dateValue = new Date(primaryJob.finishedAt.seconds * 1000);
-        } else if (primaryJob.finishedAt instanceof Date) {
-          dateValue = primaryJob.finishedAt;
-        } else if (typeof primaryJob.finishedAt === 'string') {
-          dateValue = new Date(primaryJob.finishedAt);
-        } else if (typeof primaryJob.finishedAt === 'number') {
-          dateValue = new Date(primaryJob.finishedAt);
+        let dateValue: Date | undefined;
+        const finishedAt = primaryJob.finishedAt as unknown;
+        if (typeof finishedAt === 'object' && finishedAt !== null && 'seconds' in finishedAt && typeof (finishedAt as { seconds?: number }).seconds === 'number') {
+          dateValue = new Date((finishedAt as { seconds: number }).seconds * 1000);
+        } else if (finishedAt instanceof Date) {
+          dateValue = finishedAt;
+        } else if (typeof finishedAt === 'string' || typeof finishedAt === 'number') {
+          dateValue = new Date(finishedAt);
         }
-        if (dateValue && !isNaN(dateValue.getTime())) {
+        if (dateValue && !Number.isNaN(dateValue.getTime())) {
           invoiceDateStr = dateValue.toISOString().split('T')[0];
         }
       }
@@ -494,9 +516,10 @@ export default function GenerateTaxInvoice() {
       clientFromBook = cachedClients.find(c => c.id === primaryJob.clientId);
     }
     // Fallback: match by cname
-    if (!clientFromBook && primaryJob.cname && cachedClients && cachedClients.length > 0) {
-      clientFromBook = cachedClients.find(c => 
-        c.name && c.name.toLowerCase() === primaryJob.cname.toLowerCase()
+    const primaryCname = primaryJob.cname;
+    if (!clientFromBook && primaryCname && cachedClients && cachedClients.length > 0) {
+      clientFromBook = cachedClients.find(c =>
+        c.name && c.name.toLowerCase() === primaryCname.toLowerCase()
       );
     }
 
@@ -522,7 +545,7 @@ export default function GenerateTaxInvoice() {
     });
 
     // Find matching price proposals for this client
-    findMatchingProposals(primaryJob.clientId, clientFromBook, primaryJob.cname);
+    findMatchingProposals(primaryJob.clientId, clientFromBook || null, primaryCname);
 
     // Merge parts from ALL selected jobs
     const mergedParts = mergePartsFromJobs(jobs);
@@ -535,7 +558,7 @@ export default function GenerateTaxInvoice() {
   };
 
   // Find price proposals matching the client
-  const findMatchingProposals = (clientId, clientObj, clientName) => {
+  const findMatchingProposals = (clientId: string | undefined, clientObj: Client | null, customerName: string | undefined) => {
     if (!cachedDocuments || cachedDocuments.length === 0) {
       setMatchingProposals([]);
       return;
@@ -549,31 +572,40 @@ export default function GenerateTaxInvoice() {
       return;
     }
 
-    // Match by clientId first, then fallback to clientName
-    let matched = [];
+    // Match by clientId first, then fallback to customer name
+    let matched: AppDocument[] = [];
     if (clientId) {
       matched = proposals.filter(p => p.clientId === clientId);
     }
-    // Fallback: match by clientName
-    if (matched.length === 0 && (clientObj?.name || clientName)) {
-      const nameToMatch = (clientObj?.name || clientName || '').toLowerCase();
+    // Fallback: match by customer name
+    if (matched.length === 0 && (clientObj?.name || customerName)) {
+      const nameToMatch = (clientObj?.name || customerName || '').toLowerCase();
       matched = proposals.filter(p => 
         p.cname && p.cname.toLowerCase() === nameToMatch
       );
     }
 
     // Sort by creation date (newest first)
-    matched.sort((a, b) => {
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA;
-    });
+    const getTimeMs = (value?: unknown): number => {
+      if (!value) return 0;
+      if (value instanceof Date) return value.getTime();
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') return new Date(value).getTime();
+      if (typeof value === 'object' && 'toMillis' in value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
+        return (value as { toMillis: () => number }).toMillis();
+      }
+      if (typeof value === 'object' && 'seconds' in value && typeof (value as { seconds?: number }).seconds === 'number') {
+        return (value as { seconds: number }).seconds * 1000;
+      }
+      return 0;
+    };
+    matched.sort((a, b) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
 
     setMatchingProposals(matched);
   };
 
   // Apply prices from selected price proposal to job parts
-  const applyPriceProposal = (proposal) => {
+  const applyPriceProposal = (proposal: AppDocument) => {
     if (selectedPriceProposal?.id === proposal.id) {
       // Deselect: clear prices
       setSelectedPriceProposal(null);
@@ -583,23 +615,24 @@ export default function GenerateTaxInvoice() {
 
     setSelectedPriceProposal(proposal);
 
-    if (!proposal.items || proposal.items.length === 0) return;
+    const proposalItems = proposal.items || [];
+    if (proposalItems.length === 0) return;
 
     // Match proposal items to job parts by partId or name
     setJobParts(prev => prev.map(part => {
       // Try match by partId first (convert to strings to handle type mismatches)
-      let match = null;
+      let match: DocumentItem | undefined;
       if (part.id) {
         const partIdStr = String(part.id);
-        match = proposal.items.find(item => 
+        match = proposalItems.find(item =>
           item.partId && String(item.partId) === partIdStr
         );
       }
-      
+
       // Fallback: match by EXACT description/name only (case-insensitive)
       if (!match) {
         const partNameLower = (part.name || '').toLowerCase().trim();
-        match = proposal.items.find(item => {
+        match = proposalItems.find(item => {
           const itemDescLower = (item.description || '').toLowerCase().trim();
           return itemDescLower === partNameLower;
         });
@@ -612,7 +645,7 @@ export default function GenerateTaxInvoice() {
     }));
 
     // Also add any proposal items that don't match job parts as custom parts
-    const unmatchedItems = proposal.items.filter(item => {
+    const unmatchedItems = proposalItems.filter(item => {
       const descLower = (item.description || '').toLowerCase().trim();
       const itemIdStr = item.partId ? String(item.partId) : null;
       
@@ -629,10 +662,11 @@ export default function GenerateTaxInvoice() {
     });
 
     if (unmatchedItems.length > 0) {
-      const newCustomParts = unmatchedItems.map(item => ({
-        name: item.description,
+      const newCustomParts: InvoicePart[] = unmatchedItems.map(item => ({
+        name: item.description || '',
         quantity: String(item.quantity || 1),
         price: String(item.price || ''),
+        partId: item.partId ? String(item.partId) : undefined,
       }));
       setCustomParts(newCustomParts);
     }
@@ -739,18 +773,18 @@ export default function GenerateTaxInvoice() {
     setCustomParts([...customParts, { name: '', quantity: '1', price: '' }]);
   };
 
-  const removeCustomPart = (index) => {
+  const removeCustomPart = (index: number) => {
     const updated = customParts.filter((_, i) => i !== index);
     setCustomParts(updated);
   };
 
-  const updateJobPartPrice = (index, price) => {
+  const updateJobPartPrice = (index: number, price: string) => {
     const updated = [...jobParts];
     updated[index] = { ...updated[index], price };
     setJobParts(updated);
   };
 
-  const updateCustomPart = (index, field, value) => {
+  const updateCustomPart = (index: number, field: keyof InvoicePart, value: string) => {
     const updated = [...customParts];
     updated[index] = { ...updated[index], [field]: value };
     setCustomParts(updated);
@@ -762,9 +796,9 @@ export default function GenerateTaxInvoice() {
   };
 
   // Handle selecting a part from inventory search for custom parts
-  const handleCustomPartSelect = (index, part) => {
+  const handleCustomPartSelect = (index: number, part: InventoryPart) => {
     const updated = [...customParts];
-    updated[index] = { ...updated[index], name: part.name, partId: part.id };
+    updated[index] = { ...updated[index], name: part.name, partId: part.id ? String(part.id) : undefined };
     setCustomParts(updated);
 
     // Auto-add new empty row if this is the last item
@@ -798,9 +832,16 @@ export default function GenerateTaxInvoice() {
     router,
   });
 
-  const formatDate = (timestamp) => {
+  const formatDate = (timestamp?: unknown) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate?.() || new Date(timestamp);
+    const date =
+      typeof timestamp === 'object' &&
+      timestamp !== null &&
+      'toDate' in timestamp &&
+      typeof (timestamp as { toDate?: () => Date }).toDate === 'function'
+        ? (timestamp as { toDate: () => Date }).toDate()
+        : new Date(String(timestamp));
+    if (Number.isNaN(date.getTime())) return 'N/A';
     return date.toLocaleDateString();
   };
 
@@ -818,7 +859,7 @@ export default function GenerateTaxInvoice() {
         formatDate={formatDate}
         handleOpenModal={openReceiptForm}
         colors={colors}
-        t={t}
+        t={t as Record<string, string>}
         insets={insets}
         loading={loading}
       />
@@ -854,7 +895,7 @@ export default function GenerateTaxInvoice() {
         setPdfViewerVisible={setPdfViewerVisible}
         colors={colors}
         isDarkMode={isDarkMode}
-        t={t}
+        t={t as Record<string, string>}
         insets={insets}
         language={language}
         getInventoryParts={getInventoryParts}

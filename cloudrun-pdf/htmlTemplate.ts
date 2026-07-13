@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html';
+import { DOC_TYPE, DOC_LABELS, VAT_RATE, getDocumentLabel } from '@smart-job/contracts';
 
 /**
  * HTML Template Generator Module
@@ -58,29 +59,7 @@ function formatCentsToAmount(cents) {
   return (cents / 100).toFixed(2);
 }
 
-/**
- * Document Type Codes (numeric) — mirrors @smart-job/contracts DOC_TYPE.
- * Kept local because this Cloud Run service is deployed via Docker without
- * access to the monorepo's file: dependency.  Keep in sync with contracts.
- *
- * 10 = Price Proposal (הצעת מחיר)
- * 200 = Delivery Note (תעודת משלוח)
- * 210 = Return Certificate (תעודת החזרה)
- * 305 = Tax Invoice (חשבונית מס)
- * 330 = Refund (זיכוי)
- * 400 = Receipt (קבלה)
- */
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
 
-/** Israel VAT rate — mirrors @smart-job/contracts VAT_RATE. Keep in sync. */
-const VAT_RATE = 0.18;
 
 /**
  * Generate HTML template for documents
@@ -107,16 +86,6 @@ function generateDocumentHTML(documentData) {
   const isReceipt = numericType === DOC_TYPE.RECEIPT;
   const isDeliveryNote = numericType === DOC_TYPE.DELIVERY_NOTE;
   
-  // Document type titles (keyed by numeric type)
-  const titles = {
-    [DOC_TYPE.TAX_INVOICE]: { he: 'חשבונית מס', en: 'Tax Invoice', ar: 'فاتورة ضريبية' },
-    [DOC_TYPE.PRICE_PROPOSAL]: { he: 'הצעת מחיר', en: 'Price Proposal', ar: 'عرض سعر' },
-    [DOC_TYPE.REFUND]: { he: 'זיכוי', en: 'Refund', ar: 'رد' },
-    [DOC_TYPE.RETURN_CERTIFICATE]: { he: 'תעודת החזרה', en: 'Return Certificate', ar: 'شهادة إرجاع' },
-    [DOC_TYPE.RECEIPT]: { he: 'קבלה', en: 'Receipt', ar: 'إيصال' },
-    [DOC_TYPE.DELIVERY_NOTE]: { he: 'תעודת משלוח', en: 'Delivery Note', ar: 'إشعار تسليم' }
-  };
-
   const labels = {
     he: {
       documentNumber: 'מספר מסמך',
@@ -209,7 +178,9 @@ function generateDocumentHTML(documentData) {
   };
 
   const t = labels[effectiveLanguage] || labels.he;
-  const docTitle = titles[numericType] ? titles[numericType][effectiveLanguage] : titles[DOC_TYPE.TAX_INVOICE][effectiveLanguage];
+  const docTitle = DOC_LABELS[numericType as keyof typeof DOC_LABELS]
+    ? getDocumentLabel(numericType, effectiveLanguage)
+    : getDocumentLabel(DOC_TYPE.TAX_INVOICE, effectiveLanguage);
   const isRTL = effectiveLanguage === 'he' || effectiveLanguage === 'ar';
 
   // Sanitize all text inputs to prevent XSS

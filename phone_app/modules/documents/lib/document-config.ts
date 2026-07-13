@@ -1,9 +1,9 @@
-import { DOC_TYPE } from '@smart-job/contracts';
+import { DOC_TYPE, DOC_COLORS, DOC_GRADIENTS, DOC_ICONS } from '@smart-job/contracts';
 
 export const DOCUMENT_CONFIGS = {
   [DOC_TYPE.TAX_INVOICE]: {
-    icon: 'file-document',
-    gradient: ['#10B981', '#059669'],
+    icon: DOC_ICONS[DOC_TYPE.TAX_INVOICE],
+    gradient: DOC_GRADIENTS[DOC_TYPE.TAX_INVOICE],
     requiresVatNumber: true,
     requiresInvoiceSelection: false,
     requiresPaymentMethod: false,
@@ -11,8 +11,8 @@ export const DOCUMENT_CONFIGS = {
     itemFields: ['description', 'price', 'quantity'],
   },
   [DOC_TYPE.RECEIPT]: {
-    icon: 'receipt',
-    gradient: ['#06B6D4', '#0891B2'],
+    icon: DOC_ICONS[DOC_TYPE.RECEIPT],
+    gradient: DOC_GRADIENTS[DOC_TYPE.RECEIPT],
     requiresVatNumber: false,
     requiresInvoiceSelection: false,
     requiresPaymentMethod: true,
@@ -20,8 +20,8 @@ export const DOCUMENT_CONFIGS = {
     itemFields: ['description', 'price', 'quantity'],
   },
   [DOC_TYPE.PRICE_PROPOSAL]: {
-    icon: 'file-document-edit',
-    gradient: ['#3B82F6', '#2563EB'],
+    icon: DOC_ICONS[DOC_TYPE.PRICE_PROPOSAL],
+    gradient: DOC_GRADIENTS[DOC_TYPE.PRICE_PROPOSAL],
     requiresVatNumber: false,
     requiresInvoiceSelection: false,
     requiresPaymentMethod: false,
@@ -29,8 +29,8 @@ export const DOCUMENT_CONFIGS = {
     itemFields: ['description', 'price', 'quantity'],
   },
   [DOC_TYPE.DELIVERY_NOTE]: {
-    icon: 'truck-delivery',
-    gradient: ['#8B5CF6', '#7C3AED'],
+    icon: DOC_ICONS[DOC_TYPE.DELIVERY_NOTE],
+    gradient: DOC_GRADIENTS[DOC_TYPE.DELIVERY_NOTE],
     requiresVatNumber: false,
     requiresInvoiceSelection: false,
     requiresPaymentMethod: false,
@@ -38,8 +38,8 @@ export const DOCUMENT_CONFIGS = {
     itemFields: ['description', 'price', 'quantity'],
   },
   [DOC_TYPE.RETURN_CERTIFICATE]: {
-    icon: 'file-certificate',
-    gradient: ['#EC4899', '#DB2777'],
+    icon: DOC_ICONS[DOC_TYPE.RETURN_CERTIFICATE],
+    gradient: DOC_GRADIENTS[DOC_TYPE.RETURN_CERTIFICATE],
     requiresVatNumber: false,
     requiresInvoiceSelection: false,
     requiresPaymentMethod: false,
@@ -47,8 +47,8 @@ export const DOCUMENT_CONFIGS = {
     itemFields: ['description', 'price', 'quantity'],
   },
   [DOC_TYPE.REFUND]: {
-    icon: 'cash-refund',
-    gradient: ['#F59E0B', '#D97706'],
+    icon: DOC_ICONS[DOC_TYPE.REFUND],
+    gradient: DOC_GRADIENTS[DOC_TYPE.REFUND],
     requiresVatNumber: false,
     requiresInvoiceSelection: false,
     requiresPaymentMethod: false,

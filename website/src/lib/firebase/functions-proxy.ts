@@ -1,22 +1,11 @@
 import { NextResponse } from "next/server";
+import { getEdgeFunctionPath } from "@smart-job/contracts";
 import { ApiRouteError } from "@/lib/api/errors";
 import { resolveRequestAuth } from "@/lib/firebase/request-auth";
 
 function trimTrailingSlash(value: string) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }
-
-const EDGE_FUNCTION_NAME_MAP: Record<string, string> = {
-  mutationGatewayV1: "mutation-gateway",
-  mutationGatewayMeWest1V1: "mutation-gateway-me-west1",
-  readModelV1: "read-model",
-  createInviteV1: "invites-create",
-  joinCompanyV1: "invites-join",
-  requestUpgradeV1: "upgrades-request",
-  listUpgradeRequestsV1: "upgrades-list",
-  moderateUpgradeRequestV1: "upgrades-moderate",
-  contactRequestV1: "contact-request",
-};
 
 function getEdgeFunctionsBaseUrl() {
   const explicitBase = process.env.BACKEND_EDGE_FUNCTIONS_BASE_URL;
@@ -49,9 +38,7 @@ function getEdgeFunctionsBaseUrl() {
   return `${supabaseUrl}/functions/v1`;
 }
 
-function getEdgeFunctionPath(functionName: string): string {
-  return EDGE_FUNCTION_NAME_MAP[functionName] || functionName;
-}
+
 
 function getEdgeFunctionUrl(functionName: string) {
   return `${getEdgeFunctionsBaseUrl()}/${getEdgeFunctionPath(functionName)}`;

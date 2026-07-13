@@ -1,34 +1,7 @@
-import { DOC_TYPE } from '@smart-job/contracts';
+import { getDocumentLabel } from '@smart-job/contracts';
 
 export function getDocumentTranslations(language: string, documentType: number) {
-  const documentNames: Record<string, Record<number, string>> = {
-    en: {
-      [DOC_TYPE.TAX_INVOICE]: 'Tax Invoice',
-      [DOC_TYPE.RECEIPT]: 'Receipt',
-      [DOC_TYPE.PRICE_PROPOSAL]: 'Price Proposal',
-      [DOC_TYPE.DELIVERY_NOTE]: 'Delivery Note',
-      [DOC_TYPE.RETURN_CERTIFICATE]: 'Return Certificate',
-      [DOC_TYPE.REFUND]: 'Refund',
-    },
-    he: {
-      [DOC_TYPE.TAX_INVOICE]: 'חשבונית מס',
-      [DOC_TYPE.RECEIPT]: 'קבלה',
-      [DOC_TYPE.PRICE_PROPOSAL]: 'הצעת מחיר',
-      [DOC_TYPE.DELIVERY_NOTE]: 'תעודת משלוח',
-      [DOC_TYPE.RETURN_CERTIFICATE]: 'תעודת החזרה',
-      [DOC_TYPE.REFUND]: 'החזר כספי',
-    },
-    ar: {
-      [DOC_TYPE.TAX_INVOICE]: 'فاتورة ضريبية',
-      [DOC_TYPE.RECEIPT]: 'إيصال',
-      [DOC_TYPE.PRICE_PROPOSAL]: 'عرض السعر',
-      [DOC_TYPE.DELIVERY_NOTE]: 'إشعار تسليم',
-      [DOC_TYPE.RETURN_CERTIFICATE]: 'شهادة إرجاع',
-      [DOC_TYPE.REFUND]: 'استرداد',
-    },
-  };
-
-  const docName = documentNames[language]?.[documentType] || documentNames.en[documentType] || 'Document';
+  const docName = getDocumentLabel(documentType, language);
 
   if (language === 'en') {
     return {

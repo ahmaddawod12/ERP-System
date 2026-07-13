@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * ViewDocument.js - View Document Details
  * 
@@ -12,7 +11,6 @@
  * - Refund (330): Standard fields
  */
 
-import React from 'react';
 import { View,
   StyleSheet,
   TouchableOpacity,
@@ -27,63 +25,46 @@ import { getColors, spacing, borderRadius, typography, shadows } from '../../../
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { AppText, GlobalHeader, ScrollableContainer } from '../../../components';
-import { DOC_TYPE } from '@smart-job/contracts';
+import { DOC_TYPE, DOC_COLORS, DOC_GRADIENTS, DOC_ICONS, getDocumentLabel } from '@smart-job/contracts';
 import { safeJsonParse } from '../../../utils/helpers';
+import type { AppDocument } from '../../../types';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { getDocumentDownloadUrl } from '../lib/document-download';
 
-// Document type configurations
-const DOCUMENT_CONFIGS = {
+// Document type behavior configurations (visual metadata lives in @smart-job/contracts)
+const DOCUMENT_BEHAVIOR_CONFIGS = {
   [DOC_TYPE.TAX_INVOICE]: {
-    icon: 'file-document',
-    gradient: ['#10B981', '#059669'],
-    color: '#10B981',
     hasConfirmationNumber: true,
     hasVatNumber: true,
     hasPaymentMethod: false,
   },
   [DOC_TYPE.RECEIPT]: {
-    icon: 'receipt',
-    gradient: ['#06B6D4', '#0891B2'],
-    color: '#06B6D4',
     hasConfirmationNumber: false,
     hasVatNumber: false,
     hasPaymentMethod: true,
   },
   [DOC_TYPE.PRICE_PROPOSAL]: {
-    icon: 'file-document-edit',
-    gradient: ['#3B82F6', '#2563EB'],
-    color: '#3B82F6',
     hasConfirmationNumber: false,
     hasVatNumber: false,
     hasPaymentMethod: false,
   },
   [DOC_TYPE.DELIVERY_NOTE]: {
-    icon: 'truck-delivery',
-    gradient: ['#8B5CF6', '#7C3AED'],
-    color: '#8B5CF6',
     hasConfirmationNumber: false,
     hasVatNumber: false,
     hasPaymentMethod: false,
   },
   [DOC_TYPE.RETURN_CERTIFICATE]: {
-    icon: 'file-certificate',
-    gradient: ['#EC4899', '#DB2777'],
-    color: '#EC4899',
     hasConfirmationNumber: false,
     hasVatNumber: false,
     hasPaymentMethod: false,
   },
   [DOC_TYPE.REFUND]: {
-    icon: 'cash-refund',
-    gradient: ['#F59E0B', '#D97706'],
-    color: '#F59E0B',
     hasConfirmationNumber: false,
     hasVatNumber: false,
     hasPaymentMethod: false,
   },
-};
+} as const;
 
 export default function ViewDocument() {
   const router = useRouter();
@@ -96,35 +77,33 @@ export default function ViewDocument() {
   const colors = getColors(isDarkMode);
   
   // Parse document from params (passed from DocumentHistory)
-  const document = safeJsonParse(params.document);
+  const document = safeJsonParse(params.document) as AppDocument | null;
 
   // Translations
   const t = getTranslations(language);
 
-  const getDocTypeConfig = (type) => {
+  const getDocTypeConfig = (type?: number | string) => {
     const numericType = typeof type === 'number' ? type : Number(type);
-    return DOCUMENT_CONFIGS[numericType] || DOCUMENT_CONFIGS[DOC_TYPE.PRICE_PROPOSAL];
-  };
-
-  const getDocTypeName = (type) => {
-    const numericType = typeof type === 'number' ? type : Number(type);
-    const names = {
-      [DOC_TYPE.TAX_INVOICE]: t.taxInvoice,
-      [DOC_TYPE.RECEIPT]: t.receipt,
-      [DOC_TYPE.PRICE_PROPOSAL]: t.priceProposal,
-      [DOC_TYPE.DELIVERY_NOTE]: t.deliveryNote,
-      [DOC_TYPE.RETURN_CERTIFICATE]: t.returnCertificate,
-      [DOC_TYPE.REFUND]: t.refund,
+    const behavior = DOCUMENT_BEHAVIOR_CONFIGS[numericType as keyof typeof DOCUMENT_BEHAVIOR_CONFIGS] || DOCUMENT_BEHAVIOR_CONFIGS[DOC_TYPE.PRICE_PROPOSAL];
+    return {
+      icon: DOC_ICONS[numericType as keyof typeof DOC_ICONS] || DOC_ICONS[DOC_TYPE.PRICE_PROPOSAL],
+      gradient: DOC_GRADIENTS[numericType as keyof typeof DOC_GRADIENTS] || DOC_GRADIENTS[DOC_TYPE.PRICE_PROPOSAL],
+      color: DOC_COLORS[numericType as keyof typeof DOC_COLORS] || DOC_COLORS[DOC_TYPE.PRICE_PROPOSAL],
+      ...behavior,
     };
-    return names[numericType] || t.document;
   };
 
-  const formatDate = (dateInput) => {
+  const getDocTypeName = (type?: number | string) => {
+    const numericType = typeof type === 'number' ? type : Number(type);
+    return getDocumentLabel(numericType, language) || t.document;
+  };
+
+  const formatDate = (dateInput?: unknown) => {
     if (!dateInput) return 'N/A';
-    
+
     // Handle Firestore Timestamp
-    if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-      const date = dateInput.toDate();
+    if (typeof dateInput === 'object' && dateInput !== null && 'toDate' in dateInput && typeof (dateInput as { toDate?: () => Date }).toDate === 'function') {
+      const date = (dateInput as { toDate: () => Date }).toDate();
       return date.toLocaleDateString(language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-SA' : 'en-US', {
         year: 'numeric',
         month: 'long',
@@ -133,10 +112,10 @@ export default function ViewDocument() {
         minute: '2-digit'
       });
     }
-    
+
     try {
-      const date = new Date(dateInput);
-      if (isNaN(date.getTime())) return 'N/A';
+      const date = new Date(String(dateInput));
+      if (Number.isNaN(date.getTime())) return 'N/A';
       return date.toLocaleDateString(language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-SA' : 'en-US', {
         year: 'numeric',
         month: 'long',
@@ -149,22 +128,23 @@ export default function ViewDocument() {
     }
   };
 
-  const formatAmount = (amount) => {
-    if (!amount || isNaN(amount)) return '₪0.00';
-    return `₪${parseFloat(amount).toFixed(2)}`;
+  const formatAmount = (amount?: number | string) => {
+    const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+    if (num === undefined || num === null || Number.isNaN(num)) return '₪0.00';
+    return `₪${num.toFixed(2)}`;
   };
 
-  const calculateTotal = (items) => {
+  const calculateTotal = (items?: Array<{ price?: number | string; quantity?: number | string }>) => {
     if (!items || !Array.isArray(items)) return 0;
     return items.reduce((sum, item) => {
-      const price = parseFloat(item.price) || 0;
-      const quantity = parseFloat(item.quantity) || 1;
+      const price = typeof item.price === 'string' ? parseFloat(item.price) : (item.price || 0);
+      const quantity = typeof item.quantity === 'string' ? parseFloat(item.quantity) : (item.quantity || 1);
       return sum + (price * quantity);
     }, 0);
   };
 
-  const getPaymentMethodLabel = (method) => {
-    const methods = {
+  const getPaymentMethodLabel = (method?: string) => {
+    const methods: Record<string, string> = {
       cash: t.paymentCash,
       credit: t.paymentCredit,
       transfer: t.paymentTransfer,
@@ -172,10 +152,11 @@ export default function ViewDocument() {
       bit: t.paymentBit,
       paybox: t.paymentPaybox,
     };
-    return methods[method] || method;
+    return method ? methods[method] || method : '';
   };
 
   const openDocumentPdf = async () => {
+    if (!document) return;
     try {
       const companyId = getCompanyId();
       const documentId = document.documentId || document.id;
@@ -217,7 +198,7 @@ export default function ViewDocument() {
   const grandTotal = document.totalWithVat || document.documentData?.totalWithVat || (subtotal + vatAmount);
   
   // Get client data from various possible locations
-  const clientData = document.documentData?.client || {
+  const clientData: NonNullable<AppDocument['documentData']>['client'] = document.documentData?.client || {
     name: document.cname,
     phone: document.cphone,
     clientVatNumber: document.clientVatNumber,
@@ -234,13 +215,13 @@ export default function ViewDocument() {
         {/* Header Card */}
         <View style={[styles.headerCard, { backgroundColor: colors.surface }]}>
           <LinearGradient
-            colors={config.gradient}
+            colors={config.gradient as [string, string, ...string[]]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.headerGradient}
           >
             <View style={styles.headerIconContainer}>
-              <MaterialCommunityIcons name={config.icon} size={48} color="white" />
+              <MaterialCommunityIcons name={config.icon as keyof typeof MaterialCommunityIcons.glyphMap} size={48} color="white" />
             </View>
             <AppText style={styles.headerTitle}>{getDocTypeName(document.type)}</AppText>
             {document.documentNumber && (
@@ -274,7 +255,7 @@ export default function ViewDocument() {
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={config.gradient}
+              colors={config.gradient as [string, string, ...string[]]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.downloadButtonGradient}
@@ -425,7 +406,7 @@ export default function ViewDocument() {
                   <View style={styles.itemDetail}>
                     <AppText style={[styles.itemDetailLabel, { color: colors.textSecondary }]}>{t.subtotal}</AppText>
                     <AppText style={[styles.itemDetailValue, { color: config.color, fontWeight: 'bold' }]}>
-                      {formatAmount((parseFloat(item.price) || 0) * (parseFloat(item.quantity) || 1))}
+                      {formatAmount((parseFloat(String(item.price ?? 0)) || 0) * (parseFloat(String(item.quantity ?? 1)) || 1))}
                     </AppText>
                   </View>
                 </View>
@@ -478,17 +459,11 @@ export default function ViewDocument() {
 }
 
 // Translation helper function
-function getTranslations(language) {
+function getTranslations(language: string) {
   if (language === 'en') {
     return {
       documentNotFound: 'Document not found',
       document: 'Document',
-      taxInvoice: 'Tax Invoice',
-      receipt: 'Receipt',
-      priceProposal: 'Price Proposal',
-      deliveryNote: 'Delivery Note',
-      returnCertificate: 'Return Certificate',
-      refund: 'Refund',
       createdBy: 'Created by',
       taxAuthority: 'Tax Authority Approval',
       confirmationNumber: 'Confirmation Number (מספר הקצאה)',
@@ -523,12 +498,6 @@ function getTranslations(language) {
     return {
       documentNotFound: 'המסמך לא נמצא',
       document: 'מסמך',
-      taxInvoice: 'חשבונית מס',
-      receipt: 'קבלה',
-      priceProposal: 'הצעת מחיר',
-      deliveryNote: 'תעודת משלוח',
-      returnCertificate: 'תעודת החזרה',
-      refund: 'זיכוי',
       createdBy: 'נוצר על ידי',
       taxAuthority: 'אישור רשות המיסים',
       confirmationNumber: 'מספר הקצאה',
@@ -563,12 +532,6 @@ function getTranslations(language) {
     return {
       documentNotFound: 'المستند غير موجود',
       document: 'مستند',
-      taxInvoice: 'فاتورة ضريبية',
-      receipt: 'إيصال',
-      priceProposal: 'عرض السعر',
-      deliveryNote: 'إشعار تسليم',
-      returnCertificate: 'شهادة إرجاع',
-      refund: 'استرداد',
       createdBy: 'أنشئ بواسطة',
       taxAuthority: 'موافقة مصلحة الضرائب',
       confirmationNumber: 'رقم التأكيد',

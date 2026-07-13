@@ -9,14 +9,14 @@ import UserInventory from '../modules/inventory/screens/UserInventory';
  * Inventory route — renders the correct screen based on role:
  *  • worker / manager → WorkerInventory (company-linked parts)
  *  • user / basic     → UserInventory   (personal free-form parts)
- *  • If `workerId` param is passed (manager viewing worker), always team inventory
+ *  • If `wid` param is passed (manager viewing worker), always team inventory
  */
 function InventoryRouter() {
-  const { workerId } = useLocalSearchParams();
+  const { wid } = useLocalSearchParams();
   const { profile } = useCache();
   const role = profile?.role;
 
-  if (workerId || role === 'worker' || role === 'manager') {
+  if (wid || role === 'worker' || role === 'manager') {
     return <WorkerInventory />;
   }
   return <UserInventory />;

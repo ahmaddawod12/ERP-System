@@ -1,74 +1,196 @@
-// @ts-nocheck
 import { styles } from './JobMonitor.styles';
-import React, { useState, useEffect } from 'react';
-import { View,
+import { useState, useEffect, useMemo, memo, useCallback } from 'react';
+import {
+  View,
   TouchableOpacity,
-  StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Modal,
-  Image,
-  Platform,
- } from 'react-native';
+  FlatList,
+} from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { auth } from '../../../firebase';
-import { colors, gradients, spacing, borderRadius, typography, shadows, getColors } from '../../../theme';
-import { AppCard, AppEmptyState, AppText, SearchInput, LoadingSpinner, PrimaryButton, SecondaryButton, DangerButton, ViewJobDetails, GlobalHeader, DateFilter, ScrollableContainer, ScreenHeroCard } from '../../../components';
+import { colors, gradients, getColors } from '../../../theme';
+import { AppCard, AppEmptyState, AppText, SearchInput, ViewJobDetails, GlobalHeader, DateFilter, ScreenHeroCard } from '../../../components';
+import { useScrollHandler } from '../../../contexts/HeaderContext';
+import type { DateFilterRange } from '../../../components/forms/DateFilter';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { ROUTES } from '../../../navigation/routes';
+import type { Job } from '../../../types';
+
+const getTimeMs = (value?: unknown): number => {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return new Date(value).getTime();
+  if (typeof value === 'object' && 'toMillis' in value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  if (typeof value === 'object' && 'seconds' in value && typeof (value as { seconds?: number }).seconds === 'number') {
+    return (value as { seconds: number }).seconds * 1000;
+  }
+  return 0;
+};
+
+const formatDateShort = (value?: unknown): string => {
+  const ms = getTimeMs(value);
+  if (!ms) return '';
+  return new Date(ms).toLocaleDateString();
+};
+
+const formatTimeShort = (value?: unknown): string => {
+  const ms = getTimeMs(value);
+  if (!ms) return '';
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
+interface JobCardProps {
+  job: Job;
+  isHighlighted: boolean;
+  language: string;
+  themeColors: ReturnType<typeof getColors>;
+  isDarkMode: boolean;
+  t: Record<string, string>;
+  onPress: (job: Job) => void;
+  onEdit: (job: Job) => void;
+}
+
+const JobCard = memo(function JobCard({
+  job,
+  isHighlighted,
+  language,
+  themeColors,
+  isDarkMode,
+  t,
+  onPress,
+  onEdit,
+}: JobCardProps) {
+  const displayName = job.wname || 'Unknown Worker';
+  const statusColor =
+    job.status?.toLowerCase() === 'pending' ? '#f59e0b' :
+    job.status?.toLowerCase() === 'waiting' ? '#8b5cf6' :
+    job.status?.toLowerCase() === 'finished' ? '#10b981' : '#6b7280';
+
+  const statusText =
+    job.status?.toLowerCase() === 'pending' ? t.pending :
+    job.status?.toLowerCase() === 'waiting' ? t.waiting :
+    job.status?.toLowerCase() === 'finished' ? t.finished :
+    job.status || 'unknown';
+
+  const isNew = (() => {
+    if (!job.createdAt) return false;
+    const hoursDiff = (Date.now() - getTimeMs(job.createdAt)) / (1000 * 60 * 60);
+    return hoursDiff <= 24;
+  })();
+
+  return (
+    <TouchableOpacity onPress={() => onPress(job)}>
+      <AppCard
+        style={[
+          styles.jobCard,
+          { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border },
+          isHighlighted && styles.highlightedJobCard,
+        ]}
+      >
+        <View style={styles.jobHeader}>
+          <View style={styles.jobLeft}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <View style={styles.jobHeaderContent}>
+              <View style={styles.jobTitleRow}>
+                <AppText style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</AppText>
+                {isNew && (
+                  <View style={styles.newBadge}>
+                    <AppText style={styles.newBadgeText}>NEW</AppText>
+                  </View>
+                )}
+              </View>
+              <AppText style={[styles.jobWorker, { color: themeColors.textSecondary }]}>
+                👤 {displayName}
+              </AppText>
+              {job.createdAt && (
+                <AppText style={[styles.jobDate, { color: themeColors.textSecondary }]}>
+                  📅 {formatDateShort(job.createdAt)}
+                </AppText>
+              )}
+              {job.status?.toLowerCase() === 'finished' && job.finishedAt && (
+                <AppText style={[styles.jobFinishedDate, { color: themeColors.textSecondary }]}>
+                  ✓ {t.finishedAt || 'Finished'}: {formatDateShort(job.finishedAt)} {formatTimeShort(job.finishedAt)}
+                </AppText>
+              )}
+            </View>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+            <AppText style={styles.statusText}>{statusText}</AppText>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.editButton, {
+            backgroundColor: isDarkMode ? themeColors.border : 'rgba(0, 172, 193, 0.08)',
+            borderColor: isDarkMode ? themeColors.border : 'rgba(0, 172, 193, 0.2)',
+          }]}
+          onPress={(e) => {
+            e.stopPropagation();
+            onEdit(job);
+          }}
+        >
+          <Ionicons name="create-outline" size={18} color={themeColors.secondary} />
+          <AppText style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</AppText>
+        </TouchableOpacity>
+      </AppCard>
+    </TouchableOpacity>
+  );
+});
 
 export default function JobMonitor() {
   const router = useRouter();
-  const { jobId } = useLocalSearchParams();
+  const { jobId: rawJobId } = useLocalSearchParams();
+  const jobId = Array.isArray(rawJobId) ? rawJobId[0] : rawJobId;
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const alert = useAlert();
-  const { 
-    getCompanyId, 
+  const { scrollProps } = useScrollHandler();
+  const {
+    getCompanyId,
     companyJobs,
     getDataForDateRange,
-    isWithinCacheRange 
+    isWithinCacheRange,
   } = useCache();
-  const cachedPendingJobs = React.useMemo(
+  const cachedPendingJobs = useMemo(
     () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
     [companyJobs]
   );
-  const cachedFinishedJobs = React.useMemo(
+  const cachedFinishedJobs = useMemo(
     () => (companyJobs || []).filter(j => j.status === 'finished'),
     [companyJobs]
   );
   const themeColors = getColors(isDarkMode);
   const [loading, setLoading] = useState(true);
-  const [jobs, setJobs] = useState({
+  const [jobs, setJobs] = useState<{
+    pending: Job[];
+    waiting: Job[];
+    finished: Job[];
+  }>({
     pending: [],
     waiting: [],
     finished: [],
   });
-  const [selectedJobDetails, setSelectedJobDetails] = useState(null);
-  const [activeFilter, setActiveFilter] = useState('all');
-  // OLD EDIT MODAL STATE - NO LONGER NEEDED (using /EditJob screen now)
-  // const [showEditJob, setShowEditJob] = useState(false);
-  // const [editingJob, setEditingJob] = useState(null);
-  const [highlightedJobId, setHighlightedJobId] = useState(null);
+  const [selectedJobDetails, setSelectedJobDetails] = useState<Job | null>(null);
+  const [activeFilter, setActiveFilter] = useState<'all' | 'pending' | 'waiting' | 'finished'>('all');
+  const [highlightedJobId, setHighlightedJobId] = useState<string | null>(null);
   const [showDateFilter, setShowDateFilter] = useState(false);
-  const [dateFilter, setDateFilter] = useState({
+  const [dateFilter, setDateFilter] = useState<DateFilterRange>({
     type: 'last7days',
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)),
     endDate: new Date(),
-    label: 'Last 7 Days'
+    label: 'Last 7 Days',
   });
   const [clientFilter, setClientFilter] = useState('');
-  // const [workerInventory, setWorkerInventory] = useState([]);
-  // const [showAddPartsModal, setShowAddPartsModal] = useState(false);
-  // const [partsSearchQuery, setPartsSearchQuery] = useState('');
 
-  const t = language === 'en' ? {
+  const t = (language === 'en' ? {
     title: 'Job Monitor',
     subtitle: 'Track all company jobs',
     back: 'Back',
@@ -99,7 +221,6 @@ export default function JobMonitor() {
     clearDate: 'Clear Filter',
     allDates: 'All Dates',
     filterByClient: 'Filter by Client',
-    clientName: 'Client Name',
     allClients: 'All Clients',
     edit: 'Edit Job',
     save: 'Save',
@@ -107,7 +228,6 @@ export default function JobMonitor() {
     timeWorked: 'Time Worked',
     from: 'From',
     to: 'To',
-    clientName: 'Client Name',
     clientPhone: 'Client Phone',
     partsUsed: 'Parts Used',
     noParts: 'No parts used',
@@ -122,7 +242,6 @@ export default function JobMonitor() {
     searchParts: 'Search parts...',
     noInventoryParts: 'No parts in worker inventory',
     add: 'Add',
-    filterByDate: 'Filter by Date',
     showingJobsFrom: 'Showing jobs from',
     visible: 'Visible',
   } : language === 'he' ? {
@@ -155,6 +274,8 @@ export default function JobMonitor() {
     selectDate: 'בחר תאריך',
     clearDate: 'נקה סינון',
     allDates: 'כל התאריכים',
+    filterByClient: 'סינון לפי לקוח',
+    allClients: 'כל הלקוחות',
     edit: 'ערוך משימה',
     save: 'שמור',
     cancel: 'בטל',
@@ -216,7 +337,6 @@ export default function JobMonitor() {
     timeWorked: 'وقت العمل',
     from: 'من',
     to: 'إلى',
-    clientName: 'اسم العميل',
     clientPhone: 'هاتف العميل',
     partsUsed: 'القطع المستخدمة',
     noParts: 'لا توجد قطع مستخدمة',
@@ -232,7 +352,7 @@ export default function JobMonitor() {
     noInventoryParts: 'لا توجد قطع في مخزون العامل',
     add: 'إضافة',
     visible: 'المعروض',
-  };
+  }) as Record<string, string>;
 
   // Use cached data with smart date filtering from CacheContext
   useEffect(() => {
@@ -242,33 +362,33 @@ export default function JobMonitor() {
         if (!user) return;
 
         const companyId = getCompanyId();
-        
+
         if (!companyId) {
           console.error('CompanyId not found in cache');
           setLoading(false);
           return;
         }
-        
+
         setLoading(true);
-        
+
         // Check if date filter is within 90 days (use isWithinCacheRange from CacheContext)
         const isStartInCache = isWithinCacheRange(dateFilter.startDate);
-        
+
         // Process pending jobs from cache (always within cache range since they're current)
-        const pendingJobsList = [];
-        const waitingJobsList = [];
-        
+        const pendingJobsList: Job[] = [];
+        const waitingJobsList: Job[] = [];
+
         if (cachedPendingJobs && cachedPendingJobs.length > 0) {
           console.log('📦 [CACHE READ] JobMonitor - pending jobs from cache:', cachedPendingJobs.length);
           cachedPendingJobs.forEach((job) => {
             // Apply date filter
-            const jobDate = job.createdAt ? new Date(job.createdAt) : new Date(0);
-            if (jobDate >= dateFilter.startDate && jobDate <= dateFilter.endDate) {
+            const jobDateMs = getTimeMs(job.createdAt);
+            if (jobDateMs >= dateFilter.startDate.getTime() && jobDateMs <= dateFilter.endDate.getTime()) {
               const jobData = {
                 ...job,
                 workerName: job.wname || 'Unknown',
               };
-              
+
               const status = jobData.status?.toLowerCase();
               if (status === 'pending') {
                 pendingJobsList.push(jobData);
@@ -278,51 +398,49 @@ export default function JobMonitor() {
             }
           });
         }
-        
+
         // Sort pending jobs lists
-        const sortByDate = (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+        const sortByDate = (a: Job, b: Job) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt);
         pendingJobsList.sort(sortByDate);
         waitingJobsList.sort(sortByDate);
-        
+
         // Get finished jobs using smart date filtering from CacheContext
-        // This automatically handles cache vs backend/archive based on date range.
-        let finishedJobsData = [];
-        
+        let finishedJobsData: Job[] = [];
+
         if (isStartInCache) {
           // Date range is within cache, filter from cached data
           if (cachedFinishedJobs && cachedFinishedJobs.length > 0) {
             console.log('📦 [CACHE READ] JobMonitor - finished jobs from cache:', cachedFinishedJobs.length);
             finishedJobsData = cachedFinishedJobs.filter((job) => {
-              const finishedDate = job.finishedAt ? new Date(job.finishedAt) : new Date(0);
-              return finishedDate >= dateFilter.startDate && finishedDate <= dateFilter.endDate;
+              const finishedDateMs = getTimeMs(job.finishedAt);
+              return finishedDateMs >= dateFilter.startDate.getTime() && finishedDateMs <= dateFilter.endDate.getTime();
             });
           }
         } else {
           // Date range extends beyond cache - use smart filtering.
-          // This uses local cache for recent data and backend/archive reads for older data.
           console.log('[BACKEND READ] JobMonitor - fetching older finished jobs');
           finishedJobsData = await getDataForDateRange(
-            dateFilter.startDate, 
-            dateFilter.endDate, 
+            dateFilter.startDate,
+            dateFilter.endDate,
             'finishedJobs'
           );
         }
-        
-        const finishedJobsList = finishedJobsData
+
+        const finishedJobsList = (finishedJobsData as Job[])
           .map((job) => ({
             ...job,
             workerName: job.wname || 'Unknown',
           }))
-          .sort((a, b) => new Date(b.finishedAt || 0) - new Date(a.finishedAt || 0));
-        
+          .sort((a, b) => getTimeMs(b.finishedAt) - getTimeMs(a.finishedAt));
+
         setJobs({
           pending: pendingJobsList,
           waiting: waitingJobsList,
           finished: finishedJobsList,
         });
-        
+
         setLoading(false);
-        
+
       } catch (error) {
         console.error('Error loading jobs from cache:', error);
         setLoading(false);
@@ -335,14 +453,14 @@ export default function JobMonitor() {
   // Apply client name filter to jobs
   useEffect(() => {
     if (clientFilter.trim()) {
-      const filterByClient = (jobsList) => {
+      const filterByClient = (jobsList: Job[]) => {
         const query = clientFilter.toLowerCase();
-        return jobsList.filter(job => 
+        return jobsList.filter(job =>
           (job.signingPersonName && job.signingPersonName.toLowerCase().includes(query)) ||
           (job.cname && job.cname.toLowerCase().includes(query))
         );
       };
-      
+
       setJobs(prevJobs => ({
         pending: filterByClient(prevJobs.pending),
         waiting: filterByClient(prevJobs.waiting),
@@ -354,38 +472,29 @@ export default function JobMonitor() {
   // Highlight job when navigating from WorkersMonitor with jobId
   useEffect(() => {
     if (jobId && !loading) {
-      // Set the highlighted job
       setHighlightedJobId(jobId);
-      
-      // Remove highlight after 2.5 seconds
       const timer = setTimeout(() => {
         setHighlightedJobId(null);
       }, 2500);
-      
       return () => clearTimeout(timer);
     }
   }, [jobId, loading]);
 
-  const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'pending': return '#f59e0b';
-      case 'waiting': return '#8b5cf6';
-      case 'finished': return '#10b981';
-      default: return '#6b7280';
-    }
-  };
+  const handleEditJob = useCallback((job: Job) => {
+    router.push({
+      pathname: ROUTES.editJob,
+      params: {
+        job: JSON.stringify(job),
+      },
+    });
+  }, [router]);
 
-  const getStatusText = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'pending': return t.pending;
-      case 'waiting': return t.waiting;
-      case 'finished': return t.finished;
-      default: return status || 'unknown';
-    }
-  };
+  const handlePressJob = useCallback((job: Job) => {
+    setSelectedJobDetails(job);
+  }, []);
 
   const getFilteredJobs = () => {
-    let allJobs = [];
+    let allJobs: Job[] = [];
     if (activeFilter === 'all') {
       allJobs = [
         ...jobs.pending,
@@ -395,143 +504,30 @@ export default function JobMonitor() {
     } else {
       allJobs = jobs[activeFilter] || [];
     }
-    
-    // Date filtering is handled by the backend read-model/archive query (dateFilter state).
-    // No need for additional client-side date filtering here
-    
-    // Sort by date - newest first
-    // Use finishedAt for finished jobs, createdAt for others
+
     return allJobs.sort((a, b) => {
       const dateFieldA = a.status?.toLowerCase() === 'finished' ? a.finishedAt : a.createdAt;
       const dateFieldB = b.status?.toLowerCase() === 'finished' ? b.finishedAt : b.createdAt;
-      const dateA = dateFieldA ? new Date(dateFieldA).getTime() : 0;
-      const dateB = dateFieldB ? new Date(dateFieldB).getTime() : 0;
-      return dateB - dateA; // Descending order (newest first)
+      const dateA = getTimeMs(dateFieldA);
+      const dateB = getTimeMs(dateFieldB);
+      return dateB - dateA;
     });
   };
 
   const filteredJobs = getFilteredJobs();
 
-  const isJobNew = (job) => {
-    if (!job.createdAt) return false;
-    const jobDate = new Date(job.createdAt);
-    const now = new Date();
-    const hoursDiff = (now - jobDate) / (1000 * 60 * 60);
-    return hoursDiff <= 24; // Job is "new" if created within last 24 hours
-  };
-
-  const handleEditJobClick = (job) => {
-    // Check if job can be edited
-    if (!canEditJob(job)) {
-      let message = '';
-      if (job.isCert === true) {
-        message = language === 'en' 
-          ? 'This job has a tax document and cannot be edited.'
-          : language === 'he'
-          ? 'למשימה זו יש אישור מס ולא ניתן לערוך אותה.'
-          : 'هذه المهمة لها شهادة ضريبية ولا يمكن تعديلها.';
-      } else {
-        message = language === 'en'
-          ? 'This job is older than 7 days and cannot be edited.'
-          : language === 'he'
-          ? 'משימה זו ישנה מ-7 ימים ולא ניתן לערוך אותה.'
-          : 'هذه المهمة أقدم من 7 أيام ولا يمكن تعديلها.';
-      }
-      
-      alert.warning(
-        language === 'en' ? 'Cannot Edit Job' : language === 'he' ? 'לא ניתן לערוך משימה' : 'لا يمكن تعديل المهمة',
-        message
-      );
-      return;
-    }
-
-    // Close details modal and navigate to edit page
-    setSelectedJobDetails(null);
-    router.push({
-      pathname: ROUTES.editJob,
-      params: {
-        job: JSON.stringify(job),
-        from: 'jobMonitor'
-      }
-    });
-  };
-
-  const handleEditJob = (job) => {
-    router.push({
-      pathname: ROUTES.editJob,
-      params: {
-        job: JSON.stringify(job)
-      }
-    });
-  };
-
-  const JobCard = ({ job }) => {
-    const displayName = job.wname || 'Unknown Worker';
-    
-    // Check if this job is currently highlighted
-    const isHighlighted = highlightedJobId === job.id;
-    
-    // Get status color for badge and dot
-    const statusColor = getStatusColor(job.status);
-    
-    return (
-      <TouchableOpacity onPress={() => setSelectedJobDetails(job)}>
-        <AppCard 
-          style={[
-            styles.jobCard,
-            { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border },
-            isHighlighted && styles.highlightedJobCard
-          ]}
-        >
-          <View style={styles.jobHeader}>
-            <View style={styles.jobLeft}>
-              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              <View style={styles.jobHeaderContent}>
-                <View style={styles.jobTitleRow}>
-                  <AppText style={[styles.jobTitle, { color: themeColors.textPrimary }]}>{job.title || 'Untitled Job'}</AppText>
-                  {isJobNew(job) && (
-                    <View style={styles.newBadge}>
-                      <AppText style={styles.newBadgeText}>NEW</AppText>
-                    </View>
-                  )}
-                </View>
-                <AppText style={[styles.jobWorker, { color: themeColors.textSecondary }]}>
-                  👤 {displayName}
-                </AppText>
-                {job.createdAt && (
-                  <AppText style={[styles.jobDate, { color: themeColors.textSecondary }]}>
-                    📅 {new Date(job.createdAt).toLocaleDateString()}
-                  </AppText>
-                )}
-                {job.status?.toLowerCase() === 'finished' && job.finishedAt && (
-                  <AppText style={[styles.jobFinishedDate, { color: themeColors.textSecondary }]}>
-                    ✓ {t.finishedAt || 'Finished'}: {new Date(job.finishedAt).toLocaleDateString()} {new Date(job.finishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </AppText>
-                )}
-              </View>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-              <AppText style={styles.statusText}>{getStatusText(job.status)}</AppText>
-            </View>
-          </View>
-          
-          <TouchableOpacity 
-            style={[styles.editButton, { 
-              backgroundColor: isDarkMode ? themeColors.border : 'rgba(0, 172, 193, 0.08)',
-              borderColor: isDarkMode ? themeColors.border : 'rgba(0, 172, 193, 0.2)'
-            }]}
-            onPress={(e) => {
-              e.stopPropagation();
-              handleEditJob(job);
-            }}
-          >
-            <Ionicons name="create-outline" size={18} color={themeColors.secondary} />
-            <AppText style={[styles.editButtonText, { color: themeColors.secondary }]}>{t.edit}</AppText>
-          </TouchableOpacity>
-        </AppCard>
-      </TouchableOpacity>
-    );
-  };
+  const renderItem = useCallback(({ item }: { item: Job }) => (
+    <JobCard
+      job={item}
+      isHighlighted={highlightedJobId === item.id}
+      language={language}
+      themeColors={themeColors}
+      isDarkMode={isDarkMode}
+      t={t}
+      onPress={handlePressJob}
+      onEdit={handleEditJob}
+    />
+  ), [highlightedJobId, language, themeColors, isDarkMode, t, handlePressJob, handleEditJob]);
 
   if (loading) {
     return (
@@ -545,130 +541,139 @@ export default function JobMonitor() {
   return (
     <View style={[styles.container, { backgroundColor: themeColors.background }]}>
       <StatusBar style={isDarkMode ? "light" : "dark"} />
-      <ScrollableContainer 
+      <FlatList
         style={styles.content}
         contentContainerStyle={styles.contentContainer}
-      >
-        <ScreenHeroCard
-          title={t.title}
-          subtitle={t.subtitle}
-          eyebrow="Monitoring"
-          icon="clipboard-text-clock"
-          iconLibrary="material"
-          accentColor={themeColors.boxIndigo}
-          metrics={[
-            { label: t.pending, value: String(jobs.pending.length) },
-            { label: t.waiting, value: String(jobs.waiting.length) },
-            { label: t.visible, value: String(filteredJobs.length) },
-          ]}
-          badges={[t.filterByDate, t.filterByClient, dateFilter.label]}
-          style={styles.heroCard}
-        />
-
-        <AppCard style={[styles.filtersCard, { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border }]}> 
-          <View style={styles.filtersRow}>
-            <TouchableOpacity
-              onPress={() => setShowDateFilter(true)}
-              style={styles.dateFilterButtonWrapper}
-            >
-              <LinearGradient
-                colors={isDarkMode ? ['#0f172a', '#1e3a8a'] : ['#3b82f6', '#1e40af']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.dateFilterButton}
-              >
-                <Ionicons name="calendar-outline" size={20} color="#fff" />
-                <AppText style={styles.dateFilterButtonTextSmall}>
-                  {dateFilter.label}
-                </AppText>
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <SearchInput
-              value={clientFilter}
-              onChangeText={setClientFilter}
-              placeholder={t.filterByClient}
-              onClear={() => setClientFilter('')}
-              colors={themeColors}
-              style={styles.clientFilterInput}
+        data={filteredJobs}
+        keyExtractor={(item) => `${item.wid}-${item.id}`}
+        renderItem={renderItem}
+        ListHeaderComponent={
+          <View>
+            <ScreenHeroCard
+              title={t.title}
+              subtitle={t.subtitle}
+              eyebrow="Monitoring"
+              icon="clipboard-text-clock"
+              iconLibrary="material"
+              accentColor={themeColors.boxIndigo}
+              metrics={[
+                { label: t.pending, value: String(jobs.pending.length) },
+                { label: t.waiting, value: String(jobs.waiting.length) },
+                { label: t.visible, value: String(filteredJobs.length) },
+              ]}
+              badges={[t.filterByDate, t.filterByClient, dateFilter.label]}
+              style={styles.heroCard}
             />
+
+            <AppCard style={[styles.filtersCard, { backgroundColor: themeColors.backgroundElevated, borderColor: themeColors.border }]}>
+              <View style={styles.filtersRow}>
+                <TouchableOpacity
+                  onPress={() => setShowDateFilter(true)}
+                  style={styles.dateFilterButtonWrapper}
+                >
+                  <LinearGradient
+                    colors={isDarkMode ? ['#0f172a', '#1e3a8a'] : ['#3b82f6', '#1e40af']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.dateFilterButton}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color="#fff" />
+                    <AppText style={styles.dateFilterButtonTextSmall}>
+                      {dateFilter.label}
+                    </AppText>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <SearchInput
+                  value={clientFilter}
+                  onChangeText={setClientFilter}
+                  placeholder={t.filterByClient}
+                  onClear={() => setClientFilter('')}
+                  colors={themeColors}
+                  style={styles.clientFilterInput}
+                />
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.filterContainer}
+                contentContainerStyle={styles.filterContent}
+              >
+                <TouchableOpacity
+                  style={[styles.filterButton, activeFilter === 'all' && styles.filterButtonActive]}
+                  onPress={() => setActiveFilter('all')}
+                >
+                  <LinearGradient
+                    colors={activeFilter === 'all' ? gradients.indigoBox : ['#F3F4F6', '#F3F4F6']}
+                    style={styles.filterButtonInner}
+                  >
+                    <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
+                      {t.all} ({jobs.pending.length + jobs.waiting.length + jobs.finished.length})
+                    </AppText>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterButton, activeFilter === 'pending' && styles.filterButtonActive]}
+                  onPress={() => setActiveFilter('pending')}
+                >
+                  <LinearGradient
+                    colors={activeFilter === 'pending' ? gradients.yellowBox : ['#F3F4F6', '#F3F4F6']}
+                    style={styles.filterButtonInner}
+                  >
+                    <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
+                      {t.pending} ({jobs.pending.length})
+                    </AppText>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterButton, activeFilter === 'waiting' && styles.filterButtonActive]}
+                  onPress={() => setActiveFilter('waiting')}
+                >
+                  <LinearGradient
+                    colors={activeFilter === 'waiting' ? gradients.purpleBox : ['#F3F4F6', '#F3F4F6']}
+                    style={styles.filterButtonInner}
+                  >
+                    <AppText style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
+                      {t.waiting} ({jobs.waiting.length})
+                    </AppText>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.filterButton, activeFilter === 'finished' && styles.filterButtonActive]}
+                  onPress={() => setActiveFilter('finished')}
+                >
+                  <LinearGradient
+                    colors={activeFilter === 'finished' ? gradients.greenBox : ['#F3F4F6', '#F3F4F6']}
+                    style={styles.filterButtonInner}
+                  >
+                    <AppText style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
+                      {t.finished} ({jobs.finished.length})
+                    </AppText>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </ScrollView>
+            </AppCard>
           </View>
-
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={styles.filterContainer}
-            contentContainerStyle={styles.filterContent}
-          >
-            <TouchableOpacity
-              style={[styles.filterButton, activeFilter === 'all' && styles.filterButtonActive]}
-              onPress={() => setActiveFilter('all')}
-            >
-              <LinearGradient 
-                colors={activeFilter === 'all' ? gradients.indigoBox : ['#F3F4F6', '#F3F4F6']} 
-                style={styles.filterButtonInner}
-              >
-                <AppText style={[styles.filterText, activeFilter === 'all' && styles.filterTextActive]}>
-                  {t.all} ({jobs.pending.length + jobs.waiting.length + jobs.finished.length})
-                </AppText>
-              </LinearGradient>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.filterButton, activeFilter === 'pending' && styles.filterButtonActive]}
-              onPress={() => setActiveFilter('pending')}
-            >
-              <LinearGradient 
-                colors={activeFilter === 'pending' ? gradients.yellowBox : ['#F3F4F6', '#F3F4F6']} 
-                style={styles.filterButtonInner}
-              >
-                <AppText style={[styles.filterText, activeFilter === 'pending' && styles.filterTextActive]}>
-                  {t.pending} ({jobs.pending.length})
-                </AppText>
-              </LinearGradient>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.filterButton, activeFilter === 'waiting' && styles.filterButtonActive]}
-              onPress={() => setActiveFilter('waiting')}
-            >
-              <LinearGradient 
-                colors={activeFilter === 'waiting' ? gradients.purpleBox : ['#F3F4F6', '#F3F4F6']} 
-                style={styles.filterButtonInner}
-              >
-                <AppText style={[styles.filterText, activeFilter === 'waiting' && styles.filterTextActive]}>
-                  {t.waiting} ({jobs.waiting.length})
-                </AppText>
-              </LinearGradient>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.filterButton, activeFilter === 'finished' && styles.filterButtonActive]}
-              onPress={() => setActiveFilter('finished')}
-            >
-              <LinearGradient 
-                colors={activeFilter === 'finished' ? gradients.greenBox : ['#F3F4F6', '#F3F4F6']} 
-                style={styles.filterButtonInner}
-              >
-                <AppText style={[styles.filterText, activeFilter === 'finished' && styles.filterTextActive]}>
-                  {t.finished} ({jobs.finished.length})
-                </AppText>
-              </LinearGradient>
-            </TouchableOpacity>
-          </ScrollView>
-        </AppCard>
-
-        {filteredJobs.length === 0 ? (
+        }
+        ListEmptyComponent={
           <AppEmptyState title={t.noJobs} subtitle={t.subtitle} style={styles.emptyContainer} />
-        ) : (
-          filteredJobs.map((job) => <JobCard key={`${job.wid}-${job.id}`} job={job} />)
-        )}
-      </ScrollableContainer>
+        }
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="always"
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        {...scrollProps}
+      />
 
       {/* Job Details Modal */}
       <ViewJobDetails
         visible={!!selectedJobDetails}
-        job={selectedJobDetails}
+        job={selectedJobDetails as any}
         onClose={() => setSelectedJobDetails(null)}
         translations={{
           jobDetails: t.jobDetails,
@@ -692,9 +697,16 @@ export default function JobMonitor() {
           partsUsed: t.partsUsed,
           signingPerson: t.signingPerson,
           timeStatus: t.timeWorked,
+        } as Record<string, string>}
+        getStatusColor={(status?: string) => {
+          switch (status?.toLowerCase()) {
+            case 'pending': return '#f59e0b';
+            case 'waiting': return '#8b5cf6';
+            case 'finished': return '#10b981';
+            default: return '#6b7280';
+          }
         }}
-        getStatusColor={getStatusColor}
-        onImagePress={(photo) => {/* Can add image modal if needed */}}
+        onImagePress={() => {}}
         isDarkMode={false}
       />
 

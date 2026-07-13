@@ -1,6 +1,5 @@
-// @ts-nocheck
 import { ROUTES } from '../../../navigation/routes';
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -30,6 +29,21 @@ import {
   ScreenHeroCard,
   ViewJobDetails,
 } from '../../../components';
+import type { Job, Worker } from '../../../types';
+
+type Translations = typeof translateMap.en;
+
+interface JobCardProps {
+  job: Job & { workerName?: string };
+  palette: ReturnType<typeof getColors>;
+  t: Translations;
+  statusColor: string;
+  statusLabel: string;
+  highlighted: boolean;
+  onOpenDetails: (job: Job & { workerName?: string }) => void;
+  onAccept: (job: Job & { workerName?: string }) => void;
+  onDeny: (job: Job & { workerName?: string }) => void;
+}
 
 
 const JobCard = memo(function JobCard({
@@ -42,7 +56,7 @@ const JobCard = memo(function JobCard({
   onOpenDetails,
   onAccept,
   onDeny,
-}) {
+}: JobCardProps) {
   const isWaiting = String(job.status || '').toLowerCase() === 'waiting';
 
   return (
@@ -76,7 +90,7 @@ const JobCard = memo(function JobCard({
               ) : null}
               {job.createdAt ? (
                 <AppText variant="caption" color={palette.textLight} numberOfLines={1}>
-                  {t.createdAt}: {new Date(job.createdAt).toLocaleDateString()}
+                  {t.createdAt}: {new Date(String(job.createdAt)).toLocaleDateString()}
                 </AppText>
               ) : null}
             </View>
@@ -243,16 +257,16 @@ export default function ManageJobs() {
   } = useCache();
 
   const cachedPendingJobs = useMemo(
-    () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
+    () => (companyJobs || []).filter(j => String(j.status) === 'pending' || String(j.status) === 'waiting'),
     [companyJobs]
   );
 
   const palette = getColors(isDarkMode);
   const t = translateMap[language] || translateMap.en;
   const [loading, setLoading] = useState(true);
-  const [jobs, setJobs] = useState([]);
-  const [selectedJobDetails, setSelectedJobDetails] = useState(null);
-  const [highlightedJobId, setHighlightedJobId] = useState(null);
+  const [jobs, setJobs] = useState<(Job & { workerName?: string })[]>([]);
+  const [selectedJobDetails, setSelectedJobDetails] = useState<(Job & { workerName?: string }) | null>(null);
+  const [highlightedJobId, setHighlightedJobId] = useState<string | null>(null);
 
   const waitingCount = useMemo(
     () => jobs.filter((job) => String(job.status || '').toLowerCase() === 'waiting').length,
@@ -264,28 +278,28 @@ export default function ManageJobs() {
     [jobs]
   );
 
-  const workerNameByWid = useMemo(() => {
+  const workerNameByWid = useMemo<Record<string, string>>(() => {
     const source = workers || {};
     if (Array.isArray(source)) {
-      return source.reduce((acc, worker) => {
-        if (worker?.wid) acc[worker.wid] = worker.name || worker.email || worker.wid;
+      return (source as Worker[]).reduce<Record<string, string>>((acc, worker) => {
+        if (worker?.wid) acc[String(worker.wid)] = String(worker.name || worker.email || worker.wid);
         return acc;
       }, {});
     }
-    return Object.keys(source).reduce((acc, wid) => {
-      const worker = source[wid] || {};
-      acc[wid] = worker.name || worker.email || wid;
+    return Object.keys(source as Record<string, Worker>).reduce<Record<string, string>>((acc, wid) => {
+      const worker = (source as Record<string, Worker>)[wid] || {};
+      acc[wid] = String(worker.name || worker.email || wid);
       return acc;
     }, {});
   }, [workers]);
 
   useEffect(() => {
     const list = Array.isArray(cachedPendingJobs) ? [...cachedPendingJobs] : [];
-    list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    list.sort((a, b) => new Date(String(b.createdAt || 0)).getTime() - new Date(String(a.createdAt || 0)).getTime());
     setJobs(
       list.map((job) => ({
         ...job,
-        workerName: job.wname || workerNameByWid[job.wid],
+        workerName: job.wname || workerNameByWid[String(job.wid)],
       }))
     );
     setLoading(false);
@@ -298,7 +312,7 @@ export default function ManageJobs() {
     return () => clearTimeout(timer);
   }, [jobId, loading]);
 
-  const getStatusColor = useCallback((status) => {
+  const getStatusColor = useCallback((status: string | null | undefined) => {
     const key = String(status || '').toLowerCase();
     if (key === 'pending') return '#F59E0B';
     if (key === 'waiting') return '#8B5CF6';
@@ -307,7 +321,7 @@ export default function ManageJobs() {
     return '#64748B';
   }, []);
 
-  const getStatusLabel = useCallback((status) => {
+  const getStatusLabel = useCallback((status: string | null | undefined) => {
     const key = String(status || '').toLowerCase();
     if (key === 'pending') return t.pending;
     if (key === 'waiting') return t.waiting;
@@ -316,28 +330,12 @@ export default function ManageJobs() {
     return status || '-';
   }, [t]);
 
-  const renderJobCard = useCallback(({ item }) => (
-    <JobCard
-      job={item}
-      palette={palette}
-      t={t}
-      statusColor={getStatusColor(item.status)}
-      statusLabel={getStatusLabel(item.status)}
-      highlighted={highlightedJobId === String(item.id)}
-      onOpenDetails={setSelectedJobDetails}
-      onAccept={handleAcceptJob}
-      onDeny={handleDenyJob}
-    />
-  ), [palette, t, getStatusColor, getStatusLabel, highlightedJobId, handleAcceptJob, handleDenyJob]);
-
-  const keyExtractor = useCallback((item) => String(item.id), []);
-
-  const handleAcceptJob = useCallback((job) => {
+  const handleAcceptJob = useCallback((job: Job & { workerName?: string }) => {
     alert.confirm(t.confirmAccept, t.confirmAcceptMessage, [
       { text: t.cancel, style: 'cancel', onPress: () => {} },
       {
         text: t.accept,
-        style: 'primary',
+        style: 'default',
         onPress: async () => {
           try {
             const companyId = getCompanyId();
@@ -363,7 +361,7 @@ export default function ManageJobs() {
 
             setSelectedJobDetails(null);
             alert.success('Success', t.acceptSuccess);
-          } catch (error) {
+          } catch (error: any) {
             console.error('ManageJobs accept error:', error);
             alert.error('Error', `Failed to accept job: ${error.message}`);
           }
@@ -372,7 +370,7 @@ export default function ManageJobs() {
     ]);
   }, [alert, t, getCompanyId, getUid, acceptJob]);
 
-  const handleDenyJob = useCallback((job) => {
+  const handleDenyJob = useCallback((job: Job & { workerName?: string }) => {
     alert.confirm(t.confirmDeny, t.confirmDenyMessage, [
       { text: t.cancel, style: 'cancel', onPress: () => {} },
       {
@@ -388,18 +386,18 @@ export default function ManageJobs() {
 
             const deniedBy = getUid() || auth.currentUser?.uid;
             const payload = {
-              status: 'denied',
+              status: 'denied' as const,
               deniedAt: new Date().toISOString(),
               deniedBy,
             };
 
             const updateJobFn = httpsCallable(functions, 'updateJobV1');
             await updateJobFn({ companyId, jobId: job.id, ...payload });
-            await updateJob(job.id, payload, true);
+            await updateJob(job.id, payload);
 
             setSelectedJobDetails(null);
             alert.success('Success', t.denySuccess);
-          } catch (error) {
+          } catch (error: any) {
             console.error('ManageJobs deny error:', error);
             alert.error('Error', `Failed to deny job: ${error.message}`);
           }
@@ -407,6 +405,22 @@ export default function ManageJobs() {
       },
     ]);
   }, [alert, t, getCompanyId, getUid, updateJob]);
+
+  const renderJobCard = useCallback(({ item }: { item: Job & { workerName?: string } }) => (
+    <JobCard
+      job={item}
+      palette={palette}
+      t={t}
+      statusColor={getStatusColor(item.status)}
+      statusLabel={getStatusLabel(item.status)}
+      highlighted={highlightedJobId === String(item.id)}
+      onOpenDetails={setSelectedJobDetails}
+      onAccept={handleAcceptJob}
+      onDeny={handleDenyJob}
+    />
+  ), [palette, t, getStatusColor, getStatusLabel, highlightedJobId, handleAcceptJob, handleDenyJob]);
+
+  const keyExtractor = useCallback((item: Job & { workerName?: string }) => String(item.id), []);
 
   if (loading) {
     return (
@@ -492,7 +506,7 @@ export default function ManageJobs() {
 
       <ViewJobDetails
         visible={!!selectedJobDetails}
-        job={selectedJobDetails}
+        job={selectedJobDetails as any}
         onClose={() => setSelectedJobDetails(null)}
         translations={{
           jobDetails: t.jobDetails,

@@ -57,14 +57,20 @@ async function handleJoinCompanyRequest(req: Request): Promise<Response> {
 
     const body = await parseJsonBody(req);
     const inviteCode = requireNonEmptyString(body?.inviteCode || "", "inviteCode", 4, 80);
+    const displayName = body?.displayName
+      ? requireNonEmptyString(body.displayName, "displayName", 1, 120)
+      : undefined;
+    const phoneNumber = body?.phoneNumber
+      ? requireNonEmptyString(body.phoneNumber, "phoneNumber", 3, 30)
+      : undefined;
 
     await checkRateLimit(`join:${ctx.auth.uid}`, 10, 60_000, ctx);
 
     const response = await joinCompanyV1(
       {
         inviteCode,
-        displayName: body?.displayName,
-        phoneNumber: body?.phoneNumber,
+        displayName,
+        phoneNumber,
       },
       ctx,
     );

@@ -270,7 +270,7 @@ export default function CreateDocument() {
     if (clientObj?.id) {
       matched = proposals.filter(p => p.clientId === clientObj.id);
     }
-    // Fallback: match by clientName
+    // Fallback: match by customer name
     if (matched.length === 0 && clientObj?.name) {
       const nameToMatch = clientObj.name.toLowerCase();
       matched = proposals.filter(p => p.cname && p.cname.toLowerCase() === nameToMatch);
@@ -374,9 +374,9 @@ export default function CreateDocument() {
   // Filter invoices by search text
   const filteredInvoices = invoices.filter(invoice => {
     const searchLower = invoiceSearchText.toLowerCase();
-    const clientName = (invoice.documentData?.client?.name || '').toLowerCase();
+    const customerName = (invoice.documentData?.client?.name || '').toLowerCase();
     const docNumber = String(invoice.documentNumber || '');
-    return clientName.includes(searchLower) || docNumber.includes(searchLower);
+    return customerName.includes(searchLower) || docNumber.includes(searchLower);
   });
 
   // Item management

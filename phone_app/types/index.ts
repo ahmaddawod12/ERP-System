@@ -128,6 +128,14 @@ export interface Job {
   /** Solo-job extra fields */
   signingPerson?: string;
   customer?: string;
+  /** Certified / tax-document flag (read-model extension) */
+  isCert?: boolean;
+  /** Display name of signing person */
+  signingPersonName?: string;
+  /** Travel distance in km */
+  travelDistance?: number;
+  /** Parts consumed for this job */
+  partsUsed?: Array<{ id?: string | number; name?: string; quantity?: number | string }>;
 }
 
 export interface JobItem {
@@ -147,6 +155,9 @@ export interface InventoryPart {
   unit?: string;
   minStock?: number;
   price?: number;
+  active?: boolean;
+  lowThreshold?: number;
+  dateAdded?: string;
 }
 
 export interface InventoryData {
@@ -163,19 +174,60 @@ export interface AppDocument {
   cid?: string;
   /** Client name */
   cname?: string;
+  /** Client phone */
+  cphone?: string;
   totalAmount?: number;
   vatAmount?: number;
   netAmount?: number;
   items?: DocumentItem[];
   createdAt?: DateLike;
   updatedAt?: DateLike;
+  /** Display / PDF metadata */
+  documentId?: string;
+  documentNumber?: string | number;
+  storagePath?: string;
+  taxAuthorityConfirmationNumber?: string;
+  paymentMethod?: string;
+  paymentInfo?: string;
+  invoiceReference?: string;
+  totalBeforeVat?: number;
+  totalWithVat?: number;
+  clientVatNumber?: string;
+  createdByName?: string;
+  createdByUid?: string;
+  notes?: string;
+  income?: DocumentItem[];
+  /** Used-by receipt flag for price proposals */
+  isUsed?: boolean;
+  /** Client id for proposals/invoices */
+  clientId?: string;
+  documentData?: {
+    items?: DocumentItem[];
+    client?: {
+      name?: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      clientVatNumber?: string;
+    };
+    totalBeforeVat?: number;
+    vatAmount?: number;
+    totalWithVat?: number;
+    paymentMethod?: string;
+    paymentInfo?: string;
+    invoiceReference?: string;
+    notes?: string;
+  };
 }
 
 export interface DocumentItem {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
+  id?: string | number;
+  partId?: string | number | null;
+  description?: string;
+  quantity?: number | string;
+  unitPrice?: number;
+  total?: number;
+  price?: number | string;
 }
 
 // ── Worker ─────────────────────────────────────────────────────────────────

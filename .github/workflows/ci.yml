@@ -56,9 +56,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - packages_contracts
-    defaults:
-      run:
-        working-directory: website
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -70,18 +67,15 @@ jobs:
             packages/contracts/package-lock.json
       - run: npm --prefix packages/contracts ci
       - run: npm --prefix packages/contracts run build
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run build
+      - run: npm --prefix website ci
+      - run: npm --prefix website test
+      - run: npm --prefix website run typecheck
+      - run: npm --prefix website run lint
+      - run: npm --prefix website run build
 
   phone_app:
     runs-on: ubuntu-latest
     needs: packages_contracts
-    defaults:
-      run:
-        working-directory: phone_app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -93,27 +87,28 @@ jobs:
             packages/contracts/package-lock.json
       - run: npm --prefix packages/contracts ci
       - run: npm --prefix packages/contracts run build
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
+      - run: npm --prefix phone_app ci
+      - run: npm --prefix phone_app test
+      - run: npm --prefix phone_app run typecheck
 
   cloudrun_pdf:
     runs-on: ubuntu-latest
     needs:
       - packages_contracts
-    defaults:
-      run:
-        working-directory: cloudrun-pdf
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: cloudrun-pdf/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+          cache-dependency-path: |
+            cloudrun-pdf/package-lock.json
+            packages/contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix cloudrun-pdf ci
+      - run: npm --prefix cloudrun-pdf run typecheck
+      - run: npm --prefix cloudrun-pdf test
 
   cloudrun_archiver:
     runs-on: ubuntu-latest
@@ -166,6 +161,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build PDF service image
-        run: docker build -t smart-job-cloudrun-pdf:ci ./cloudrun-pdf
+        run: docker build -f cloudrun-pdf/Dockerfile -t smart-job-cloudrun-pdf:ci .
       - name: Build archiver image
         run: docker build -f cloudrun-archiver/Dockerfile -t smart-job-cloudrun-archiver:ci .

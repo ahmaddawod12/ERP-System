@@ -13,6 +13,7 @@ import {
   resolveCompanyIdentifiers,
   optionalTrimmedString,
 } from "../../shared-edge-helpers.ts";
+import type { EdgeFunctionContext } from "../../shared-edge-helpers.ts";
 import {
   canReadCompanyDocuments,
   canReadCompanyInventory,
@@ -257,405 +258,410 @@ function normalizePrefixSearch(value: unknown): string {
     .slice(0, 80);
 }
 
-async function buildReadModelResponse(
+function buildReadModelContext(uid: string): EdgeFunctionContext {
+  return {
+    correlationId: "read-model",
+    logger: console as any,
+    auth: { uid, claims: {} },
+    env,
+    corsHeaders: {},
+  };
+}
+
+type ReadModelSupabase = ReturnType<typeof createSupabaseClient>;
+
+interface HandlerContext {
+  supabase: ReadModelSupabase;
+  scope: CompanyScope;
+  requester: RequesterContext;
+  ctx: EdgeFunctionContext;
+}
+
+async function handleCompanySyncState(
+  _body: Record<string, unknown>,
+  _uid: string,
+  { supabase, scope }: Pick<HandlerContext, "supabase" | "scope">,
+) {
+  const { data } = await supabase
+    .from("company_sync_state")
+    .select("jobs_version, documents_version, clients_version, workers_version, company_inventory_version, updated_at")
+    .eq("company_id", scope.internalCompanyId)
+    .maybeSingle();
+
+  return {
+    jobsVersion: Number(data?.jobs_version || 0),
+    documentsVersion: Number(data?.documents_version || 0),
+    clientsVersion: Number(data?.clients_version || 0),
+    workersVersion: Number(data?.workers_version || 0),
+    companyInventoryVersion: Number(data?.company_inventory_version || 0),
+    updatedAt: data?.updated_at || new Date().toISOString(),
+  };
+}
+
+async function handleWorkers(
+  _body: Record<string, unknown>,
+  _uid: string,
+  { supabase, scope, requester, ctx }: HandlerContext,
+) {
+  await assertModuleEnabled(scope.internalCompanyId, "workers", ctx);
+  if (!canReadCompanyWorkers(requester)) {
+    return [];
+  }
+
+  const { data } = await supabase
+    .from("company_memberships")
+    .select("id, user_id, member_no, role, display_name, phone_number, created_at, updated_at, app_users(email)")
+    .eq("company_id", scope.internalCompanyId)
+    .eq("status", "active")
+    .in("role", ["worker", "user", "basic"])
+    .order("member_no", { ascending: true });
+
+  return (data || []).map((row: any) => ({
+    wid: row.member_no,
+    uid: row.user_id,
+    email: row.app_users?.email || "",
+    role: row.role,
+    name: row.display_name || "",
+    phoneNumber: row.phone_number || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+async function handleClients(
+  body: Record<string, unknown>,
+  _uid: string,
+  { supabase, scope, ctx }: Pick<HandlerContext, "supabase" | "scope" | "ctx">,
+) {
+  await assertModuleEnabled(scope.internalCompanyId, "clients", ctx);
+  const pageSize = parseReadLimit(body);
+  const cursor = parseNumberCursor(body.afterCursor);
+  const search = normalizePrefixSearch(body.search);
+  const { data, error } = await supabase.rpc("get_clients_page", {
+    p_company_id: scope.internalCompanyId,
+    p_page_size: pageSize,
+    p_after_client_no: cursor ? cursor.value : null,
+    p_after_id: cursor ? cursor.id : null,
+    p_search: search || null,
+  });
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load clients" };
+  }
+
+  const payload = data && typeof data === "object" && !Array.isArray(data)
+    ? data as { items?: unknown; nextCursor?: unknown }
+    : {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  return {
+    items,
+    nextCursor: typeof payload.nextCursor === "string" && payload.nextCursor.trim() ? payload.nextCursor : null,
+  };
+}
+
+async function handleInventory(
   body: Record<string, unknown>,
   uid: string,
-  preloaded: {
-    supabase?: ReturnType<typeof createSupabaseClient>;
-    scope?: CompanyScope;
-    requester?: RequesterContext;
-  } = {},
-): Promise<any> {
-  const kind = optionalTrimmedString(body.kind, 64);
-  if (!kind || !READ_MODEL_KINDS.has(kind)) {
-    throw {
-      code: "invalid-argument",
-      httpStatus: 400,
-      message: "Unsupported read-model kind",
-    };
-  }
-
-  const supabase = preloaded.supabase || createSupabaseClient(env);
-
-  if (kind === "userSyncState") {
-    const { data: userRow } = await supabase
-      .from("app_users")
-      .select("updated_at")
-      .eq("id", uid)
-      .maybeSingle();
-    return {
-      profile: 0,
-      inventory: 0,
-      subscription: 0,
-      updatedAt: userRow?.updated_at || new Date().toISOString(),
-    };
-  }
-
-  let scope: CompanyScope;
-  if (preloaded.scope) {
-    scope = preloaded.scope;
-  } else {
-    scope = await resolveCompanyScope(uid, body.companyId);
-    await assertCompanyAccess(uid, scope.publicCompanyId, [], {
-      correlationId: "read-model",
-      logger: console as any,
-      auth: { uid, claims: {} },
-      env,
-      corsHeaders: {},
-    } as any);
-  }
-  const requester = preloaded.requester || await getRequesterContext(scope, uid);
-  const scopedContext = { supabase, scope, requester };
-
-  if (kind === "companySyncState") {
-    const { data } = await supabase
-      .from("company_sync_state")
-      .select("jobs_version, documents_version, clients_version, workers_version, company_inventory_version, updated_at")
-      .eq("company_id", scope.internalCompanyId)
-      .maybeSingle();
-
-    return {
-      jobsVersion: Number(data?.jobs_version || 0),
-      documentsVersion: Number(data?.documents_version || 0),
-      clientsVersion: Number(data?.clients_version || 0),
-      workersVersion: Number(data?.workers_version || 0),
-      companyInventoryVersion: Number(data?.company_inventory_version || 0),
-      updatedAt: data?.updated_at || new Date().toISOString(),
-    };
-  }
-
-  if (kind === "workers") {
-    await assertModuleEnabled(scope.internalCompanyId, "workers", ctx);
-    if (!canReadCompanyWorkers(requester)) {
-      return [];
-    }
-
-    const { data } = await supabase
-      .from("company_memberships")
-      .select("id, user_id, member_no, role, display_name, phone_number, created_at, updated_at, app_users(email)")
-      .eq("company_id", scope.internalCompanyId)
-      .eq("status", "active")
-      .in("role", ["worker", "user", "basic"])
-      .order("member_no", { ascending: true });
-
-    return (data || []).map((row: any) => ({
-      wid: row.member_no,
-      uid: row.user_id,
-      email: row.app_users?.email || "",
-      role: row.role,
-      name: row.display_name || "",
-      phoneNumber: row.phone_number || "",
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
-  }
-
-  if (kind === "clients") {
-    await assertModuleEnabled(scope.internalCompanyId, "clients", ctx);
-    const pageSize = parseReadLimit(body);
-    const cursor = parseNumberCursor(body.afterCursor);
-    const search = normalizePrefixSearch(body.search);
-    const { data, error } = await supabase.rpc("get_clients_page", {
-      p_company_id: scope.internalCompanyId,
-      p_page_size: pageSize,
-      p_after_client_no: cursor ? cursor.value : null,
-      p_after_id: cursor ? cursor.id : null,
-      p_search: search || null,
-    });
-    if (error) {
-      throw { code: "internal", httpStatus: 500, message: "Failed to load clients" };
-    }
-
-    const payload = data && typeof data === "object" && !Array.isArray(data)
-      ? data as { items?: unknown; nextCursor?: unknown }
-      : {};
-    const items = Array.isArray(payload.items) ? payload.items : [];
-    return {
-      items,
-      nextCursor: typeof payload.nextCursor === "string" && payload.nextCursor.trim() ? payload.nextCursor : null,
-    };
-  }
-
-  if (kind === "inventory") {
-    await assertModuleEnabled(scope.internalCompanyId, "inventory", ctx);
-    const scopeKind = optionalTrimmedString(body.scope, 16) || "company";
-    if (scopeKind === "user") {
-      if (!canReadUserInventory(requester)) {
-        throw {
-          code: "permission-denied",
-          httpStatus: 403,
-          message: "Inventory is not available for this role or subscription tier",
-        };
-      }
-      const targetUid = optionalTrimmedString(body.targetUid, 200) || uid;
-      if (targetUid !== uid) {
-        if (!requester.isDev && requester.role !== "manager") {
-          throw {
-            code: "permission-denied",
-            httpStatus: 403,
-            message: "Only managers can read another member inventory",
-          };
-        }
-      }
-      return getUserInventoryParts(scope.internalCompanyId, targetUid, {
-        pageSize: parseReadLimit(body),
-        afterCursor: parseNumberCursor(body.afterCursor),
-        search: optionalTrimmedString(body.search, 80) || null,
-      });
-    }
-    if (!canReadCompanyInventory(requester)) {
+  { supabase, scope, requester, ctx }: HandlerContext,
+) {
+  await assertModuleEnabled(scope.internalCompanyId, "inventory", ctx);
+  const scopeKind = optionalTrimmedString(body.scope, 16) || "company";
+  if (scopeKind === "user") {
+    if (!canReadUserInventory(requester)) {
       throw {
         code: "permission-denied",
         httpStatus: 403,
-        message: "Company inventory is not available for this role or subscription tier",
+        message: "Inventory is not available for this role or subscription tier",
       };
     }
-    return getCompanyInventoryParts(scope.internalCompanyId, {
+    const targetUid = optionalTrimmedString(body.targetUid, 200) || uid;
+    if (targetUid !== uid) {
+      if (!requester.isDev && requester.role !== "manager") {
+        throw {
+          code: "permission-denied",
+          httpStatus: 403,
+          message: "Only managers can read another member inventory",
+        };
+      }
+    }
+    return getUserInventoryParts(scope.internalCompanyId, targetUid, {
       pageSize: parseReadLimit(body),
       afterCursor: parseNumberCursor(body.afterCursor),
       search: optionalTrimmedString(body.search, 80) || null,
     });
   }
-
-  if (kind === "documentTask") {
-    await assertModuleEnabled(scope.internalCompanyId, "documents", ctx);
-    const taskId = optionalTrimmedString(body.taskId, 160);
-    if (!taskId) {
-      throw { code: "invalid-argument", httpStatus: 400, message: "taskId is required" };
-    }
-
-    const { data: task } = await supabase
-      .from("document_tasks")
-      .select("id, company_id, user_id, task_type, status, preview_url, generate_url, request_payload, storage_path, pdf_size, error, document_id")
-      .eq("company_id", scope.internalCompanyId)
-      .eq("task_key", taskId)
-      .maybeSingle();
-
-    if (!task) return null;
-    if (String(task.company_id) !== scope.internalCompanyId) {
-      throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
-    }
-
-    const isTaskOwner = String(task.user_id) === uid;
-    const canReadCompanyTask = requester.isDev || requester.role === "manager";
-    if (!isTaskOwner && !canReadCompanyTask) {
-      throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
-    }
-
-    return {
-      status: task.status,
-      taskType: task.task_type,
-      previewURL: task.preview_url || null,
-      downloadURL: task.generate_url || null,
-      documentId: task.request_payload?.publicDocumentId || task.request_payload?.documentId || null,
-      pdfSize: task.pdf_size || null,
-      storagePath: task.storage_path || null,
-      error: task.error || null,
-      requestPayload: task.request_payload || {},
+  if (!canReadCompanyInventory(requester)) {
+    throw {
+      code: "permission-denied",
+      httpStatus: 403,
+      message: "Company inventory is not available for this role or subscription tier",
     };
   }
+  return getCompanyInventoryParts(scope.internalCompanyId, {
+    pageSize: parseReadLimit(body),
+    afterCursor: parseNumberCursor(body.afterCursor),
+    search: optionalTrimmedString(body.search, 80) || null,
+  });
+}
 
-  if (kind === "recordById") {
-    const recordId = optionalTrimmedString(body.recordId, 160);
-    if (!recordId) {
-      throw { code: "invalid-argument", httpStatus: 400, message: "recordId is required" };
-    }
+async function handleDocumentTask(
+  body: Record<string, unknown>,
+  uid: string,
+  { supabase, scope, requester, ctx }: HandlerContext,
+) {
+  await assertModuleEnabled(scope.internalCompanyId, "documents", ctx);
+  const taskId = optionalTrimmedString(body.taskId, 160);
+  if (!taskId) {
+    throw { code: "invalid-argument", httpStatus: 400, message: "taskId is required" };
+  }
 
-    const normalizedRecordId = String(recordId || "").trim();
-    const jobQuery = supabase
-      .from("jobs")
-      .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, meta, created_at, updated_at, finished_at, denied_at")
-      .eq("company_id", scope.internalCompanyId);
-    const documentByCodeQuery = supabase
+  const { data: task } = await supabase
+    .from("document_tasks")
+    .select("id, company_id, user_id, task_type, status, preview_url, generate_url, request_payload, storage_path, pdf_size, error, document_id")
+    .eq("company_id", scope.internalCompanyId)
+    .eq("task_key", taskId)
+    .maybeSingle();
+
+  if (!task) return null;
+  if (String(task.company_id) !== scope.internalCompanyId) {
+    throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
+  }
+
+  const isTaskOwner = String(task.user_id) === uid;
+  const canReadCompanyTask = requester.isDev || requester.role === "manager";
+  if (!isTaskOwner && !canReadCompanyTask) {
+    throw { code: "permission-denied", httpStatus: 403, message: "Not allowed to read this task" };
+  }
+
+  return {
+    status: task.status,
+    taskType: task.task_type,
+    previewURL: task.preview_url || null,
+    downloadURL: task.generate_url || null,
+    documentId: task.request_payload?.publicDocumentId || task.request_payload?.documentId || null,
+    pdfSize: task.pdf_size || null,
+    storagePath: task.storage_path || null,
+    error: task.error || null,
+    requestPayload: task.request_payload || {},
+  };
+}
+
+async function handleRecordById(
+  body: Record<string, unknown>,
+  uid: string,
+  { supabase, scope, requester }: Pick<HandlerContext, "supabase" | "scope" | "requester">,
+) {
+  const recordId = optionalTrimmedString(body.recordId, 160);
+  if (!recordId) {
+    throw { code: "invalid-argument", httpStatus: 400, message: "recordId is required" };
+  }
+
+  const normalizedRecordId = String(recordId || "").trim();
+  const jobQuery = supabase
+    .from("jobs")
+    .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, meta, created_at, updated_at, finished_at, denied_at")
+    .eq("company_id", scope.internalCompanyId);
+  const documentByCodeQuery = supabase
+    .from("documents")
+    .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
+    .eq("company_id", scope.internalCompanyId)
+    .eq("document_code", normalizedRecordId)
+    .or("document_type.neq.305,tax_authority_status.eq.approved")
+    .maybeSingle();
+  const documentByIdQuery = isUuidLike(normalizedRecordId)
+    ? supabase
       .from("documents")
       .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
       .eq("company_id", scope.internalCompanyId)
-      .eq("document_code", normalizedRecordId)
+      .eq("id", normalizedRecordId)
       .or("document_type.neq.305,tax_authority_status.eq.approved")
-      .maybeSingle();
-    const documentByIdQuery = isUuidLike(normalizedRecordId)
-      ? supabase
-        .from("documents")
-        .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
-        .eq("company_id", scope.internalCompanyId)
-        .eq("id", normalizedRecordId)
-        .or("document_type.neq.305,tax_authority_status.eq.approved")
-        .maybeSingle()
-      : Promise.resolve({ data: null });
+      .maybeSingle()
+    : Promise.resolve({ data: null });
 
-    const [{ data: job }, { data: documentByCode }, { data: documentById }] = await Promise.all([
-      (/^\d+$/.test(normalizedRecordId)
-        ? jobQuery.eq("job_no", Number(normalizedRecordId))
-        : isUuidLike(normalizedRecordId)
-          ? jobQuery.eq("id", normalizedRecordId)
-          : jobQuery.eq("id", NEVER_UUID)
-      ).maybeSingle(),
-      documentByCodeQuery,
-      documentByIdQuery,
-    ]);
-    const document = documentByCode || documentById;
+  const [{ data: job }, { data: documentByCode }, { data: documentById }] = await Promise.all([
+    (/^\d+$/.test(normalizedRecordId)
+      ? jobQuery.eq("job_no", Number(normalizedRecordId))
+      : isUuidLike(normalizedRecordId)
+        ? jobQuery.eq("id", normalizedRecordId)
+        : jobQuery.eq("id", NEVER_UUID)
+    ).maybeSingle(),
+    documentByCodeQuery,
+    documentByIdQuery,
+  ]);
+  const document = documentByCode || documentById;
 
-    if (job) {
-      if (!canReadCompanyJobs(requester)) {
-        return null;
-      }
-      if (
-        shouldScopeJobsToMembership(requester) &&
-        (!requester.membershipId || String(job.assigned_membership_id || "") !== requester.membershipId)
-      ) {
-        return null;
-      }
-      const [membershipMap, attachmentsByJobId, partsByJobId] = await Promise.all([
-        getMembershipMap(scope.internalCompanyId, [job.assigned_membership_id, job.created_by_membership_id].filter(Boolean).map(String)),
-        getJobAttachments([String(job.id)]),
-        getJobPartUsageMap([String(job.id)]),
-      ]);
-      return mapJobRecord(job, membershipMap, attachmentsByJobId, partsByJobId);
-    }
-
-    if (document) {
-      if (!canReadCompanyDocuments(requester)) {
-        return null;
-      }
-      const mapped = await mapDocumentRows(scope.internalCompanyId, [document]);
-      return mapped[0] || null;
-    }
-
-    return null;
-  }
-
-  if (kind === "jobs") {
-    await assertModuleEnabled(scope.internalCompanyId, "jobs", ctx);
+  if (job) {
     if (!canReadCompanyJobs(requester)) {
-      return { items: [], nextCursor: null };
+      return null;
     }
-
-    const pageSize = parseReadLimit(body);
-    const cursor = parseCursor(body.afterCursor);
-    const dateField = resolveJobDateField(body.dateField);
-    const statuses = normalizeStringList(body.status);
-    const dateFrom = normalizeDateFilter(body.dateFrom);
-    const dateTo = normalizeDateFilter(body.dateTo);
-    let query = supabase
-      .from("jobs")
-      .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, meta, created_at, updated_at, finished_at, denied_at")
-      .eq("company_id", scope.internalCompanyId)
-      .order(dateField, { ascending: false })
-      .order("id", { ascending: false })
-      .limit(pageSize + 1);
-
-    if (shouldScopeJobsToMembership(requester)) {
-      if (!requester.membershipId) {
-        return { items: [], nextCursor: null };
-      }
-      query = query.eq("assigned_membership_id", requester.membershipId);
+    if (
+      shouldScopeJobsToMembership(requester) &&
+      (!requester.membershipId || String(job.assigned_membership_id || "") !== requester.membershipId)
+    ) {
+      return null;
     }
-    if (statuses.length === 1) {
-      query = query.eq("status", statuses[0]);
-    } else if (statuses.length > 1) {
-      query = query.in("status", statuses);
-    }
-    if (dateFrom) {
-      query = query.gte(dateField, dateFrom);
-    }
-    if (dateTo) {
-      query = query.lte(dateField, dateTo);
-    }
-    if (cursor) {
-      query = query.or(`${dateField}.lt.${cursor.createdAt},and(${dateField}.eq.${cursor.createdAt},id.lt.${cursor.id})`);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      throw { code: "internal", httpStatus: 500, message: "Failed to load jobs" };
-    }
-    const slicedRows = (data || []).slice(0, pageSize);
-    const membershipMap = await getMembershipMap(
-      scope.internalCompanyId,
-      slicedRows.flatMap((job: any) => [job.assigned_membership_id, job.created_by_membership_id]).filter(Boolean).map(String),
-    );
-    const attachmentsByJobId = await getJobAttachments(slicedRows.map((job: any) => String(job.id)));
-    const partsByJobId = await getJobPartUsageMap(slicedRows.map((job: any) => String(job.id)));
-    const hasMore = (data || []).length > pageSize;
-    const items = slicedRows.map((job: any) => mapJobRecord(job, membershipMap, attachmentsByJobId, partsByJobId));
-
-    const nextCursor = hasMore && items.length > 0
-      ? makeCursor(getRowDateValue(slicedRows[slicedRows.length - 1], dateField), slicedRows[slicedRows.length - 1]?.id)
-      : null;
-
-    return { items, nextCursor };
+    const [membershipMap, attachmentsByJobId, partsByJobId] = await Promise.all([
+      getMembershipMap(scope.internalCompanyId, [job.assigned_membership_id, job.created_by_membership_id].filter(Boolean).map(String)),
+      getJobAttachments([String(job.id)]),
+      getJobPartUsageMap([String(job.id)]),
+    ]);
+    return mapJobRecord(job, membershipMap, attachmentsByJobId, partsByJobId);
   }
 
-  if (kind === "documents") {
-    await assertModuleEnabled(scope.internalCompanyId, "documents", ctx);
+  if (document) {
     if (!canReadCompanyDocuments(requester)) {
-      return { items: [], nextCursor: null };
+      return null;
     }
-
-    const pageSize = parseReadLimit(body);
-    const cursor = parseCursor(body.afterCursor);
-    const dateField = resolveDocumentDateField(body.dateField);
-    const statuses = normalizeStringList(body.status);
-    const dateFrom = normalizeDateFilter(body.dateFrom);
-    const dateTo = normalizeDateFilter(body.dateTo);
-    const documentType = Number(body.documentType);
-    const createdByUid = optionalTrimmedString(body.createdByUid, 200);
-    const creatorMembershipIds = createdByUid
-      ? await getMembershipIdsForUser(scope.internalCompanyId, createdByUid)
-      : [];
-
-    if (createdByUid && creatorMembershipIds.length === 0) {
-      return { items: [], nextCursor: null };
-    }
-
-    let query = supabase
-      .from("documents")
-      .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
-      .eq("company_id", scope.internalCompanyId)
-      .or("document_type.neq.305,tax_authority_status.eq.approved")
-      .order(dateField, { ascending: false })
-      .order("id", { ascending: false })
-      .limit(pageSize + 1);
-
-    if (statuses.length === 1) {
-      query = query.eq("generation_status", statuses[0]);
-    } else if (statuses.length > 1) {
-      query = query.in("generation_status", statuses);
-    }
-    if (Number.isInteger(documentType)) {
-      query = query.eq("document_type", documentType);
-    }
-    if (creatorMembershipIds.length === 1) {
-      query = query.eq("created_by_membership_id", creatorMembershipIds[0]);
-    } else if (creatorMembershipIds.length > 1) {
-      query = query.in("created_by_membership_id", creatorMembershipIds);
-    }
-    if (dateFrom) {
-      query = query.gte(dateField, dateFrom);
-    }
-    if (dateTo) {
-      query = query.lte(dateField, dateTo);
-    }
-    if (cursor) {
-      query = query.or(`${dateField}.lt.${cursor.createdAt},and(${dateField}.eq.${cursor.createdAt},id.lt.${cursor.id})`);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      throw { code: "internal", httpStatus: 500, message: "Failed to load documents" };
-    }
-    const hasMore = (data || []).length > pageSize;
-    const slicedRows = (data || []).slice(0, pageSize);
-    const items = await mapDocumentRows(scope.internalCompanyId, slicedRows);
-
-    const nextCursor = hasMore && items.length > 0
-      ? makeCursor(getRowDateValue((data || [])[pageSize - 1], dateField), (data || [])[pageSize - 1]?.id)
-      : null;
-
-    return { items, nextCursor };
+    const mapped = await mapDocumentRows(scope.internalCompanyId, [document]);
+    return mapped[0] || null;
   }
 
-  // bootstrap
+  return null;
+}
+
+async function handleJobs(
+  body: Record<string, unknown>,
+  _uid: string,
+  { supabase, scope, requester, ctx }: HandlerContext,
+) {
+  await assertModuleEnabled(scope.internalCompanyId, "jobs", ctx);
+  if (!canReadCompanyJobs(requester)) {
+    return { items: [], nextCursor: null };
+  }
+
+  const pageSize = parseReadLimit(body);
+  const cursor = parseCursor(body.afterCursor);
+  const dateField = resolveJobDateField(body.dateField);
+  const statuses = normalizeStringList(body.status);
+  const dateFrom = normalizeDateFilter(body.dateFrom);
+  const dateTo = normalizeDateFilter(body.dateTo);
+  let query = supabase
+    .from("jobs")
+    .select("id, job_no, status, title, description, notes, location, address, category, priority, due_at, client_id, client_name_snapshot, client_phone_snapshot, assigned_membership_id, assigned_member_name_snapshot, created_by_membership_id, created_by_name_snapshot, is_cert, meta, created_at, updated_at, finished_at, denied_at")
+    .eq("company_id", scope.internalCompanyId)
+    .order(dateField, { ascending: false })
+    .order("id", { ascending: false })
+    .limit(pageSize + 1);
+
+  if (shouldScopeJobsToMembership(requester)) {
+    if (!requester.membershipId) {
+      return { items: [], nextCursor: null };
+    }
+    query = query.eq("assigned_membership_id", requester.membershipId);
+  }
+  if (statuses.length === 1) {
+    query = query.eq("status", statuses[0]);
+  } else if (statuses.length > 1) {
+    query = query.in("status", statuses);
+  }
+  if (dateFrom) {
+    query = query.gte(dateField, dateFrom);
+  }
+  if (dateTo) {
+    query = query.lte(dateField, dateTo);
+  }
+  if (cursor) {
+    query = query.or(`${dateField}.lt.${cursor.createdAt},and(${dateField}.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load jobs" };
+  }
+  const slicedRows = (data || []).slice(0, pageSize);
+  const membershipMap = await getMembershipMap(
+    scope.internalCompanyId,
+    slicedRows.flatMap((job: any) => [job.assigned_membership_id, job.created_by_membership_id]).filter(Boolean).map(String),
+  );
+  const attachmentsByJobId = await getJobAttachments(slicedRows.map((job: any) => String(job.id)));
+  const partsByJobId = await getJobPartUsageMap(slicedRows.map((job: any) => String(job.id)));
+  const hasMore = (data || []).length > pageSize;
+  const items = slicedRows.map((job: any) => mapJobRecord(job, membershipMap, attachmentsByJobId, partsByJobId));
+
+  const nextCursor = hasMore && items.length > 0
+    ? makeCursor(getRowDateValue(slicedRows[slicedRows.length - 1], dateField), slicedRows[slicedRows.length - 1]?.id)
+    : null;
+
+  return { items, nextCursor };
+}
+
+async function handleDocuments(
+  body: Record<string, unknown>,
+  _uid: string,
+  { supabase, scope, requester, ctx }: HandlerContext,
+) {
+  await assertModuleEnabled(scope.internalCompanyId, "documents", ctx);
+  if (!canReadCompanyDocuments(requester)) {
+    return { items: [], nextCursor: null };
+  }
+
+  const pageSize = parseReadLimit(body);
+  const cursor = parseCursor(body.afterCursor);
+  const dateField = resolveDocumentDateField(body.dateField);
+  const statuses = normalizeStringList(body.status);
+  const dateFrom = normalizeDateFilter(body.dateFrom);
+  const dateTo = normalizeDateFilter(body.dateTo);
+  const documentType = Number(body.documentType);
+  const createdByUid = optionalTrimmedString(body.createdByUid, 200);
+  const creatorMembershipIds = createdByUid
+    ? await getMembershipIdsForUser(scope.internalCompanyId, createdByUid)
+    : [];
+
+  if (createdByUid && creatorMembershipIds.length === 0) {
+    return { items: [], nextCursor: null };
+  }
+
+  let query = supabase
+    .from("documents")
+    .select("id, document_type, document_number, document_code, generation_status, tax_authority_status, client_id, client_name_snapshot, client_phone_snapshot, client_city_snapshot, client_vat_snapshot, created_by_membership_id, language, notes, storage_path, confirmation_number, total_before_vat, vat_amount, total_with_vat, payload, tax_authority_response, created_at, updated_at, document_date")
+    .eq("company_id", scope.internalCompanyId)
+    .or("document_type.neq.305,tax_authority_status.eq.approved")
+    .order(dateField, { ascending: false })
+    .order("id", { ascending: false })
+    .limit(pageSize + 1);
+
+  if (statuses.length === 1) {
+    query = query.eq("generation_status", statuses[0]);
+  } else if (statuses.length > 1) {
+    query = query.in("generation_status", statuses);
+  }
+  if (Number.isInteger(documentType)) {
+    query = query.eq("document_type", documentType);
+  }
+  if (creatorMembershipIds.length === 1) {
+    query = query.eq("created_by_membership_id", creatorMembershipIds[0]);
+  } else if (creatorMembershipIds.length > 1) {
+    query = query.in("created_by_membership_id", creatorMembershipIds);
+  }
+  if (dateFrom) {
+    query = query.gte(dateField, dateFrom);
+  }
+  if (dateTo) {
+    query = query.lte(dateField, dateTo);
+  }
+  if (cursor) {
+    query = query.or(`${dateField}.lt.${cursor.createdAt},and(${dateField}.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw { code: "internal", httpStatus: 500, message: "Failed to load documents" };
+  }
+  const hasMore = (data || []).length > pageSize;
+  const slicedRows = (data || []).slice(0, pageSize);
+  const items = await mapDocumentRows(scope.internalCompanyId, slicedRows);
+
+  const nextCursor = hasMore && items.length > 0
+    ? makeCursor(getRowDateValue((data || [])[pageSize - 1], dateField), (data || [])[pageSize - 1]?.id)
+    : null;
+
+  return { items, nextCursor };
+}
+
+async function handleBootstrap(
+  body: Record<string, unknown>,
+  uid: string,
+  { supabase, scope, requester, ctx }: HandlerContext,
+) {
   const includeCollections = body.includeCollections === true;
   const countOnly = body.countOnly === true;
 
@@ -847,6 +853,7 @@ async function buildReadModelResponse(
 
   if (includeCollections) {
     const moduleEnabled = (name: string) => Boolean(enabledModules[name]);
+    const handlerCtx: HandlerContext = { supabase, scope, requester, ctx };
 
     if (moduleEnabled("inventory")) {
       const [userInventoryResult, companyInventoryResult] = await Promise.all([
@@ -862,13 +869,13 @@ async function buildReadModelResponse(
     const collectionPromises: Promise<any>[] = [];
     if (moduleEnabled("workers")) {
       collectionPromises.push(
-        buildReadModelResponse({ kind: "workers", companyId: scope.publicCompanyId }, uid, scopedContext)
+        handleWorkers({ kind: "workers", companyId: scope.publicCompanyId }, uid, handlerCtx)
           .then((result) => { workers = result; counts.workers = workers.length; }),
       );
     }
     if (moduleEnabled("clients")) {
       collectionPromises.push(
-        buildReadModelResponse({ kind: "clients", companyId: scope.publicCompanyId, pageSize: 50 }, uid, scopedContext)
+        handleClients({ kind: "clients", companyId: scope.publicCompanyId, pageSize: 50 }, uid, handlerCtx)
           .then((result) => {
             clients = Array.isArray(result) ? result : (result.items || []);
             clientsNextCursor = Array.isArray(result) ? null : (result.nextCursor || null);
@@ -878,13 +885,13 @@ async function buildReadModelResponse(
     }
     if (moduleEnabled("jobs")) {
       collectionPromises.push(
-        buildReadModelResponse({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 50 }, uid, scopedContext)
+        handleJobs({ kind: "jobs", companyId: scope.publicCompanyId, pageSize: 50 }, uid, handlerCtx)
           .then((result) => { jobs = result.items || []; jobsNextCursor = result.nextCursor || null; counts.jobs = jobs.length; }),
       );
     }
     if (moduleEnabled("documents")) {
       collectionPromises.push(
-        buildReadModelResponse({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 50 }, uid, scopedContext)
+        handleDocuments({ kind: "documents", companyId: scope.publicCompanyId, pageSize: 50 }, uid, handlerCtx)
           .then((result) => { documents = result.items || []; documentsNextCursor = result.nextCursor || null; counts.documents = documents.length; }),
       );
     }
@@ -915,6 +922,79 @@ async function buildReadModelResponse(
       updatedAt: syncResult.data?.updated_at || new Date().toISOString(),
     },
   };
+}
+
+async function buildReadModelResponse(
+  body: Record<string, unknown>,
+  uid: string,
+  preloaded: {
+    supabase?: ReturnType<typeof createSupabaseClient>;
+    scope?: CompanyScope;
+    requester?: RequesterContext;
+  } = {},
+): Promise<any> {
+  const kind = optionalTrimmedString(body.kind, 64);
+  if (!kind || !READ_MODEL_KINDS.has(kind)) {
+    throw {
+      code: "invalid-argument",
+      httpStatus: 400,
+      message: "Unsupported read-model kind",
+    };
+  }
+
+  const supabase = preloaded.supabase || createSupabaseClient(env);
+
+  if (kind === "userSyncState") {
+    const { data: userRow } = await supabase
+      .from("app_users")
+      .select("updated_at")
+      .eq("id", uid)
+      .maybeSingle();
+    return {
+      profile: 0,
+      inventory: 0,
+      subscription: 0,
+      updatedAt: userRow?.updated_at || new Date().toISOString(),
+    };
+  }
+
+  let scope: CompanyScope;
+  if (preloaded.scope) {
+    scope = preloaded.scope;
+  } else {
+    scope = await resolveCompanyScope(uid, body.companyId);
+    await assertCompanyAccess(uid, scope.publicCompanyId, [], buildReadModelContext(uid));
+  }
+  const requester = preloaded.requester || await getRequesterContext(scope, uid);
+  const ctx = buildReadModelContext(uid);
+  const handlerCtx: HandlerContext = { supabase, scope, requester, ctx };
+
+  switch (kind) {
+    case "companySyncState":
+      return handleCompanySyncState(body, uid, handlerCtx);
+    case "workers":
+      return handleWorkers(body, uid, handlerCtx);
+    case "clients":
+      return handleClients(body, uid, handlerCtx);
+    case "inventory":
+      return handleInventory(body, uid, handlerCtx);
+    case "documentTask":
+      return handleDocumentTask(body, uid, handlerCtx);
+    case "recordById":
+      return handleRecordById(body, uid, handlerCtx);
+    case "jobs":
+      return handleJobs(body, uid, handlerCtx);
+    case "documents":
+      return handleDocuments(body, uid, handlerCtx);
+    case "bootstrap":
+      return handleBootstrap(body, uid, handlerCtx);
+    default:
+      throw {
+        code: "invalid-argument",
+        httpStatus: 400,
+        message: "Unsupported read-model kind",
+      };
+  }
 }
 
 async function handleReadModelRequest(req: Request): Promise<Response> {

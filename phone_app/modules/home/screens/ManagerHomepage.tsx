@@ -1,6 +1,5 @@
-// @ts-nocheck
 import { ROUTES } from '../../../navigation/routes';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +14,7 @@ import {
   DashboardShell,
   GlobalHeader,
 } from '../../../components';
+import type { IconLibrary } from '../../../components/primitives/AppIcon';
 
 const translations = {
   en: {
@@ -167,37 +167,48 @@ export default function ManagerHomepage() {
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
 
-  const hasTeam = isModuleEnabled(subscription, 'team');
-  const hasSoloJob = isModuleEnabled(subscription, 'solojob');
-  const hasDocs = isModuleEnabled(subscription, 'documents');
-  const subActive = isSubscriptionActive(subscription);
+  const hasTeam = isModuleEnabled(subscription ?? null, 'team');
+  const hasSoloJob = isModuleEnabled(subscription ?? null, 'solojob');
+  const hasDocs = isModuleEnabled(subscription ?? null, 'documents');
+  const subActive = isSubscriptionActive(subscription ?? null);
 
-  const availableTabs = [
+  const availableTabs: string[] = [
     ...(hasTeam ? ['management', 'jobMonitor'] : []),
     ...(hasSoloJob ? ['work'] : []),
     ...(hasDocs ? ['documents'] : []),
   ];
 
+  const normalizedTab = Array.isArray(tab) ? tab[0] : tab;
+
   useEffect(() => {
-    if (tab && availableTabs.includes(tab)) {
-      setActiveTab(tab);
+    if (normalizedTab && availableTabs.includes(normalizedTab)) {
+      setActiveTab(normalizedTab);
     }
-  }, [tab, availableTabs.join('|')]);
+  }, [normalizedTab, availableTabs]);
 
   useEffect(() => {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
       setActiveTab(availableTabs[0]);
     }
-  }, [activeTab, availableTabs.join('|')]);
+  }, [activeTab, availableTabs]);
 
-  const tabItems = [
-    ...(hasTeam ? [{ key: 'management', label: t.managementTab, icon: 'account-group', iconLibrary: 'material' }] : []),
-    ...(hasTeam ? [{ key: 'jobMonitor', label: t.jobMonitorTab, icon: 'clipboard-text-clock', iconLibrary: 'material' }] : []),
-    ...(hasSoloJob ? [{ key: 'work', label: t.workTab, icon: 'briefcase', iconLibrary: 'material' }] : []),
-    ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' }] : []),
+  const tabItems: Array<{ key: string; label: string; icon: string; iconLibrary: IconLibrary }> = [
+    ...(hasTeam ? [{ key: 'management', label: t.managementTab, icon: 'account-group', iconLibrary: 'material' as IconLibrary }] : []),
+    ...(hasTeam ? [{ key: 'jobMonitor', label: t.jobMonitorTab, icon: 'clipboard-text-clock', iconLibrary: 'material' as IconLibrary }] : []),
+    ...(hasSoloJob ? [{ key: 'work', label: t.workTab, icon: 'briefcase', iconLibrary: 'material' as IconLibrary }] : []),
+    ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' as IconLibrary }] : []),
   ];
 
-  const cardsByTab = {
+  const cardsByTab: Record<string, Array<{
+    key: string;
+    title: string;
+    description: string;
+    icon: string;
+    iconLibrary: IconLibrary;
+    accentColor: string;
+    badge: string;
+    onPress: () => void;
+  }>> = {
     management: [
       {
         key: 'workers-monitor',
@@ -318,7 +329,7 @@ export default function ManagerHomepage() {
     ],
   };
 
-  const activeCards = cardsByTab[activeTab] || [];
+  const activeCards = (cardsByTab as Record<string, typeof cardsByTab.management>)[activeTab] || [];
 
   if (!subActive) {
     return (

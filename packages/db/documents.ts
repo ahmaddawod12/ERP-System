@@ -107,14 +107,6 @@ function normalizeStringList(value) {
   return single ? [single] : [];
 }
 
-function resolveDocumentDateColumnName(dateField: string): string {
-  switch (String(dateField || '').trim()) {
-    case 'documentDate': return 'd.document_date';
-    case 'updatedAt': return 'd.updated_at';
-    default: return 'd.created_at';
-  }
-}
-
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
 function encodeDocumentsCursor(dateValue: Date | string | null, rowId: string | null): string {
   const d = dateValue instanceof Date ? dateValue.toISOString() : (dateValue ?? '');
@@ -291,9 +283,8 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   const requestedDateFrom = options.dateFrom ? asDate(options.dateFrom, null) : null;
   const requestedDateTo = options.dateTo ? asDate(options.dateTo, null) : null;
   const dateColumn = resolveDocumentDateColumnSql(options.dateField);
-  const dateColumnName = resolveDocumentDateColumnName(options.dateField);
   const cursorFilter = afterCursor
-    ? sql` AND (${sql.raw(dateColumnName)}, d.id) < (${afterCursor.dateValue}, ${afterCursor.id})`
+    ? sql` AND (${dateColumn}, d.id) < (${afterCursor.dateValue}, ${afterCursor.id})`
     : sql``;
 
   // Optional filter by a specific document code (used by getDocumentRecordById for targeted lookups).
@@ -373,7 +364,7 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       ${statusFilter}
       ${cursorFilter}
     ORDER BY ${dateColumn} DESC, d.id DESC
-    LIMIT ${sql.raw(String(effectiveLimit + 1))}
+    LIMIT ${effectiveLimit + 1}
   `);
 
   const allRows = rows.rows || [];

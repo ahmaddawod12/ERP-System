@@ -1,4 +1,5 @@
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { DOC_TYPE, DOC_LABELS, getDocumentLabel } from '@smart-job/contracts';
 
 /**
  * Escape a string for safe interpolation into HTML text content.
@@ -11,6 +12,30 @@ function escapeHtml(input: unknown): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * Strip control characters that could be used for email-header injection.
+ * Allows printable ASCII plus common Unicode, but removes CR, LF, TAB,
+ * null bytes, and other header-control characters.
+ */
+function sanitizeEmailHeaderValue(input: unknown): string {
+  const raw = String(input ?? '');
+  return raw
+    .replace(/[\x00-\x1F\x7F]/g, '') // C0 control + DEL
+    .replace(/[\u200E\u200F\u202A-\u202E]/g, '') // bidirectional override characters
+    .trim();
+}
+
+const EMAIL_ADDRESS_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateEmailAddress(email: unknown, label: string): string {
+  const raw = String(email ?? '');
+  const cleaned = sanitizeEmailHeaderValue(raw);
+  if (!EMAIL_ADDRESS_RE.test(cleaned)) {
+    throw new Error(`Invalid ${label} email address: ${raw}`);
+  }
+  return cleaned;
 }
 
 /**
@@ -106,12 +131,13 @@ class AmazonSESEmailService {
       throw new Error('Business email (sender) is required in businessInfo');
     }
 
-    // Sender configuration from business info
-    const senderEmail = businessInfo.email;
-    const senderName = businessInfo.name || 'Smart-Job';
+    // Sender configuration from business info — sanitize to prevent header injection.
+    const senderEmail = validateEmailAddress(businessInfo.email, 'sender');
+    const senderName = sanitizeEmailHeaderValue(businessInfo.name || 'Smart-Job');
+    const recipient = validateEmailAddress(recipientEmail, 'recipient');
     const fromAddress = `${senderName} <${senderEmail}>`;
     console.log('[SES] Preparing to send email', {
-      to: recipientEmail ? `***@${recipientEmail.split('@')[1] || '?'}` : '(none)',
+      to: recipient ? `***@${recipient.split('@')[1] || '?'}` : '(none)',
       from: senderName,
       documentTitle,
       language
@@ -130,7 +156,7 @@ class AmazonSESEmailService {
     const command = new SendEmailCommand({
       Source: fromAddress,
       Destination: {
-        ToAddresses: [recipientEmail]
+        ToAddresses: [recipient]
       },
       ReplyToAddresses: [senderEmail],
       Message: {
@@ -348,53 +374,18 @@ Smart-Job © ${new Date().getFullYear()}
  * @returns {string} Formatted document title
  */
 function getDocumentTitle(documentType, documentNumber, language = 'he') {
-  const titles = {
-    taxInvoice: {
-      he: `חשבונית מס מספר ${documentNumber}`,
-      en: `Tax Invoice #${documentNumber}`,
-      ar: `فاتورة ضريبية رقم ${documentNumber}`,
-    },
-    receipt: {
-      he: `קבלה מספר ${documentNumber}`,
-      en: `Receipt #${documentNumber}`,
-      ar: `إيصال رقم ${documentNumber}`,
-    },
-    priceProposal: {
-      he: `הצעת מחיר מספר ${documentNumber}`,
-      en: `Price Proposal #${documentNumber}`,
-      ar: `عرض سعر رقم ${documentNumber}`,
-    },
-    deliveryNote: {
-      he: `תעודת משלוח מספר ${documentNumber}`,
-      en: `Delivery Note #${documentNumber}`,
-      ar: `إشعار تسليم رقم ${documentNumber}`,
-    },
-    returnCertificate: {
-      he: `תעודת החזרה מספר ${documentNumber}`,
-      en: `Return Certificate #${documentNumber}`,
-      ar: `شهادة إرجاع رقم ${documentNumber}`,
-    },
-    refund: {
-      he: `זיכוי מספר ${documentNumber}`,
-      en: `Refund #${documentNumber}`,
-      ar: `رد رقم ${documentNumber}`,
-    },
-  };
+  const numericType = typeof documentType === 'number' ? documentType : Number(documentType);
+  const title = DOC_LABELS[numericType as keyof typeof DOC_LABELS]
+    ? getDocumentLabel(numericType, language)
+    : getDocumentLabel(DOC_TYPE.TAX_INVOICE, language);
 
-  // Map numeric document type codes to string keys (callers pass numeric codes
-  // like 305, 400, etc. from DOC_TYPE constants)
-  const numericToKey = {
-    305: 'taxInvoice',
-    400: 'receipt',
-    10:  'priceProposal',
-    200: 'deliveryNote',
-    210: 'returnCertificate',
-    330: 'refund',
-  };
+  const numberPart = language === 'he'
+    ? `מספר ${documentNumber}`
+    : language === 'ar'
+      ? `رقم ${documentNumber}`
+      : `#${documentNumber}`;
 
-  const resolvedKey = numericToKey[documentType] || documentType;
-  const typeTitle = titles[resolvedKey] || titles.taxInvoice;
-  return typeTitle[language] || typeTitle.he;
+  return `${title} ${numberPart}`;
 }
 
 /**

@@ -1,45 +1,53 @@
-# Stage 1: Install dependencies and build
+# Stage 1: Install dependencies and build shared packages + service
 FROM ghcr.io/puppeteer/puppeteer:24.40.0 AS build
 
 USER root
-WORKDIR /cloudrun-pdf
+WORKDIR /workspace
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-COPY package*.json ./
-RUN npm ci
+COPY packages/contracts ./packages/contracts
+COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
-COPY . .
-RUN npm run build
+RUN npm --prefix packages/contracts ci
+RUN npm --prefix packages/contracts run build
+RUN npm --prefix cloudrun-pdf ci
+
+COPY cloudrun-pdf ./cloudrun-pdf
+RUN npm --prefix cloudrun-pdf run build
 
 # Stage 2: Production dependencies only
 FROM ghcr.io/puppeteer/puppeteer:24.40.0 AS deps
 
 USER root
-WORKDIR /cloudrun-pdf
+WORKDIR /workspace
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-COPY package*.json ./
-RUN npm ci --omit=dev
+# Copy the built contracts package so the file: symlink stays valid.
+COPY --from=build /workspace/packages/contracts ./packages/contracts
+COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
-# Stage 2: Production image
+RUN npm --prefix cloudrun-pdf ci --omit=dev
+
+# Stage 3: Production image
 FROM ghcr.io/puppeteer/puppeteer:24.40.0
 
 USER root
-WORKDIR /cloudrun-pdf
+
+# Preserve the /workspace layout so the file: symlink to @smart-job/contracts remains valid.
+WORKDIR /workspace/cloudrun-pdf
 
 ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 ENV HOME=/tmp
 
-# Copy dependencies from deps stage and compiled output from build stage
-COPY --from=deps /cloudrun-pdf/node_modules ./node_modules
-COPY --from=build /cloudrun-pdf/dist ./dist
+COPY --from=deps /workspace/packages /workspace/packages
+COPY --from=deps /workspace/cloudrun-pdf/node_modules ./node_modules
+COPY --from=build /workspace/cloudrun-pdf/dist ./dist
 
-# Change ownership of the working directory to pptruser
-RUN chown -R pptruser:pptruser /cloudrun-pdf
+RUN chown -R pptruser:pptruser /workspace/cloudrun-pdf
 
 # Cloud Run uses PORT environment variable
 ENV PORT=8080

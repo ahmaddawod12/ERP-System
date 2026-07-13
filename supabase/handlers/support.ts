@@ -32,9 +32,12 @@ export async function createSupportConversationV1(payload: CreateSupportConversa
     throw { code: "unauthenticated", message: "Authentication required", httpStatus: 401 };
   }
 
+  const ALLOWED_SUPPORT_CATEGORIES = ["general", "bug", "opinion", "suggestion", "support", "freeChat"];
+
   const supabase = createSupabaseClient(ctx.env);
   const now = new Date().toISOString();
-  const category = optionalTrimmedString(payload?.category, 64) || "general";
+  const rawCategory = optionalTrimmedString(payload?.category, 64) || "general";
+  const category = ALLOWED_SUPPORT_CATEGORIES.includes(rawCategory) ? rawCategory : "general";
 
   const { data: userRow, error: userError } = await supabase
     .from("app_users")

@@ -52,6 +52,48 @@ export const DOC_SUFFIX = Object.freeze({
 
 export const VAT_RATE = 0.18;
 
+export const DOC_LABELS = Object.freeze({
+  [DOC_TYPE.PRICE_PROPOSAL]: { en: 'Price Proposal', he: 'הצעת מחיר', ar: 'عرض سعر' },
+  [DOC_TYPE.DELIVERY_NOTE]: { en: 'Delivery Note', he: 'תעודת משלוח', ar: 'إشعار تسليم' },
+  [DOC_TYPE.RETURN_CERTIFICATE]: { en: 'Return Certificate', he: 'תעודת החזרה', ar: 'شهادة إرجاع' },
+  [DOC_TYPE.TAX_INVOICE]: { en: 'Tax Invoice', he: 'חשבונית מס', ar: 'فاتورة ضريبية' },
+  [DOC_TYPE.REFUND]: { en: 'Refund', he: 'זיכוי', ar: 'استرداد' },
+  [DOC_TYPE.RECEIPT]: { en: 'Receipt', he: 'קבלה', ar: 'إيصال' },
+} as const satisfies Record<DocTypeCode, { en: string; he: string; ar: string }>);
+
+export const DOC_COLORS = Object.freeze({
+  [DOC_TYPE.PRICE_PROPOSAL]: '#3B82F6',
+  [DOC_TYPE.DELIVERY_NOTE]: '#8B5CF6',
+  [DOC_TYPE.RETURN_CERTIFICATE]: '#EC4899',
+  [DOC_TYPE.TAX_INVOICE]: '#10B981',
+  [DOC_TYPE.REFUND]: '#F59E0B',
+  [DOC_TYPE.RECEIPT]: '#06B6D4',
+} as const satisfies Record<DocTypeCode, string>);
+
+export const DOC_GRADIENTS = Object.freeze({
+  [DOC_TYPE.PRICE_PROPOSAL]: ['#3B82F6', '#2563EB'],
+  [DOC_TYPE.DELIVERY_NOTE]: ['#8B5CF6', '#7C3AED'],
+  [DOC_TYPE.RETURN_CERTIFICATE]: ['#EC4899', '#DB2777'],
+  [DOC_TYPE.TAX_INVOICE]: ['#10B981', '#059669'],
+  [DOC_TYPE.REFUND]: ['#F59E0B', '#D97706'],
+  [DOC_TYPE.RECEIPT]: ['#06B6D4', '#0891B2'],
+} as const satisfies Record<DocTypeCode, [string, string]>);
+
+export const DOC_ICONS = Object.freeze({
+  [DOC_TYPE.PRICE_PROPOSAL]: 'file-document-edit',
+  [DOC_TYPE.DELIVERY_NOTE]: 'truck-delivery',
+  [DOC_TYPE.RETURN_CERTIFICATE]: 'file-certificate',
+  [DOC_TYPE.TAX_INVOICE]: 'file-document',
+  [DOC_TYPE.REFUND]: 'cash-refund',
+  [DOC_TYPE.RECEIPT]: 'receipt',
+} as const satisfies Record<DocTypeCode, string>);
+
+export function getDocumentLabel(code: number, language: string): string {
+  const labels = DOC_LABELS[code as DocTypeCode];
+  if (!labels) return 'Document';
+  return labels[language as keyof typeof labels] ?? labels.en ?? 'Document';
+}
+
 export const AccountType = Object.freeze({
   Solo: 'solo',
   Business: 'business',
@@ -177,6 +219,30 @@ export const paths = {
   contactRequest: (id: string) => `contact_requests/${id}`,
   documentTask: (id: string) => `documentTasks/${id}`,
 };
+
+/**
+ * Maps logical edge-function operation names to the dashed HTTP paths used by
+ * Supabase Edge Functions. Nested function paths (e.g. `invites/create`) are
+ * flattened at deploy time, so callers must use the dashed form.
+ */
+export const EDGE_FUNCTION_NAME_MAP = Object.freeze({
+  mutationGatewayV1: 'mutation-gateway',
+  mutationGatewayMeWest1V1: 'mutation-gateway-me-west1',
+  readModelV1: 'read-model',
+  createInviteV1: 'invites-create',
+  joinCompanyV1: 'invites-join',
+  requestUpgradeV1: 'upgrades-request',
+  listUpgradeRequestsV1: 'upgrades-list',
+  moderateUpgradeRequestV1: 'upgrades-moderate',
+  contactRequestV1: 'contact-request',
+  getInvoiceApproval: 'mutation-gateway-me-west1',
+} as const);
+
+export type EdgeFunctionOperation = keyof typeof EDGE_FUNCTION_NAME_MAP;
+
+export function getEdgeFunctionPath(functionName: string): string {
+  return (EDGE_FUNCTION_NAME_MAP as Record<string, string>)[functionName] || functionName;
+}
 
 export function resolveCompanyScope(companyId?: string | null): string {
   const normalized = String(companyId || '').trim();

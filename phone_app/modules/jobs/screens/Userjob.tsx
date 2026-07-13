@@ -826,7 +826,7 @@ export default function Userjob() {
       <ClientSelectorModal
         visible={showClientSelector}
         onClose={() => setShowClientSelector(false)}
-        onSelectClient={(clientName) => setClientFilter(clientName)}
+        onSelectClient={(name) => setClientFilter(name)}
         colors={colors}
         translations={{
           filterByClient: t.filterByClient,

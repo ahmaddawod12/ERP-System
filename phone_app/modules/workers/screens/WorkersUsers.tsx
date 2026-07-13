@@ -1,5 +1,4 @@
-// @ts-nocheck
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -22,6 +21,7 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
+import type { Worker } from '../../../types';
 import {
   AppButton,
   AppCard,
@@ -114,8 +114,8 @@ const translations = {
 
 const initialNewWorker = { email: '', password: '', phoneNumber: '', name: '' };
 
-const normalizeEmail = (value) => (value || '').trim().toLowerCase();
-const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+const normalizeEmail = (value: string) => (value || '').trim().toLowerCase();
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 export default function WorkersUsers() {
   const { language } = useLanguageContext();
@@ -132,12 +132,12 @@ export default function WorkersUsers() {
     deleteWorker,
   } = useCache();
 
-  const [workers, setWorkers] = useState([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [newWorker, setNewWorker] = useState(initialNewWorker);
-  const [editingWorker, setEditingWorker] = useState(null);
+  const [editingWorker, setEditingWorker] = useState<(Worker & { password?: string }) | null>(null);
 
   const hasCachedWorkers = useMemo(
     () => cachedWorkersList && Object.keys(cachedWorkersList).length > 0,
@@ -179,11 +179,11 @@ export default function WorkersUsers() {
       }
 
       const fetchedWorkers = await fetchCompanyWorkers(companyId);
-      const workersData = {};
+      const workersData: Record<string, Worker> = {};
       const workersList = fetchedWorkers
-        .filter((worker) => worker.email)
+        .filter((worker): worker is Worker & { email: string } => Boolean(worker.email))
         .map((worker) => {
-          const wid = worker.wid || worker.uid;
+          const wid = String(worker.wid || worker.uid);
           workersData[wid] = worker;
           return worker;
         });
@@ -192,7 +192,7 @@ export default function WorkersUsers() {
       await updateWorkers(workersData);
     } catch (error) {
       console.error('WorkersUsers loadWorkers error:', error);
-      alert.error('Error', error.message || 'Failed to load workers.');
+      alert.error('Error', error instanceof Error ? error.message : 'Failed to load workers.');
     } finally {
       setLoading(false);
     }
@@ -234,8 +234,8 @@ export default function WorkersUsers() {
         companyId,
       });
 
-      const workerUid = result?.data?.uid;
-      const workerWid = result?.data?.wid;
+      const workerUid = (result?.data as { uid?: string; wid?: string } | undefined)?.uid;
+      const workerWid = (result?.data as { uid?: string; wid?: string } | undefined)?.wid;
       if (!workerUid || !workerWid) {
         throw new Error('Worker UID or wid was not returned from backend.');
       }
@@ -256,7 +256,7 @@ export default function WorkersUsers() {
       await loadWorkers();
     } catch (error) {
       console.error('WorkersUsers handleAddWorker error:', error);
-      alert.error('Error', error.message || 'Failed to add worker.');
+      alert.error('Error', error instanceof Error ? error.message : 'Failed to add worker.');
     } finally {
       setLoading(false);
     }
@@ -296,7 +296,7 @@ export default function WorkersUsers() {
       const manageWorkerFn = httpsCallable(functions, 'manageWorker');
       await manageWorkerFn(payload);
 
-      await editWorker(editingWorker.wid, {
+      await editWorker(String(editingWorker.wid), {
         name: editingWorker.name?.trim() || '',
         phoneNumber: editingWorker.phoneNumber || '',
       });
@@ -307,13 +307,13 @@ export default function WorkersUsers() {
       await loadWorkers();
     } catch (error) {
       console.error('WorkersUsers handleEditWorker error:', error);
-      alert.error('Error', error.message || 'Failed to edit worker.');
+      alert.error('Error', error instanceof Error ? error.message : 'Failed to edit worker.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDeleteWorker = (worker) => {
+  const handleDeleteWorker = (worker: Worker) => {
     alert.confirm('Confirm Delete', t.confirmDelete, [
       { text: t.cancel, style: 'cancel', onPress: () => {} },
       {
@@ -338,18 +338,18 @@ export default function WorkersUsers() {
             const manageWorkerFn = httpsCallable(functions, 'manageWorker');
             await manageWorkerFn({
               action: 'delete',
-              email: normalizeEmail(worker.email),
+              email: normalizeEmail(worker.email || ''),
               companyId,
               workerUid: worker.uid,
-              wid: worker.wid,
+              wid: String(worker.wid),
             });
 
-            await deleteWorker(worker.wid);
+            await deleteWorker(String(worker.wid));
             alert.success('Success', t.workerDeleted);
             await loadWorkers();
           } catch (error) {
             console.error('WorkersUsers handleDeleteWorker error:', error);
-            alert.error('Error', error.message || 'Failed to delete worker.');
+            alert.error('Error', error instanceof Error ? error.message : 'Failed to delete worker.');
           } finally {
             setLoading(false);
           }
@@ -358,7 +358,7 @@ export default function WorkersUsers() {
     ]);
   };
 
-  const renderWorker = ({ item }) => (
+  const renderWorker = ({ item }: { item: Worker }) => (
     <AppCard style={styles.workerCard}>
       <View style={styles.workerTopRow}>
         <View style={[styles.avatar, { backgroundColor: `${palette.secondary}20` }]}>
@@ -402,13 +402,29 @@ export default function WorkersUsers() {
     </AppCard>
   );
 
-  const renderWorkerForm = ({ mode }) => {
+  interface WorkerFormData {
+    name: string;
+    email: string;
+    phoneNumber: string;
+    password?: string;
+  }
+
+  const renderWorkerForm = ({ mode }: { mode: 'add' | 'edit' }) => {
     const isEdit = mode === 'edit';
-    const data = isEdit ? editingWorker : newWorker;
-    const setData = isEdit ? setEditingWorker : setNewWorker;
+    const data: WorkerFormData | null = isEdit
+      ? (editingWorker as WorkerFormData | null)
+      : newWorker;
     const onSubmit = isEdit ? handleEditWorker : handleAddWorker;
 
     if (!data) return null;
+
+    const updateData = (patch: Partial<WorkerFormData>) => {
+      if (isEdit) {
+        setEditingWorker((prev) => (prev ? { ...prev, ...patch } : prev));
+      } else {
+        setNewWorker((prev) => ({ ...prev, ...patch }));
+      }
+    };
 
     return (
       <KeyboardAvoidingView
@@ -420,14 +436,14 @@ export default function WorkersUsers() {
           <AppInput
             label={t.name}
             value={data.name}
-            onChangeText={(value) => setData({ ...data, name: value })}
+            onChangeText={(value) => updateData({ name: value })}
             placeholder="Full name"
             autoFocus
           />
           <AppInput
             label={t.email}
             value={data.email}
-            onChangeText={(value) => setData({ ...data, email: value })}
+            onChangeText={(value) => updateData({ email: value })}
             placeholder="worker@company.com"
             keyboardType="email-address"
             autoCapitalize="none"
@@ -439,7 +455,7 @@ export default function WorkersUsers() {
           <AppInput
             label={t.phoneNumber}
             value={data.phoneNumber}
-            onChangeText={(value) => setData({ ...data, phoneNumber: value })}
+            onChangeText={(value) => updateData({ phoneNumber: value })}
             placeholder="+972..."
             keyboardType="phone-pad"
           />

@@ -21,3 +21,10 @@ test('requester identity and company match are enforced before document work', (
   assert.match(indexSource, /Role not authorized for document generation/);
   assert.match(indexSource, /Role not authorized for document preview/);
 });
+
+test('worker role is rejected for both document preview and generation', () => {
+  // The allowed role list for preview and generate must not include "worker".
+  assert.doesNotMatch(indexSource, /\['manager', 'user', 'basic', 'dev', 'worker'\]/);
+  assert.doesNotMatch(indexSource, /\['worker', 'manager', 'user', 'basic', 'dev'\]/);
+  assert.match(indexSource, /!\['manager', 'user', 'basic', 'dev'\]\.includes\(userRole\)/);
+});

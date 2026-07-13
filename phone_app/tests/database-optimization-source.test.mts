@@ -12,7 +12,7 @@ test('read model supports opt-in clients and inventory pagination', () => {
   const sharedData = readRepoFile('supabase', 'functions', 'read-model', 'kinds', 'shared-data.ts');
   const schema = readRepoFile('website', 'src', 'lib', 'validation', 'schemas.ts');
 
-  assert.match(readModel, /kind === "clients"[\s\S]*nextCursor/);
+  assert.match(readModel, /handleClients[\s\S]*nextCursor/);
   assert.match(readModel, /rpc\("get_clients_page"/);
   assert.match(readModel, /parseNumberCursor\(body\.afterCursor\)/);
   assert.match(sharedData, /getCompanyInventoryParts\(internalCompanyId: string, options: InventoryReadOptions = \{\}\)/);

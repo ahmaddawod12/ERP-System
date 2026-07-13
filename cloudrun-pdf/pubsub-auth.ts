@@ -120,10 +120,14 @@ export function createPubSubVerifier(options: {
       return res.status(401).send('Trusted bearer token required');
     }
 
+    // Fail closed: at least one authentication method must be configured.
+    if (!expectedAudience && !options.pubsubVerificationToken) {
+      console.error('Pub/Sub verifier is not configured: set CLOUD_RUN_SERVICE_URL or PUBSUB_VERIFICATION_TOKEN');
+      return res.status(403).send('Pub/Sub authentication not configured');
+    }
+
     if (!options.pubsubVerificationToken) {
-      if (!expectedAudience) {
-        console.warn('PUBSUB_VERIFICATION_TOKEN is unset and CLOUD_RUN_SERVICE_URL is not configured; allowing request in non-production mode');
-      }
+      // Bearer verification already succeeded above; shared token layer is not configured.
       return next();
     }
 

@@ -1,62 +1,233 @@
-// @ts-nocheck
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View,
+import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import {
+  View,
   TouchableOpacity,
   StyleSheet,
   Platform,
   ActivityIndicator,
   Modal,
   FlatList,
- } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
+} from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { auth, functions, httpsCallable } from '../../../firebase';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { AppButton, AppCard, AppEmptyState, AppInput, AppText, GlobalHeader, ScreenHeroCard, ScrollableContainer, SearchInput } from '../../../components';
+import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
+import { AppButton, AppCard, AppEmptyState, AppInput, AppText, GlobalHeader, ScreenHeroCard, SearchInput } from '../../../components';
+import { useScrollHandler } from '../../../contexts/HeaderContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { fetchUserInventoryParts } from '../../../utils/read-model';
+import type { InventoryPart } from '../../../types';
+
+interface PartRowProps {
+  part: InventoryPart;
+  colors: ReturnType<typeof getColors>;
+  isDarkMode: boolean;
+  t: Record<string, string>;
+  onRemove: (id: string | number) => void;
+  onUse: (id: string | number, amount: number) => void;
+  onAddQuantity: (id: string | number, amount: number) => void;
+}
+
+const InventoryPartRow = memo(function InventoryPartRow({
+  part,
+  colors,
+  isDarkMode,
+  t,
+  onRemove,
+  onUse,
+  onAddQuantity,
+}: PartRowProps) {
+  const alert = useAlert();
+  const [useAmount, setUseAmount] = useState('');
+  const [addAmount, setAddAmount] = useState('');
+  const [showUse, setShowUse] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+
+  const isLowStock = part.quantity <= (part.lowThreshold || 0);
+
+  const validateAmount = (value: string) => {
+    const amount = parseInt(value, 10);
+    if (!amount || amount <= 0) {
+      alert.warning(t.invalidAmount, t.amountMustBePositive);
+      return null;
+    }
+    return amount;
+  };
+
+  const handleUse = () => {
+    const amount = validateAmount(useAmount);
+    if (amount == null) return;
+    onUse(part.id, amount);
+    setUseAmount('');
+    setShowUse(false);
+  };
+
+  const handleAdd = () => {
+    const amount = validateAmount(addAmount);
+    if (amount == null) return;
+    onAddQuantity(part.id, amount);
+    setAddAmount('');
+    setShowAdd(false);
+  };
+
+  return (
+    <View style={[styles.partCard, { backgroundColor: colors.surface }]}>
+      <View style={styles.partHeader}>
+        <View style={styles.partInfo}>
+          <View style={styles.partNameRow}>
+            {isLowStock && (
+              <MaterialCommunityIcons
+                name="alert-circle"
+                size={24}
+                color="#ef4444"
+                style={styles.warningIcon}
+              />
+            )}
+            <View style={[styles.idBadge, { backgroundColor: colors.secondary + '20' }]}>
+              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{part.id}</AppText>
+            </View>
+            <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText>
+          </View>
+          <AppText style={[styles.partQuantity, { color: colors.textSecondary }]}>
+            {t.quantity}: {part.quantity} ({t.alert}: {part.lowThreshold || 0})
+          </AppText>
+        </View>
+
+        <View style={styles.partActions}>
+          <TouchableOpacity
+            style={[styles.actionButton, {
+              backgroundColor: isDarkMode ? 'rgba(0, 172, 193, 0.15)' : 'rgba(0, 172, 193, 0.08)',
+              borderColor: colors.secondary,
+              borderWidth: 1,
+            }]}
+            onPress={() => { setShowAdd(true); setShowUse(false); }}
+          >
+            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>+ {t.add}</AppText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, {
+              backgroundColor: isDarkMode ? 'rgba(0, 172, 193, 0.15)' : 'rgba(0, 172, 193, 0.08)',
+              borderColor: colors.secondary,
+              borderWidth: 1,
+            }]}
+            onPress={() => { setShowUse(true); setShowAdd(false); }}
+          >
+            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>- {t.use}</AppText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, {
+              backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.08)',
+              borderColor: '#ef4444',
+              borderWidth: 1,
+            }]}
+            onPress={() => {
+              alert.confirm(
+                t.confirmRemove,
+                `${t.areYouSure}\n${part.name}\n\n${t.confirmRemoveMessage}`,
+                [
+                  { text: t.cancel, style: 'cancel', onPress: () => {} },
+                  { text: t.remove, style: 'destructive', onPress: () => onRemove(part.id) },
+                ]
+              );
+            }}
+          >
+            <AppText style={[styles.actionButtonText, { color: '#ef4444' }]}>🗑</AppText>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Use Part Input */}
+      {showUse && (
+        <View style={styles.amountInput}>
+          <AppInput
+            value={useAmount}
+            onChangeText={setUseAmount}
+            placeholder={t.amount}
+            keyboardType="numeric"
+            colors={colors}
+          />
+          <View style={styles.buttonRow}>
+            <TouchableOpacity onPress={handleUse} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
+              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setShowUse(false); setUseAmount(''); }}
+              style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
+            >
+              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Add Quantity Input */}
+      {showAdd && (
+        <View style={styles.amountInput}>
+          <AppInput
+            value={addAmount}
+            onChangeText={setAddAmount}
+            placeholder={t.amount}
+            keyboardType="numeric"
+            colors={colors}
+          />
+          <View style={styles.buttonRow}>
+            <TouchableOpacity onPress={handleAdd} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
+              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setShowAdd(false); setAddAmount(''); }}
+              style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
+            >
+              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+});
 
 export default function WorkerInventory() {
-  const router = useRouter();
-  const { workerId } = useLocalSearchParams();
-  const [inventory, setInventory] = useState([]);
+  const { wid: rawWorkerId } = useLocalSearchParams();
+  const wid = Array.isArray(rawWorkerId) ? rawWorkerId[0] : rawWorkerId;
+  const [inventory, setInventory] = useState<InventoryPart[]>([]);
   // Manager/Worker role: select from company parts
   const [showCompanyPicker, setShowCompanyPicker] = useState(false);
-  const [companyParts, setCompanyParts] = useState([]);
+  const [companyParts, setCompanyParts] = useState<InventoryPart[]>([]);
   const [companyPickerSearch, setCompanyPickerSearch] = useState('');
-  const [selectedCompanyPart, setSelectedCompanyPart] = useState(null);
+  const [selectedCompanyPart, setSelectedCompanyPart] = useState<InventoryPart | null>(null);
   const [addQuantity, setAddQuantity] = useState('');
   const [addLowThreshold, setAddLowThreshold] = useState('');
-  // Common states
-  const [showUsePart, setShowUsePart] = useState(null);
-  const [useAmount, setUseAmount] = useState('');
-  const [showAddQuantity, setShowAddQuantity] = useState(null);
-  const [addAmount, setAddAmount] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [userRole, setUserRole] = useState('user');
   const [isLoadingInventory, setIsLoadingInventory] = useState(true);
   const [isLoadingCompanyParts, setIsLoadingCompanyParts] = useState(false);
-  const unsubscribeRef = useRef(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
+  const { scrollProps } = useScrollHandler();
   const {
     inventory: cachedInventory,
     companyInventory: cachedCompanyInventory,
-    profile,
     getUid,
-    getUserRole: getCachedUserRole,
     getCompanyId,
     updateInventory,
     isLoading: cacheLoading
   } = useCache();
   const colors = getColors(isDarkMode);
+
+  const inventoryRef = useRef(inventory);
+  const updateInventoryRef = useRef(updateInventory);
+  const widRef = useRef(wid);
+
+  useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
+  useEffect(() => { updateInventoryRef.current = updateInventory; }, [updateInventory]);
+  useEffect(() => { widRef.current = wid; }, [wid]);
 
   const t = language === 'en' ? {
     title: 'Cooling Parts',
@@ -215,14 +386,10 @@ export default function WorkerInventory() {
     const user = auth.currentUser;
     if (!user) return;
 
-    const targetUid = workerId || getUid() || user.uid;
-
-    // Set user role from cache
-    const role = getCachedUserRole();
-    if (role) setUserRole(role);
+    const targetUid = wid || getUid() || user.uid;
 
     // If viewing own inventory (not worker's), use cached data
-    if (!workerId) {
+    if (!wid) {
       if (!cacheLoading) {
         const partsArray = Array.isArray(cachedInventory) ? cachedInventory : [];
         setInventory(partsArray);
@@ -255,16 +422,16 @@ export default function WorkerInventory() {
         unsubscribeRef.current = null;
       }
     };
-  }, [workerId]);
+  }, [wid]);
 
   // Update inventory from cache when it changes
   useEffect(() => {
-    if (!workerId && !cacheLoading) {
+    if (!wid && !cacheLoading) {
       const partsArray = Array.isArray(cachedInventory) ? cachedInventory : [];
       setInventory(partsArray);
       setIsLoadingInventory(false);
     }
-  }, [cachedInventory, cacheLoading, workerId]);
+  }, [cachedInventory, cacheLoading, wid]);
 
   // ─── Load company parts for manager/worker when picker opens ─
   const loadCompanyParts = useCallback(async () => {
@@ -279,22 +446,20 @@ export default function WorkerInventory() {
     }
   }, [cachedCompanyInventory]);
 
-  // ─── Save inventory through backend & cache ─────────────────────
-  const saveInventory = async (updatedInventory) => {
+  // ─── Persist inventory through backend & cache ─────────────────────
+  const persistInventory = useCallback(async (updatedInventory: InventoryPart[]) => {
     const user = auth.currentUser;
     if (!user) return;
 
-    const targetUid = workerId || getUid() || user.uid;
+    const targetUid = widRef.current || getUid() || user.uid;
     const companyId = getCompanyId();
     if (!companyId) {
       throw new Error('Company ID not found');
     }
 
-    // 1. Update local cache first (if viewing own inventory)
-    if (!workerId) {
-      await updateInventory(updatedInventory);
+    if (!widRef.current) {
+      await updateInventoryRef.current(updatedInventory);
     } else {
-      // Manager editing worker inventory goes through protected Cloud Function.
       const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
       await updateInventoryFn({
         companyId,
@@ -304,7 +469,7 @@ export default function WorkerInventory() {
         parts: Array.isArray(updatedInventory) ? updatedInventory : [],
       });
     }
-  };
+  }, [getUid, getCompanyId]);
 
   // ─── MANAGER/WORKER: Add part from company parts ─────────────
   const handleOpenCompanyPicker = () => {
@@ -316,7 +481,7 @@ export default function WorkerInventory() {
     setAddLowThreshold('');
   };
 
-  const handleSelectCompanyPart = (companyPart) => {
+  const handleSelectCompanyPart = (companyPart: InventoryPart) => {
     // Check if already in inventory (no duplicate IDs allowed)
     const exists = inventory.find(p => p.id === companyPart.id);
     if (exists) {
@@ -332,15 +497,15 @@ export default function WorkerInventory() {
       return;
     }
 
-    const qty = parseInt(addQuantity);
-    const lowThres = parseInt(addLowThreshold);
-    if (!qty || qty <= 0 || isNaN(lowThres) || lowThres < 0) {
+    const qty = parseInt(addQuantity, 10);
+    const lowThres = parseInt(addLowThreshold, 10);
+    if (!qty || qty <= 0 || Number.isNaN(lowThres) || lowThres < 0) {
       alert.warning(t.invalidAmount, t.amountMustBePositive);
       return;
     }
 
     try {
-      const part = {
+      const part: InventoryPart = {
         id: selectedCompanyPart.id, // Same ID as company part — source of truth
         name: selectedCompanyPart.name,
         quantity: qty,
@@ -349,7 +514,8 @@ export default function WorkerInventory() {
       };
 
       const updated = [...inventory, part];
-      await saveInventory(updated);
+      await persistInventory(updated);
+      setInventory(updated);
 
       alert.success(t.partAddedSuccess, `${part.name} ${t.partAddedMessage}`);
       setShowCompanyPicker(false);
@@ -363,68 +529,41 @@ export default function WorkerInventory() {
   };
 
   // ─── Common: Use Part ────────────────────────────────────────
-  const handleUsePart = async (id) => {
-    const amount = parseInt(useAmount);
-    if (!amount || amount <= 0) {
-      alert.warning(t.invalidAmount, t.amountMustBePositive);
-      return;
-    }
+  const handleUsePart = useCallback((id: string | number, amount: number) => {
+    const part = inventoryRef.current.find(p => p.id === id);
+    if (!part) return;
+    const updated = inventoryRef.current.map((p) =>
+      p.id === id ? { ...p, quantity: Math.max(0, p.quantity - amount) } : p
+    );
+    setInventory(updated);
+    void persistInventory(updated);
 
-    try {
-      const part = inventory.find(p => p.id === id);
-      const updated = inventory.map((p) =>
-        p.id === id ? { ...p, quantity: Math.max(0, p.quantity - amount) } : p
-      );
-      await saveInventory(updated);
-
-      alert.success(t.partUsedSuccess, `${amount} ${t.partUsedMessage} ${part.name}`);
-      setShowUsePart(null);
-      setUseAmount('');
-    } catch (error) {
-      console.error('Error using part:', error);
-      alert.error('Error', 'Failed to update inventory. Please try again.');
-    }
-  };
+    alert.success(t.partUsedSuccess, `${amount} ${t.partUsedMessage} ${part.name}`);
+  }, [alert, t, persistInventory]);
 
   // ─── Common: Add Quantity ────────────────────────────────────
-  const handleAddQuantityToPart = async (id) => {
-    const amount = parseInt(addAmount);
-    if (!amount || amount <= 0) {
-      alert.warning(t.invalidAmount, t.amountMustBePositive);
-      return;
-    }
+  const handleAddQuantityToPart = useCallback((id: string | number, amount: number) => {
+    const part = inventoryRef.current.find(p => p.id === id);
+    if (!part) return;
+    const updated = inventoryRef.current.map((p) =>
+      p.id === id ? { ...p, quantity: p.quantity + amount } : p
+    );
+    setInventory(updated);
+    void persistInventory(updated);
 
-    try {
-      const part = inventory.find(p => p.id === id);
-      const updated = inventory.map((p) =>
-        p.id === id ? { ...p, quantity: p.quantity + amount } : p
-      );
-      await saveInventory(updated);
-
-      alert.success(t.quantityAddedSuccess, `${amount} ${t.quantityAddedMessage} ${part.name}`);
-      setShowAddQuantity(null);
-      setAddAmount('');
-    } catch (error) {
-      console.error('Error adding quantity:', error);
-      alert.error('Error', 'Failed to update inventory. Please try again.');
-    }
-  };
+    alert.success(t.quantityAddedSuccess, `${amount} ${t.quantityAddedMessage} ${part.name}`);
+  }, [alert, t, persistInventory]);
 
   // ─── Common: Remove Part from inventory ──────────────────────
-  // NOTE: Removing does NOT recycle the ID. For user role, nextId stays unchanged.
-  // For manager/worker role, the company part ID stays in the company inventory.
-  const handleRemovePart = async (id) => {
-    try {
-      const part = inventory.find(p => p.id === id);
-      const updated = inventory.filter((p) => p.id !== id);
-      await saveInventory(updated);
+  const handleRemovePart = useCallback((id: string | number) => {
+    const part = inventoryRef.current.find(p => p.id === id);
+    if (!part) return;
+    const updated = inventoryRef.current.filter((p) => p.id !== id);
+    setInventory(updated);
+    void persistInventory(updated);
 
-      alert.success(t.partRemovedSuccess, `${part.name} ${t.partRemovedMessage}`);
-    } catch (error) {
-      console.error('Error removing part:', error);
-      alert.error('Error', 'Failed to remove part. Please try again.');
-    }
-  };
+    alert.success(t.partRemovedSuccess, `${part.name} ${t.partRemovedMessage}`);
+  }, [alert, t, persistInventory]);
 
   // ─── Filtering ───────────────────────────────────────────────
   const safeInventory = Array.isArray(inventory) ? inventory : [];
@@ -453,208 +592,124 @@ export default function WorkerInventory() {
         : true
     );
 
-  // ─── Render a part card ──────────────────────────────────────
-  const renderPartCard = (part, isLowStock) => (
-    <View key={part.id} style={[styles.partCard, { backgroundColor: colors.surface }]}>
-      <View style={styles.partHeader}>
-        <View style={styles.partInfo}>
-          <View style={styles.partNameRow}>
-            {isLowStock && (
-              <MaterialCommunityIcons
-                name="alert-circle"
-                size={24}
-                color="#ef4444"
-                style={styles.warningIcon}
-              />
-            )}
-            <View style={[styles.idBadge, { backgroundColor: colors.secondary + '20' }]}>
-              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{part.id}</AppText>
+  const listData = useMemo(
+    () => [...filteredLowStockParts, ...filteredNormalStockParts],
+    [filteredLowStockParts, filteredNormalStockParts]
+  );
+
+  const renderItem = useCallback(({ item }: { item: InventoryPart }) => (
+    <InventoryPartRow
+      part={item}
+      colors={colors}
+      isDarkMode={isDarkMode}
+      t={t}
+      onRemove={handleRemovePart}
+      onUse={handleUsePart}
+      onAddQuantity={handleAddQuantityToPart}
+    />
+  ), [colors, isDarkMode, t, handleRemovePart, handleUsePart, handleAddQuantityToPart]);
+
+  const hasListContent = !isLoadingInventory && !cacheLoading && inventory.length > 0;
+
+  const ListHeader = useCallback(() => (
+    <View>
+      <ScreenHeroCard
+        title={t.title}
+        subtitle={t.subtitle}
+        eyebrow="Inventory"
+        icon="package-variant"
+        iconLibrary="material"
+        accentColor={colors.boxOrange}
+        metrics={[
+          { label: t.quantity, value: String(safeInventory.length) },
+          { label: t.lowStock, value: String(lowStockParts.length) },
+        ]}
+        badges={[t.addFromCompany, t.searchParts]}
+        style={styles.heroCard}
+      />
+
+      {/* Low Stock Warning */}
+      {lowStockParts.length > 0 && (
+        <AppCard style={[styles.warningBox, {
+          backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.1)' : 'rgba(239, 68, 68, 0.05)',
+          borderColor: '#ef4444',
+        }]}>
+          <View style={styles.warningBoxContent}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#ef4444" style={styles.warningBoxIcon} />
+            <View style={styles.warningBoxText}>
+              <AppText style={[styles.warningTitle, { color: '#ef4444' }]}>{t.lowStockWarning}</AppText>
+              <AppText style={[styles.warningDescription, { color: isDarkMode ? colors.textSecondary : '#7f1d1d' }]}>
+                {lowStockParts.length} {lowStockParts.length === 1 ? t.partLowStock : t.partsLowStock}
+              </AppText>
             </View>
-            <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText>
           </View>
-          <AppText style={[styles.partQuantity, { color: colors.textSecondary }]}>
-            {t.quantity}: {part.quantity} ({t.alert}: {part.lowThreshold || 0})
-          </AppText>
-        </View>
-
-        <View style={styles.partActions}>
-          <TouchableOpacity
-            style={[styles.actionButton, {
-              backgroundColor: isDarkMode ? 'rgba(0, 172, 193, 0.15)' : 'rgba(0, 172, 193, 0.08)',
-              borderColor: colors.secondary,
-              borderWidth: 1,
-            }]}
-            onPress={() => { setShowAddQuantity(part.id); setShowUsePart(null); }}
-          >
-            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>+ {t.add}</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, {
-              backgroundColor: isDarkMode ? 'rgba(0, 172, 193, 0.15)' : 'rgba(0, 172, 193, 0.08)',
-              borderColor: colors.secondary,
-              borderWidth: 1,
-            }]}
-            onPress={() => { setShowUsePart(part.id); setShowAddQuantity(null); }}
-          >
-            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>- {t.use}</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, {
-              backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.08)',
-              borderColor: '#ef4444',
-              borderWidth: 1,
-            }]}
-            onPress={() => {
-              alert.confirm(
-                t.confirmRemove,
-                `${t.areYouSure}\n${part.name}\n\n${t.confirmRemoveMessage}`,
-                [
-                  { text: t.cancel, style: 'cancel', onPress: () => {} },
-                  { text: t.remove, style: 'destructive', onPress: () => handleRemovePart(part.id) },
-                ]
-              );
-            }}
-          >
-            <AppText style={[styles.actionButtonText, { color: '#ef4444' }]}>🗑</AppText>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Use Part Input */}
-      {showUsePart === part.id && (
-        <View style={styles.amountInput}>
-          <AppInput
-            value={useAmount}
-            onChangeText={setUseAmount}
-            placeholder={t.amount}
-            keyboardType="numeric"
-            colors={colors}
-          />
-          <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={() => handleUsePart(part.id)} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
-              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { setShowUsePart(null); setUseAmount(''); }}
-              style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
-            >
-              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </AppCard>
       )}
 
-      {/* Add Quantity Input */}
-      {showAddQuantity === part.id && (
-        <View style={styles.amountInput}>
-          <AppInput
-            value={addAmount}
-            onChangeText={setAddAmount}
-            placeholder={t.amount}
-            keyboardType="numeric"
-            colors={colors}
-          />
-          <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={() => handleAddQuantityToPart(part.id)} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
-              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { setShowAddQuantity(null); setAddAmount(''); }}
-              style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
-            >
-              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
-            </TouchableOpacity>
-          </View>
-        </View>
+      {/* Add from Company Parts */}
+      <AppButton
+        title={`+ ${t.addFromCompany}`}
+        onPress={handleOpenCompanyPicker}
+        style={styles.addButton}
+      />
+
+      {hasListContent && (
+        <SearchInput
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder={t.searchParts}
+          colors={colors}
+          style={styles.searchInput}
+        />
       )}
     </View>
-  );
+  ), [t, colors, isDarkMode, safeInventory, lowStockParts, searchQuery, hasListContent, handleOpenCompanyPicker]);
+
+  const ListEmpty = useCallback(() => {
+    if (isLoadingInventory || cacheLoading) {
+      return (
+        <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
+          <ActivityIndicator size="large" color={colors.secondary} />
+          <AppText style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>Loading inventory...</AppText>
+        </View>
+      );
+    }
+    if (inventory.length === 0) {
+      return (
+        <AppEmptyState
+          icon="package-variant"
+          title={t.noPartsYet}
+          subtitle={t.addFirstPart}
+          style={[styles.emptyCard, { backgroundColor: colors.surface }]}
+        />
+      );
+    }
+    return <AppEmptyState title={t.noResults} style={[styles.emptyCard, { backgroundColor: colors.surface }]} />;
+  }, [isLoadingInventory, cacheLoading, inventory.length, colors, t]);
 
   // ─── Render ──────────────────────────────────────────────────
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? "light" : "dark"} />
 
-      <ScrollableContainer
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-      >
-        <ScreenHeroCard
-          title={t.title}
-          subtitle={t.subtitle}
-          eyebrow="Inventory"
-          icon="package-variant"
-          iconLibrary="material"
-          accentColor={colors.boxOrange}
-          metrics={[
-            { label: t.quantity, value: String(safeInventory.length) },
-            { label: t.lowStock, value: String(lowStockParts.length) },
-          ]}
-          badges={[t.addFromCompany, t.searchParts]}
-          style={styles.heroCard}
-        />
-
-        {/* Low Stock Warning */}
-        {lowStockParts.length > 0 && (
-          <AppCard style={[styles.warningBox, {
-            backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.1)' : 'rgba(239, 68, 68, 0.05)',
-            borderColor: '#ef4444',
-          }]}> 
-            <View style={styles.warningBoxContent}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#ef4444" style={styles.warningBoxIcon} />
-              <View style={styles.warningBoxText}>
-                <AppText style={[styles.warningTitle, { color: '#ef4444' }]}>{t.lowStockWarning}</AppText>
-                <AppText style={[styles.warningDescription, { color: isDarkMode ? colors.textSecondary : '#7f1d1d' }]}>
-                  {lowStockParts.length} {lowStockParts.length === 1 ? t.partLowStock : t.partsLowStock}
-                </AppText>
-              </View>
-            </View>
-          </AppCard>
-        )}
-
-        {/* Add from Company Parts */}
-        <AppButton
-          title={`+ ${t.addFromCompany}`}
-          onPress={handleOpenCompanyPicker}
-          style={styles.addButton}
-        />
-
-        {/* Loading State */}
-        {isLoadingInventory || cacheLoading ? (
-          <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
-            <ActivityIndicator size="large" color={colors.secondary} />
-            <AppText style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>Loading inventory...</AppText>
-          </View>
-        ) : inventory.length === 0 ? (
-          <AppEmptyState
-            icon="package-variant"
-            title={t.noPartsYet}
-            subtitle={t.addFirstPart}
-            style={[styles.emptyCard, { backgroundColor: colors.surface }]}
-          />
-        ) : (
-          <>
-            {/* Search */}
-            <SearchInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder={t.searchParts}
-              colors={colors}
-              style={styles.searchInput}
-            />
-
-            {/* Low Stock Parts */}
-            {filteredLowStockParts.map((part) => renderPartCard(part, true))}
-
-            {/* Normal Stock Parts */}
-            {filteredNormalStockParts.map((part) => renderPartCard(part, false))}
-
-            {filteredLowStockParts.length === 0 && filteredNormalStockParts.length === 0 && (
-              <AppEmptyState title={t.noResults} style={[styles.emptyCard, { backgroundColor: colors.surface }]} />
-            )}
-          </>
-        )}
-      </ScrollableContainer>
+      <FlatList
+        data={listData}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={renderItem}
+        contentContainerStyle={{
+          paddingTop: Platform.OS === 'ios' ? 95 : 85,
+          paddingHorizontal: spacing.lg,
+          paddingBottom: spacing.xxxl + 80,
+        }}
+        ListHeaderComponent={ListHeader}
+        ListEmptyComponent={ListEmpty}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="always"
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        {...scrollProps}
+      />
 
       {/* ─── Company Parts Picker Modal (Manager/Worker) ─── */}
       <Modal
@@ -807,13 +862,6 @@ const styles = StyleSheet.create({
   warningDescription: {
     fontSize: typography.sm,
     fontWeight: typography.semibold,
-  },
-  scrollView: {
-    flex: 1,
-    paddingTop: Platform.OS === 'ios' ? 95 : 85,
-  },
-  scrollContent: {
-    padding: spacing.lg,
   },
   heroCard: {
     marginBottom: spacing.lg,
@@ -1069,10 +1117,3 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
 });
-
-
-
-
-
-
-

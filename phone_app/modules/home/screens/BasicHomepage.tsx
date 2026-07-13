@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { ROUTES } from '../../../navigation/routes';
 import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -18,6 +17,7 @@ import {
   DashboardShell,
   GlobalHeader,
 } from '../../../components';
+import type { IconLibrary } from '../../../components/primitives/AppIcon';
 
 const translations = {
   en: {
@@ -154,7 +154,22 @@ const translations = {
   },
 };
 
-const compactSections = (t, businessInfo) => [
+interface BusinessInfo {
+  heName: string;
+  enName: string;
+  vatNumber: string;
+  businessType: string;
+  address: string;
+  city: string;
+  businessEmail: string;
+  businessPhone: string;
+  businessFax: string;
+  accountantName: string;
+  accountantEmail: string;
+  accountantPhone: string;
+}
+
+const compactSections = (t: typeof translations.en, businessInfo: BusinessInfo | null) => [
   {
     title: t.companySection,
     items: [
@@ -184,24 +199,25 @@ const compactSections = (t, businessInfo) => [
   },
 ].filter((section) => section.items.length > 0);
 
-function normalizeBusinessInfo(data) {
+function normalizeBusinessInfo(data: unknown): BusinessInfo | null {
   if (!data || typeof data !== 'object') {
     return null;
   }
 
+  const d = data as Record<string, unknown>;
   return {
-    heName: data.he_name || '',
-    enName: data.en_name || '',
-    vatNumber: data.vat_number || '',
-    businessType: data.business_type || '',
-    address: data.address || '',
-    city: data.city || '',
-    businessEmail: data.business_email || '',
-    businessPhone: data.business_phone || '',
-    businessFax: data.business_fax || '',
-    accountantName: data.accountant_name || '',
-    accountantEmail: data.accountant_email || '',
-    accountantPhone: data.accountant_phone || '',
+    heName: String(d.he_name || ''),
+    enName: String(d.en_name || ''),
+    vatNumber: String(d.vat_number || ''),
+    businessType: String(d.business_type || ''),
+    address: String(d.address || ''),
+    city: String(d.city || ''),
+    businessEmail: String(d.business_email || ''),
+    businessPhone: String(d.business_phone || ''),
+    businessFax: String(d.business_fax || ''),
+    accountantName: String(d.accountant_name || ''),
+    accountantEmail: String(d.accountant_email || ''),
+    accountantPhone: String(d.accountant_phone || ''),
   };
 }
 
@@ -210,16 +226,16 @@ export default function BasicHomepage() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const { subscription, getCompanyId } = useCache();
-  const [businessInfo, setBusinessInfo] = useState(null);
+  const [businessInfo, setBusinessInfo] = useState<BusinessInfo | null>(null);
   const [activeTab, setActiveTab] = useState('business');
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
   const companyId = getCompanyId();
 
-  const hasDocs = isModuleEnabled(subscription, 'documents');
-  const subActive = isSubscriptionActive(subscription);
+  const hasDocs = isModuleEnabled(subscription ?? null, 'documents');
+  const subActive = isSubscriptionActive(subscription ?? null);
 
-  const availableTabs = [
+  const availableTabs: string[] = [
     'business',
     ...(hasDocs ? ['documents'] : []),
   ];
@@ -228,7 +244,7 @@ export default function BasicHomepage() {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
       setActiveTab(availableTabs[0]);
     }
-  }, [activeTab, availableTabs.join('|')]);
+  }, [activeTab, availableTabs]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -245,7 +261,7 @@ export default function BasicHomepage() {
         if (cancelled) return;
         setBusinessInfo(normalizeBusinessInfo(bootstrap?.businessInfo));
       } catch (error) {
-        console.warn('BasicHomepage: failed to load business info', error?.message || error);
+        console.warn('BasicHomepage: failed to load business info', error instanceof Error ? error.message : String(error));
       }
     })();
 
@@ -254,20 +270,29 @@ export default function BasicHomepage() {
     };
   }, [companyId]);
 
-  const tabItems = [
-    { key: 'business', label: t.businessTab, icon: 'domain', iconLibrary: 'material' },
-    ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' }] : []),
+  const tabItems: Array<{ key: string; label: string; icon: string; iconLibrary: IconLibrary }> = [
+    { key: 'business', label: t.businessTab, icon: 'domain', iconLibrary: 'material' as IconLibrary },
+    ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' as IconLibrary }] : []),
   ];
 
   const infoSections = useMemo(() => compactSections(t, businessInfo), [t, businessInfo]);
 
-  const documentCards = [
+  const documentCards: Array<{
+    key: string;
+    title: string;
+    description: string;
+    icon: string;
+    iconLibrary: IconLibrary;
+    accentColor: string;
+    badge: string;
+    onPress: () => void;
+  }> = [
     {
       key: 'general-documents',
       title: t.generalDocs,
       description: t.generalDocsDesc,
       icon: 'file-document-multiple',
-      iconLibrary: 'material',
+      iconLibrary: 'material' as IconLibrary,
       accentColor: colors.boxBlue,
       badge: t.docsBadge,
       onPress: () => router.push(ROUTES.generalDocuments),
@@ -277,7 +302,7 @@ export default function BasicHomepage() {
       title: t.documentHistory,
       description: t.documentHistoryDesc,
       icon: 'history',
-      iconLibrary: 'material',
+      iconLibrary: 'material' as IconLibrary,
       accentColor: colors.boxLime,
       badge: t.docsBadge,
       onPress: () => router.push(ROUTES.documentHistory),
@@ -287,7 +312,7 @@ export default function BasicHomepage() {
       title: t.clientBook,
       description: t.clientBookDesc,
       icon: 'book-account',
-      iconLibrary: 'material',
+      iconLibrary: 'material' as IconLibrary,
       accentColor: colors.boxPink,
       badge: t.docsBadge,
       onPress: () => router.push(ROUTES.clientBook),

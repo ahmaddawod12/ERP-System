@@ -45,7 +45,8 @@ if (!STORAGE_BUCKET) {
 const storage = new Storage();
 
 const app = express();
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }));
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '1mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // ============================================================================
 // CONSTANTS

@@ -1,12 +1,11 @@
-﻿// @ts-nocheck
-/**
+﻿/**
  * SupportChat.js - User Support & Feedback Chat Page
- * 
+ *
  * Full-page chat screen for users to send support questions/feedback
  * and receive replies from dev team.
  */
 import { useCache } from '../../../contexts/CacheContext';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -45,6 +44,10 @@ import {
   getSupportTranslations,
 } from '../lib/support-copy';
 
+type Conversation = any;
+type Message = any;
+type Translations = ReturnType<typeof getSupportTranslations>;
+
 export default function SupportChat() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -57,23 +60,23 @@ export default function SupportChat() {
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [conversationId, setConversationId] = useState(null);
-  const [conversationStatus, setConversationStatus] = useState('open');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationStatus, setConversationStatus] = useState<'open' | 'closed'>('open');
   const [showHistory, setShowHistory] = useState(false);
-  const [closedConversations, setClosedConversations] = useState([]);
+  const [closedConversations, setClosedConversations] = useState<Conversation[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [viewingClosedConversation, setViewingClosedConversation] = useState(null);
-  const [hiddenConversations, setHiddenConversations] = useState([]);
+  const [viewingClosedConversation, setViewingClosedConversation] = useState<Conversation | null>(null);
+  const [hiddenConversations, setHiddenConversations] = useState<string[]>([]);
   const [hasNoConversation, setHasNoConversation] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
-  const [openConversations, setOpenConversations] = useState([]);
+  const [openConversations, setOpenConversations] = useState<Conversation[]>([]);
   const [showTemplateForm, setShowTemplateForm] = useState(false);
-  const [templateAnswers, setTemplateAnswers] = useState({});
+  const [templateAnswers, setTemplateAnswers] = useState<Record<number, string>>({});
   const hiddenConversationsKey = scopedKey('hiddenConversations');
-  
-  const flatListRef = useRef(null);
+
+  const flatListRef = useRef<FlatList<Message> | null>(null);
 
   const t = getSupportTranslations(language);
 
@@ -95,9 +98,9 @@ export default function SupportChat() {
       
       // Load hidden conversations from local storage
       const hiddenStr = storage.getString(hiddenConversationsKey);
-      const hiddenIds = safeJsonParse(hiddenStr, []);
+      const hiddenIds = safeJsonParse<string[]>(hiddenStr, []) || [];
       setHiddenConversations(hiddenIds);
-      
+
       // Load open conversations to display on main page
       const openConvs = allOpenConversations.filter(conv => !hiddenIds.includes(conv.id));
       setOpenConversations(openConvs);
@@ -122,7 +125,7 @@ export default function SupportChat() {
   }, []);
 
   // Load messages for a specific conversation (one-time fetch)
-  const loadConversationMessages = async (convId) => {
+  const loadConversationMessages = async (convId: string) => {
     try {
       const msgs = await loadConversationThread(convId);
       setMessages(msgs);
@@ -195,7 +198,7 @@ export default function SupportChat() {
     }
   };
 
-  const viewConversation = async (conv) => {
+  const viewConversation = async (conv: Conversation) => {
     setViewingClosedConversation(conv);
     
     // If conversation is open, allow chatting
@@ -221,7 +224,7 @@ export default function SupportChat() {
     }
   };
 
-  const startNewConversation = async (category = null) => {
+  const startNewConversation = async (category: string | null = null) => {
     const user = auth.currentUser;
     if (!user) return;
     
@@ -308,7 +311,7 @@ export default function SupportChat() {
     setShowHistory(!showHistory);
   };
 
-  const hideConversation = (convId) => {
+  const hideConversation = (convId: string) => {
     if (!convId) return;
     
     alert.confirm(
@@ -339,17 +342,17 @@ export default function SupportChat() {
     );
   };
 
-  const formatTime = (date) => {
+  const formatTime = (date: Date | null | undefined) => {
     if (!date) return '';
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const formatDate = (date) => {
+  const formatDate = (date: Date | null | undefined) => {
     if (!date) return '';
     return date.toLocaleDateString();
   };
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = ({ item }: { item: Message }) => {
     const user = auth.currentUser;
     const uid = user ? user.uid : '';
     const isUser = item.senderUid === uid;
@@ -376,7 +379,7 @@ export default function SupportChat() {
     );
   };
 
-  const renderConversation = ({ item }) => {
+  const renderConversation = ({ item }: { item: Conversation }) => {
     const isOpen = item.status === 'open';
     const categoryIcon = getSupportCategoryMeta(item.category, colors, t);
     
@@ -390,9 +393,9 @@ export default function SupportChat() {
             <View style={styles.historyItemHeader}>
               <View style={styles.categoryIconContainer}>
                 {categoryIcon.type === 'Ionicons' ? (
-                  <Ionicons name={categoryIcon.icon} size={20} color={categoryIcon.color} />
+                  <Ionicons name={categoryIcon.icon as any} size={20} color={categoryIcon.color} />
                 ) : (
-                  <MaterialCommunityIcons name={categoryIcon.icon} size={20} color={categoryIcon.color} />
+                  <MaterialCommunityIcons name={categoryIcon.icon as any} size={20} color={categoryIcon.color} />
                 )}
               </View>
               <AppText style={[styles.historyItemMessage, { color: colors.textPrimary }]} numberOfLines={2}>

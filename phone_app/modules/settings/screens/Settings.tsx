@@ -1,5 +1,4 @@
-// @ts-nocheck
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -27,7 +26,7 @@ export default function Settings() {
   const { clearCache, profile, getUserRole } = useCache();
   const colors = getColors(isDarkMode);
   const alert = useAlert();
-  const [userRole, setUserRole] = useState(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Get user role from cache instead of a backend round-trip
   useEffect(() => {

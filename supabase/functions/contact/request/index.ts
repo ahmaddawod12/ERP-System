@@ -52,12 +52,37 @@ const RATE_LIMIT_KEY_PREFIX = "contact:request";
 const RATE_LIMIT_MAX_REQUESTS = 5;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-function getClientIp(req: Request): string {
-  const cfConnectingIp = req.headers.get("cf-connecting-ip");
-  if (cfConnectingIp) return cfConnectingIp.trim();
+function isValidIp(ip: string): boolean {
+  if (!ip || typeof ip !== "string") return false;
+  // IPv4
+  const ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  // IPv6 (including compressed forms)
+  const ipv6 = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,7}:$|^(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}$|^(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}$|^(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}$|^[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}$|^::$|^::1$/;
+  return ipv4.test(ip) || ipv6.test(ip);
+}
 
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) return realIp.trim();
+function getRemoteAddr(req: Request): string | undefined {
+  const connInfo = (req as unknown as { connInfo?: { remoteAddr?: { hostname?: string; port?: number } | string } }).connInfo;
+  if (!connInfo?.remoteAddr) return undefined;
+  if (typeof connInfo.remoteAddr === "string") return connInfo.remoteAddr;
+  return connInfo.remoteAddr.hostname;
+}
+
+function getClientIp(req: Request): string {
+  // Only trust CF-Connecting-IP when the request came through Cloudflare (cf-ray is present).
+  // Direct callers can spoof x-real-ip / x-forwarded-for, so those headers are ignored.
+  const cfRay = req.headers.get("cf-ray");
+  const cfConnectingIp = req.headers.get("cf-connecting-ip");
+  if (cfRay && cfConnectingIp) {
+    const ip = cfConnectingIp.trim();
+    if (isValidIp(ip)) return ip;
+  }
+
+  const remoteAddr = getRemoteAddr(req);
+  if (remoteAddr) {
+    const ip = remoteAddr.trim();
+    if (isValidIp(ip)) return ip;
+  }
 
   return "unknown";
 }
@@ -112,12 +137,16 @@ async function handleContactRequestRequest(req: Request): Promise<Response> {
     const rateLimitKey = `${RATE_LIMIT_KEY_PREFIX}:${clientIp}:${email.toLowerCase()}`;
     await checkRateLimit(rateLimitKey, RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_MS, ctx);
 
+    const company = body?.company
+      ? requireNonEmptyString(body.company, "company", 1, 500)
+      : "General";
+
     const result = await contactRequestV1(
       {
         name,
         email,
         subject,
-        company: body?.company || "General",
+        company,
         message,
       },
       ctx,

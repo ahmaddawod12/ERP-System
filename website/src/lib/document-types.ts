@@ -1,13 +1,11 @@
-import { DOC_SUFFIX, DOC_TYPE, VAT_RATE, type DocTypeCode } from "@smart-job/contracts";
-
-const DOC_LABELS = Object.freeze({
-  [DOC_TYPE.PRICE_PROPOSAL]: "Price Proposal",
-  [DOC_TYPE.DELIVERY_NOTE]: "Delivery Note",
-  [DOC_TYPE.RETURN_CERTIFICATE]: "Return Certificate",
-  [DOC_TYPE.TAX_INVOICE]: "Tax Invoice",
-  [DOC_TYPE.REFUND]: "Refund",
-  [DOC_TYPE.RECEIPT]: "Receipt",
-});
+import {
+  DOC_SUFFIX,
+  DOC_TYPE,
+  VAT_RATE,
+  DOC_LABELS,
+  getDocumentLabel,
+  type DocTypeCode,
+} from "@smart-job/contracts";
 
 const DOCUMENT_TYPE_ORDER = [
   DOC_TYPE.PRICE_PROPOSAL,
@@ -22,7 +20,7 @@ export type DocumentTypeCode = DocTypeCode;
 export { DOC_TYPE, VAT_RATE };
 
 export function getDocumentTypeLabel(code: number) {
-  return DOC_LABELS[code as DocumentTypeCode] ?? `Type ${code}`;
+  return DOC_LABELS[code as DocumentTypeCode] ? getDocumentLabel(code, "en") : `Type ${code}`;
 }
 
 export const DOCUMENT_TYPES = DOCUMENT_TYPE_ORDER.map((code) => ({

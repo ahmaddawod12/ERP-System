@@ -6,9 +6,19 @@ export interface JobFileRef {
   url?: string;
 }
 
+const SAFE_STORAGE_PATH_RE = /^[a-zA-Z0-9._\-/]+$/;
+const NULL_BYTE_RE = /\x00/;
+
 function normalizeStoragePath(value: string | null | undefined): string | null {
   const normalized = String(value || '').trim().replace(/^\/+/, '');
-  if (!normalized || normalized.includes('..') || normalized.includes('?')) {
+  if (
+    !normalized ||
+    NULL_BYTE_RE.test(normalized) ||
+    !SAFE_STORAGE_PATH_RE.test(normalized) ||
+    normalized.includes('..') ||
+    normalized.includes('//') ||
+    normalized.includes('?')
+  ) {
     return null;
   }
   return normalized;

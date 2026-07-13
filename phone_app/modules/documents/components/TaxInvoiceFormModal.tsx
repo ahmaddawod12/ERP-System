@@ -1,5 +1,3 @@
-// @ts-nocheck
-import React from 'react';
 import {
   View,
   ScrollView,
@@ -15,7 +13,86 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WebView } from 'react-native-webview';
 import { AppText, AppInput, GlobalHeader, InventoryItemSearch } from '../../../components';
-import { spacing, borderRadius, typography, shadows } from '../../../theme';
+import { spacing, borderRadius, typography, shadows, type ColorPalette } from '../../../theme';
+import type { AppDocument, InventoryPart } from '../../../types';
+import type { TaxInvoiceJob } from './TaxInvoiceJobList';
+
+const getTimeMs = (value?: unknown): number => {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return new Date(value).getTime();
+  if (typeof value === 'object' && 'toMillis' in value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  if (typeof value === 'object' && 'seconds' in value && typeof (value as { seconds?: number }).seconds === 'number') {
+    return (value as { seconds: number }).seconds * 1000;
+  }
+  return 0;
+};
+
+const formatDateShort = (value?: unknown): string => {
+  const ms = getTimeMs(value);
+  return ms ? new Date(ms).toLocaleDateString() : '';
+};
+
+interface InvoicePart {
+  id?: string;
+  name: string;
+  quantity: string;
+  price: string;
+  partId?: string;
+}
+
+interface InvoiceData {
+  customerName: string;
+  customerVatNumber: string;
+  customerEmail: string;
+  customerId: string;
+  customerAddress: string;
+  customerCity: string;
+  customerPhone: string;
+  serviceDescription: string;
+  invoiceDate: string;
+}
+
+interface TaxInvoiceFormModalProps {
+  modalVisible: boolean;
+  closeReceiptForm: () => void;
+  currentStep: number;
+  goToStep1: () => void;
+  goToStep2: () => void;
+  invoiceData: InvoiceData;
+  setInvoiceData: (data: InvoiceData) => void;
+  selectedClientObj: { name?: string } | null;
+  matchingProposals: AppDocument[];
+  selectedPriceProposal: AppDocument | null;
+  applyPriceProposal: (proposal: AppDocument) => void;
+  jobParts: InvoicePart[];
+  updateJobPartPrice: (index: number, price: string) => void;
+  customParts: InvoicePart[];
+  updateCustomPart: (index: number, field: keyof InvoicePart, value: string) => void;
+  handleCustomPartSelect: (index: number, part: InventoryPart) => void;
+  addCustomPart: () => void;
+  removeCustomPart: (index: number) => void;
+  selectedJobs: TaxInvoiceJob[];
+  handlePreviewInvoice: () => void;
+  handleSubmitInvoice: () => void;
+  downloadAndSharePDF: () => void;
+  previewLoading: boolean;
+  previewURL: string | null;
+  pdfModalVisible: boolean;
+  setPdfModalVisible: (visible: boolean) => void;
+  pdfViewerVisible: boolean;
+  setPdfViewerVisible: (visible: boolean) => void;
+  colors: ColorPalette;
+  isDarkMode: boolean;
+  t: Record<string, string>;
+  insets: { top: number; bottom: number };
+  language: string;
+  getInventoryParts: () => InventoryPart[];
+  alert: { error: (title: string, message: string) => void };
+}
 
 /**
  * Form modal sub-component for the Generate Tax Invoice screen.
@@ -57,8 +134,8 @@ export default function TaxInvoiceFormModal({
   language,
   getInventoryParts,
   alert,
-}) {
-  const showErrorMessage = (title, message) => alert.error(title, message);
+}: TaxInvoiceFormModalProps) {
+  const showErrorMessage = (title: string, message: string) => alert.error(title, message);
 
   return (
     <>
@@ -217,7 +294,7 @@ export default function TaxInvoiceFormModal({
                         const isSelected = selectedPriceProposal?.id === proposal.id;
                         const totalAmount = proposal.totalWithVat || proposal.totalBeforeVat || 0;
                         const itemCount = proposal.items?.length || 0;
-                        const dateStr = proposal.createdAt ? new Date(proposal.createdAt).toLocaleDateString() : '';
+                        const dateStr = formatDateShort(proposal.createdAt);
                         
                         return (
                           <TouchableOpacity
@@ -406,7 +483,7 @@ export default function TaxInvoiceFormModal({
                             </TouchableOpacity>
                           </View>
                           <InventoryItemSearch
-                            style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary, borderColor: colors.border, marginBottom: spacing.sm }]}
+                            style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: spacing.sm }]}
                             value={part.name}
                             onChangeText={(text) => updateCustomPart(index, 'name', text)}
                             onSelectPart={(selectedPart) => handleCustomPartSelect(index, selectedPart)}

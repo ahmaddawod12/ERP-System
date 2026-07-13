@@ -1,8 +1,8 @@
-// @ts-nocheck
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   FlatList,
   Modal,
+  Platform,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -15,23 +15,33 @@ import {
   getColors,
   shadows,
   spacing,
+  type ColorPalette,
 } from '../../../theme';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
+
+interface InventoryPayload {
+  action: 'addPart' | 'togglePart' | 'updatePart';
+  partName?: string;
+  quantity?: number;
+  partId?: number;
+}
 import {
   AppButton,
   AppCard,
   AppChip,
   AppDivider,
   AppEmptyState,
+  AppInput,
   SearchInput,
   AppText,
   GlobalHeader,
   LoadingSpinner,
   ScreenHeroCard,
 } from '../../../components';
+import type { InventoryPart } from '../../../types';
 
 const translations = {
   en: {
@@ -144,7 +154,7 @@ export default function CompanyInventory() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [newPartName, setNewPartName] = useState('');
-  const [editingPart, setEditingPart] = useState(null);
+  const [editingPart, setEditingPart] = useState<InventoryPart | null>(null);
   const [editName, setEditName] = useState('');
 
   const filteredParts = useMemo(() => {
@@ -163,7 +173,7 @@ export default function CompanyInventory() {
   const activeCount = useMemo(() => companyParts.filter((part) => part.active !== false).length, [companyParts]);
   const disabledCount = useMemo(() => companyParts.filter((part) => part.active === false).length, [companyParts]);
 
-  const callInventoryFn = async (payload) => {
+  const callInventoryFn = async (payload: InventoryPayload) => {
     const companyId = getCompanyId();
     if (!companyId) {
       throw new Error('Company ID not found.');
@@ -194,11 +204,11 @@ export default function CompanyInventory() {
       setShowAddModal(false);
     } catch (error) {
       console.error('CompanyInventory addPart error:', error);
-      alert.error('Error', error.message || 'Failed to add part.');
+      alert.error('Error', error instanceof Error ? error.message : 'Failed to add part.');
     }
   };
 
-  const togglePart = (part) => {
+  const togglePart = (part: InventoryPart) => {
     const nextActionLabel = part.active === false ? t.enable : t.disable;
     const confirmMessage = part.active === false ? t.toggleConfirmEnable : t.toggleConfirmDisable;
 
@@ -206,21 +216,21 @@ export default function CompanyInventory() {
       { text: t.cancel, style: 'cancel', onPress: () => {} },
       {
         text: nextActionLabel,
-        style: part.active === false ? 'primary' : 'destructive',
+        style: part.active === false ? 'default' : 'destructive',
         onPress: async () => {
           try {
             await callInventoryFn({ action: 'togglePart', partId: Number(part.id) });
             alert.success('Success', t.updateSuccess);
           } catch (error) {
             console.error('CompanyInventory togglePart error:', error);
-            alert.error('Error', error.message || 'Failed to update part.');
+            alert.error('Error', error instanceof Error ? error.message : 'Failed to update part.');
           }
         },
       },
     ]);
   };
 
-  const startEdit = (part) => {
+  const startEdit = (part: InventoryPart) => {
     setEditingPart(part);
     setEditName(part.name || '');
     setShowEditModal(true);
@@ -256,11 +266,11 @@ export default function CompanyInventory() {
       setEditName('');
     } catch (error) {
       console.error('CompanyInventory saveEdit error:', error);
-      alert.error('Error', error.message || 'Failed to rename part.');
+      alert.error('Error', error instanceof Error ? error.message : 'Failed to rename part.');
     }
   };
 
-  const renderPart = ({ item }) => {
+  const renderPart = ({ item }: { item: InventoryPart }) => {
     const quantity = Number(item.quantity || 0);
     const threshold = Number(item.lowThreshold || 0);
     const lowStock = threshold > 0 && quantity <= threshold;
@@ -387,7 +397,7 @@ export default function CompanyInventory() {
                         variant="caption"
                         color={filter === item ? '#FFFFFF' : palette.textPrimary}
                       >
-                        {t[item]} ({count})
+                        {t[item as keyof typeof t]} ({count})
                       </AppText>
                     </TouchableOpacity>
                   );

@@ -116,7 +116,7 @@ export default function LoadingOverlay({ visible = false, message, type = 'previ
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(2, 8, 20, 0.74)',
     justifyContent: 'center',
     alignItems: 'center',

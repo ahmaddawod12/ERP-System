@@ -21,10 +21,17 @@ test('document task polling caps at the configured maximum interval', () => {
   assert.equal(getNextDocumentTaskPollIntervalMs(10), DOCUMENT_TASK_POLL_MAX_INTERVAL_MS);
 });
 
-test('document task polling carries company scope to read-model', () => {
+test('document task polling carries user and company scope to the Cloud API', () => {
   const source = fs.readFileSync(path.resolve(process.cwd(), 'hooks', 'useDocumentTask.ts'), 'utf8');
 
-  assert.match(source, /\.\.\.\(companyId \? \{ companyId \} : \{\}\)/);
+  assert.match(source, /fetchDocumentTask\(\{/);
+  assert.match(source, /uid,\s*companyId: resolvedCompanyId,\s*taskId: newTaskId/);
+  assert.match(source, /createDocumentPreviewTask\(\{/);
+  assert.match(source, /createDocumentGenerationTask\(\{/);
   assert.match(source, /listenToTask\(result\.data\.taskId, 'preview', params\.companyId\)/);
-  assert.match(source, /listenToTask\(result\.data\.taskId, 'generate', params\.companyId\)/);
+  assert.match(source, /listenToTask\(accepted\.taskId, 'preview', companyId\)/);
+  assert.match(source, /listenToTask\(accepted\.taskId, 'generate', companyId\)/);
+  assert.match(source, /if \(isTaxDocumentType\(params\.documentType\)\)/);
+  assert.doesNotMatch(source, /['"]publishGenerateTask['"]/);
+  assert.doesNotMatch(source, /readModelV1|callHttpFunction/);
 });

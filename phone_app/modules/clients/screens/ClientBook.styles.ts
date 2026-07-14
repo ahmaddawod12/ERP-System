@@ -138,6 +138,45 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: spacing.xxl,
   },
+  queryErrorBanner: {
+    borderWidth: 1,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  queryErrorText: {
+    fontSize: typography.sm,
+    lineHeight: 20,
+  },
+  retryButton: {
+    alignSelf: 'center',
+    minWidth: 96,
+    minHeight: 42,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: typography.sm,
+    fontWeight: typography.bold,
+  },
+  loadMoreButton: {
+    minHeight: 48,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  loadMoreButtonText: {
+    color: '#fff',
+    fontSize: typography.base,
+    fontWeight: typography.bold,
+  },
 
   // ====================== Options Modal ======================
   optionsOverlay: {

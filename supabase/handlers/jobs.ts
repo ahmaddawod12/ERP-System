@@ -16,7 +16,7 @@ import {
 } from "../shared-edge-helpers.ts";
 import { JobStatus } from "@smart-job/contracts";
 
-const VALID_STATUSES = Object.values(JobStatus);
+const VALID_STATUSES: readonly string[] = Object.values(JobStatus);
 
 type MembershipContext = {
   id: string;
@@ -957,7 +957,7 @@ export async function createJobFileDownloadUrlV1(payload: any, ctx: EdgeFunction
   const companyId = resolvedCompany.internalCompanyId;
   await assertModuleEnabled(companyId, "jobs", ctx);
   const requestedJobId = requireNonEmptyString(payload?.jobId, "jobId", 1, 128);
-  const storagePath = requireNonEmptyString(payload?.storagePath, "storagePath", 4, 1024).replace(/^\/+, "");
+  const storagePath = requireNonEmptyString(payload?.storagePath, "storagePath", 4, 1024).replace(/^\/+/u, "");
   const membership = await requireMembership(companyId, ctx, ["manager", "worker", "user", "dev"]);
 
   const supabase = createSupabaseClient(ctx.env);
@@ -984,12 +984,24 @@ export async function createJobFileDownloadUrlV1(payload: any, ctx: EdgeFunction
     ctx.auth?.uid || null,
     normalizedPublicJobId,
   );
-  const { data: attachment } = await supabase
+  const { data: attachment, error: attachmentError } = await supabase
     .from("job_attachments")
     .select("id")
     .eq("job_id", String(job.id))
     .eq("storage_path", normalizedStoragePath)
     .maybeSingle();
+  if (attachmentError) {
+    ctx.logger.error("Failed to verify job attachment", {
+      companyId,
+      jobId: String(job.id),
+      error: attachmentError.message,
+    });
+    throw {
+      code: "unavailable",
+      message: "Job attachment lookup is unavailable",
+      httpStatus: 503,
+    };
+  }
   if (!attachment?.id) {
     throw { code: "invalid-argument", message: "storagePath does not match the requested job", httpStatus: 400 };
   }

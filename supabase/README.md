@@ -1,6 +1,6 @@
 # Supabase Backend Workspace
 
-Status: Active backend gateway surface (June 22, 2026)
+Status: Active legacy/transition gateway surface (July 13, 2026)
 
 This directory is where backend runtime work happens in this repository.
 
@@ -15,6 +15,32 @@ This directory is where backend runtime work happens in this repository.
 - `functions/mutation-gateway/`
 - `functions/mutation-gateway-me-west1/`
 - `functions/read-model/`
+
+## Cloud API Migration Coexistence
+
+Edge remains active for operations that have not been cut over. The staged
+`cloudrun-api` is a separate direct-to-Postgres/Auth/Storage boundary; it does
+not proxy its implemented routes through these Deno functions. Through database
+migration `0021`, that service implements:
+
+- viewer, workspaces, and lightweight company bootstrap
+- bounded SQL-filtered jobs, clients, company inventory, and member inventory
+- atomic idempotent job creation and version-checked completion
+- versioned, idempotent job metadata/client/assignee updates, manager/dev
+  acceptance, and guarded deletion behind SQL-derived authority
+- claim-idempotent private job-attachment upload sessions in
+  `smart-job-company-files`, with fresh signed URLs on replay and database
+  rate/quota enforcement from migration `0016`
+- opaque 12-hour web sessions
+- verified-email, first-workspace business registration
+- self-scoped push-token register/clear
+- verified, idempotent invitation create/redeem with SQL-derived authority and
+  hashed fail-closed rate limits
+
+Frontend job-mutation callers, documents/task dispatch, and tax remain
+Edge-owned or unfinished until their
+complete route + migration + client slice is accepted. Source files under
+active development are not a cutover signal.
 
 ## Read-Model Contract
 
@@ -74,7 +100,7 @@ Notes:
 Smoke test:
 
 ```bash
-curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
+curl -X POST http://localhost:55321/functions/v1/mutation-gateway \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d '{"operation":"updateProfileV1","payload":{"displayName":"Test"}}'
@@ -94,6 +120,12 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 - Parallelize independent DB lookups with `Promise.all` instead of sequential `await` calls where the results are not interdependent.
 - Resolve and validate dependent data before destructive writes so failures leave previous state intact rather than leaving rows in a partial state.
 - Treat `packages/db` as the SQL source of truth.
+- The staged API migration chain currently ends at
+  `0012_hardened_api_invitations.sql`: `0006` establishes the runtime boundary, `0007`
+  adds atomic API job creation/private attachment storage, `0008` adds PDF MIME
+  support, `0009` adds bounded cleanup, `0010` adds hardened first-workspace
+  registration, `0011` adds self-scoped push-token mutations, and `0012` adds
+  hardened invitation creation/redemption plus hashed rate limits.
 - Preserve backend-only write boundaries.
 - Preserve idempotency and deduplication before side effects.
 - Use SQL-backed counter allocation helpers for sequential IDs (`public_company_id`, `member_no`, `client_no`, `job_no`).
@@ -104,22 +136,40 @@ curl -X POST http://localhost:54321/functions/v1/mutation-gateway \
 - Privileged SQL implementations must live in the private schema. Public RPC names are compatibility wrappers for service-role Edge callers, not direct client APIs; public wrappers should use `SECURITY INVOKER` and explicit `search_path = ''`.
 - `createJobV1` uses the `create_job_with_details(...)` SQL RPC so job row, part usages, attachments, and finished-job inventory consumption commit in one transaction.
 - `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so company, profile, subscription, sync state, and owner membership commit in one transaction.
+- The staged `POST /api/v1/auth/business-registration` route instead uses
+  `private.register_api_business_account(...)`; identity, owner role, tier,
+  modules, and public company counter are derived server-side and callers cannot
+  select them.
 - `bootstrap` count-only reads must use lightweight count helpers and must not fetch full inventory or collection payloads.
 - Keep `packages/db/perf/profiling.sql` as the first stop for database performance work; do not add broad indexes without advisor/`EXPLAIN` evidence.
-- Use `cleanup_expired_operational_rows()` from a trusted schedule to trim expired rate-limit, task, notification, contact, and failed idempotency rows.
+- Use the service-role-only `queue_expired_file_upload_cleanup(...)` wrapper for
+  trusted upload cleanup. Its private implementation also trims expired
+  operational rows before the worker claims canonical manifests; never expose
+  the private cleanup function or cleanup claims to client roles.
 
 ## Environment Essentials
 
-Required in local or deployed environments:
+Required by the still-active Edge runtime in local or deployed environments:
 
 - `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_ANON_KEY` (legacy low-privilege key during transition)
+- `SUPABASE_SERVICE_ROLE_KEY` (legacy elevated key; Edge only)
 - `JWT_SECRET`
 - `DATABASE_URL`
 - `CORS_ALLOWED_ORIGINS`
 - `CLOUD_RUN_PDF_SERVICE_URL`
 - `ARCHIVE_BUCKET`
+- `DOCUMENTS_BUCKET=smart-job-company-files`
+
+New runtime key conventions are deliberately separate:
+
+- website server Auth and `cloudrun-api` Auth use
+  `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`)
+- mobile uses `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- trusted `cloudrun-api`, `cloudrun-pdf`, and `cloudrun-archiver` Storage work
+  uses server-only `SUPABASE_SECRET_KEY` (`sb_secret_...`)
+- no publishable/secret migration should place a secret or legacy service-role
+  key in a `NEXT_PUBLIC_*` or `EXPO_PUBLIC_*` variable
 
 Required for trusted edge-to-Cloud-Run document dispatch:
 

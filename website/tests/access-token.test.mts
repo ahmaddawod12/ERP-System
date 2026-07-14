@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SignJWT } from "jose";
-import { verifyAccessToken, parseBearerToken } from "../src/lib/auth/access-token.ts";
+import {
+  getSupabaseUserByUid,
+  parseBearerToken,
+  verifyAccessToken,
+} from "../src/lib/auth/access-token.ts";
 
 const TEST_SECRET = "test-secret-must-be-at-least-32-bytes-long-for-hs256";
 const TEST_ISSUER = "https://test.supabase.co/auth/v1";
@@ -12,6 +16,69 @@ test("parseBearerToken extracts token from Authorization header", () => {
   assert.equal(parseBearerToken("abc123"), null);
   assert.equal(parseBearerToken(null), null);
   assert.equal(parseBearerToken("Bearer "), null);
+});
+
+test("getSupabaseUserByUid accepts the direct Admin response without treating audit timestamps as revocation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.SUPABASE_URL;
+  const originalServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  process.env.SUPABASE_URL = "https://test.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  globalThis.fetch = (async (input, init) => {
+    assert.equal(String(input), "https://test.supabase.co/auth/v1/admin/users/user-123");
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer service-role-key");
+    return Response.json({
+      id: "user-123",
+      banned_until: null,
+      deleted_at: null,
+      updated_at: "2026-07-13T10:00:00.000Z",
+      last_sign_in_at: "2026-07-13T09:00:00.000Z",
+    });
+  }) as typeof fetch;
+
+  try {
+    assert.deepEqual(await getSupabaseUserByUid("user-123"), {
+      disabled: false,
+      tokensValidAfterTime: null,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.SUPABASE_URL;
+    else process.env.SUPABASE_URL = originalUrl;
+    if (originalServiceRoleKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRoleKey;
+  }
+});
+
+test("getSupabaseUserByUid rejects an Admin response for a different user", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.SUPABASE_URL;
+  const originalServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  process.env.SUPABASE_URL = "https://test.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key";
+  globalThis.fetch = (async () => Response.json({
+    user: {
+      id: "different-user",
+      banned_until: null,
+      deleted_at: null,
+    },
+  })) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => getSupabaseUserByUid("user-123"),
+      (error: { code?: string; status?: number }) =>
+        error.code === "invalid_session" && error.status === 401,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.SUPABASE_URL;
+    else process.env.SUPABASE_URL = originalUrl;
+    if (originalServiceRoleKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRoleKey;
+  }
 });
 
 test("verifyAccessToken verifies a valid Supabase-style token", async () => {

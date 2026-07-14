@@ -1,6 +1,7 @@
 # Backend
 
-This document summarizes the active backend boundaries in June 22, 2026.
+This document summarizes the active backend boundaries and the pre-launch
+migration foundation as of July 13, 2026.
 
 ## Current Backend Reality
 
@@ -12,8 +13,99 @@ This document summarizes the active backend boundaries in June 22, 2026.
 - SQL is the primary persistence layer for company-scoped ERP data.
 - Firestore is still used for selected operational paths, compatibility mirrors, rules-backed reads, and residual legacy surfaces.
 - Supabase Edge Functions in `supabase/functions/` are the maintained gateway surface in this workspace.
+- `cloudrun-api` now includes tested Postgres, Supabase JWT, opaque-session, and
+  initial domain-route implementations. `cloudrun-tax` remains a tested
+  Fastify foundation. Neither is an active production gateway yet.
+
+The approved migration chain now runs through
+`0021_api_job_mutations.sql`. Migrations `0006`–`0021` add the least-privileged
+API role and request context, private session/idempotency/upload state, atomic
+job creation/completion, the canonical private file bucket and PDF extension,
+bounded abandoned-upload cleanup, hardened first-workspace registration,
+self-scoped push-token writes, hardened invitation creation/redemption, and
+versioned atomic inventory, worker, and job mutations. The
+API consumes these foundations locally, but
+this does not activate a deployed production path.
 
 ## Service Boundaries
+
+### cloudrun-api/
+
+This is the future Node 22 modular API boundary. Its current implementation owns:
+
+- strict environment validation and a 12-second request timeout ceiling
+- shared `@smart-job/api-contracts` envelopes and runtime schemas
+- request IDs, structured logs, OpenAPI/Zod wiring, and safe error responses
+- liveness/readiness probes and `private, no-store` headers for `/api/v1`
+- a `smart_job_api`-only Postgres pool whose authenticated transactions call
+  `private.set_api_request_context(...)`
+- exact Supabase issuer/audience/JWKS verification for mobile Bearer tokens
+- verified-email-only opaque website sessions with encrypted rotating Auth
+  credentials, row-locked refresh, revocation, and a 12-hour absolute expiry
+- one strict domain authenticator that accepts either Bearer or
+  `SmartJobSession`, never combined/ambiguous credentials
+- `GET /api/v1/me`, `GET /api/v1/workspaces`, lightweight company bootstrap,
+  and the web-session lifecycle
+- SQL-filtered, bounded `GET` routes for jobs, clients, company inventory, and
+  the authenticated member's inventory, all with opaque `(createdAt, id)`
+  cursors and role/module/tenant enforcement
+- verified, idempotent client create/update/delete routes through migration
+  `0018`; default reads exclude archived rows, updates are version checked,
+  sequential client numbers use the company counter, and DELETE archives
+  referenced clients instead of orphaning job or document history
+- verified, idempotent inventory part create/update/archive, company/self
+  adjustment, single transfer, and bounded batch-pick routes through migration
+  `0019`. SQL derives entitlement/membership authority, versions part metadata
+  and each location balance, locks balances deterministically, rejects
+  underflow/stale writes, and bumps inventory sync state atomically; the
+  runtime role has no direct inventory-table write grant
+- verified, idempotent, version-checked team-member updates and guarded disable
+  through migration `0020`; direct Auth-user creation/password handling is not
+  part of worker management, and members with active jobs or positive stock
+  cannot be disabled
+- idempotent `POST` routes for atomic job creation and version-checked job
+  completion, including same-transaction attachment upload-session consumption
+- idempotent, signed create-only job-attachment upload sessions in the private
+  `smart-job-company-files` bucket. Migration `0016` deterministically reuses
+  the claim-backed session, enforces a committed 12-per-10-minute user limit
+  and four-active-session user/workspace quota, and queues cleanup after three
+  initial signing failures; replays generate fresh signed URLs rather than
+  persisting bearer URLs
+- verified-email, idempotent first-workspace business registration through the
+  migration `0010` transaction
+- verified, self-scoped push-token upsert/clear through migration `0011`; token
+  values are never returned or logged
+- verified, idempotent invitation create/redeem through migration `0012`, with
+  SQL-derived authority, exact row locks, atomic membership creation, and
+  separate hashed 10-per-minute limits
+
+The main API requires `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`) for Auth
+calls and `SUPABASE_SECRET_KEY` (`sb_secret_...`) only for trusted Storage
+administration. It rejects legacy key formats in these new runtime slots. The
+legacy `SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` names remain confined to
+the still-active Edge compatibility runtime.
+
+Documents and task dispatch, tax integration, remaining legacy file
+paths, container/deployment configuration, and full client cutover are not
+complete. In-progress source without its approved migration is not an active
+route contract.
+
+### cloudrun-tax/
+
+This is the future stateless Israel-region boundary. It currently owns only
+validated configuration, safe request logging, common envelopes, and service
+probes. It has no database connection and must never become an application data
+writer. Tax OAuth, callbacks, IAM invocation, and deployment configuration are
+still gated.
+
+### packages/api-contracts/
+
+This package derives canonical business values from `@smart-job/contracts` and
+adds Zod schemas for API envelopes, viewers/workspaces, cursors, entity
+versions, uploads, jobs, clients, inventory, business registration, push tokens,
+and document tasks. Its migration-only characterization subpath freezes
+operation/deploy names and representative request shapes so catalog drift is
+visible while domain behavior is ported and integration-tested.
 
 ### supabase/functions/
 
@@ -48,14 +140,21 @@ This service owns PDF preview and generation. It:
 
 - validates requester identity and company scope
 - renders previews and final PDFs
-- stores files by canonical `storagePath`
-- finalizes task and document state
-- preserves create-only semantics for new generated documents
+- stores active artifacts in the private `smart-job-company-files` Supabase bucket
+- derives object paths from internal company/document UUIDs and stores only canonical `storagePath` values
+- finalizes document state and its sync-version bump atomically
+- preserves create-only semantics; retries reuse only byte-identical PDFs and never overwrite
+- uses GCS for no application-facing files; GCS remains owned by the monthly archiver
 
 ### cloudrun-archiver/
 
 This batch job owns monthly archive creation and verified deletion. It:
 
+- queues expired upload sessions and claims one bounded cleanup batch through
+  migration `0009` service-role-only RPCs
+- deletes only exact, canonical `smart-job-company-files` manifest paths and
+  acknowledges each lease as complete, retryable, or dead-lettered
+- reports upload-cleanup failures without preventing monthly archive work
 - snapshots eligible finished jobs and documents
 - drains paginated SQL reads for the full target month
 - writes archive payloads to Cloud Storage
@@ -72,6 +171,30 @@ This package is the SQL persistence layer. It contains:
 - read-model helpers used by backend services
 - read-only profiling helpers under `packages/db/perf/` for advisor and `EXPLAIN` checks before broad index changes
 - optimized baseline RPCs for client pages, inventory pages, and atomic multi-part inventory picks
+- migration `0006_api_security_foundation.sql`, which provides
+  `smart_job_api`, `private.set_api_request_context(...)`, private opaque
+  session/idempotency/upload state, job `entity_version`, and
+  `private.complete_job_with_details(...)`
+- migration `0007_api_job_creation_and_storage.sql`, which provides atomic API
+  job creation and the private `smart-job-company-files` attachment bucket
+- migration `0008_pdf_supabase_storage.sql`, which permits PDF content in that
+  same private bucket while leaving overwrite prevention to the trusted worker
+- migration `0009_bounded_upload_session_cleanup.sql`, which provides
+  service-role-only expiry/claim/finish wrappers, skip-locked leases, canonical
+  manifest quarantine, and bounded cleanup attempts
+- migration `0010_hardened_api_business_registration.sql`, which derives the
+  first workspace's identity, role, tier, modules, and public counter inside one
+  serialized transaction
+- migration `0011_api_push_tokens.sql`, which exposes only authenticated-self
+  push-token upsert/clear RPCs to `smart_job_api`
+
+`smart_job_api` is intentionally not a migration role and has no general direct
+write access to public ERP tables. Its password is not present in source or SQL
+migrations; provision it out of band and supply the connection URL from Secret
+Manager or an equivalent runtime secret. The role also has no database
+`TEMPORARY` privilege. Every `SECURITY DEFINER` inventory/sync helper reachable
+from job completion uses an empty search path and fully qualified database
+objects, preventing temporary-relation shadowing.
 
 ### supabase/
 
@@ -111,10 +234,43 @@ Firestore remains active for:
 
 The website uses API proxy routes and signed HttpOnly `__session` cookies, then calls backend edge function endpoints.
 Those server routes authenticate backend calls from a verified split-cookie session: signed metadata in `__session`, current bearer token in HttpOnly `__session_access`.
+Alongside that transitional path, `/app/select-company` and the explicit-tenant
+overview, jobs, clients, and inventory pages under `/app/c/{companyId}` now use
+the server-only Cloud Run transport and a Server Component DAL. The DAL resolves
+the opaque session, validates URL tenancy before scoped calls, and renders a
+bounded first page before hydration. Same-origin login/session/logout and
+business-registration BFF handlers use
+`Authorization: SmartJobSession <opaque-token>`, exact Origin checks, and
+double-submit CSRF for mutations. The production browser cookie is
+`__Host-sj_web_session`; no Supabase access/refresh token is returned to browser
+JavaScript. Other `/app/*` routes still use the legacy split-cookie/Edge flow.
 
 ### Mobile
 
-The mobile app attaches Supabase bearer tokens and calls backend edge gateway endpoints.
+The mobile app restores Supabase sessions through a SecureStore adapter and
+attaches bearer tokens to both staged Cloud API calls and remaining Edge gateway
+operations. Its root provider order now establishes session, tenant, React
+Query, encrypted outbox, and notification state before routing. The assigned
+jobs list uses the bounded Cloud API job route with tenant-scoped infinite-query
+keys; other feature reads/mutations remain transitional.
+
+Offline v1 supports only `job.create_finished` and `job.complete_assigned`.
+Each authenticated uid has a SQLCipher database whose key remains in
+SecureStore; photos/signatures are copied to app-owned storage, AES-256-GCM
+chunk-encrypted, and hashed before enqueueing. Synchronization runs only at app
+start, foreground, and connectivity restoration. Logout closes the database but
+keeps pending work recoverable only by the same uid. Staged files are removed
+only after confirmed reconciliation or explicit discard.
+The processor exposes reconciled, queued, retry, conflict, and terminal outcomes
+per operation; the Pending Work screen provides deliberate retry and discard.
+
+Pinned `react-native-notify-kit` `10.4.8` owns local notification APIs while
+Firebase Messaging continues to own remote delivery. Push-token register/clear
+now uses `/api/v1/me/push-token` with a SecureStore-only installation ID so
+logout clears one device registration. Token values are no longer cached in
+MMKV or logged. Notification display/open handling requires the restored uid and
+current accessible company, and Android local notifications use a new private
+channel ID.
 
 ### Direct SQL access
 
@@ -122,7 +278,36 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 
 ## Development Guidance
 
+The isolated local Supabase Docker Desktop project is
+`smart-job-erp-local`. Core ports are API `55321`, PostgreSQL `55322`, Studio
+`55323`, Inbucket `55324`, and Edge inspector `55883`. Supabase CLI owns the
+containers, but Drizzle owns application migrations in `packages/db/migrations`:
+
+```powershell
+supabase start
+supabase db reset --local --no-seed
+$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
+$env:DATABASE_SSL_MODE = "disable"
+npm --prefix packages/db run db:migrate
+npm --prefix packages/db run test:integration
+supabase db lint --local --schema public,private --level warning
+```
+
 - Treat `supabase/functions/` and `supabase/handlers/` as the active in-repo backend surface.
+- Wrap each main-API authenticated database operation in one transaction
+  and call `private.set_api_request_context(...)` before domain queries.
+- Use opaque `entity_version` values for update/completion/deletion conflicts;
+  job completion must go through `private.complete_job_with_details(...)` so
+  job, part, inventory, upload, attachment, and sync-version state commits
+  together. API metadata updates, manager acceptance, and guarded deletion use
+  only the narrow functions from `0021_api_job_mutations.sql`; each derives
+  tenant/module/role authority in SQL and bumps `jobs_version` atomically.
+- Enforce subscription status, expiry, tier, and canonical module overrides in
+  SQL before returning module counts or accepting completion. Completion also
+  records `accepted_by_user_id` and `accepted_at` from the verified request
+  context in the same transaction.
+- Store only hashed opaque session/CSRF tokens and AES-GCM-encrypted Supabase
+  credentials in `private.web_sessions`; never add plaintext token columns.
 - Verify Supabase bearer tokens against the configured issuer/audience and fail closed on missing or empty `uid` claims.
 - Preserve canonical field names and status enums from `@smart-job/contracts`.
 - Preserve backend-only mutation boundaries for locked business collections.
@@ -159,12 +344,23 @@ Client applications must not bypass the backend and talk directly to SQL for pro
 - Keep privileged RPC implementations in the private schema and expose only service-role public wrappers needed by Edge code; public wrappers should use `SECURITY INVOKER` and explicit `search_path = ''`.
 - `createJobV1` uses the `create_job_with_details(...)` SQL RPC so job row, part usages, attachments, and finished-job inventory consumption commit in one transaction.
 - `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so company, profile, subscription, sync state, and owner membership commit in one transaction.
+- Main-API creation uses `private.create_api_job_with_details(...)`; first-workspace
+  registration uses `private.register_api_business_account(...)`. Both derive
+  identity/tenant authority from the transaction request context and participate
+  in API idempotency instead of trusting caller-supplied user metadata.
+- Main-API push-token mutations may call only
+  `private.upsert_api_push_token(...)` and `private.clear_api_push_token()`;
+  never accept a target uid or expose the stored token.
 - Cache/sync version mutations should use the SQL-side `bump_company_sync_version(...)` helper instead of read-modify-write updates.
 - Keep tax invoice reservation/document/task ordering SQL-first and idempotent, without leaving reservation/task side effects ahead of the draft document row.
 - Validate date fields before converting to ISO strings in tax and document handlers.
 - Block deletion of approved tax invoices.
-- `deleteJobV1` and `deleteClientV1` must check for dependent documents, inventory movements, or linked jobs and reject the request when dependents exist.
-- `updateJobV1` must block reverting terminal (`finished`/`denied`) jobs to other statuses.
+- Job deletion must reject certificates plus dependent documents, inventory
+  movements, upload sessions, and attachments. The API never cascades these
+  protected records or performs compensating file writes.
+- Job PATCH never transitions directly to `finished`; callers use the
+  versioned acceptance or field-completion route. Finished jobs cannot be
+  moved back to another status.
 - `manageWorker` add must handle unique-conflict races gracefully.
 - Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.
 - Sanitize `item.quantity`, `item.price`, and `date` values in PDF templates; HTML-escape email template variables.
@@ -178,4 +374,11 @@ The migration goal remains runtime replacement without contract drift. During th
 
 - client payloads and response envelopes must stay stable
 - website and mobile app behavior should remain unchanged
-- some legacy Firebase backend paths may still exist outside this workspace, but source changes in this repo should target `supabase/functions/`
+- active Edge behavior fixes still belong in `supabase/functions/` and
+  `supabase/handlers/`; new migration domain routes belong in `cloudrun-api`
+  and use Edge fixtures only as behavioral references
+- The implemented API, explicit-tenant SSR, encrypted mobile field outbox, and
+  private job/PDF Storage slices do not constitute full cutover.
+- New API/tax Dockerfiles and Cloud Run deployment/IAM, stable API domain,
+  remaining domain routes and website/mobile paths, legacy file-path removal,
+  and final Edge/Firebase deletion remain separate approval gates.

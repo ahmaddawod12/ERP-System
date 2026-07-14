@@ -12,11 +12,15 @@ import { StatusBar } from 'expo-status-bar';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { getColors, shadows, spacing, borderRadius, typography, gradients } from '../../../theme';
-import { auth, signOut, functions, httpsCallable } from '../../../firebase';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useOutbox } from '../../../contexts/OutboxContext';
 import { AppButton, AppText, GlobalHeader, ScrollableContainer } from '../../../components';
 import { ROUTES } from '../../../navigation/routes';
+import { clearViewerPushToken } from '../../../lib/api/push-tokens';
+import { logger } from '../../../utils/logger';
+import { runLogoutSequence } from '../lib/logout';
 
 
 export default function Settings() {
@@ -24,6 +28,8 @@ export default function Settings() {
   const { language, setLanguage } = useLanguageContext();
   const { isDarkMode, toggleTheme } = useThemeContext();
   const { clearCache, profile, getUserRole } = useCache();
+  const { user, signOut: signOutSession } = useSession();
+  const { operations: pendingOperations } = useOutbox();
   const colors = getColors(isDarkMode);
   const alert = useAlert();
   const [userRole, setUserRole] = useState<string | null>(null);
@@ -85,21 +91,20 @@ export default function Settings() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // P1-8: Clear push token on server before sign-out
-              try {
-                const clearPushTokenFn = httpsCallable(functions, 'clearPushTokenV1');
-                await clearPushTokenFn({});
-              } catch (tokenErr) {
-                console.warn('Failed to clear push token on logout:', tokenErr);
-              }
-              // Clear auth transport before cache teardown so stale session state cannot linger.
-              await signOut(auth);
-              clearCache();
+              await runLogoutSequence({
+                userId: user?.id ?? null,
+                clearPushToken: clearViewerPushToken,
+                signOut: signOutSession,
+                clearCache,
+                onPushTokenClearError: (tokenError) => {
+                  logger.warn('Failed to clear push token before logout:', tokenError);
+                },
+              });
               
               // Navigate to login
               router.replace(ROUTES.root);
             } catch (error) {
-              console.error('Logout error:', error);
+              logger.error('Logout error:', error);
               alert.error('Error', 'Failed to logout. Please try again.');
             }
           },
@@ -262,6 +267,21 @@ export default function Settings() {
               </AppText>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <TouchableOpacity
+            style={[styles.menuItem, { borderColor: colors.border }]}
+            onPress={() => router.push(ROUTES.pendingWork)}
+          >
+            <View style={styles.menuItemLeft}>
+              <MaterialCommunityIcons name="cloud-sync-outline" size={24} color={colors.secondary} />
+              <AppText style={[styles.menuItemText, { color: colors.textPrimary }]}>
+                Pending Work{pendingOperations.length > 0 ? ` (${pendingOperations.length})` : ''}
+              </AppText>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         {/* Dev Inbox Section (only for dev role) */}

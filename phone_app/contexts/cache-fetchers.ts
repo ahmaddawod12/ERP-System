@@ -2,7 +2,8 @@
  * cache-fetchers.ts
  *
  * Centralized read-model fetchers for CacheContext.
- * These read business data through Supabase Edge read-model endpoints.
+ * Migrated slices use the authenticated Cloud API; remaining legacy fields
+ * continue through the transitional Edge read model.
  */
 
 import {
@@ -11,6 +12,11 @@ import {
 } from './mmkv-storage';
 import { callHttpFunction } from '../utils/httpFunctions';
 import { logger } from '../utils/logger';
+import { fetchClientsPage } from '../modules/clients/lib/clients-api';
+import {
+  mapClientSummary,
+  normalizeClientListFilters,
+} from '../modules/clients/lib/client-list-model';
 
 interface BootstrapPayload {
   profile: any | null;
@@ -121,10 +127,16 @@ export async function fetchDataFromBackend(
 
       case 'clients': {
         if (!companyId) return [];
-        return callHttpFunction<any[]>('readModelV1', {
-          kind: 'clients',
-          companyId,
+        const numericCompanyId = Number(companyId);
+        if (!Number.isSafeInteger(numericCompanyId) || numericCompanyId <= 0) {
+          throw new Error('A valid company is required to load clients');
+        }
+        const page = await fetchClientsPage({
+          uid,
+          companyId: numericCompanyId,
+          filters: normalizeClientListFilters({ status: 'active', pageSize: 200 }),
         });
+        return page.items.map(mapClientSummary);
       }
 
       default:

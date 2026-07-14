@@ -2,13 +2,18 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (June 22, 2026)
+## Runtime Snapshot (July 13, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
 - PostgreSQL (via `packages/db`) is the primary source of truth for company-scoped ERP data.
-- Firestore and Cloud Storage remain for compatibility reads, operational metadata, and files.
+- Firestore remains for compatibility reads/operational metadata. Active PDFs
+  and previews now use private Supabase Storage; GCS remains for monthly archives.
 - Cloud Run services still handle PDF generation and monthly archives.
+- The new `cloudrun-api` has tested dual authentication, opaque sessions, a
+  least-privileged database adapter, and initial domain routes;
+  `cloudrun-tax` remains a Fastify foundation. Edge remains the active gateway
+  until the remaining domain and frontend cutover stages are complete.
 
 ## Repository Layout
 
@@ -17,9 +22,12 @@ ERP-System/
 |-- website/             Next.js website
 |-- phone_app/           Expo mobile app
 |-- supabase/            Backend gateways and migration handlers
+|-- cloudrun-api/        Main Fastify API foundation
+|-- cloudrun-tax/        Stateless Israel tax gateway foundation
 |-- cloudrun-pdf/        PDF preview/generation service
 |-- cloudrun-archiver/   Monthly archive service
 |-- packages/contracts/  Shared contracts and constants
+|-- packages/api-contracts/ Runtime-validated HTTP contracts
 |-- packages/db/         SQL schema, migrations, and access layer
 |-- SETUP.md             Setup and deployment guide
 |-- architecture.md      System and data ownership map
@@ -43,14 +51,36 @@ Install dependencies per package:
 
 ```bash
 npm --prefix packages/contracts install
-npm --prefix packages/db install
 npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts install
+npm --prefix packages/api-contracts run build
+npm --prefix packages/db install
 npm --prefix packages/db run build
 npm --prefix website install
 npm --prefix phone_app install
+npm --prefix cloudrun-api install
+npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
 npm --prefix cloudrun-archiver install
 ```
+
+Start the repository's isolated Supabase Docker Desktop stack, reset it when a
+fresh database is required, and apply the canonical Drizzle migrations:
+
+```powershell
+supabase start
+supabase db reset --local --no-seed
+$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
+$env:DATABASE_SSL_MODE = "disable"
+npm --prefix packages/db run db:migrate
+npm --prefix packages/db run test:integration
+supabase db lint --local --schema public,private --level warning
+```
+
+The local Supabase `project_id` is `smart-job-erp-local`; core endpoints use API
+`55321`, PostgreSQL `55322`, Studio `55323`, Inbucket `55324`, and Edge inspector
+`55883`. Migrations remain under `packages/db/migrations`, not
+`supabase/migrations`.
 
 Common checks:
 
@@ -59,7 +89,12 @@ npm --prefix website run typecheck
 npm --prefix phone_app run typecheck
 npm --prefix website run test
 npm --prefix phone_app run test
+npm --prefix packages/api-contracts test
+npm --prefix cloudrun-api test
+npm --prefix cloudrun-tax test
+npm --prefix phone_app run doctor
 deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrations" supabase/handlers/handlers-hardening.test.ts
 # In bash, enable globstar so nested function paths are included:
 # shopt -s globstar
 # deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
@@ -81,6 +116,13 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Finished solo jobs consume member inventory through the SQL `apply_job_inventory_consumption_batch(...)` helper.
 - `deleteJobV1` and `deleteClientV1` reject requests when linked documents, inventory movements, or jobs exist.
 - Module entitlement is enforced for both mutations and read-model kinds (`jobs`, `clients`, `inventory`, `documents`, `workers`).
+- `smart_job_api` is a least-privileged database runtime role. Its password is
+  provisioned out of band and must never be committed or embedded in a
+  migration; authenticated API transactions set their user/timeouts through
+  `private.set_api_request_context(...)`.
+- Job updates use opaque `entity_version` values. Atomic completion goes through
+  `private.complete_job_with_details(...)` and returns a conflict for stale
+  versions instead of performing compensating writes.
 
 ## Recent Hardening (April 26-June 22, 2026)
 
@@ -91,7 +133,34 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - New empty databases start from the optimized SQL baseline plus forward hardening migrations. The baseline includes RLS hardening, support-owner policies, document task locks, atomic inventory/invite/idempotency RPCs, read-model indexes for jobs/documents/clients/memberships/inventory, and service-role RPCs for client/inventory pages.
 - Privileged RPC implementations live behind the private schema after `0001_supabase_cost_perf_security_hardening.sql`; public RPC names are compatibility wrappers granted to `service_role` only.
 - `packages/db/perf/profiling.sql` contains the read-only profiling checklist for Supabase advisors, `pg_stat_statements`, and `EXPLAIN` before broader index changes.
-- New migrations: `0002_phase1_read_caps.sql`, `0003_phase1_atomic_jobs.sql`, `0004_phase1_atomic_business_registration.sql`, `0005_phase2_trigger_search_path.sql`.
+- New migrations continue in numeric order through the current Drizzle journal
+  tail; that journal is the authoritative forward-migration manifest.
+- Migration `0006` adds `private.web_sessions`, `private.api_idempotency`, and
+  `private.file_upload_sessions`; the `smart_job_api` role receives only the
+  explicit reads and private RPC/DML grants required by the future API.
+- Migration `0016` replaces direct runtime writes to upload-session state with
+  claim-backed preparation/signing-failure RPCs, a committed 12-per-10-minute
+  per-user limiter, a four-active-session user/workspace quota, and bounded
+  cleanup after three initial Storage-signing failures. Replays mint fresh
+  signed URLs and never persist them in idempotency state.
+- Migration `0018` adds client entity versions and narrow API-only
+  create/update/delete-or-archive functions. Client numbers use the locked SQL
+  counter, stale writes fail with 409, manager/user/basic may mutate while
+  workers are denied, referenced clients are archived, and default list reads
+  omit archived rows unless `status=archived` or `status=all` is requested.
+- Migration `0019` adds opaque inventory part and location-stock versions plus
+  narrow API-only create/update/archive, company/self adjustment, manager
+  transfer, and bounded batch-pick functions. SQL owns tenant/role/module
+  checks, deterministic locks, underflow prevention, movement rows, and the
+  inventory sync bump; the runtime role retains no direct table writes.
+- Migration `0021` adds narrow API-only job update, acceptance, and deletion
+  functions. Requests use opaque versions and idempotency; SQL owns
+  tenant/module/role/assignment checks and the jobs sync bump. PATCH cannot
+  complete a job, acceptance is manager/dev-only from pending or waiting, and
+  deletion refuses protected database or private-file references.
+- Web-session rows contain SHA-256 token/CSRF hashes and encrypted Supabase
+  credentials, never plaintext session tokens. Operational cleanup now covers
+  expired sessions, idempotency rows, and abandoned upload-session state.
 
 ## Optimizations (May 1-May 15, 2026)
 
@@ -168,8 +237,12 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Document task URLs split by task type: `preview_url` → `previewURL`, `generate_url` → `downloadURL`. `updateBusinessInfoV1` rejects `vat_number` mutations after onboarding.
 - Website server proxy auth now uses split HttpOnly cookies: signed session metadata in `__session`, current bearer token in `__session_access`.
 - Session route validation now requires the `__session_access` bearer cookie in addition to the signed `__session` metadata cookie.
-- Registration now signs the user in before redirecting into onboarding, which keeps the cookie-backed session continuous across the handoff.
+- Registration now requires email confirmation and does not create a browser session. Confirmation is handled server-side; the user signs in only after the email is verified.
 - Contact request spam/challenge failures now return `400` route errors with stable codes (`spam_rejected`, `invalid_challenge`).
+- The explicit-tenant clients page keeps its bounded initial directory
+  server-rendered and sends create/update/delete-or-archive only through
+  tenant-scoped opaque-session BFF routes with exact Origin, double-submit
+  CSRF, stable idempotency keys, and client entity versions.
 
 ### Mobile (`phone_app`)
 - Tax invoice `idempotencyKey` suffix now uses `crypto.randomUUID()` instead of `Math.random()`.
@@ -177,6 +250,10 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `SupportChat.tsx` back-button label fixed (was mojibake `×—×–×•×¨` / `Ø±Ø¬ÙˆØ¹`; now correct UTF-8 `חזור` / `رجوع`).
 - Jobs/documents cache bootstrap and version refresh drain paginated read-model pages only for the active 90-day cache window: open jobs, recently updated closed jobs, and recent documents.
 - Mobile read-model array helpers unwrap paginated `{ items, nextCursor }` responses while page helpers preserve the cursor for future infinite-scroll callers.
+- Client Book and compatibility cache client mutations now use authenticated
+  Cloud API calls with active-only bounded pages, opaque entity versions,
+  retry-stable idempotency keys, and tenant-scoped React Query invalidation;
+  these paths no longer call Edge client mutations or Firebase data writes.
 - Core mobile cache/debug logging is routed through a dev-only logger wrapper; warnings and errors remain visible.
 - MMKV draft, pending-job, and support hide-state keys are now scoped by active `uid` / `companyId` instead of sharing global device-wide keys.
 - Supabase auth transport tokens now live in Expo SecureStore; non-sensitive identity hints remain in the general MMKV cache.
@@ -186,6 +263,10 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Solo finished jobs now upload attachments before `createJobV1`, so the created job record is born with real file refs instead of an empty placeholder payload.
 - Mobile job attachment uploads now use canonical company-scoped storage paths and may pass a temporary `attachmentUploadId` until the server allocates the final public job number.
 - Notification channel initialization is now idempotent, and push listeners/token sync are attached only after the authenticated cache bootstrap succeeds for the active user session.
+- Local notification APIs now come from pinned `react-native-notify-kit`; iOS
+  disables NotifyKit remote-notification handling because Firebase Messaging
+  continues to own remote push callbacks. Native dev clients must be rebuilt
+  after this dependency change.
 
 ### `cloudrun-pdf`
 - `buildStoredDocumentRecord` no longer writes forbidden field names (`clientName`, `clientPhone`, `clientEmail`, `clientAddress`, `createdBy`) to stored document records.
@@ -194,10 +275,20 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - Email template variables are HTML-escaped before message composition.
 - Email service is now a true singleton; the non-singleton `getEmailService()` export has been removed.
 - Generated PDF finalization now stays create-only in both Storage and SQL document finalization for all document types.
+- Generated PDFs, previews, and logo reads use the private
+  `smart-job-company-files` Supabase bucket through a server-only secret key.
+  Object paths are internal-UUID scoped; duplicate retries reuse only
+  byte-identical PDFs, ambiguous finalization failures retain retryable bytes,
+  and document finalization advances sync state atomically.
 - `cloudrun-pdf` trusted dispatch verification now supports the Supabase edge self-signed service-account JWT path in addition to Google OIDC verification.
 - Dockerfile pins Puppeteer to `24.40.0` and sets `NODE_ENV=production`.
 
 ### `cloudrun-archiver`
+- Startup runs one bounded abandoned-upload cleanup batch before monthly archive
+  work when `SUPABASE_URL` and server-only `SUPABASE_SECRET_KEY` are configured.
+  It claims sessions with leases, deletes only exact canonical manifest paths,
+  and acknowledges completion or a bounded retry; failures are reported without
+  blocking monthly archives.
 - Monthly archives now drain paginated SQL reads and stream JSON payloads through temporary disk files before upload, which removes the old single-page and whole-month-in-memory failure mode.
 - Archive verification now checks stored metadata and re-hashes the uploaded object via stream before deletion.
 - Archive manifests remain resumable: `uploaded_not_deleted` retries verify the archive and mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches.
@@ -212,3 +303,11 @@ deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions
 - `cloudrun_pdf` and `cloudrun_archiver` CI now run `npm run typecheck` before test.
 - `cloudrun_archiver` CI now builds `packages/contracts` and `packages/db` before installing/testing the archiver, and the image build now uses `docker build -f cloudrun-archiver/Dockerfile .`.
 - Edge function caller URLs in website/mobile use flattened dash names (e.g., `invites-create`, `upgrades-request`) so they match Supabase deploy names for nested paths.
+
+## Remaining Migration Gates
+
+The local/database foundation does not complete the full architecture plan.
+New API/tax Dockerfiles and Cloud Run deployment/IAM, remaining main-API domain
+routes, opaque website-session cutover, mobile outbox and query refactor,
+remaining non-PDF Supabase Storage unification, and final deletion of Edge/Firebase
+infrastructure remain future approval gates.

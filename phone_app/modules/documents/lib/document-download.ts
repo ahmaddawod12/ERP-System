@@ -1,14 +1,10 @@
-import { functions, httpsCallable } from '../../../firebase';
+import { fetchDocumentDownloadAccess } from './documents-api';
 
-export async function getDocumentDownloadUrl(companyId: string, documentId: string): Promise<string> {
-  const callable = httpsCallable(functions, 'createDocumentDownloadUrlV1');
-  const result = await callable({ companyId, documentId }) as {
-    data?: { success?: boolean; downloadURL?: string };
-  };
-
-  if (!result?.data?.success || !result.data.downloadURL) {
-    throw new Error('Document download URL is unavailable');
-  }
-
-  return result.data.downloadURL;
+export async function getDocumentDownloadUrl(
+  uid: string,
+  companyId: number,
+  documentId: string,
+): Promise<string> {
+  const access = await fetchDocumentDownloadAccess({ uid, companyId, documentId });
+  return access.downloadURL;
 }

@@ -9,13 +9,9 @@ import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import { useCache } from '../../contexts/CacheContext';
 import { useAlert } from '../../contexts/AlertContext';
+import { useTenant } from '../../contexts/TenantContext';
 import { AppText } from '../../components';
-import { 
-  registerPushTokenForUser, 
-  setupNotificationListeners,
-  initializeNotifications 
-} from '../../utils/notifications';
-import { NOTIFICATION_SCREEN_ROUTES, ROUTES } from '../../navigation/routes';
+import { ROUTES } from '../../navigation/routes';
 
 export default function App() {
   const router = useRouter();
@@ -23,12 +19,13 @@ export default function App() {
   const [user, setUser] = useState<SupabaseAuthUser | null>(null);
   const [firebaseInitialized, setFirebaseInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [readySessionUid, setReadySessionUid] = useState<string | null>(null);
   const { language } = useLanguageContext();
   const { initializeCache } = useCache();
+  const { workspace } = useTenant();
+  const workspaceCompanyId = workspace?.companyId ?? null;
+  const workspaceRole = workspace?.role ?? null;
   const alert = useAlert();
-  const initializedAuthUidRef = useRef<string | null>(null);
-  const notificationCleanupRef = useRef<(() => void) | null>(null);
+  const initializedScopeRef = useRef<string | null>(null);
   const navigationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Animation states for loading dots
@@ -89,8 +86,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    void initializeNotifications();
-
     return () => {
       if (navigationTimeoutRef.current) {
         clearTimeout(navigationTimeoutRef.current);
@@ -170,19 +165,28 @@ export default function App() {
           setFirebaseInitialized(true);
           
           if (nextUser) {
-            if (initializedAuthUidRef.current === nextUser.uid) {
+            if (!workspaceCompanyId || !workspaceRole) {
+              return;
+            }
+            const selectedCompanyId = String(workspaceCompanyId);
+            const selectedRole = workspaceRole;
+            const selectedScope = `${nextUser.uid}:${selectedCompanyId}`;
+            if (initializedScopeRef.current === selectedScope) {
               return;
             }
 
-            initializedAuthUidRef.current = nextUser.uid;
-            setReadySessionUid(null);
+            initializedScopeRef.current = selectedScope;
             setShowSuccess(false);
             setIsLoading(true);
 
             try {
               // Initialize cache - it handles profile loading from cache first, then backend if needed
               // Returns { uid, role, companyId } or null on failure
-              const cacheResult = await initializeCache(nextUser.uid);
+              const cacheResult = await initializeCache(
+                nextUser.uid,
+                selectedCompanyId,
+                selectedRole,
+              );
 
               if (!isActive) {
                 return;
@@ -190,14 +194,12 @@ export default function App() {
               
               if (cacheResult) {
                 const { uid, role } = cacheResult;
-                setReadySessionUid(uid);
                 console.log(`🔐 User authenticated: ${uid} (${role})`);
 
                 // All checks passed - show success animation then navigate
                 showSuccessAndNavigate(role);
               } else {
-                initializedAuthUidRef.current = null;
-                setReadySessionUid(null);
+                initializedScopeRef.current = null;
                 // No profile found - show error and return to login
                 console.log('❌ Could not initialize cache/profile');
                 alert.error(
@@ -211,15 +213,13 @@ export default function App() {
                 setIsLoading(false);
               }
             } catch (error) {
-              initializedAuthUidRef.current = null;
-              setReadySessionUid(null);
+              initializedScopeRef.current = null;
               console.error('Error during authentication:', error);
               setIsLoading(false);
             }
           } else {
             // No user authenticated
-            initializedAuthUidRef.current = null;
-            setReadySessionUid(null);
+            initializedScopeRef.current = null;
             setShowSuccess(false);
             setIsLoading(false);
           }
@@ -243,46 +243,14 @@ export default function App() {
       }
       unsubscribe?.();
     };
-  }, [router, initializeCache, alert, language]);
-
-  useEffect(() => {
-    if (!readySessionUid) {
-      if (notificationCleanupRef.current) {
-        notificationCleanupRef.current();
-        notificationCleanupRef.current = null;
-      }
-      return;
-    }
-
-    notificationCleanupRef.current = setupNotificationListeners(
-      (remoteMessage: any) => {
-        console.log('📬 Foreground notification:', remoteMessage?.notification?.title);
-      },
-      (response) => {
-        const data = response.data || {};
-        if (data?.type === 'job_assigned' && data?.screen === 'Workerjob') {
-          router.push(NOTIFICATION_SCREEN_ROUTES.Workerjob);
-        } else if (data?.type === 'job_submitted' && data?.screen === 'ManageJobs') {
-          router.push(NOTIFICATION_SCREEN_ROUTES.ManageJobs);
-        }
-      }
-    );
-
-    registerPushTokenForUser(readySessionUid).then((success) => {
-      if (success) {
-        console.log('🔔 Push token registered successfully');
-      }
-    }).catch((err) => {
-      console.warn('Push token registration failed (non-blocking):', err.message);
-    });
-
-    return () => {
-      if (notificationCleanupRef.current) {
-        notificationCleanupRef.current();
-        notificationCleanupRef.current = null;
-      }
-    };
-  }, [readySessionUid, router]);
+  }, [
+    router,
+    initializeCache,
+    alert,
+    language,
+    workspaceCompanyId,
+    workspaceRole,
+  ]);
 
   // Show loading screen while native services initialize with branded design
   if (isLoading || !firebaseInitialized) {

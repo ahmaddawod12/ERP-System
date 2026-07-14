@@ -71,7 +71,12 @@ function normalizeDocumentPayload(payload: unknown): Record<string, unknown> {
     : {};
 }
 
-function emptyInventoryPayload() {
+function emptyInventoryPayload(): {
+  parts: unknown[];
+  nextId: number;
+  lastUpdated: string;
+  nextCursor: string | null;
+} {
   return {
     parts: [],
     nextId: 1,

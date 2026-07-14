@@ -17,7 +17,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, storage as fbStorage, functions, httpsCallable } from '../../../firebase';
 import NetInfo from '@react-native-community/netinfo';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
 import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput, ScreenHeroCard } from '../../../components';
@@ -25,35 +24,44 @@ import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
-import { scopedKey, storage } from '../../../contexts/mmkv-storage';
-import { generateUuid, safeJsonParse } from '../../../utils/helpers';
+import { useOutbox } from '../../../contexts/OutboxContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
+import { storage } from '../../../contexts/mmkv-storage';
+import { safeJsonParse } from '../../../utils/helpers';
 import { logger } from '../../../utils/logger';
-import { fetchUserInventoryParts } from '../../../utils/read-model';
-import type { Client, InventoryPart, Job, JobFileRef, JobItem } from '../../../types';
+import { enqueueOutboxOperation } from '../../../lib/outbox/operations';
+import type { OutboxOperationResult } from '../../../lib/outbox/processor';
+import { queryClient, tenantQueryKey } from '../../../lib/query/client';
+import type { Client, InventoryPart, JobFileRef, JobItem } from '../../../types';
 import {
-  cleanupUploadedJobFiles,
-  extractStoragePathFromJobFile,
   getImmediateJobFileUri,
   resolveJobFileUri,
-  uploadJobFilesForStorage,
 } from '../lib/job-file-utils';
+import { stageFinishedJobAttachments } from '../lib/finished-job-outbox-attachments';
+import {
+  buildAssignedJobCompletionOutboxPayload,
+  buildFinishedJobOutboxPayload,
+} from '../lib/finished-job-outbox-model';
 import { styles } from './FillJob.styles';
-
-import { generateTempId, getFillJobDraftStorageKey, getPendingUserJobsStorageKey, getPendingWorkerJobsStorageKey, type EditableJob, type FillJobDraft, type FillJobFormData, type FillJobMode, type FillJobPart, type PendingUserJobRecord, type PendingWorkerJobRecord } from '../lib/fill-job-model';
+import { generateTempId, getFillJobDraftStorageKey, type EditableJob, type FillJobDraft, type FillJobFormData, type FillJobMode, type FillJobPart } from '../lib/fill-job-model';
 
 export default function FillJob() {
-  const {
-    updateJob,
-    getDataForDateRange,
-    isWithinCacheRange
-  } = useCache();
   const router = useRouter();
   const params = useLocalSearchParams();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
+  const { user: sessionUser } = useSession();
+  const { workspace } = useTenant();
+  const {
+    database: outboxDatabase,
+    ready: outboxReady,
+    synchronizeOperation,
+    refresh: refreshOutbox,
+  } = useOutbox();
   const insets = useSafeAreaInsets();
-  const { getCompanyId, getUid, profile, addJob, inventory: cachedInventory, updateInventory, clients: cachedClients, addClient, updateClient, fetchClients } = useCache();
+  const { getCompanyId, profile, addJob, inventory: cachedInventory, clients: cachedClients, addClient, updateClient, fetchClients } = useCache();
   const colors = getColors(isDarkMode);
 
   // Determine if we're in user mode or worker mode
@@ -251,7 +259,7 @@ export default function FillJob() {
       setRefreshedSignatureURL(freshURL);
       return freshURL;
     } catch (error) {
-      console.error('❌ Error refreshing signature URL:', error);
+      logger.error('Error refreshing signature URL:', error);
       setRefreshedSignatureURL(null);
       return null;
     } finally {
@@ -268,7 +276,7 @@ export default function FillJob() {
       );
       setResolvedPhotoPreviewUrls(nextUrls.filter((value): value is string => Boolean(value)));
     } catch (error) {
-      console.error('Error resolving photo preview URLs:', error);
+      logger.error('Error resolving photo preview URLs:', error);
       setResolvedPhotoPreviewUrls([]);
     }
   };
@@ -279,7 +287,7 @@ export default function FillJob() {
     
     // Fetch clients if not already cached
     const companyId = getCompanyId();
-    if (cachedClients.length === 0 && companyId) {
+    if (mode === 'user' && cachedClients.length === 0 && companyId) {
       void fetchClients(companyId);
     }
     
@@ -324,7 +332,7 @@ export default function FillJob() {
         setInventory([]);
       }
     } catch (error) {
-      console.error('Error loading inventory:', error);
+      logger.error('Error loading inventory:', error);
       setInventory([]);
     }
   };
@@ -348,7 +356,7 @@ export default function FillJob() {
         setJobData({ ...jobData, location: formattedAddress });
       }
     } catch (error) {
-      console.error('Error getting location:', error);
+      logger.error('Error getting location:', error);
       alert.error('Error', 'Failed to get location');
     }
   };
@@ -398,27 +406,6 @@ export default function FillJob() {
     }
   };
 
-  const enqueuePendingJob = async (
-    modeToQueue: FillJobMode,
-    companyId: string,
-    uid: string,
-    jobId: string,
-    jobPayload: Record<string, unknown>,
-  ) => {
-    if (modeToQueue === 'user') {
-      const pendingKey = getPendingUserJobsStorageKey();
-      const existing = safeJsonParse<PendingUserJobRecord[]>(storage.getString(pendingKey), []) || [];
-      storage.set(pendingKey, JSON.stringify([...existing, { uid, localJobId: jobId, jobData: jobPayload }]));
-      addJob({ ...jobPayload, id: jobId, status: 'finished' });
-      return;
-    }
-
-    const pendingKey = getPendingWorkerJobsStorageKey();
-    const existing = safeJsonParse<PendingWorkerJobRecord[]>(storage.getString(pendingKey), []) || [];
-    storage.set(pendingKey, JSON.stringify([...existing, { companyId, jobId, jobData: jobPayload }]));
-    updateJob(jobId, jobPayload);
-  };
-
   const validateForm = () => {
     // User mode requires title, worker mode doesn't
     if (mode === 'user' && !jobData.title) {
@@ -426,8 +413,12 @@ export default function FillJob() {
       return false;
     }
 
-    if (!jobData.timeFrom || !jobData.timeTo || !jobData.location || 
-        !jobData.description || !jobData.cname || !jobData.signingPerson) {
+    if (
+      !jobData.timeFrom
+      || !jobData.timeTo
+      || !jobData.signingPerson
+      || (mode === 'user' && (!jobData.location || !jobData.description || !jobData.cname))
+    ) {
       alert.error('Error', t.fillAllFields);
       return false;
     }
@@ -456,52 +447,51 @@ export default function FillJob() {
     return true;
   };
 
-  const decreaseInventoryParts = async (uid: string) => {
-    try {
-      if (!selectedParts || selectedParts.length === 0) {
-        logger.debug('No parts to deduct from inventory');
-        return;
-      }
+  const showSavedOffline = () => {
+    alert.success(
+      language === 'en'
+        ? 'Saved Offline'
+        : language === 'he'
+        ? '\u05e0\u05e9\u05de\u05e8 \u05d1\u05de\u05e6\u05d1 \u05dc\u05d0 \u05de\u05e7\u05d5\u05d5\u05df'
+        : '\u062a\u0645 \u0627\u0644\u062d\u0641\u0638 \u062f\u0648\u0646 \u0627\u062a\u0635\u0627\u0644',
+      language === 'en'
+        ? 'Job saved locally and will sync when you are back online.'
+        : language === 'he'
+        ? '\u05d4\u05de\u05e9\u05d9\u05de\u05d4 \u05e0\u05e9\u05de\u05e8\u05d4 \u05de\u05e7\u05d5\u05de\u05d9\u05ea \u05d5\u05ea\u05e1\u05ea\u05e0\u05db\u05e8\u05df \u05db\u05e9\u05ea\u05d7\u05d6\u05d5\u05e8 \u05dc\u05d7\u05d9\u05d1\u05d5\u05e8.'
+        : '\u062a\u0645 \u062d\u0641\u0638 \u0627\u0644\u0645\u0647\u0645\u0629 \u0645\u062d\u0644\u064a\u064b\u0627 \u0648\u0633\u062a\u062a\u0645 \u0645\u0632\u0627\u0645\u0646\u062a\u0647\u0627 \u0639\u0646\u062f \u0639\u0648\u062f\u0629 \u0627\u0644\u0627\u062a\u0635\u0627\u0644.',
+    );
+  };
 
-      // Use cached inventory before falling back to the backend read model.
-      logger.debug('Using cached inventory to deduct parts');
-      let partsArray = Array.isArray(cachedInventory) ? [...cachedInventory] : [];
-
-      // If cache is empty, fetch from backend as fallback.
-      if (partsArray.length === 0) {
-        console.warn('Cached inventory is empty, fetching from backend...');
-        const companyId = getCompanyId();
-        if (companyId) {
-          partsArray = await fetchUserInventoryParts(companyId, uid);
-        }
-      }
-
-      // Deduct parts from cached inventory array
-      selectedParts.forEach(usedPart => {
-        const partIndex = partsArray.findIndex(p => p.id === usedPart.id);
-        if (partIndex !== -1) {
-          const currentQty = Number(partsArray[partIndex].quantity) || 0;
-          const usedQty = Number(usedPart.usedQuantity ?? usedPart.quantity) || 0;
-          const newQty = Math.max(0, currentQty - usedQty);
-          
-          partsArray[partIndex] = {
-            ...partsArray[partIndex],
-            quantity: newQty
-          };
-          logger.debug(`Deducting ${usedQty} of ${partsArray[partIndex].name} from inventory. New qty: ${newQty}`);
-        }
-      });
-
-      // Route through Cloud Function so audit log, cache-version bump, and rules are applied consistently
-      const companyId = getCompanyId();
-      const updateInvFn = httpsCallable(functions, 'updateInventoryV1');
-      await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: uid, parts: partsArray });
-      
-      logger.debug('Inventory deducted via backend; cache version incremented by server');
-    } catch (error) {
-      console.error('❌ Error decreasing inventory:', error);
-      throw error;
+  const showSynchronizationOutcome = (result: OutboxOperationResult) => {
+    if (result.outcome === 'reconciled') {
+      alert.success('Success', t.success);
+      return;
     }
+    if (result.outcome === 'conflict') {
+      alert.error(
+        'Job changed on the server',
+        'Your work is preserved in Pending Work. Review the latest job before retrying or discarding it.',
+      );
+      return;
+    }
+    if (result.outcome === 'terminal') {
+      alert.error(
+        'Job was not submitted',
+        'The server rejected this operation. Your work is preserved in Pending Work for review or discard.',
+      );
+      return;
+    }
+    if (result.outcome === 'retry') {
+      alert.warning(
+        'Saved for retry',
+        'Your work is safely stored on this device and will retry when connectivity is restored.',
+      );
+      return;
+    }
+    alert.info(
+      'Saved to Pending Work',
+      'Your work is safely queued on this device and has not been confirmed by the server yet.',
+    );
   };
 
   const handleSubmit = async () => {
@@ -511,47 +501,22 @@ export default function FillJob() {
     setSubmitting(true);
     alert.loading(
       language === 'en' ? 'Saving Job' : language === 'he' ? 'שומר משימה' : 'حفظ المهمة',
-      language === 'en' ? 'Please wait while we save your job details...' : 
-      language === 'he' ? 'אנא המתן בזמן שאנו שומרים את פרטי המשימה...' : 
+      language === 'en' ? 'Please wait while we save your job details...' :
+      language === 'he' ? 'אנא המתן בזמן שאנו שומרים את פרטי המשימה...' :
       'يرجى الانتظار بينما نحفظ تفاصيل مهمتك...'
     );
-    let uploadedStoragePaths: string[] = [];
-    let jobPersisted = false;
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        throw new Error('User session not found');
+      if (!sessionUser || !workspace || !outboxReady || !outboxDatabase) {
+        throw new Error('The encrypted offline outbox is not ready');
       }
-      const uid = getUid() || user.uid;
       const jobId = editingJob?.id || generateTempId();
       const currentDate = new Date();
       const networkState = await NetInfo.fetch();
       const isOnline = Boolean(networkState.isConnected && networkState.isInternetReachable !== false);
 
-      // Get user profile from cache
-      const companyId = getCompanyId();
-
-      if (!companyId) {
-        throw new Error('User does not belong to a company');
-      }
-
-      let photoRefs: Array<{ storagePath: string; uploaded: boolean }> = [];
-      let signatureRef: { storagePath: string; uploaded: boolean } | null = null;
-      if (isOnline && mode !== 'user') {
-        const uploadResult = await uploadJobFilesForStorage(
-          companyId,
-          jobId,
-          jobData.photos,
-          jobData.signature
-        );
-        photoRefs = uploadResult.photoRefs;
-        signatureRef = uploadResult.signatureRef;
-        uploadedStoragePaths = uploadResult.uploadedStoragePaths || [];
-      }
-
       // Auto-save new client or update existing client with missing fields
       let clientId = selectedClientObj?.id || null;
-      if (selectedClientObj && jobData.cname.trim()) {
+      if (mode === 'user' && isOnline && selectedClientObj && jobData.cname.trim()) {
         // Update existing client with any newly filled fields
         try {
           const updates: { name?: string; phone?: string } = {};
@@ -564,7 +529,7 @@ export default function FillJob() {
         } catch (e) {
           logger.debug('Update client failed (non-critical):', e);
         }
-      } else if (!selectedClientObj && jobData.cname.trim()) {
+      } else if (mode === 'user' && isOnline && !selectedClientObj && jobData.cname.trim()) {
         // Save as new client
         try {
           const clientToSave: { name: string; phone?: string } = { name: jobData.cname.trim() };
@@ -577,7 +542,7 @@ export default function FillJob() {
       }
 
       const jobToSave = {
-        ...(mode === 'user' && { title: jobData.title }),
+        title: jobData.title,
         timeFrom: jobData.timeFrom,
         timeTo: jobData.timeTo,
         location: jobData.location,
@@ -587,12 +552,11 @@ export default function FillJob() {
         cphone: jobData.cphone || '',
         ...(clientId && { cid: clientId }),
         signingPerson: jobData.signingPerson,
-        photos: photoRefs,
-        signature: signatureRef,
-        status: mode === 'user' ? 'finished' : 'waiting',
-        ...(mode === 'user'
-          ? { wid: profile?.wid ? String(profile.wid) : null, wname: profile?.name || '' }
-          : { wname: profile?.name || '' }),
+        photos: jobData.photos,
+        signature: jobData.signature || undefined,
+        status: 'finished' as const,
+        wid: profile?.wid ? String(profile.wid) : undefined,
+        wname: profile?.name || '',
         finishedAt: currentDate.toISOString(),
         updatedAt: currentDate.toISOString(),
         isCert: false, // New field for tax invoice tracking
@@ -603,114 +567,136 @@ export default function FillJob() {
         })),
       };
 
-      if (!isOnline) {
-        const offlinePayload = mode === 'user'
-          ? {
-              ...jobToSave,
-              photos: jobData.photos,
-              signature: jobData.signature,
-              attachmentUploadId: jobId,
-              idempotencyKey: `job_${Date.now()}_${jobId}`,
-            }
-          : {
-              ...jobToSave,
-              photos: jobData.photos,
-              signature: jobData.signature,
-            };
+      if (mode === 'user') {
+        if (!jobData.signature) {
+          throw new Error('A client signature is required');
+        }
 
-        await enqueuePendingJob(mode, companyId, uid, jobId, offlinePayload);
-        const draftKey = getFillJobDraftStorageKey(mode, jobId);
-        storage.remove(draftKey);
+        const payload = buildFinishedJobOutboxPayload({
+          title: jobData.title,
+          description: jobData.description,
+          location: jobData.location,
+          clientId,
+          assigneeMemberNo: profile?.wid ?? null,
+          timeFrom: jobData.timeFrom,
+          timeTo: jobData.timeTo,
+          signingPerson: jobData.signingPerson,
+          travelDistance,
+          parts: selectedParts,
+        });
+        const attachments = await stageFinishedJobAttachments({
+          userId: sessionUser.id,
+          photos: jobData.photos,
+          signature: jobData.signature,
+        });
+        const operationId = await enqueueOutboxOperation({
+          database: outboxDatabase,
+          companyId: workspace.companyId,
+          kind: 'job.create_finished',
+          payload,
+          attachments,
+        });
+        addJob({
+          ...jobToSave,
+          id: operationId,
+          photos: jobData.photos,
+          signature: jobData.signature,
+          pendingSync: true,
+        });
+        storage.remove(getFillJobDraftStorageKey(mode, jobId));
+
+        let synchronizationResult: OutboxOperationResult | null = null;
+        if (isOnline) {
+          try {
+            synchronizationResult = await synchronizeOperation(operationId);
+          } catch (syncError) {
+            logger.warn('Finished job remains queued after synchronization failed', syncError);
+            synchronizationResult = { operationId, outcome: 'queued' };
+          }
+        } else {
+          void refreshOutbox().catch((refreshError) => {
+            logger.warn('Could not refresh the pending-work list after enqueue', refreshError);
+          });
+        }
+        void queryClient.invalidateQueries({
+          queryKey: tenantQueryKey(sessionUser.id, workspace.companyId, 'jobs'),
+        }).catch((queryError) => {
+          logger.warn('Could not refresh the jobs list after enqueue', queryError);
+        });
+
         alert.hideLoading();
-        alert.success(
-          language === 'en' ? 'Saved Offline' : language === 'he' ? 'נשמר במצב לא מקוון' : 'تم الحفظ دون اتصال',
-          language === 'en'
-            ? 'Job saved locally and will sync when you are back online.'
-            : language === 'he'
-            ? 'המשימה נשמרה מקומית ותסונכרן כשתחזור לחיבור.'
-            : 'تم حفظ المهمة محلياً وستتم مزامنتها عند عودة الاتصال.'
-        );
+        if (synchronizationResult) {
+          showSynchronizationOutcome(synchronizationResult);
+        } else {
+          showSavedOffline();
+        }
         setTimeout(() => {
           router.back();
         }, 500);
         return;
       }
 
-      // Save to appropriate location
-      if (mode === 'user') {
-        logger.debug('FillJob: creating user finished job via backend');
-        const attachmentUploadId = `pending-${generateUuid()}`;
-        const userUploadResult = await uploadJobFilesForStorage(
-          companyId,
-          attachmentUploadId,
-          jobData.photos,
-          jobData.signature
-        );
-        uploadedStoragePaths = userUploadResult.uploadedStoragePaths || [];
-        const createJobFn = httpsCallable(functions, 'createJobV1');
-        const result = await createJobFn({
-          companyId,
-          type: 'finished',
-          ...jobToSave,
-          photos: userUploadResult.photoRefs,
-          signature: userUploadResult.signatureRef,
-          attachmentUploadId,
-          idempotencyKey: `job_${Date.now()}_${jobId}`,
-        }) as { data?: { jobId?: string } };
-
-        const createdServerJobId = result.data?.jobId;
-        if (!createdServerJobId) {
-          throw new Error('Job was created without a server job ID');
-        }
-        jobPersisted = true;
-        photoRefs = userUploadResult.photoRefs;
-        signatureRef = userUploadResult.signatureRef;
-        
-        // Update local cache with the server-generated ID
-        logger.debug('FillJob: adding created job to local cache');
-        addJob({ ...jobToSave, photos: photoRefs, signature: signatureRef, id: createdServerJobId });
-        
-        logger.debug('FillJob: job saved successfully');
-        
-        // Decrease inventory after job is successfully saved
-        if (selectedParts && selectedParts.length > 0) {
-          logger.debug('Solo inventory deduction is handled by createJobV1.');
-        }
-      } else {
-        logger.debug('FillJob: updating worker pending job via backend', jobId);
-        
-        // Worker mode: update existing job through the backend mutation gateway.
-        // Backend notification logic handles manager push notifications when status changes to 'waiting'.
-        const updateJobFn = httpsCallable(functions, 'updateJobV1');
-        await updateJobFn({ companyId, jobId, ...jobToSave });
-        jobPersisted = true;
-        
-        logger.debug('FillJob: worker job updated through backend');
-        
-        // Update local cache and increment versions
-        logger.debug('FillJob: updating job in local cache');
-        updateJob(jobId, jobToSave);
-        
-        logger.debug('FillJob: cache updated successfully');
-        // Note: Inventory is deducted when manager ACCEPTS the job in ManageJobs.js
+      if (!editingJob?.id || !editingJob.entityVersion) {
+        throw new Error('The assigned job is missing its current entity version');
+      }
+      if (!jobData.signature) {
+        throw new Error('A client signature is required');
       }
 
-      // Clear draft
-      const draftKey = getFillJobDraftStorageKey(mode, jobId);
-      storage.remove(draftKey);
+      const completionPayload = buildAssignedJobCompletionOutboxPayload({
+        jobId: editingJob.id,
+        entityVersion: editingJob.entityVersion,
+        timeFrom: jobData.timeFrom,
+        timeTo: jobData.timeTo,
+        signingPerson: jobData.signingPerson,
+        travelDistance,
+        parts: selectedParts,
+      });
+      const attachments = await stageFinishedJobAttachments({
+        userId: sessionUser.id,
+        photos: jobData.photos,
+        signature: jobData.signature,
+      });
+      const operationId = await enqueueOutboxOperation({
+        database: outboxDatabase,
+        companyId: workspace.companyId,
+        kind: 'job.complete_assigned',
+        payload: completionPayload,
+        entityVersion: editingJob.entityVersion,
+        attachments,
+      });
+      storage.remove(getFillJobDraftStorageKey(mode, editingJob.id));
+
+      let synchronizationResult: OutboxOperationResult | null = null;
+      if (isOnline) {
+        try {
+          synchronizationResult = await synchronizeOperation(operationId);
+        } catch (syncError) {
+          logger.warn('Assigned-job completion remains queued after synchronization failed', syncError);
+          synchronizationResult = { operationId, outcome: 'queued' };
+        }
+      } else {
+        void refreshOutbox().catch((refreshError) => {
+          logger.warn('Could not refresh the pending-work list after enqueue', refreshError);
+        });
+      }
+      void queryClient.invalidateQueries({
+        queryKey: tenantQueryKey(sessionUser.id, workspace.companyId, 'jobs'),
+      }).catch((queryError) => {
+        logger.warn('Could not refresh the jobs list after completion enqueue', queryError);
+      });
 
       alert.hideLoading();
-      alert.success('Success', t.success);
-      
-      // Navigate back
+      if (synchronizationResult) {
+        showSynchronizationOutcome(synchronizationResult);
+      } else {
+        showSavedOffline();
+      }
       setTimeout(() => {
         router.back();
       }, 500);
     } catch (error) {
-      if (!jobPersisted && uploadedStoragePaths.length > 0) {
-        await cleanupUploadedJobFiles(uploadedStoragePaths);
-      }
-      console.error('Error saving job:', error);
+      logger.error('Error saving job:', error);
       alert.hideLoading();
       alert.error('Error', 'Failed to save job');
     } finally {
@@ -731,7 +717,7 @@ export default function FillJob() {
       alert.success('Success', t.draftSaved);
       router.back();
     } catch (error) {
-      console.error('Error saving draft:', error);
+      logger.error('Error saving draft:', error);
       alert.error('Error', 'Failed to save draft');
     }
   };
@@ -794,31 +780,34 @@ export default function FillJob() {
             </View>
 
             {/* Embedded client selector (search + dropdown) */}
-            <ClientSelector
-              clients={cachedClients}
-              onSelect={(client) => {
-                setSelectedClientObj(client);
-                setJobData(prev => ({
-                  ...prev,
-                  cname: client.cname || client.name || '',
-                  cphone: client.cphone || client.phone || '',
-                }));
-              }}
-              selectedClient={selectedClientObj}
-              onClear={() => {
-                setSelectedClientObj(null);
-                setJobData(prev => ({ ...prev, cname: '', cphone: '' }));
-              }}
-              colors={colors}
-              language={language}
-            />
+            {mode === 'user' && (
+              <ClientSelector
+                clients={cachedClients}
+                onSelect={(client) => {
+                  setSelectedClientObj(client);
+                  setJobData(prev => ({
+                    ...prev,
+                    cname: client.cname || client.name || '',
+                    cphone: client.cphone || client.phone || '',
+                  }));
+                }}
+                selectedClient={selectedClientObj}
+                onClear={() => {
+                  setSelectedClientObj(null);
+                  setJobData(prev => ({ ...prev, cname: '', cphone: '' }));
+                }}
+                colors={colors}
+                language={language}
+              />
+            )}
 
             {/* Client fields - always visible, pre-filled when client selected */}
             <AppInput
               inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
-              placeholder={t.clientName + ' *'}
+              placeholder={t.clientName + (mode === 'user' ? ' *' : '')}
               value={jobData.cname}
               onChangeText={(text) => setJobData({ ...jobData, cname: text })}
+              editable={mode === 'user'}
             />
             <AppInput
               inputStyle={[styles.input, { color: colors.textPrimary, backgroundColor: colors.background, borderColor: colors.border }]}
@@ -826,6 +815,7 @@ export default function FillJob() {
               value={jobData.cphone}
               onChangeText={(text) => setJobData({ ...jobData, cphone: text })}
               keyboardType="phone-pad"
+              editable={mode === 'user'}
             />
 
           </AppCard>
@@ -870,7 +860,7 @@ export default function FillJob() {
             <View style={styles.cardHeader}>
               <Ionicons name="location" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
-                {t.location} *
+                {t.location}{mode === 'user' ? ' *' : ''}
               </AppText>
             </View>
             <AppInput
@@ -878,13 +868,16 @@ export default function FillJob() {
               placeholder={t.locationPlaceholder}
               value={jobData.location}
               onChangeText={(text) => setJobData({ ...jobData, location: text })}
+              editable={mode === 'user'}
             />
-            <AppButton
-              title={t.getLocation}
-              iconLeft={{ name: 'navigate-outline' }}
-              onPress={handleGetLocation}
-              style={styles.locationButton}
-            />
+            {mode === 'user' && (
+              <AppButton
+                title={t.getLocation}
+                iconLeft={{ name: 'navigate-outline' }}
+                onPress={handleGetLocation}
+                style={styles.locationButton}
+              />
+            )}
           </AppCard>
 
           {/* Travel Distance Card */}
@@ -927,7 +920,7 @@ export default function FillJob() {
             <View style={styles.cardHeader}>
               <MaterialCommunityIcons name="text" size={20} color={colors.secondary} />
               <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
-                {t.jobDescription} *
+                {t.jobDescription}{mode === 'user' ? ' *' : ''}
               </AppText>
             </View>
             <AppInput
@@ -938,6 +931,7 @@ export default function FillJob() {
               multiline
               numberOfLines={4}
               textAlignVertical="top"
+              editable={mode === 'user'}
             />
           </AppCard>
 
@@ -1090,8 +1084,7 @@ export default function FillJob() {
                     style={[styles.signaturePreview, { borderColor: colors.border, marginTop: 0 }]} 
                     resizeMode="contain"
                     onError={(error) => {
-                      console.error('=== Signature Image Load Error (Refreshed URL) ===');
-                      console.error('Error details:', error?.nativeEvent || error);
+                      logger.error('Signature image failed to load from the refreshed URL:', error?.nativeEvent || error);
                       logger.debug('Refreshed signature URI:', refreshedSignatureURL);
                     }}
                     onLoad={() => {
@@ -1146,7 +1139,7 @@ export default function FillJob() {
               title={t.submit}
               style={[styles.button, styles.submitButton]}
               onPress={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || !outboxReady || (mode === 'worker' && !editingJob?.entityVersion)}
               loading={submitting}
             />
           </View>

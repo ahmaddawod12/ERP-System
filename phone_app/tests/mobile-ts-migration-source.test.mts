@@ -26,15 +26,20 @@ test('typed job and document screens do not regress to ts-nocheck', () => {
 test('auth tokens are stored in SecureStore instead of MMKV-derived keys', () => {
   const mmkvStorage = readProjectFile('contexts', 'mmkv-storage.ts');
   const firebase = readProjectFile('firebase.ts');
+  const supabaseClient = readProjectFile('lib', 'auth', 'supabase-client.ts');
 
   assert.doesNotMatch(mmkvStorage, /encryptionKey:\s*['"]smart-job-auth-v1['"]/);
   assert.doesNotMatch(mmkvStorage, /AUTH_STORAGE_KEY_SEED/);
   assert.doesNotMatch(mmkvStorage, /storage\.getString\([^\n]*AUTH_STORAGE_KEY/);
   assert.doesNotMatch(mmkvStorage, /EXPO_PUBLIC_MMKV_AUTH_KEY/);
   assert.doesNotMatch(firebase, /authStorage\.(getString|set|remove)/);
-  assert.match(firebase, /expo-secure-store/);
-  assert.match(firebase, /SecureStore\.setItemAsync/);
-  assert.match(firebase, /SecureStore\.getItemAsync/);
+  assert.match(supabaseClient, /expo-secure-store/);
+  assert.match(supabaseClient, /SecureStore\.setItemAsync/);
+  assert.match(supabaseClient, /SecureStore\.getItemAsync/);
+  assert.match(supabaseClient, /EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
+  assert.match(supabaseClient, /refreshSessionSingleFlight/);
+  assert.match(supabaseClient, /AppState\.addEventListener/);
+  assert.doesNotMatch(supabaseClient, /EXPO_PUBLIC_SUPABASE_ANON_KEY/);
 });
 
 test('read-model list helpers unwrap paginated items while preserving page helpers', () => {
@@ -63,4 +68,22 @@ test('mobile cache debug output uses dev-only logger and avoids AsyncStorage run
   assert.doesNotMatch(cacheFetchers, /console\.log/);
   assert.doesNotMatch(archiveQuery, /console\.log/);
   assert.doesNotMatch(packageJson, /@react-native-async-storage\/async-storage/);
+});
+
+test('NotifyKit replaces archived Notifee without taking over RNFirebase remote events', () => {
+  const notifications = readProjectFile('utils', 'notifications.ts');
+  const packageJson = JSON.parse(readProjectFile('package.json')) as {
+    dependencies?: Record<string, string>;
+    expo?: unknown;
+  };
+
+  assert.equal(packageJson.dependencies?.['react-native-notify-kit'], '10.4.8');
+  assert.equal(packageJson.dependencies?.['@notifee/react-native'], undefined);
+  assert.match(notifications, /from 'react-native-notify-kit'/);
+  assert.doesNotMatch(notifications, /from '@notifee\/react-native'/);
+  assert.match(
+    notifications,
+    /setNotificationConfig\(\{[\s\S]*ios:\s*\{\s*handleRemoteNotifications:\s*false\s*\}/,
+  );
+  assert.equal(packageJson.expo, undefined);
 });

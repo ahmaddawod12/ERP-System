@@ -16,6 +16,7 @@
   "include": [
     "index.ts",
     "archive-month.ts",
+    "upload-cleanup.ts",
     "tests/**/*.js"
   ],
   "exclude": ["dist"]

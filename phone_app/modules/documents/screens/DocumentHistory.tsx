@@ -1,9 +1,8 @@
-import React, { useState, useEffect, memo, useCallback } from 'react';
+import React, { useState, memo, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
   TouchableOpacity,
-  Modal,
   Platform,
   Linking,
   ActivityIndicator,
@@ -11,6 +10,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { randomUUID } from 'expo-crypto';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,20 +18,26 @@ import { getColors, spacing, borderRadius, typography, shadows, gradients } from
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import { useScrollHandler } from '../../../contexts/HeaderContext';
 import { AppText, AppButton, GlobalHeader, DateFilter, ClientSelectorModal, ScreenHeroCard } from '../../../components';
-import { auth, functions, httpsCallable } from '../../../firebase';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import type { DocTypeCode, DateLike, AppDocument } from '../../../types';
 import type { DateFilterRange } from '../../../components/forms/DateFilter';
 import { DOC_TYPE, DOC_COLORS, DOC_GRADIENTS, DOC_ICONS, getDocumentLabel } from '@smart-job/contracts';
+import { DocumentDeleteRequestSchema } from '@smart-job/api-contracts';
 import { getDocumentDownloadUrl } from '../lib/document-download';
+import { StableDocumentActionKeys } from '../lib/document-action-keys';
+import { useDocumentsInfinite } from '../lib/use-documents-infinite';
+import { useDocumentMutations } from '../lib/use-document-mutations';
+import { useClientsInfinite } from '../../clients/lib/use-clients-infinite';
 import { ROUTES } from '../../../navigation/routes';
+import { logger } from '../../../utils/logger';
 import { styles } from './DocumentHistory.styles';
 
-import { getDateLikeTime, type DocumentDateFilter, type DocumentHistoryRecord, type DocumentLineItem, type DocumentTypeFilter, type DocumentTypeOption } from '../lib/document-history-model';
+import { type DocumentDateFilter, type DocumentHistoryRecord, type DocumentTypeFilter, type DocumentTypeOption } from '../lib/document-history-model';
 
 interface DocumentRowProps {
   doc: DocumentHistoryRecord;
@@ -43,8 +49,10 @@ interface DocumentRowProps {
   onView: (doc: DocumentHistoryRecord) => void;
   onDownload: (doc: DocumentHistoryRecord) => void;
   onShare: (doc: DocumentHistoryRecord) => void;
+  onDelete: (doc: DocumentHistoryRecord) => void;
   isDownloading: boolean;
   isSharing: boolean;
+  isDeleting: boolean;
   formatDate: (dateInput: DateLike | null | undefined) => string;
   formatAmount: (amount: number | string | null | undefined) => string;
 }
@@ -59,8 +67,10 @@ const DocumentRow = memo(function DocumentRow({
   onView,
   onDownload,
   onShare,
+  onDelete,
   isDownloading,
   isSharing,
+  isDeleting,
   formatDate,
   formatAmount,
 }: DocumentRowProps) {
@@ -125,35 +135,54 @@ const DocumentRow = memo(function DocumentRow({
           <AppText style={styles.actionButtonText}>{t.view}</AppText>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.actionButton, styles.actionButtonThree, { backgroundColor: colors.secondary }]}
-          onPress={() => onDownload(doc)}
-          disabled={isDownloading}
-        >
-          {isDownloading ? (
-            <ActivityIndicator size="small" color="white" />
-          ) : (
-            <>
-              <Ionicons name="download-outline" size={18} color="white" />
-              <AppText style={styles.actionButtonText}>{t.download}</AppText>
-            </>
-          )}
-        </TouchableOpacity>
+        {doc.hasFile ? (
+          <>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.actionButtonThree, { backgroundColor: colors.secondary }]}
+              onPress={() => onDownload(doc)}
+              disabled={isDownloading}
+            >
+              {isDownloading ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <>
+                  <Ionicons name="download-outline" size={18} color="white" />
+                  <AppText style={styles.actionButtonText}>{t.download}</AppText>
+                </>
+              )}
+            </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.actionButton, styles.actionButtonThree, { backgroundColor: '#25D366' }]}
-          onPress={() => onShare(doc)}
-          disabled={isSharing}
-        >
-          {isSharing ? (
-            <ActivityIndicator size="small" color="white" />
-          ) : (
-            <>
-              <Ionicons name="share-social-outline" size={18} color="white" />
-              <AppText style={styles.actionButtonText}>{t.share}</AppText>
-            </>
-          )}
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, styles.actionButtonThree, { backgroundColor: '#25D366' }]}
+              onPress={() => onShare(doc)}
+              disabled={isSharing}
+            >
+              {isSharing ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <>
+                  <Ionicons name="share-social-outline" size={18} color="white" />
+                  <AppText style={styles.actionButtonText}>{t.share}</AppText>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+        ) : doc.entityVersion ? (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.actionButtonThree, { backgroundColor: colors.error }]}
+            onPress={() => onDelete(doc)}
+            disabled={isDeleting}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <>
+                <Ionicons name="trash-outline" size={18} color="white" />
+                <AppText style={styles.actionButtonText}>{t.delete}</AppText>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -166,29 +195,15 @@ export default function DocumentHistory() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { scrollProps } = useScrollHandler();
-  const {
-    getCompanyId,
-    documents: cachedDocuments,
-    clients: cachedClients,
-    fetchClients,
-    refreshCache,
-    getDataForDateRange,
-    getDataForMonth,
-    isWithinCacheRange,
-  } = useCache();
+  const { user } = useSession();
+  const { workspace, status: tenantStatus, refreshWorkspaces } = useTenant();
   const colors = getColors(isDarkMode);
 
   const PAGE_SIZE = 50;
-  const [documents, setDocuments] = useState<DocumentHistoryRecord[]>([]);
-  const [filteredDocuments, setFilteredDocuments] = useState<DocumentHistoryRecord[]>([]);
-  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedDocType, setSelectedDocType] = useState<DocumentTypeFilter>('all');
-  const [selectedDocument] = useState<DocumentHistoryRecord | null>(null);
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [downloadingDoc, setDownloadingDoc] = useState<string | null>(null);
   const [sharingDoc, setSharingDoc] = useState<string | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [dateFilter, setDateFilter] = useState<DocumentDateFilter>({
@@ -204,8 +219,17 @@ export default function DocumentHistory() {
   const [clientFilter, setClientFilter] = useState('');
   const [showClientSelector, setShowClientSelector] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const { deleteMutation } = useDocumentMutations({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+  });
+  const [actionKeys] = useState(() => new StableDocumentActionKeys(() => randomUUID()));
 
-  const t = (language === 'en' ? {
+  useEffect(() => {
+    actionKeys.reset();
+  }, [actionKeys, user?.id, workspace?.companyId]);
+
+  const t = useMemo(() => (language === 'en' ? {
     title: 'Document History',
     back: 'Back',
     filterByType: 'Filter by Type',
@@ -317,9 +341,9 @@ export default function DocumentHistory() {
     date: 'التاريخ',
     description: 'الوصف',
     total: 'المجموع',
-  }) as Record<string, string>;
+  }) as Record<string, string>, [language]);
 
-  const documentTypes: DocumentTypeOption[] = [
+  const documentTypes = useMemo<DocumentTypeOption[]>(() => [
     { id: 'all', label: t.all, icon: 'file-document-multiple', color: '#6B7280', gradient: ['#6B7280', '#4B5563'] },
     ...(Object.values(DOC_TYPE) as DocTypeCode[]).map((code) => ({
       id: code,
@@ -328,161 +352,51 @@ export default function DocumentHistory() {
       color: DOC_COLORS[code],
       gradient: DOC_GRADIENTS[code],
     })),
-  ];
+  ], [language, t.all]);
 
-  useEffect(() => {
-    loadDocuments();
-  }, [cachedDocuments]);
+  const documentFilters = useMemo(() => {
+    const dateFrom = dateFilter.startDate ? new Date(dateFilter.startDate) : undefined;
+    const dateTo = dateFilter.endDate ? new Date(dateFilter.endDate) : undefined;
+    dateFrom?.setHours(0, 0, 0, 0);
+    dateTo?.setHours(23, 59, 59, 999);
+    return {
+      search: clientFilter || undefined,
+      documentType: selectedDocType === 'all' ? undefined : selectedDocType,
+      dateFrom,
+      dateTo,
+      pageSize: PAGE_SIZE,
+    };
+  }, [clientFilter, dateFilter.endDate, dateFilter.startDate, selectedDocType]);
+  const { query: documentsQuery, documents } = useDocumentsInfinite({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    filters: documentFilters,
+    enabled: tenantStatus === 'ready',
+  });
+  const clientFilters = useMemo(() => ({
+    search: clientSearchQuery,
+    status: 'active' as const,
+    pageSize: 50,
+  }), [clientSearchQuery]);
+  const { clients } = useClientsInfinite({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    filters: clientFilters,
+    enabled: tenantStatus === 'ready' && showClientSelector,
+  });
 
-  useEffect(() => {
-    applyFilters();
-    setDisplayLimit(PAGE_SIZE);
-  }, [documents, selectedDocType, dateFilter, clientFilter]);
-
-  const calculateTotal = (income?: DocumentLineItem[]) => {
-    if (!income || !Array.isArray(income)) return 0;
-    return income.reduce((sum, item) => {
-      const price = Number.parseFloat(String(item.price ?? 0)) || 0;
-      const quantity = Number.parseFloat(String(item.quantity ?? 1)) || 1;
-      return sum + (price * quantity);
-    }, 0);
-  };
-
-  const getDescriptionFromIncome = (income?: DocumentLineItem[]) => {
-    if (!income || !Array.isArray(income) || income.length === 0) return '';
-    return income.map(item => item.description).filter(Boolean).join(', ');
-  };
-
-  const loadDocuments = async () => {
-    try {
-      setLoadError(null);
-      const user = auth.currentUser;
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-
-      const companyId = getCompanyId();
-
-      if (!companyId) {
-        console.log('No company name found');
-        setDocuments([]);
-        setLoading(false);
-        return;
-      }
-
-      if (cachedDocuments && cachedDocuments.length > 0) {
-        console.log('📦 [CACHE READ] DocumentHistory - documents from cache:', cachedDocuments.length);
-        const docs: DocumentHistoryRecord[] = cachedDocuments.map((data) => {
-          return {
-            ...data,
-            id: data.id,
-            type: data.type,
-            total: calculateTotal((data as DocumentHistoryRecord).income || data.items),
-            description: getDescriptionFromIncome((data as DocumentHistoryRecord).income || data.items) || (data as DocumentHistoryRecord).notes,
-            documentNumber: (data as DocumentHistoryRecord).documentNumber || (data as DocumentHistoryRecord).number || data.id,
-          };
-        });
-
-        docs.sort((a, b) => {
-          const dateA = getDateLikeTime(a.createdAt);
-          const dateB = getDateLikeTime(b.createdAt);
-          return dateB - dateA;
-        });
-
-        setDocuments(docs);
-        setLoading(false);
-        return;
-      }
-
-      console.log('No cached documents available, cache may not be initialized');
-      setDocuments([]);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error loading documents:', error);
-      setDocuments([]);
-      setLoadError(error instanceof Error ? error.message : String(error));
-      setLoading(false);
-    }
-  };
-
-  const applyFilters = async () => {
-    let filtered = [...documents];
-
-    if (selectedDocType !== 'all') {
-      filtered = filtered.filter(doc => doc.type === selectedDocType);
-    }
-
-    if (dateFilter.startDate && dateFilter.endDate) {
-      const startInCache = isWithinCacheRange(dateFilter.startDate);
-
-      if (!startInCache) {
-        try {
-          const smartData = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'documents');
-
-          filtered = smartData.map((data): DocumentHistoryRecord => ({
-            id: data.id,
-            ...data,
-            type: data.type,
-            total: calculateTotal((data as DocumentHistoryRecord).income || data.items),
-            description: getDescriptionFromIncome((data as DocumentHistoryRecord).income || data.items) || (data as DocumentHistoryRecord).notes,
-            documentNumber: (data as DocumentHistoryRecord).documentNumber || (data as DocumentHistoryRecord).number || data.id,
-          }));
-
-          if (selectedDocType !== 'all') {
-            filtered = filtered.filter(doc => doc.type === selectedDocType);
-          }
-        } catch (error) {
-          console.error('Error fetching data for date range:', error);
-        }
-      } else {
-        const start = new Date(dateFilter.startDate.getFullYear(), dateFilter.startDate.getMonth(), dateFilter.startDate.getDate()).getTime();
-        const end = new Date(dateFilter.endDate.getFullYear(), dateFilter.endDate.getMonth(), dateFilter.endDate.getDate(), 23, 59, 59).getTime();
-
-        filtered = filtered.filter(doc => {
-          const docDate = getDateLikeTime(doc.createdAt);
-          return docDate >= start && docDate <= end;
-        });
-      }
-    } else {
-      if (dateFilter.startDate) {
-        const start = new Date(dateFilter.startDate.getFullYear(), dateFilter.startDate.getMonth(), dateFilter.startDate.getDate()).getTime();
-        filtered = filtered.filter(doc => {
-          const docDate = getDateLikeTime(doc.createdAt);
-          return docDate >= start;
-        });
-      }
-
-      if (dateFilter.endDate) {
-        const end = new Date(dateFilter.endDate.getFullYear(), dateFilter.endDate.getMonth(), dateFilter.endDate.getDate(), 23, 59, 59).getTime();
-        filtered = filtered.filter(doc => {
-          const docDate = getDateLikeTime(doc.createdAt);
-          return docDate <= end;
-        });
-      }
-    }
-
-    if (clientFilter.trim()) {
-      const query = clientFilter.toLowerCase();
-      filtered = filtered.filter(doc =>
-        (doc.cname && doc.cname.toLowerCase().includes(query))
-      );
-    }
-
-    setFilteredDocuments(filtered);
-  };
-
-  const resolveDocumentUrl = async (doc: DocumentHistoryRecord) => {
-    const companyId = getCompanyId();
+  const resolveDocumentUrl = useCallback(async (doc: DocumentHistoryRecord) => {
+    const uid = user?.id;
+    const companyId = workspace?.companyId;
     const documentId = doc.documentId || doc.id;
-    if (!doc.storagePath || !companyId || !documentId) {
+    if (!doc.hasFile || !uid || !companyId || !documentId) {
       throw new Error(t.pdfNotAvailable);
     }
 
-    return getDocumentDownloadUrl(companyId, documentId);
-  };
+    return getDocumentDownloadUrl(uid, companyId, documentId);
+  }, [t.pdfNotAvailable, user?.id, workspace?.companyId]);
 
-  const getDocTypeName = (type: DocumentTypeFilter) => {
+  const getDocTypeName = useCallback((type: DocumentTypeFilter) => {
     const numericType = typeof type === 'number' ? type : Number(type);
     switch (numericType) {
       case DOC_TYPE.TAX_INVOICE: return 'TaxInvoice';
@@ -493,17 +407,17 @@ export default function DocumentHistory() {
       case DOC_TYPE.REFUND: return 'Refund';
       default: return 'Document';
     }
-  };
+  }, []);
 
-  const getDocTypeIcon = (type: DocumentTypeFilter): React.ComponentProps<typeof MaterialCommunityIcons>['name'] => {
+  const getDocTypeIcon = useCallback((type: DocumentTypeFilter): React.ComponentProps<typeof MaterialCommunityIcons>['name'] => {
     const numericType = typeof type === 'number' ? type : Number(type);
     return DOC_ICONS[numericType as DocTypeCode] || 'file-document';
-  };
+  }, []);
 
-  const getDocTypeColor = (type: DocumentTypeFilter) => {
+  const getDocTypeColor = useCallback((type: DocumentTypeFilter) => {
     const numericType = typeof type === 'number' ? type : Number(type);
     return DOC_COLORS[numericType as DocTypeCode] || colors.primary;
-  };
+  }, [colors.primary]);
 
   const formatDate = useCallback((dateInput: DateLike | null | undefined) => {
     if (!dateInput) return 'N/A';
@@ -578,7 +492,7 @@ export default function DocumentHistory() {
     } finally {
       setDownloadingDoc(null);
     }
-  }, [alert, t]);
+  }, [alert, getDocTypeName, resolveDocumentUrl, t.download, t.downloadComplete, t.downloadError]);
 
   const handleShare = useCallback(async (doc: DocumentHistoryRecord) => {
     try {
@@ -611,49 +525,43 @@ export default function DocumentHistory() {
     } finally {
       setSharingDoc(null);
     }
-  }, [alert, t]);
+  }, [alert, getDocTypeName, resolveDocumentUrl, t.share, t.shareError]);
 
-  const handleDelete = async (document: DocumentHistoryRecord) => {
-    try {
-      const companyId = getCompanyId();
+  const handleDelete = useCallback((doc: DocumentHistoryRecord) => {
+    const documentId = doc.documentId || doc.id;
+    if (!documentId || !doc.entityVersion || doc.hasFile) return;
 
-      if (!companyId) {
-        alert.error('Error', 'Company name not found');
-        return;
-      }
-
-      alert.confirm(
-        t.delete,
-        t.deleteConfirm,
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => {},
-          },
-          {
-            text: t.delete,
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                const deleteDocumentFn = httpsCallable(functions, 'deleteDocumentV1');
-                await deleteDocumentFn({ companyId, documentId: document.id });
-                alert.success(t.deleteSuccess || 'Success', t.deleteSuccess);
-              } catch (error) {
-                console.error('Error deleting document:', error);
-                alert.error(t.deleteError || 'Error', error instanceof Error ? error.message : String(error));
-              }
-            },
-          },
-        ]
-      );
-    } catch (error) {
-      console.error('Error in handleDelete:', error);
-      alert.error('Error', error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const displayedDocuments = filteredDocuments.slice(0, displayLimit);
+    alert.confirm(t.delete, t.deleteConfirm, [
+      { text: t.close, style: 'cancel', onPress: () => {} },
+      {
+        text: t.delete,
+        style: 'destructive',
+        onPress: async () => {
+          setDeletingDoc(doc.id);
+          try {
+            const request = DocumentDeleteRequestSchema.parse({
+              entityVersion: doc.entityVersion,
+            });
+            const fingerprint = JSON.stringify({ documentId, request });
+            const action = `delete:${documentId}`;
+            const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+            await deleteMutation.mutateAsync({
+              documentId,
+              body: request,
+              idempotencyKey,
+            });
+            actionKeys.complete(action, idempotencyKey);
+            alert.success('✓', t.deleteSuccess);
+          } catch (error: unknown) {
+            logger.error('Error deleting document', error);
+            alert.error(t.deleteError, error instanceof Error ? error.message : t.deleteError);
+          } finally {
+            setDeletingDoc(null);
+          }
+        },
+      },
+    ]);
+  }, [actionKeys, alert, deleteMutation, t.close, t.delete, t.deleteConfirm, t.deleteError, t.deleteSuccess]);
 
   const renderItem = useCallback(({ item }: { item: DocumentHistoryRecord }) => {
     const typeOption = documentTypes.find(t => t.id === item.type);
@@ -668,15 +576,20 @@ export default function DocumentHistory() {
         onView={handleView}
         onDownload={handleDownload}
         onShare={handleShare}
+        onDelete={handleDelete}
         isDownloading={downloadingDoc === item.id}
         isSharing={sharingDoc === item.id}
+        isDeleting={deletingDoc === item.id}
         formatDate={formatDate}
         formatAmount={formatAmount}
       />
     );
-  }, [colors, t, documentTypes, downloadingDoc, sharingDoc, handleView, handleDownload, handleShare]);
+  }, [colors, deletingDoc, documentTypes, downloadingDoc, formatAmount, formatDate, getDocTypeColor, getDocTypeIcon, handleDelete, handleDownload, handleShare, handleView, sharingDoc, t]);
 
-  if (loading) {
+  if (
+    (tenantStatus === 'loading' || (tenantStatus === 'ready' && documentsQuery.isPending))
+    && documents.length === 0
+  ) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -685,19 +598,29 @@ export default function DocumentHistory() {
     );
   }
 
-  if (loadError) {
+  if ((tenantStatus === 'error' || documentsQuery.isError) && documents.length === 0) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
         <MaterialCommunityIcons name="alert-circle-outline" size={42} color={colors.error} />
         <AppText style={[styles.loadingText, { color: colors.textPrimary }]}>Failed to load documents</AppText>
-        <AppText style={[styles.errorText, { color: colors.textSecondary }]}>{loadError}</AppText>
+        <AppText style={[styles.errorText, { color: colors.textSecondary }]}>
+          {documentsQuery.error instanceof Error
+            ? documentsQuery.error.message
+            : tenantStatus === 'error'
+              ? 'The active workspace could not be restored.'
+              : 'Please try again.'}
+        </AppText>
         <View style={styles.retryButtonWrap}>
           <AppButton
             title={language === 'he' ? 'נסה שוב' : language === 'ar' ? 'إعادة المحاولة' : 'Retry'}
             onPress={() => {
-              setLoading(true);
-              void loadDocuments();
+              if (tenantStatus === 'error') {
+                void refreshWorkspaces();
+              } else {
+                void documentsQuery.refetch();
+              }
             }}
+            disabled={documentsQuery.isFetching}
           />
         </View>
       </View>
@@ -711,7 +634,7 @@ export default function DocumentHistory() {
       <FlatList
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingTop: 120, paddingBottom: insets.bottom + 20 }]}
-        data={displayedDocuments}
+        data={documents}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderItem}
         ListHeaderComponent={
@@ -724,8 +647,8 @@ export default function DocumentHistory() {
               iconLibrary="material"
               accentColor={colors.boxBlue}
               metrics={[
-                { label: t.all, value: String(documents.length) },
-                { label: language === 'he' ? 'מוצג' : language === 'ar' ? 'المعروض' : 'Shown', value: String(filteredDocuments.length) },
+                { label: t.all, value: `${documents.length}${documentsQuery.hasNextPage ? '+' : ''}` },
+                { label: language === 'he' ? 'מוצג' : language === 'ar' ? 'المعروض' : 'Shown', value: String(documents.length) },
               ]}
               badges={[t.filterByType, t.filterByDate]}
               style={styles.heroCard}
@@ -879,18 +802,44 @@ export default function DocumentHistory() {
           </View>
         }
         ListFooterComponent={
-          filteredDocuments.length > displayLimit ? (
+          documentsQuery.isError ? (
             <TouchableOpacity
-              style={[styles.showMoreButton, { borderColor: colors.primary }]}
-              onPress={() => setDisplayLimit(prev => prev + PAGE_SIZE)}
+              style={[styles.showMoreButton, { borderColor: colors.error }]}
+              onPress={() => { void documentsQuery.refetch(); }}
+              disabled={documentsQuery.isFetching}
               activeOpacity={0.7}
             >
-              <AppText style={{ color: colors.primary, fontWeight: '600' }}>
-                {language === 'he' ? `הצג עוד (${filteredDocuments.length - displayLimit} נותרו)` : `Show more (${filteredDocuments.length - displayLimit} remaining)`}
-              </AppText>
+              {documentsQuery.isFetching ? (
+                <ActivityIndicator size="small" color={colors.error} />
+              ) : (
+                <AppText style={{ color: colors.error, fontWeight: '600' }}>
+                  {language === 'he' ? 'הטעינה נכשלה — נסה שוב' : language === 'ar' ? 'فشل التحميل — حاول مرة أخرى' : 'Refresh failed — try again'}
+                </AppText>
+              )}
+            </TouchableOpacity>
+          ) : documentsQuery.hasNextPage ? (
+            <TouchableOpacity
+              style={[styles.showMoreButton, { borderColor: colors.primary }]}
+              onPress={() => { void documentsQuery.fetchNextPage(); }}
+              disabled={documentsQuery.isFetchingNextPage}
+              activeOpacity={0.7}
+            >
+              {documentsQuery.isFetchingNextPage ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <AppText style={{ color: colors.primary, fontWeight: '600' }}>
+                  {language === 'he' ? 'הצג עוד' : language === 'ar' ? 'عرض المزيد' : 'Show more'}
+                </AppText>
+              )}
             </TouchableOpacity>
           ) : null
         }
+        onEndReached={() => {
+          if (documentsQuery.hasNextPage && !documentsQuery.isFetchingNextPage) {
+            void documentsQuery.fetchNextPage();
+          }
+        }}
+        onEndReachedThreshold={0.4}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="always"
         initialNumToRender={10}
@@ -898,34 +847,6 @@ export default function DocumentHistory() {
         windowSize={5}
         {...scrollProps}
       />
-
-      {/* Preview Modal */}
-      <Modal
-        visible={showPreviewModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowPreviewModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <AppText style={[styles.modalTitle, { color: colors.textPrimary }]}>{t.documentDetails}</AppText>
-              <TouchableOpacity onPress={() => setShowPreviewModal(false)}>
-                <Ionicons name="close" size={28} color={colors.textPrimary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Modal body intentionally left unchanged */}
-
-            <TouchableOpacity
-              style={[styles.closeButton, { backgroundColor: colors.primary }]}
-              onPress={() => setShowPreviewModal(false)}
-            >
-              <AppText style={styles.closeButtonText}>{t.close}</AppText>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* DateFilter Component */}
       <DateFilter
@@ -952,7 +873,7 @@ export default function DocumentHistory() {
           noSearchResults: t.noSearchResults,
           clearFilter: t.clearFilter,
         }}
-        clients={cachedClients || []}
+        clients={clients}
         searchQuery={clientSearchQuery}
         onSearchChange={setClientSearchQuery}
         currentFilter={clientFilter}

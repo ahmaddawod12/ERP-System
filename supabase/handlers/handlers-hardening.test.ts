@@ -12,9 +12,21 @@ function readFile(...segments: string[]) {
 test('job file signed URLs require exact job attachment lookup', () => {
   const jobsHandler = readFile('supabase', 'handlers', 'jobs.ts');
 
+  assert.match(jobsHandler, /replace\(\/\^\\\/\+\/u, ""\)/);
   assert.match(jobsHandler, /from\("job_attachments"\)/);
   assert.match(jobsHandler, /\.eq\("job_id", String\(job.id\)\)/);
   assert.match(jobsHandler, /\.eq\("storage_path", normalizedStoragePath\)/);
+  assert.match(jobsHandler, /error: attachmentError/);
+  assert.match(jobsHandler, /Job attachment lookup is unavailable/);
+});
+
+test('business registration binds normalized city and address values to the RPC', () => {
+  const authHandler = readFile('supabase', 'handlers', 'auth.ts');
+
+  assert.match(authHandler, /p_city: city/);
+  assert.match(authHandler, /p_address: address/);
+  assert.doesNotMatch(authHandler, /^\s+p_city,\s*$/m);
+  assert.doesNotMatch(authHandler, /^\s+p_address,\s*$/m);
 });
 
 test('document task publishing dispatches Cloud Run only for newly created tasks', () => {

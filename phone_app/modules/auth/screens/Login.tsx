@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10000,

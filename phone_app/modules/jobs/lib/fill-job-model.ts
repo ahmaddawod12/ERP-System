@@ -43,12 +43,6 @@ export type PendingUserJobRecord = {
   jobData?: Record<string, unknown>;
 };
 
-export type PendingWorkerJobRecord = {
-  companyId?: string;
-  jobId?: string;
-  jobData?: Record<string, unknown>;
-};
-
 export function getFillJobDraftStorageKey(mode: FillJobMode, jobId?: string | null) {
   if (mode === 'user') {
     return scopedKey('userjobDraft');
@@ -59,10 +53,6 @@ export function getFillJobDraftStorageKey(mode: FillJobMode, jobId?: string | nu
 
 export function getPendingUserJobsStorageKey() {
   return scopedKey('pendingJobs');
-}
-
-export function getPendingWorkerJobsStorageKey() {
-  return scopedKey('pendingWorkerJobs');
 }
 
 // Generate a temporary ID for file upload paths (not used as the backend record ID)

@@ -60,6 +60,23 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
     '0003_phase1_atomic_jobs.sql',
     '0004_phase1_atomic_business_registration.sql',
     '0005_phase2_trigger_search_path.sql',
+    '0006_api_security_foundation.sql',
+    '0007_api_job_creation_and_storage.sql',
+    '0008_pdf_supabase_storage.sql',
+    '0009_bounded_upload_session_cleanup.sql',
+    '0010_hardened_api_business_registration.sql',
+    '0011_api_push_tokens.sql',
+    '0012_hardened_api_invitations.sql',
+    '0013_api_profile_updates.sql',
+    '0014_api_support_conversations.sql',
+    '0015_api_push_devices.sql',
+    '0016_upload_session_idempotency_limits.sql',
+    '0017_api_upgrade_and_contact_requests.sql',
+    '0018_api_client_mutations.sql',
+    '0019_api_inventory_mutations.sql',
+    '0020_api_worker_mutations.sql',
+    '0021_api_job_mutations.sql',
+    '0022_api_document_tasks.sql',
   ]);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);

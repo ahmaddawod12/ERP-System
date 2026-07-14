@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { LoadingState } from "@/components/states/loading-state";
 import { cn } from "@/lib/utils";
+import { isOpaqueSessionAppRoute } from "@/lib/dal/workspace-routing";
 
 interface NavItem {
   label: string;
@@ -92,8 +93,13 @@ function navItemsByRole(role: string): NavItem[] {
   ];
 }
 
-export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+function LegacyDashboardShell({
+  children,
+  pathname,
+}: {
+  children: React.ReactNode;
+  pathname: string;
+}) {
   const router = useRouter();
   const { user, profile, subscription, loading, logout } = useAuth();
 
@@ -266,5 +272,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
     </div>
+  );
+}
+
+export function DashboardShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+
+  if (isOpaqueSessionAppRoute(pathname)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <LegacyDashboardShell pathname={pathname}>
+      {children}
+    </LegacyDashboardShell>
   );
 }

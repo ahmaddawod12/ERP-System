@@ -2,12 +2,13 @@ const {
   check,
   bigint,
   boolean,
+  customType,
   index,
   integer,
-  sql,
   jsonb,
   numeric,
   pgEnum,
+  pgSchema,
   pgTable,
   primaryKey,
   smallint,
@@ -17,6 +18,15 @@ const {
   uuid,
   varchar,
 } = require('drizzle-orm/pg-core');
+const { sql } = require('drizzle-orm');
+
+const bytea = customType({
+  dataType() {
+    return 'bytea';
+  },
+});
+
+const privateSchema = pgSchema('private');
 
 const accountTypeEnum = pgEnum('account_type', ['solo', 'business']);
 const workspaceStatusEnum = pgEnum('workspace_status', ['active', 'disabled', 'archived']);
@@ -100,6 +110,7 @@ const companyProfiles = pgTable('company_profiles', {
   accountantName: varchar('accountant_name', { length: 200 }),
   accountantEmail: varchar('accountant_email', { length: 320 }),
   accountantPhone: varchar('accountant_phone', { length: 40 }),
+  entityVersion: bigint('entity_version', { mode: 'number' }).notNull().default(1),
   registeredAt: timestamp('registered_at', { withTimezone: true }).notNull().defaultNow(),
   registeredByUserId: text('registered_by_user_id').references(() => appUsers.id, { onDelete: 'set null' }),
   lastUpdatedAt: timestamp('last_updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -139,6 +150,7 @@ const companyMemberships = pgTable('company_memberships', {
   joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  entityVersion: bigint('entity_version', { mode: 'number' }).notNull().default(1),
 }, (table) => ({
   membershipPerCompanyUserUnique: uniqueIndex('company_memberships_company_user_active_unique')
     .on(table.companyId, table.userId)
@@ -169,6 +181,7 @@ const clients = pgTable('clients', {
   city: varchar('city', { length: 120 }),
   vatNumber: varchar('vat_number', { length: 32 }),
   notes: text('notes'),
+  entityVersion: bigint('entity_version', { mode: 'number' }).notNull().default(1),
   createdByMembershipId: uuid('created_by_membership_id').references(() => companyMemberships.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -179,6 +192,8 @@ const clients = pgTable('clients', {
   companyPhoneIdx: index('clients_company_phone_idx').on(table.companyId, table.phone),
   companyEmailIdx: index('clients_company_email_idx').on(table.companyId, table.email),
   companyClientNoCursorIdx: index('clients_company_client_no_cursor_idx').on(table.companyId, table.clientNo, table.id),
+  companyStatusCreatedCursorIdx: index('clients_company_status_created_cursor_idx')
+    .on(table.companyId, table.status, table.createdAt, table.id),
 }));
 
 const jobs = pgTable('jobs', {
@@ -203,6 +218,7 @@ const jobs = pgTable('jobs', {
   deniedAt: timestamp('denied_at', { withTimezone: true }),
   deniedByUserId: text('denied_by_user_id').references(() => appUsers.id, { onDelete: 'set null' }),
   isCert: boolean('is_cert').notNull().default(false),
+  entityVersion: bigint('entity_version', { mode: 'number' }).notNull().default(1),
   idempotencyKey: varchar('idempotency_key', { length: 128 }),
   clientNameSnapshot: varchar('client_name_snapshot', { length: 240 }),
   clientPhoneSnapshot: varchar('client_phone_snapshot', { length: 40 }),
@@ -284,6 +300,7 @@ const inventoryParts = pgTable('inventory_parts', {
   active: boolean('active').notNull().default(true),
   lowThreshold: numeric('low_threshold', { precision: 14, scale: 3 }).notNull().default('0'),
   unit: varchar('unit', { length: 40 }),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
@@ -293,16 +310,19 @@ const inventoryParts = pgTable('inventory_parts', {
   companyArchivedPartNoIdx: index('inventory_parts_company_archived_part_no_idx').on(table.companyId, table.archivedAt, table.partNo),
   companyActiveArchivedPartNoIdx: index('inventory_parts_company_active_archived_part_no_idx').on(table.companyId, table.active, table.archivedAt, table.partNo),
   lowThresholdNonNegative: check('inventory_parts_low_threshold_non_negative_check', sql`${table.lowThreshold} >= 0`),
+  entityVersionPositive: check('inventory_parts_entity_version_positive_check', sql`${table.entityVersion} > 0`),
 }));
 
 const inventoryBalances = pgTable('inventory_balances', {
   locationId: uuid('location_id').notNull().references(() => inventoryLocations.id, { onDelete: 'cascade' }),
   partId: uuid('part_id').notNull().references(() => inventoryParts.id, { onDelete: 'cascade' }),
   quantityOnHand: numeric('quantity_on_hand', { precision: 14, scale: 3 }).notNull().default('0'),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   pk: primaryKey({ columns: [table.locationId, table.partId], name: 'inventory_balances_pk' }),
   quantityOnHandNonNegative: check('inventory_balances_quantity_on_hand_non_negative_check', sql`${table.quantityOnHand} >= 0`),
+  entityVersionPositive: check('inventory_balances_entity_version_positive_check', sql`${table.entityVersion} > 0`),
 }));
 
 const inventoryMovements = pgTable('inventory_movements', {
@@ -356,6 +376,7 @@ const documents = pgTable('documents', {
   clientCitySnapshot: varchar('client_city_snapshot', { length: 120 }),
   clientVatSnapshot: varchar('client_vat_snapshot', { length: 32 }),
   payload: jsonb('payload').notNull().default({}),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
@@ -381,6 +402,7 @@ const documents = pgTable('documents', {
   vatAmountNonNegative: check('documents_vat_amount_non_negative_check', sql`${table.vatAmount} >= 0`),
   totalWithVatNonNegative: check('documents_total_with_vat_non_negative_check', sql`${table.totalWithVat} >= 0`),
   totalConsistency: check('documents_total_consistency_check', sql`${table.totalBeforeVat} + ${table.vatAmount} = ${table.totalWithVat}`),
+  entityVersionPositive: check('documents_entity_version_positive_check', sql`${table.entityVersion} > 0`),
 }));
 
 const documentItems = pgTable('document_items', {
@@ -487,6 +509,12 @@ const documentTasks = pgTable('document_tasks', {
   processingStartedAt: timestamp('processing_started_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   expireAt: timestamp('expire_at', { withTimezone: true }),
+  dispatchAttempts: integer('dispatch_attempts').notNull().default(0),
+  dispatchLeaseToken: uuid('dispatch_lease_token'),
+  dispatchLeaseUntil: timestamp('dispatch_lease_until', { withTimezone: true }),
+  nextDispatchAt: timestamp('next_dispatch_at', { withTimezone: true }).notNull().defaultNow(),
+  dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+  dispatchError: text('dispatch_error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   taskKeyUnique: uniqueIndex('document_tasks_task_key_unique').on(table.taskKey),
@@ -494,6 +522,20 @@ const documentTasks = pgTable('document_tasks', {
     .on(table.companyId, table.taskType, table.lockKey)
     .where(sql`${table.status} in ('pending', 'queued', 'processing')`),
   userStatusIdx: index('document_tasks_user_status_idx').on(table.userId, table.status, table.createdAt),
+  dispatchOutboxIdx: index('document_tasks_dispatch_outbox_idx')
+    .on(table.nextDispatchAt, table.createdAt, table.id)
+    .where(sql`${table.status} = 'pending' AND ${table.dispatchedAt} IS NULL`),
+  dispatchAttemptsNonNegative: check(
+    'document_tasks_dispatch_attempts_non_negative_check',
+    sql`${table.dispatchAttempts} >= 0`,
+  ),
+  dispatchLeaseConsistency: check(
+    'document_tasks_dispatch_lease_consistency_check',
+    sql`(
+      (${table.dispatchLeaseToken} IS NULL AND ${table.dispatchLeaseUntil} IS NULL)
+      OR (${table.dispatchLeaseToken} IS NOT NULL AND ${table.dispatchLeaseUntil} IS NOT NULL)
+    )`,
+  ),
 }));
 
 const taxAuthorityTokens = pgTable('tax_authority_tokens', {
@@ -611,6 +653,7 @@ const upgradeRequests = pgTable('upgrade_requests', {
   moderationNote: text('moderation_note'),
   appliedAt: timestamp('applied_at', { withTimezone: true }),
   appliedByUid: text('applied_by_uid'),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
 }, (table) => ({
   createdAtIdx: index('upgrade_requests_created_at_idx').on(table.createdAt),
   statusIdx: index('upgrade_requests_status_idx').on(table.status, table.createdAt),
@@ -672,4 +715,178 @@ const archiveRuns = pgTable('archive_runs', {
   companyArchiveTypeUnique: uniqueIndex('archive_runs_company_archive_type_unique').on(table.companyId, table.archiveKey, table.dataType),
 }));
 
-export { accountTypeEnum, appUsers, archiveRuns, auditLogs, clients, companies, companyCounters, companyInvites, companyMemberships, companyProfiles, companySyncState, companySubscriptions, contactRequests, documentItems, documentJobLinks, documentTasks, documents, inventoryBalances, inventoryLocations, inventoryMovements, inventoryParts, jobAttachments, jobPartUsages, jobs, notificationDeliveries, orphanedUserCleanupMarkers, proposalUsage, rateLimitBuckets, supportConversations, supportMessages, systemCounters, taxAuthorityTokens, taxInvoiceIdempotency, taxInvoiceReservations, taxOauthCallbacks, taxOauthSessions, upgradeRequests };
+const webSessions = privateSchema.table('web_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionTokenHash: bytea('session_token_hash').notNull(),
+  csrfTokenHash: bytea('csrf_token_hash').notNull(),
+  userId: uuid('user_id').notNull(),
+  supabaseSessionId: uuid('supabase_session_id').notNull(),
+  credentialsCiphertext: bytea('credentials_ciphertext').notNull(),
+  credentialsIv: bytea('credentials_iv').notNull(),
+  credentialsAuthTag: bytea('credentials_auth_tag').notNull(),
+  encryptionKeyVersion: text('encryption_key_version').notNull(),
+  accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }).notNull(),
+  absoluteExpiresAt: timestamp('absolute_expires_at', { withTimezone: true }).notNull(),
+  lastCompanyId: uuid('last_company_id').references(() => companies.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  revocationReason: text('revocation_reason'),
+}, (table) => ({
+  tokenHashUnique: uniqueIndex('web_sessions_token_hash_unique').on(table.sessionTokenHash),
+  activeUserExpiryIdx: index('web_sessions_active_user_expiry_idx')
+    .on(table.userId, table.absoluteExpiresAt)
+    .where(sql`${table.revokedAt} IS NULL`),
+  expiryIdx: index('web_sessions_expiry_idx').on(table.absoluteExpiresAt),
+  lastCompanyIdx: index('web_sessions_last_company_idx').on(table.lastCompanyId),
+  tokenHashLength: check('web_sessions_token_hash_length_check', sql`octet_length(${table.sessionTokenHash}) = 32`),
+  csrfHashLength: check('web_sessions_csrf_hash_length_check', sql`octet_length(${table.csrfTokenHash}) = 32`),
+  credentialsIvLength: check('web_sessions_credentials_iv_length_check', sql`octet_length(${table.credentialsIv}) = 12`),
+  credentialsAuthTagLength: check('web_sessions_credentials_auth_tag_length_check', sql`octet_length(${table.credentialsAuthTag}) = 16`),
+  credentialsPresent: check('web_sessions_credentials_present_check', sql`octet_length(${table.credentialsCiphertext}) > 0`),
+  keyVersionPresent: check('web_sessions_key_version_present_check', sql`btrim(${table.encryptionKeyVersion}) <> ''`),
+  absoluteLifetime: check(
+    'web_sessions_absolute_lifetime_check',
+    sql`${table.absoluteExpiresAt} > ${table.createdAt} AND ${table.absoluteExpiresAt} <= ${table.createdAt} + interval '12 hours'`,
+  ),
+  validRevocation: check(
+    'web_sessions_valid_revocation_check',
+    sql`${table.revokedAt} IS NULL OR ${table.revokedAt} >= ${table.createdAt}`,
+  ),
+}));
+
+const apiIdempotency = privateSchema.table('api_idempotency', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  companyId: uuid('company_id').references(() => companies.id, { onDelete: 'cascade' }),
+  operation: varchar('operation', { length: 128 }).notNull(),
+  idempotencyKeyHash: bytea('idempotency_key_hash').notNull(),
+  requestHash: bytea('request_hash').notNull(),
+  responseStatus: smallint('response_status'),
+  responseBody: jsonb('response_body'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  tenantKeyUnique: uniqueIndex('api_idempotency_tenant_key_unique')
+    .on(table.userId, table.companyId, table.operation, table.idempotencyKeyHash)
+    .where(sql`${table.companyId} IS NOT NULL`),
+  globalKeyUnique: uniqueIndex('api_idempotency_global_key_unique')
+    .on(table.userId, table.operation, table.idempotencyKeyHash)
+    .where(sql`${table.companyId} IS NULL`),
+  expiryIdx: index('api_idempotency_expiry_idx').on(table.expiresAt),
+  keyHashLength: check('api_idempotency_key_hash_length_check', sql`octet_length(${table.idempotencyKeyHash}) = 32`),
+  requestHashLength: check('api_idempotency_request_hash_length_check', sql`octet_length(${table.requestHash}) = 32`),
+  operationPresent: check('api_idempotency_operation_present_check', sql`btrim(${table.operation}) <> ''`),
+  validExpiry: check('api_idempotency_valid_expiry_check', sql`${table.expiresAt} > ${table.createdAt}`),
+  completedResponse: check(
+    'api_idempotency_completed_response_check',
+    sql`(${table.completedAt} IS NULL AND ${table.responseStatus} IS NULL AND ${table.responseBody} IS NULL)
+      OR (${table.completedAt} IS NOT NULL AND ${table.responseStatus} BETWEEN 100 AND 599 AND ${table.responseBody} IS NOT NULL)`,
+  ),
+}));
+
+const fileUploadSessions = privateSchema.table('file_upload_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'restrict' }),
+  purpose: varchar('purpose', { length: 64 }).notNull(),
+  targetJobId: uuid('target_job_id').references(() => jobs.id, { onDelete: 'restrict' }),
+  bucketId: text('bucket_id').notNull(),
+  objectPrefix: text('object_prefix').notNull(),
+  expectedManifest: jsonb('expected_manifest').notNull(),
+  status: varchar('status', { length: 32 }).notNull().default('pending'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  consumedByJobId: uuid('consumed_by_job_id').references(() => jobs.id, { onDelete: 'cascade' }),
+  cleanupLeaseExpiresAt: timestamp('cleanup_lease_expires_at', { withTimezone: true }),
+  cleanupAttempts: integer('cleanup_attempts').notNull().default(0),
+  lastCleanupError: text('last_cleanup_error'),
+  signingFailures: integer('signing_failures').notNull().default(0),
+  lastSigningError: text('last_signing_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  pendingOwnerExpiryIdx: index('file_upload_sessions_pending_owner_expiry_idx')
+    .on(table.userId, table.companyId, table.expiresAt)
+    .where(sql`${table.status} = 'pending'`),
+  cleanupQueueIdx: index('file_upload_sessions_cleanup_queue_idx')
+    .on(table.status, table.cleanupLeaseExpiresAt, table.expiresAt),
+  targetJobIdx: index('file_upload_sessions_target_job_idx')
+    .on(table.companyId, table.targetJobId)
+    .where(sql`${table.targetJobId} IS NOT NULL`),
+  purposeAllowed: check(
+    'file_upload_sessions_purpose_check',
+    sql`${table.purpose} IN ('job.create_finished', 'job.complete_assigned')`,
+  ),
+  statusAllowed: check(
+    'file_upload_sessions_status_check',
+    sql`${table.status} IN ('pending', 'consumed', 'cleanup_pending', 'cleanup_claimed', 'cleanup_complete', 'cleanup_failed')`,
+  ),
+  manifestShape: check(
+    'file_upload_sessions_manifest_shape_check',
+    sql`jsonb_typeof(${table.expectedManifest}) = 'array'
+      AND jsonb_array_length(${table.expectedManifest}) BETWEEN 1 AND 20`,
+  ),
+  validExpiry: check('file_upload_sessions_valid_expiry_check', sql`${table.expiresAt} > ${table.createdAt}`),
+  completionTarget: check(
+    'file_upload_sessions_completion_target_check',
+    sql`${table.purpose} <> 'job.complete_assigned' OR ${table.targetJobId} IS NOT NULL`,
+  ),
+  consumptionState: check(
+    'file_upload_sessions_consumption_state_check',
+    sql`(${table.status} = 'consumed' AND ${table.consumedAt} IS NOT NULL AND ${table.consumedByJobId} IS NOT NULL)
+      OR (${table.status} <> 'consumed' AND ${table.consumedAt} IS NULL AND ${table.consumedByJobId} IS NULL)`,
+  ),
+  cleanupAttemptsNonNegative: check(
+    'file_upload_sessions_cleanup_attempts_non_negative_check',
+    sql`${table.cleanupAttempts} BETWEEN 0 AND 5`,
+  ),
+  cleanupErrorLength: check(
+    'file_upload_sessions_cleanup_error_length_check',
+    sql`${table.lastCleanupError} IS NULL OR char_length(${table.lastCleanupError}) <= 500`,
+  ),
+  signingFailuresValid: check(
+    'file_upload_sessions_signing_failures_check',
+    sql`${table.signingFailures} BETWEEN 0 AND 3`,
+  ),
+  signingErrorLength: check(
+    'file_upload_sessions_signing_error_length_check',
+    sql`${table.lastSigningError} IS NULL OR char_length(${table.lastSigningError}) <= 500`,
+  ),
+  cleanupLeaseState: check(
+    'file_upload_sessions_cleanup_lease_state_check',
+    sql`(${table.status} = 'cleanup_claimed' AND ${table.cleanupLeaseExpiresAt} IS NOT NULL)
+      OR (${table.status} <> 'cleanup_claimed' AND ${table.cleanupLeaseExpiresAt} IS NULL)`,
+  ),
+}));
+
+const pushDevices = privateSchema.table('push_devices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  deviceIdHash: bytea('device_id_hash').notNull(),
+  pushToken: varchar('push_token', { length: 500 }).notNull(),
+  platform: varchar('platform', { length: 32 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  userDeviceUnique: uniqueIndex('push_devices_user_device_unique')
+    .on(table.userId, table.deviceIdHash),
+  tokenUnique: uniqueIndex('push_devices_token_unique').on(table.pushToken),
+  userUpdatedIdx: index('push_devices_user_updated_idx').on(table.userId, table.updatedAt),
+  deviceHashLength: check(
+    'push_devices_device_hash_length_check',
+    sql`octet_length(${table.deviceIdHash}) = 32`,
+  ),
+  tokenPresent: check(
+    'push_devices_token_present_check',
+    sql`char_length(btrim(${table.pushToken})) BETWEEN 8 AND 500`,
+  ),
+  platformAllowed: check(
+    'push_devices_platform_check',
+    sql`${table.platform} IN ('ios', 'android')`,
+  ),
+}));
+
+export { accountTypeEnum, apiIdempotency, appUsers, archiveRuns, auditLogs, clients, companies, companyCounters, companyInvites, companyMemberships, companyProfiles, companySyncState, companySubscriptions, contactRequests, documentItems, documentJobLinks, documentTasks, documents, fileUploadSessions, inventoryBalances, inventoryLocations, inventoryMovements, inventoryParts, jobAttachments, jobPartUsages, jobs, notificationDeliveries, orphanedUserCleanupMarkers, proposalUsage, pushDevices, rateLimitBuckets, supportConversations, supportMessages, systemCounters, taxAuthorityTokens, taxInvoiceIdempotency, taxInvoiceReservations, taxOauthCallbacks, taxOauthSessions, upgradeRequests, webSessions };

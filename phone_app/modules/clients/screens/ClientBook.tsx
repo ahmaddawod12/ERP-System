@@ -14,7 +14,6 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   TouchableOpacity,
-  StyleSheet,
   Modal,
   KeyboardAvoidingView,
   Platform,
@@ -33,9 +32,21 @@ import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
-import { AppInput, AppText, GlobalHeader, ScrollableContainer } from '../../../components';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
+import { AppInput, AppText, GlobalHeader } from '../../../components';
 import { DOC_TYPE, DOC_COLORS, getDocumentLabel } from '@smart-job/contracts';
-import type { Client } from '../../../types';
+import {
+  ClientCreateRequestSchema,
+  ClientDeleteRequestSchema,
+  ClientUpdateRequestSchema,
+} from '@smart-job/api-contracts';
+import { randomUUID } from 'expo-crypto';
+import { logger } from '../../../utils/logger';
+import { useClientsInfinite } from '../lib/use-clients-infinite';
+import { useClientMutations } from '../lib/use-client-mutations';
+import type { MobileClientSummary } from '../lib/client-list-model';
+import { StableClientActionKeys } from '../lib/client-action-keys';
 
 type Translations = {
   title: string;
@@ -79,6 +90,11 @@ type Translations = {
   createdOn: string;
   close: string;
   partsUsed: string;
+  loadingClients: string;
+  loadFailed: string;
+  refreshFailed: string;
+  retry: string;
+  loadMore: string;
 };
 
 const translateMap: Record<string, Translations> = {
@@ -100,12 +116,12 @@ const translateMap: Record<string, Translations> = {
     vatNumber: 'VAT Number',
     save: 'Save',
     cancel: 'Cancel',
-    delete: 'Delete',
-    deleteConfirm: 'Delete Client',
-    deleteMessage: 'Are you sure you want to delete this client? This action cannot be undone.',
+    delete: 'Remove',
+    deleteConfirm: 'Remove Client',
+    deleteMessage: 'An unreferenced client is deleted. A client linked to jobs or documents is safely archived.',
     clientSaved: 'Client saved successfully',
     clientUpdated: 'Client updated successfully',
-    clientDeleted: 'Client deleted successfully',
+    clientDeleted: 'Client removed successfully',
     required: 'Client name is required',
     totalClients: 'clients',
     clientOptions: 'Client Options',
@@ -124,6 +140,11 @@ const translateMap: Record<string, Translations> = {
     createdOn: 'Created',
     close: 'Close',
     partsUsed: 'Parts Used',
+    loadingClients: 'Loading clients...',
+    loadFailed: 'Clients could not be loaded. Check your connection and try again.',
+    refreshFailed: 'Clients could not be refreshed. Saved results remain available.',
+    retry: 'Retry',
+    loadMore: 'Load more',
   },
   he: {
     title: 'ספר לקוחות',
@@ -143,12 +164,12 @@ const translateMap: Record<string, Translations> = {
     vatNumber: 'מספר עוסק מורשה',
     save: 'שמור',
     cancel: 'ביטול',
-    delete: 'מחק',
-    deleteConfirm: 'מחיקת לקוח',
-    deleteMessage: 'האם אתה בטוח שברצונך למחוק לקוח זה? פעולה זו לא ניתנת לביטול.',
+    delete: 'הסר',
+    deleteConfirm: 'הסרת לקוח',
+    deleteMessage: 'לקוח ללא היסטוריה יימחק. לקוח המקושר לעבודות או למסמכים יועבר לארכיון.',
     clientSaved: 'הלקוח נשמר בהצלחה',
     clientUpdated: 'הלקוח עודכן בהצלחה',
-    clientDeleted: 'הלקוח נמחק בהצלחה',
+    clientDeleted: 'הלקוח הוסר בהצלחה',
     required: 'שם לקוח נדרש',
     totalClients: 'לקוחות',
     clientOptions: 'אפשרויות לקוח',
@@ -167,6 +188,11 @@ const translateMap: Record<string, Translations> = {
     createdOn: 'נוצר',
     close: 'סגור',
     partsUsed: 'חלקים שנעשה בהם שימוש',
+    loadingClients: 'טוען לקוחות...',
+    loadFailed: 'לא ניתן היה לטעון את הלקוחות. בדוק את החיבור ונסה שוב.',
+    refreshFailed: 'לא ניתן היה לרענן את הלקוחות. התוצאות השמורות נשארו זמינות.',
+    retry: 'נסה שוב',
+    loadMore: 'טען עוד',
   },
   ar: {
     title: 'دفتر العملاء',
@@ -186,12 +212,12 @@ const translateMap: Record<string, Translations> = {
     vatNumber: 'رقم ضريبي',
     save: 'حفظ',
     cancel: 'إلغاء',
-    delete: 'حذف',
-    deleteConfirm: 'حذف عميل',
-    deleteMessage: 'هل أنت متأكد أنك تريد حذف هذا العميل؟ لا يمكن التراجع عن هذا الإجراء.',
+    delete: 'إزالة',
+    deleteConfirm: 'إزالة العميل',
+    deleteMessage: 'سيتم حذف العميل غير المرتبط بسجل، وسيتم أرشفة العميل المرتبط بأعمال أو مستندات.',
     clientSaved: 'تم حفظ العميل بنجاح',
     clientUpdated: 'تم تحديث العميل بنجاح',
-    clientDeleted: 'تم حذف العميل بنجاح',
+    clientDeleted: 'تمت إزالة العميل بنجاح',
     required: 'اسم العميل مطلوب',
     totalClients: 'عملاء',
     clientOptions: 'خيارات العميل',
@@ -210,10 +236,21 @@ const translateMap: Record<string, Translations> = {
     createdOn: 'تم الإنشاء',
     close: 'إغلاق',
     partsUsed: 'الأجزاء المستخدمة',
+    loadingClients: 'جارٍ تحميل العملاء...',
+    loadFailed: 'تعذر تحميل العملاء. تحقق من الاتصال وحاول مرة أخرى.',
+    refreshFailed: 'تعذر تحديث العملاء. ستبقى النتائج المحفوظة متاحة.',
+    retry: 'إعادة المحاولة',
+    loadMore: 'تحميل المزيد',
   },
 };
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+function mutationErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : 'The client action could not be completed.';
+}
 
 export default function ClientBook() {
   const { language } = useLanguageContext();
@@ -221,21 +258,20 @@ export default function ClientBook() {
   const alert = useAlert();
   const insets = useSafeAreaInsets();
   const colors = getColors(isDarkMode);
-  const {
-    clients: cachedClients,
-    addClient,
-    updateClient,
-    deleteClient,
-    fetchClients,
-    getDataForMonth,
-    getUserRole,
-  } = useCache();
+  const { user } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
+  const { getDataForMonth } = useCache();
+  const { createMutation, updateMutation, removeMutation } = useClientMutations({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+  });
+  const [actionKeys] = useState(() => new StableClientActionKeys(() => randomUUID()));
 
   // --- Existing state ---
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [editingClient, setEditingClient] = useState<MobileClientSummary | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({
     name: '',
     phone: '',
@@ -246,7 +282,7 @@ export default function ClientBook() {
   });
 
   // --- New state for client options & data viewer ---
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [selectedClient, setSelectedClient] = useState<MobileClientSummary | null>(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showDataModal, setShowDataModal] = useState(false);
   const [dataViewType, setDataViewType] = useState<'finishedJobs' | 'documents'>('finishedJobs');
@@ -257,6 +293,35 @@ export default function ClientBook() {
   const isRTL = language === 'he' || language === 'ar';
 
   const t = translateMap[language] || translateMap.en;
+
+  const clientFilters = useMemo(() => ({
+    search: debouncedSearchQuery,
+    pageSize: 50,
+  }), [debouncedSearchQuery]);
+  const { query: clientsQuery, clients } = useClientsInfinite({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    filters: clientFilters,
+    enabled: tenantStatus === 'ready',
+  });
+  const loading = createMutation.isPending || updateMutation.isPending;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim().slice(0, 80));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    actionKeys.reset();
+  }, [actionKeys, user?.id, workspace?.companyId]);
+
+  useEffect(() => {
+    if (clientsQuery.error) {
+      logger.warn('Client list refresh failed; retaining cached query data', clientsQuery.error);
+    }
+  }, [clientsQuery.error]);
 
   // --- Helpers ---
 
@@ -310,35 +375,6 @@ export default function ClientBook() {
     }, 0);
   }, []);
 
-  // --- Fetch clients on mount ---
-  useEffect(() => {
-    if (cachedClients.length === 0) {
-      fetchClients();
-    }
-  }, []);
-
-  // --- Filter clients by search ---
-  const filteredClients = useMemo(() => {
-    if (!searchQuery.trim()) return cachedClients;
-    const q = searchQuery.toLowerCase();
-    const filtered = cachedClients.filter(client =>
-      (client.name && client.name.toLowerCase().includes(q)) ||
-      (client.phone && client.phone.toLowerCase().includes(q)) ||
-      (client.email && client.email.toLowerCase().includes(q)) ||
-      (client.address && client.address.toLowerCase().includes(q)) ||
-      (client.city && client.city.toLowerCase().includes(q)) ||
-      (client.vatNumber && client.vatNumber.toLowerCase().includes(q)) ||
-      (client.id && client.id.toString().includes(q))
-    );
-    // Deduplicate by ID
-    const seen = new Set();
-    return filtered.filter(client => {
-      if (seen.has(client.id)) return false;
-      seen.add(client.id);
-      return true;
-    });
-  }, [cachedClients, searchQuery]);
-
   // --- Form helpers ---
   const resetForm = () => {
     setFormData({ name: '', phone: '', email: '', address: '', city: '', vatNumber: '' });
@@ -350,7 +386,7 @@ export default function ClientBook() {
     setShowModal(true);
   };
 
-  const openEditModal = (client: Client) => {
+  const openEditModal = (client: MobileClientSummary) => {
     setEditingClient(client);
     setFormData({
       name: client.name || '',
@@ -367,24 +403,29 @@ export default function ClientBook() {
   // --- New: Client options flow ---
 
   /** Open options modal when pressing a client card */
-  const openClientOptions = (client: Client) => {
+  const openClientOptions = (client: MobileClientSummary) => {
     setSelectedClient(client);
     setShowOptionsModal(true);
   };
 
   /** Fetch finished jobs or documents for the selected client & month */
-  const fetchClientData = useCallback(async (client: Client | null, type: 'finishedJobs' | 'documents', monthDate: Date) => {
+  const fetchClientData = useCallback(async (client: MobileClientSummary | null, type: 'finishedJobs' | 'documents', monthDate: Date) => {
     if (!client) return;
     setDataLoading(true);
     try {
       const allData = await getDataForMonth(monthDate, type);
 
       // Filter by client — match on clientId (primary) or cname (fallback)
-      const clientId = client.id?.toString();
+      const clientIds = new Set(
+        [client.id, client.cid]
+          .filter((value) => value !== undefined && value !== null)
+          .map((value) => String(value)),
+      );
       const normalizedClientName = client.name?.toLowerCase()?.trim();
 
       const matched = (allData || []).filter(item => {
-        if (clientId && (item.cid || item.clientId)?.toString() === clientId) return true;
+        const itemClientId = item.cid ?? item.clientId;
+        if (itemClientId !== undefined && clientIds.has(String(itemClientId))) return true;
         if (normalizedClientName && (item.cname || item.customerName)?.toLowerCase()?.trim() === normalizedClientName) return true;
         return false;
       });
@@ -402,7 +443,7 @@ export default function ClientBook() {
 
       setDataItems(matched);
     } catch (error) {
-      console.error('Error fetching client data:', error);
+      logger.error('Error fetching client data', error);
       setDataItems([]);
     } finally {
       setDataLoading(false);
@@ -440,36 +481,54 @@ export default function ClientBook() {
     }
 
     Keyboard.dismiss();
-    setLoading(true);
 
     try {
-      const clientData: Record<string, string> = {};
-      if (formData.name.trim()) clientData.name = formData.name.trim();
-      if (formData.phone.trim()) clientData.phone = formData.phone.trim();
-      if (formData.email.trim()) clientData.email = formData.email.trim();
-      if (formData.address.trim()) clientData.address = formData.address.trim();
-      if (formData.city.trim()) clientData.city = formData.city.trim();
-      if (formData.vatNumber.trim()) clientData.vatNumber = formData.vatNumber.trim();
+      const clientData = {
+        name: formData.name.trim(),
+        phone: formData.phone.trim() || null,
+        email: formData.email.trim() || null,
+        address: formData.address.trim() || null,
+        city: formData.city.trim() || null,
+        vatNumber: formData.vatNumber.trim() || null,
+      };
 
       if (editingClient) {
-        await updateClient(editingClient.id, clientData);
+        const request = ClientUpdateRequestSchema.parse({
+          ...clientData,
+          entityVersion: editingClient.entityVersion,
+        });
+        const fingerprint = JSON.stringify({ clientId: editingClient.id, request });
+        const action = `update:${editingClient.id}`;
+        const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+        await updateMutation.mutateAsync({
+          clientId: editingClient.id,
+          body: request,
+          idempotencyKey,
+        });
+        actionKeys.complete(action, idempotencyKey);
         alert.success('✅', t.clientUpdated);
       } else {
-        await addClient(clientData);
+        const request = ClientCreateRequestSchema.parse(clientData);
+        const fingerprint = JSON.stringify(request);
+        const action = 'create';
+        const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+        await createMutation.mutateAsync({
+          body: request,
+          idempotencyKey,
+        });
+        actionKeys.complete(action, idempotencyKey);
         alert.success('✅', t.clientSaved);
       }
 
       setShowModal(false);
       resetForm();
-    } catch (error: any) {
-      console.error('Error saving client:', error);
-      alert.error('Error', error.message);
-    } finally {
-      setLoading(false);
+    } catch (error: unknown) {
+      logger.error('Error saving client', error);
+      alert.error('Error', mutationErrorMessage(error));
     }
   };
 
-  const handleDelete = (client: Client) => {
+  const handleDelete = (client: MobileClientSummary) => {
     alert.confirm(
       t.deleteConfirm,
       t.deleteMessage,
@@ -480,15 +539,31 @@ export default function ClientBook() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteClient(client.id);
-              alert.success('✅', t.clientDeleted);
+              const request = ClientDeleteRequestSchema.parse({
+                entityVersion: client.entityVersion,
+              });
+              const fingerprint = JSON.stringify({ clientId: client.id, request });
+              const action = `remove:${client.id}`;
+              const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+              const removed = await removeMutation.mutateAsync({
+                clientId: client.id,
+                body: request,
+                idempotencyKey,
+              });
+              actionKeys.complete(action, idempotencyKey);
+              alert.success(
+                '✅',
+                removed.disposition === 'archived'
+                  ? `${t.clientDeleted} (${removed.disposition})`
+                  : t.clientDeleted,
+              );
               if (showModal) {
                 setShowModal(false);
                 resetForm();
               }
-            } catch (error: any) {
-              console.error('Error deleting client:', error);
-              alert.error('Error', error.message);
+            } catch (error: unknown) {
+              logger.error('Error deleting client', error);
+              alert.error('Error', mutationErrorMessage(error));
             }
           },
         },
@@ -592,7 +667,7 @@ export default function ClientBook() {
   };
 
   /** Render client card in main list */
-  const renderClientCard = ({ item: client }: { item: Client }) => (
+  const renderClientCard = ({ item: client }: { item: MobileClientSummary }) => (
     <TouchableOpacity
       style={[styles.clientCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
       onPress={() => openClientOptions(client)}
@@ -608,7 +683,7 @@ export default function ClientBook() {
               {client.name}
             </AppText>
             <View style={[styles.idBadge, { backgroundColor: colors.secondary + '15' }]}>
-              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{client.id}</AppText>
+              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{client.cid ?? client.id}</AppText>
             </View>
           </View>
           {client.phone ? (
@@ -651,19 +726,91 @@ export default function ClientBook() {
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <MaterialCommunityIcons
-        name={searchQuery ? 'account-search' : 'book-account-outline'}
-        size={72}
-        color={colors.textLight}
-      />
-      <AppText style={[styles.emptyTitle, { color: colors.textPrimary }]}>
-        {searchQuery ? t.noResults : t.noClients}
-      </AppText>
-      <AppText style={[styles.emptyDesc, { color: colors.textSecondary }]}>
-        {searchQuery ? t.noResultsDesc : t.noClientsDesc}
-      </AppText>
+      {clientsQuery.isLoading ? (
+        <>
+          <ActivityIndicator size="large" color={colors.secondary} />
+          <AppText style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+            {t.loadingClients}
+          </AppText>
+        </>
+      ) : clientsQuery.isError ? (
+        <>
+          <MaterialCommunityIcons name="cloud-alert-outline" size={72} color={colors.error} />
+          <AppText style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+            {t.loadFailed}
+          </AppText>
+          <TouchableOpacity
+            style={[styles.retryButton, { backgroundColor: colors.secondary }]}
+            onPress={() => { void clientsQuery.refetch(); }}
+            disabled={clientsQuery.isFetching}
+          >
+            {clientsQuery.isFetching ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <AppText style={styles.retryButtonText}>{t.retry}</AppText>
+            )}
+          </TouchableOpacity>
+        </>
+      ) : (
+        <>
+          <MaterialCommunityIcons
+            name={searchQuery ? 'account-search' : 'book-account-outline'}
+            size={72}
+            color={colors.textLight}
+          />
+          <AppText style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+            {searchQuery ? t.noResults : t.noClients}
+          </AppText>
+          <AppText style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+            {searchQuery ? t.noResultsDesc : t.noClientsDesc}
+          </AppText>
+        </>
+      )}
     </View>
   );
+
+  const renderRefreshError = () => {
+    if (!clientsQuery.isError || clients.length === 0) {
+      return null;
+    }
+    return (
+      <View style={[styles.queryErrorBanner, { backgroundColor: colors.surface, borderColor: colors.error }]}>
+        <AppText style={[styles.queryErrorText, { color: colors.textPrimary }]}>
+          {t.refreshFailed}
+        </AppText>
+        <TouchableOpacity
+          style={[styles.retryButton, { backgroundColor: colors.secondary }]}
+          onPress={() => { void clientsQuery.refetch(); }}
+          disabled={clientsQuery.isFetching}
+        >
+          {clientsQuery.isFetching ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <AppText style={styles.retryButtonText}>{t.retry}</AppText>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const renderListFooter = () => {
+    if (!clientsQuery.hasNextPage) {
+      return null;
+    }
+    return (
+      <TouchableOpacity
+        style={[styles.loadMoreButton, { backgroundColor: colors.secondary }]}
+        onPress={() => { void clientsQuery.fetchNextPage(); }}
+        disabled={clientsQuery.isFetchingNextPage}
+      >
+        {clientsQuery.isFetchingNextPage ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <AppText style={styles.loadMoreButtonText}>{t.loadMore}</AppText>
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   // Check if selected month is the current month (to disable forward nav)
   const isCurrentMonth = useMemo(() => {
@@ -685,13 +832,14 @@ export default function ClientBook() {
             <View>
               <AppText style={styles.headerTitle}>{t.title}</AppText>
               <AppText style={styles.headerSubtitle}>
-                {cachedClients.length} {t.totalClients}
+                {clients.length}{clientsQuery.hasNextPage ? '+' : ''} {t.totalClients}
               </AppText>
             </View>
             <TouchableOpacity
               style={styles.addButton}
               onPress={openAddModal}
               activeOpacity={0.8}
+              disabled={loading || removeMutation.isPending}
             >
               <Ionicons name="add" size={28} color={colors.primary} />
             </TouchableOpacity>
@@ -704,7 +852,8 @@ export default function ClientBook() {
         <AppInput
           placeholder={t.searchPlaceholder}
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={(value) => setSearchQuery(value.slice(0, 80))}
+          maxLength={80}
           returnKeyType="search"
           colors={colors}
           leftIcon={
@@ -723,14 +872,18 @@ export default function ClientBook() {
 
       {/* Client List */}
       <FlatList
-        data={filteredClients}
+        data={clients}
         renderItem={renderClientCard}
-        keyExtractor={(item, index) => `client-${item.id}-${index}-${item.name?.substring(0, 3) || 'x'}`}
+        keyExtractor={(item) => item.id}
         contentContainerStyle={[
           styles.listContent,
-          filteredClients.length === 0 && styles.listContentEmpty,
+          clients.length === 0 && styles.listContentEmpty,
         ]}
+        ListHeaderComponent={renderRefreshError}
         ListEmptyComponent={renderEmptyState}
+        ListFooterComponent={renderListFooter}
+        refreshing={clientsQuery.isRefetching && !clientsQuery.isFetchingNextPage}
+        onRefresh={() => { void clientsQuery.refetch(); }}
         showsVerticalScrollIndicator={false}
       />
 
@@ -811,6 +964,7 @@ export default function ClientBook() {
                     style={[styles.optionButton, { borderColor: colors.border }]}
                     onPress={() => selectedClient && openEditModal(selectedClient)}
                     activeOpacity={0.7}
+                    disabled={loading || removeMutation.isPending}
                   >
                     <View style={[styles.optionIconBox, { backgroundColor: '#F59E0B' + '15' }]}>
                       <MaterialCommunityIcons name="account-edit" size={24} color="#F59E0B" />
@@ -1065,8 +1219,13 @@ export default function ClientBook() {
                   <TouchableOpacity
                     style={[styles.deleteButton, { borderColor: colors.error }]}
                     onPress={() => handleDelete(editingClient)}
+                    disabled={loading || removeMutation.isPending}
                   >
-                    <Ionicons name="trash-outline" size={20} color={colors.error} />
+                    {removeMutation.isPending ? (
+                      <ActivityIndicator size="small" color={colors.error} />
+                    ) : (
+                      <Ionicons name="trash-outline" size={20} color={colors.error} />
+                    )}
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity
@@ -1075,6 +1234,7 @@ export default function ClientBook() {
                     setShowModal(false);
                     resetForm();
                   }}
+                  disabled={loading || removeMutation.isPending}
                 >
                   <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
                 </TouchableOpacity>

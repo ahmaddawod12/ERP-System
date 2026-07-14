@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useAppToast } from "@/hooks/use-toast";
@@ -25,6 +25,7 @@ type ContactFormValues = z.infer<typeof schema>;
 export function ContactForm() {
   const { toast } = useAppToast();
   const [challengeQuestion, setChallengeQuestion] = useState<string>("3 + 4");
+  const idempotencyKeyRef = useRef<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -58,9 +59,13 @@ export function ContactForm() {
 
   const onSubmit = async (values: ContactFormValues) => {
     try {
+      idempotencyKeyRef.current ??= crypto.randomUUID();
       const response = await fetch("/api/contact/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKeyRef.current,
+        },
         body: JSON.stringify(values),
       });
       const payload = (await response.json()) as ClientApiResponse<{ requestId: string }>;
@@ -78,6 +83,7 @@ export function ContactForm() {
         variant: "success",
       });
       reset();
+      idempotencyKeyRef.current = null;
       // Refresh the challenge token after a successful submission.
       const refresh = await fetch("/api/contact/challenge");
       if (refresh.ok) {
@@ -94,7 +100,10 @@ export function ContactForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4">
+    <form
+      onSubmit={(event) => { void handleSubmit(onSubmit)(event); }}
+      className="grid gap-4"
+    >
       <Input label="Name" placeholder="Your name" {...register("name")} error={errors.name?.message} />
       <Input
         label="Work Email"

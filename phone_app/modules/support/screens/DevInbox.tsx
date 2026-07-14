@@ -1,524 +1,537 @@
-import { ROUTES } from '../../../navigation/routes';
-/**
- * DevInbox module - Dev Support Inbox screen logic
- *
- * Only visible to users with profile.role === 'dev'
- * Lists all open conversations and allows dev to reply and close conversations.
- *
- * Extracted from app/DevInbox.js to follow the thin-wrapper pattern.
- */
-
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  View,
-  TouchableOpacity,
-  FlatList,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
-  SafeAreaView,
+  FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   RefreshControl,
+  SafeAreaView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
+import { randomUUID } from 'expo-crypto';
+import { useMutation } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { auth, signOut } from '../../../firebase';
-import { useLanguageContext } from '../../../contexts/LanguageContext';
-import { useThemeContext } from '../../../contexts/ThemeContext';
+import type { SupportConversationSummary, SupportMessage } from '@smart-job/api-contracts';
+
+import { AppInput, AppText, GlobalHeader } from '../../../components';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
-import { getColors, spacing, borderRadius, typography, shadows, gradients } from '../../../theme';
-import { AppText, GlobalHeader, AppInput } from '../../../components';
-import { loadConversationThread, type ConversationMessage } from '../lib/support-message-store';
+import { useLanguageContext } from '../../../contexts/LanguageContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
+import { useThemeContext } from '../../../contexts/ThemeContext';
+import { clearViewerPushToken } from '../../../lib/api/push-tokens';
+import { queryClient, tenantQueryKey } from '../../../lib/query/client';
+import { ROUTES } from '../../../navigation/routes';
+import NotAvailableScreen from '../../shared/NotAvailableScreen';
+import { runLogoutSequence } from '../../settings/lib/logout';
+import { borderRadius, getColors, gradients, shadows, spacing, typography } from '../../../theme';
+import { logger } from '../../../utils/logger';
+import { StableSupportActionKeys } from '../lib/support-action-keys';
 import {
   appendSupportMessage,
   closeSupportConversation,
-  listSupportConversations,
   markSupportConversationRead,
 } from '../lib/support-api';
+import { supportDate } from '../lib/support-message-store';
+import {
+  appendSupportMessageToThreadCache,
+  useSupportConversationsInfinite,
+  useSupportThreadInfinite,
+  useTrustedViewerProfile,
+} from '../lib/use-support-queries';
 
-interface SupportConversation {
-  id: string;
-  userId?: string;
-  userName?: string;
-  category?: string;
-  lastMessage?: string;
-  lastMessageAt?: Date | null;
-  unreadForDev?: number;
-}
+const translations = {
+  en: {
+    inboxTitle: 'Dev Inbox',
+    replyPlaceholder: 'Type your reply...',
+    closeConversation: 'Close conversation',
+    noOpenConversations: 'No open conversations',
+    noMessages: 'No messages',
+    confirmClose: 'Are you sure you want to close this conversation?',
+    conversationClosed: 'Conversation closed',
+    loadFailed: 'The support inbox could not be loaded.',
+    refreshFailed: 'The inbox could not be refreshed. Saved conversations remain visible.',
+    threadFailed: 'The conversation messages could not be loaded.',
+    actionFailed: 'The action failed. You can retry safely.',
+    retry: 'Retry',
+    loadMore: 'Load more conversations',
+    loadNewer: 'Load newer messages',
+    logout: 'Logout',
+    logoutConfirm: 'Are you sure you want to logout?',
+    yes: 'Yes',
+    cancel: 'Cancel',
+  },
+  he: {
+    inboxTitle: 'תיבת דואר מפתח',
+    replyPlaceholder: 'כתוב את התשובה שלך...',
+    closeConversation: 'סגור שיחה',
+    noOpenConversations: 'אין שיחות פתוחות',
+    noMessages: 'אין הודעות',
+    confirmClose: 'האם אתה בטוח שברצונך לסגור שיחה זו?',
+    conversationClosed: 'השיחה נסגרה',
+    loadFailed: 'לא ניתן היה לטעון את תיבת התמיכה.',
+    refreshFailed: 'לא ניתן היה לרענן את התיבה. השיחות השמורות נשארו מוצגות.',
+    threadFailed: 'לא ניתן היה לטעון את הודעות השיחה.',
+    actionFailed: 'הפעולה נכשלה. ניתן לנסות שוב בבטחה.',
+    retry: 'נסה שוב',
+    loadMore: 'טען שיחות נוספות',
+    loadNewer: 'טען הודעות חדשות יותר',
+    logout: 'התנתקות',
+    logoutConfirm: 'האם אתה בטוח שברצונך להתנתק?',
+    yes: 'כן',
+    cancel: 'ביטול',
+  },
+  ar: {
+    inboxTitle: 'صندوق بريد المطور',
+    replyPlaceholder: 'اكتب ردك...',
+    closeConversation: 'إغلاق المحادثة',
+    noOpenConversations: 'لا توجد محادثات مفتوحة',
+    noMessages: 'لا توجد رسائل',
+    confirmClose: 'هل أنت متأكد من إغلاق هذه المحادثة؟',
+    conversationClosed: 'تم إغلاق المحادثة',
+    loadFailed: 'تعذر تحميل صندوق الدعم.',
+    refreshFailed: 'تعذر تحديث الصندوق. ستبقى المحادثات المحفوظة ظاهرة.',
+    threadFailed: 'تعذر تحميل رسائل المحادثة.',
+    actionFailed: 'فشل الإجراء. يمكنك إعادة المحاولة بأمان.',
+    retry: 'إعادة المحاولة',
+    loadMore: 'تحميل محادثات إضافية',
+    loadNewer: 'تحميل رسائل أحدث',
+    logout: 'تسجيل الخروج',
+    logoutConfirm: 'هل أنت متأكد من تسجيل الخروج؟',
+    yes: 'نعم',
+    cancel: 'إلغاء',
+  },
+};
 
 export default function DevInbox() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const colors = getColors(isDarkMode);
-  const alert = useAlert();
+  const { user, status: sessionStatus, signOut: signOutSession } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
   const { clearCache } = useCache();
-  
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [conversations, setConversations] = useState<SupportConversation[]>([]);
-  const [selectedConversation, setSelectedConversation] = useState<SupportConversation | null>(null);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const alert = useAlert();
+  const colors = getColors(isDarkMode);
+  const t = translations[language] || translations.en;
+  const uid = user?.id ?? null;
+  const companyId = workspace?.companyId ?? null;
+  const scopeCompanyId = companyId ?? 0;
+  const actionKeysRef = useRef<StableSupportActionKeys | null>(null);
+  actionKeysRef.current ??= new StableSupportActionKeys(() => randomUUID());
+  const actionKeys = actionKeysRef.current;
+  const flatListRef = useRef<FlatList<SupportMessage> | null>(null);
+
+  const [selectedConversation, setSelectedConversation] = useState<SupportConversationSummary | null>(null);
   const [reply, setReply] = useState('');
-  const [sending, setSending] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
 
-  const flatListRef = useRef<FlatList<ConversationMessage> | null>(null);
+  const viewerQuery = useTrustedViewerProfile(uid, companyId);
+  const isDev = workspace?.role === 'dev' || viewerQuery.data?.systemRole === 'dev';
+  const conversationsQuery = useSupportConversationsInfinite({
+    uid,
+    companyId,
+    status: 'open',
+    enabled: sessionStatus === 'authenticated' && isDev,
+  });
+  const threadQuery = useSupportThreadInfinite({
+    uid,
+    companyId,
+    conversationId: selectedConversation?.id ?? null,
+    enabled: sessionStatus === 'authenticated' && isDev && selectedConversation !== null,
+  });
 
-  const t = language === 'en' ? {
-    inboxTitle: 'Dev Inbox',
-    replyPlaceholder: 'Type your reply...',
-    closeConversation: 'Close Conversation',
-    noOpenConversations: 'No open conversations',
-    openLabel: 'Open',
-    closedLabel: 'Closed',
-    send: 'Send',
-    confirmClose: 'Are you sure you want to close this conversation?',
-    yes: 'Yes',
-    cancel: 'Cancel',
-    conversationClosed: 'Conversation closed',
-  } : language === 'he' ? {
-    inboxTitle: 'תיבת דואר מפתח',
-    replyPlaceholder: 'כתוב את התשובה שלך...',
-    closeConversation: 'סגור שיחה',
-    noOpenConversations: 'אין שיחות פתוחות',
-    openLabel: 'פתוח',
-    closedLabel: 'סגור',
-    send: 'שלח',
-    confirmClose: 'האם אתה בטוח שברצונך לסגור שיחה זו?',
-    yes: 'כן',
-    cancel: 'ביטול',
-    conversationClosed: 'השיחה נסגרה',
-  } : {
-    inboxTitle: 'صندوق بريد المطور',
-    replyPlaceholder: 'اكتب ردك...',
-    closeConversation: 'إغلاق المحادثة',
-    noOpenConversations: 'لا توجد محادثات مفتوحة',
-    openLabel: 'مفتوح',
-    closedLabel: 'مغلق',
-    send: 'إرسال',
-    confirmClose: 'هل أنت متأكد من إغلاق هذه المحادثة؟',
-    yes: 'نعم',
-    cancel: 'إلغاء',
-    conversationClosed: 'تم إغلاق المحادثة',
-  };
-
-  // Load conversations (one-time fetch, no realtime)
-  const loadConversations = async () => {
-    try {
-      const convs = await listSupportConversations('open');
-      setConversations(convs);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error loading conversations:', error);
-      setLoading(false);
-    }
-  };
-
-  // Initial load
   useEffect(() => {
-    loadConversations();
-  }, []);
-
-  // Refresh handler
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadConversations();
-    setRefreshing(false);
-  }, []);
-
-  // Load messages for a specific conversation (one-time fetch)
-  const loadConversationMessages = async (convId: string) => {
-    try {
-      const msgs = await loadConversationThread(convId);
-      setMessages(msgs);
-      
-      // Scroll to bottom
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-      }, 100);
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
-  };
-
-  const openConversation = async (conv: SupportConversation) => {
-    setSelectedConversation(conv);
-    setLoadingMessages(true);
-    
-    // Load messages (one-time fetch)
-    await loadConversationMessages(conv.id);
-    setLoadingMessages(false);
-    
-    // Mark as read for dev
-    try {
-      await markSupportConversationRead(conv.id);
-    } catch (error) {
-      console.error('Error marking as read:', error);
-    }
-  };
-
-  // Refresh messages in modal
-  const refreshConversationMessages = async () => {
-    if (selectedConversation) {
-      setRefreshing(true);
-      await loadConversationMessages(selectedConversation.id);
-      setRefreshing(false);
-    }
-  };
-
-  const closeConversationModal = () => {
+    actionKeys.reset();
     setSelectedConversation(null);
-    setMessages([]);
     setReply('');
+  }, [actionKeys, scopeCompanyId, uid]);
+
+  useEffect(() => {
+    const error = viewerQuery.error ?? conversationsQuery.query.error ?? threadQuery.query.error;
+    if (error) logger.warn('Developer support inbox query failed; retaining cached data', error);
+  }, [conversationsQuery.query.error, threadQuery.query.error, viewerQuery.error]);
+
+  const appendMutation = useMutation({ mutationFn: appendSupportMessage });
+  const readMutation = useMutation({ mutationFn: markSupportConversationRead });
+  const closeMutation = useMutation({ mutationFn: closeSupportConversation });
+
+  const invalidateConversationLists = async () => {
+    if (!uid) return;
+    await queryClient.invalidateQueries({
+      queryKey: tenantQueryKey(uid, scopeCompanyId, 'support', 'conversations'),
+    });
+  };
+
+  const markConversationRead = async (conversationId: string) => {
+    if (!uid) return;
+    const action = `read:${conversationId}`;
+    const key = actionKeys.keyFor(action, conversationId);
+    try {
+      await readMutation.mutateAsync({
+        uid,
+        companyId,
+        conversationId,
+        idempotencyKey: key,
+      });
+      actionKeys.complete(action, key);
+      await invalidateConversationLists();
+    } catch (error) {
+      logger.warn('Could not mark developer support conversation as read', error);
+    }
+  };
+
+  const openConversation = (conversation: SupportConversationSummary) => {
+    setSelectedConversation(conversation);
+    setReply('');
+    if (conversation.unreadForDev > 0) void markConversationRead(conversation.id);
   };
 
   const sendReply = async () => {
-    if (!reply.trim() || !selectedConversation || sending) return;
-    
-    const user = auth.currentUser;
-    if (!user) return;
-    
+    const conversationId = selectedConversation?.id;
     const trimmedReply = reply.trim();
-    setReply('');
-    setSending(true);
-    
+    if (!uid || !conversationId || !trimmedReply || appendMutation.isPending) return;
+    const action = `message:${conversationId}`;
+    const key = actionKeys.keyFor(action, `${conversationId}:${trimmedReply}`);
     try {
-      await appendSupportMessage(selectedConversation.id, trimmedReply);
-      
-      // Refresh messages after sending
-      await loadConversationMessages(selectedConversation.id);
-      
-      setSending(false);
+      const created = await appendMutation.mutateAsync({
+        uid,
+        companyId,
+        conversationId,
+        text: trimmedReply,
+        idempotencyKey: key,
+      });
+      actionKeys.complete(action, key);
+      setReply('');
+      const cached = appendSupportMessageToThreadCache({
+        uid,
+        companyId,
+        conversationId,
+        message: created,
+      });
+      await Promise.all([
+        cached ? Promise.resolve() : threadQuery.query.refetch(),
+        invalidateConversationLists(),
+      ]);
     } catch (error) {
-      console.error('Error sending reply:', error);
-      setReply(trimmedReply);
-      setSending(false);
+      logger.warn('Could not send developer support reply', error);
     }
   };
 
   const handleCloseConversation = () => {
-    const convId = selectedConversation?.id;
-    if (!convId) return;
-    
-    // Close modal first to avoid nested modal issues
-    closeConversationModal();
-    
-    // Show alert after modal is closed
-    setTimeout(() => {
-      alert.confirm(
-        t.closeConversation,
-        t.confirmClose,
-        [
-          { text: t.cancel, style: 'cancel', onPress: () => {} },
-          {
-            text: t.yes,
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await closeSupportConversation(convId);
-                alert.success(t.conversationClosed, '');
-              } catch (error) {
-                console.error('Error closing conversation:', error);
-              }
-            },
-          },
-        ]
-      );
-    }, 300);
+    const conversationId = selectedConversation?.id;
+    if (!uid || !conversationId || closeMutation.isPending) return;
+    alert.confirm(t.closeConversation, t.confirmClose, [
+      { text: t.cancel, style: 'cancel', onPress: () => undefined },
+      {
+        text: t.yes,
+        style: 'destructive',
+        onPress: async () => {
+          const action = `close:${conversationId}`;
+          const key = actionKeys.keyFor(action, conversationId);
+          try {
+            await closeMutation.mutateAsync({
+              uid,
+              companyId,
+              conversationId,
+              idempotencyKey: key,
+            });
+            actionKeys.complete(action, key);
+            setSelectedConversation(null);
+            setReply('');
+            await invalidateConversationLists();
+            alert.success(t.conversationClosed, '');
+          } catch (error) {
+            logger.warn('Could not close support conversation', error);
+          }
+        },
+      },
+    ]);
   };
 
   const handleLogout = () => {
-    alert.confirm(
-      language === 'en' ? 'Logout' : language === 'he' ? 'התנתקות' : 'تسجيل الخروج',
-      language === 'en' ? 'Are you sure you want to logout?' : language === 'he' ? 'האם אתה בטוח שברצונך להתנתק?' : 'هل أنت متأكد من تسجيل الخروج؟',
-      [
-        { text: t.cancel, style: 'cancel', onPress: () => {} },
-        {
-          text: t.yes,
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await signOut(auth);
-              clearCache();
-              router.replace(ROUTES.root);
-            } catch (error) {
-              console.error('Error signing out:', error);
-            }
-          },
+    alert.confirm(t.logout, t.logoutConfirm, [
+      { text: t.cancel, style: 'cancel', onPress: () => undefined },
+      {
+        text: t.yes,
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await runLogoutSequence({
+              userId: uid,
+              clearPushToken: clearViewerPushToken,
+              signOut: signOutSession,
+              clearCache,
+              onPushTokenClearError: (error) => {
+                logger.warn('Failed to clear push token before developer logout', error);
+              },
+            });
+            router.replace(ROUTES.root);
+          } catch (error) {
+            logger.error('Developer logout failed', error);
+            alert.error(t.logout, t.actionFailed);
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  const formatTime = (date: Date | null | undefined) => {
+  const formatDate = (value: string) => {
+    const date = supportDate(value);
     if (!date) return '';
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+    if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleDateString();
   };
 
-  const formatDate = (date: Date | null | undefined) => {
-    if (!date) return '';
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-    if (days === 0) {
-      return formatTime(date);
-    } else if (days === 1) {
-      return language === 'en' ? 'Yesterday' : language === 'he' ? 'אתמול' : 'أمس';
-    } else {
-      return date.toLocaleDateString();
-    }
-  };
-
-  const renderConversation = ({ item }: { item: SupportConversation }) => {
-    // Use userName if available, otherwise fall back to userId
-    const displayName = item.userName || item.userId || 'Unknown User';
-    
-    // Get category icon and color
-    const getCategoryIcon = () => {
-      switch(item.category) {
-        case 'bug':
-          return { icon: 'bug-outline', type: 'Ionicons', color: colors.error };
-        case 'opinion':
-          return { icon: 'comment-text-outline', type: 'MaterialCommunityIcons', color: '#9C27B0' };
-        case 'suggestion':
-          return { icon: 'bulb-outline', type: 'Ionicons', color: '#FF9800' };
-        case 'support':
-          return { icon: 'account-tie-outline', type: 'MaterialCommunityIcons', color: colors.primary };
-        default:
-          return { icon: 'chatbubble-outline', type: 'Ionicons', color: colors.textSecondary };
-      }
-    };
-    
-    const categoryIcon = getCategoryIcon();
-    
-    return (
-      <TouchableOpacity
-        style={[styles.conversationItem, { backgroundColor: colors.surface }]}
-        onPress={() => openConversation(item)}
-      >
-        <View style={styles.avatarContainer}>
-          <LinearGradient
-            colors={gradients.primary}
-            style={styles.avatar}
-          >
-            <AppText style={styles.avatarText}>
-              {displayName.charAt(0).toUpperCase()}
-            </AppText>
-          </LinearGradient>
-        </View>
-        <View style={styles.conversationContent}>
-          <View style={styles.conversationHeader}>
-            <View style={styles.categoryIconContainer}>
-              {categoryIcon.type === 'Ionicons' ? (
-                <Ionicons name={categoryIcon.icon as unknown as keyof typeof Ionicons.glyphMap} size={18} color={categoryIcon.color} />
-              ) : (
-                <MaterialCommunityIcons name={categoryIcon.icon as unknown as keyof typeof MaterialCommunityIcons.glyphMap} size={18} color={categoryIcon.color} />
-              )}
+  const renderConversation = ({ item }: { item: SupportConversationSummary }) => (
+    <TouchableOpacity
+      style={[styles.conversationCard, { backgroundColor: colors.surface }]}
+      onPress={() => openConversation(item)}
+    >
+      <LinearGradient colors={gradients.primary} style={styles.avatar}>
+        <AppText style={styles.avatarText}>{item.userName.charAt(0).toUpperCase()}</AppText>
+      </LinearGradient>
+      <View style={styles.conversationText}>
+        <View style={styles.conversationTitleRow}>
+          <AppText variant="bodyStrong" numberOfLines={1} style={styles.userName}>{item.userName}</AppText>
+          {item.unreadForDev > 0 ? (
+            <View style={[styles.unreadBadge, { backgroundColor: colors.error }]}>
+              <AppText style={styles.unreadText}>{item.unreadForDev}</AppText>
             </View>
-            <AppText style={[styles.conversationUserName, { color: colors.textPrimary }]} numberOfLines={1}>
-              {displayName}
-            </AppText>
-            {(item.unreadForDev ?? 0) > 0 && (
-              <View style={[styles.unreadBadge, { backgroundColor: colors.error }]}>
-                <AppText style={styles.unreadBadgeText}>{item.unreadForDev}</AppText>
-              </View>
-            )}
-          </View>
-          <AppText style={[styles.conversationMessage, { color: colors.textSecondary }]} numberOfLines={2}>
-            {item.lastMessage || '(No messages)'}
-          </AppText>
-          <AppText style={[styles.conversationDate, { color: colors.textSecondary }]}>
-            {formatDate(item.lastMessageAt)}
-          </AppText>
+          ) : null}
         </View>
-        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-      </TouchableOpacity>
-    );
-  };
+        <AppText color={colors.textSecondary} numberOfLines={2}>{item.lastMessage}</AppText>
+        <AppText variant="caption" color={colors.textSecondary}>{formatDate(item.lastMessageAt)}</AppText>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+    </TouchableOpacity>
+  );
 
-  const renderMessage = ({ item }: { item: ConversationMessage }) => {
-    const isDev = item.senderUid === 'dev';
-
+  const renderMessage = ({ item }: { item: SupportMessage }) => {
+    const fromDev = item.senderRole === 'dev';
     return (
-      <View style={[
-        styles.messageContainer,
-        isDev ? styles.devMessageContainer : styles.userMessageContainer,
-      ]}>
+      <View style={[styles.messageRow, fromDev ? styles.devRow : styles.userRow]}>
         <View style={[
           styles.messageBubble,
-          isDev 
-            ? [styles.devBubble, { backgroundColor: colors.primary }]
-            : [styles.userBubble, { backgroundColor: colors.backgroundLight }],
+          fromDev
+            ? { backgroundColor: colors.primary, borderBottomRightRadius: borderRadius.xs }
+            : { backgroundColor: colors.surface, borderBottomLeftRadius: borderRadius.xs },
         ]}>
-          <AppText style={[
-            styles.messageText,
-            { color: isDev ? 'white' : colors.textPrimary }
-          ]}>
-            {item.text}
-          </AppText>
+          <AppText color={fromDev ? 'white' : colors.textPrimary}>{item.text}</AppText>
         </View>
       </View>
     );
   };
 
-  if (loading) {
+  const accessLoading = sessionStatus === 'restoring'
+    || tenantStatus === 'loading'
+    || viewerQuery.isLoading;
+  if (accessLoading) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
+        <View style={styles.centerState}><ActivityIndicator size="large" color={colors.primary} /></View>
+      </SafeAreaView>
+    );
+  }
+  if (!uid) return null;
+  if (!isDev && viewerQuery.isError) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.centerState}>
+          <AppText color={colors.error}>{t.loadFailed}</AppText>
+          <TouchableOpacity onPress={() => { void viewerQuery.refetch(); }}>
+            <AppText color={colors.primary} variant="label">{t.retry}</AppText>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
+  if (!isDev) return <NotAvailableScreen reason="role" />;
+
+  const hasConversations = conversationsQuery.conversations.length > 0;
+  const mutationError = appendMutation.error ?? closeMutation.error ?? readMutation.error;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       <GlobalHeader />
-      
-      {/* Header */}
-      <LinearGradient
-        colors={gradients.secondary}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
+      <LinearGradient colors={gradients.secondary} style={styles.header}>
         <AppText style={styles.headerTitle}>{t.inboxTitle}</AppText>
-        <View style={styles.headerRight}>
-          <View style={styles.headerBadge}>
-            <AppText style={styles.headerBadgeText}>{conversations.length}</AppText>
+        <View style={styles.headerActions}>
+          <View style={styles.countBadge}>
+            <AppText style={styles.countText}>{conversationsQuery.conversations.length}</AppText>
           </View>
-          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <MaterialCommunityIcons name="logout" size={26} color="white" />
-            <AppText style={styles.logoutText}>
-              {language === 'en' ? 'Logout' : language === 'he' ? 'יציאה' : 'خروج'}
-            </AppText>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <MaterialCommunityIcons name="logout" size={22} color="white" />
+            <AppText style={styles.logoutText}>{t.logout}</AppText>
           </TouchableOpacity>
         </View>
       </LinearGradient>
-      
-      {/* Conversations List */}
-      {conversations.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons name="inbox-outline" size={64} color={colors.textSecondary} />
-          <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>
-            {t.noOpenConversations}
-          </AppText>
+
+      {conversationsQuery.query.isLoading ? (
+        <View style={styles.centerState}><ActivityIndicator size="large" color={colors.primary} /></View>
+      ) : conversationsQuery.query.isError && !hasConversations ? (
+        <View style={styles.centerState}>
+          <AppText color={colors.error}>{t.loadFailed}</AppText>
+          <TouchableOpacity onPress={() => { void conversationsQuery.query.refetch(); }}>
+            <AppText color={colors.primary} variant="label">{t.retry}</AppText>
+          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
-          data={conversations}
+          data={conversationsQuery.conversations}
           keyExtractor={(item) => item.id}
           renderItem={renderConversation}
-          contentContainerStyle={styles.conversationsList}
-          refreshControl={
+          contentContainerStyle={hasConversations ? styles.listContent : styles.emptyListContent}
+          ListHeaderComponent={conversationsQuery.query.isError ? (
+            <View style={[styles.errorBanner, { borderColor: colors.error, backgroundColor: colors.surface }]}>
+              <AppText color={colors.error} style={styles.errorText}>{t.refreshFailed}</AppText>
+              <TouchableOpacity onPress={() => { void conversationsQuery.query.refetch(); }}>
+                <AppText color={colors.primary} variant="label">{t.retry}</AppText>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          ListEmptyComponent={(
+            <View style={styles.centerState}>
+              <MaterialCommunityIcons name="inbox-outline" size={60} color={colors.textSecondary} />
+              <AppText color={colors.textSecondary}>{t.noOpenConversations}</AppText>
+            </View>
+          )}
+          ListFooterComponent={conversationsQuery.query.hasNextPage ? (
+            <TouchableOpacity
+              style={[styles.loadMoreButton, { borderColor: colors.primary }]}
+              disabled={conversationsQuery.query.isFetchingNextPage}
+              onPress={() => { void conversationsQuery.query.fetchNextPage(); }}
+            >
+              {conversationsQuery.query.isFetchingNextPage
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <AppText color={colors.primary} variant="label">{t.loadMore}</AppText>}
+            </TouchableOpacity>
+          ) : null}
+          refreshControl={(
             <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[colors.primary]}
+              refreshing={conversationsQuery.query.isRefetching}
+              onRefresh={() => { void conversationsQuery.query.refetch(); }}
               tintColor={colors.primary}
             />
-          }
+          )}
         />
       )}
-      
-      {/* Conversation Modal */}
+
       <Modal
-        visible={!!selectedConversation}
+        visible={selectedConversation !== null}
         animationType="slide"
-        onRequestClose={closeConversationModal}
+        onRequestClose={() => setSelectedConversation(null)}
       >
-        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-          {/* Modal Header */}
-          <LinearGradient
-            colors={gradients.primary}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.modalHeader}
-          >
-            <TouchableOpacity onPress={closeConversationModal} style={styles.modalBackButton}>
-              <Ionicons name="arrow-back" size={24} color="white" />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+          <LinearGradient colors={gradients.primary} style={styles.modalHeader}>
+            <TouchableOpacity style={styles.headerButton} onPress={() => setSelectedConversation(null)}>
+              <Ionicons name="arrow-back" size={22} color="white" />
             </TouchableOpacity>
-            <View style={styles.modalTitleContainer}>
-              <AppText style={styles.modalTitle} numberOfLines={1}>
-                {selectedConversation?.userName || selectedConversation?.userId || 'user'}
-              </AppText>
-            </View>
-            <TouchableOpacity 
-              onPress={handleCloseConversation} 
-              style={styles.closeConvButton}
+            <AppText style={styles.modalTitle} numberOfLines={1}>
+              {selectedConversation?.userName ?? ''}
+            </AppText>
+            <TouchableOpacity
+              style={[styles.closeButton, { opacity: closeMutation.isPending ? 0.5 : 1 }]}
+              disabled={closeMutation.isPending}
+              onPress={handleCloseConversation}
             >
-              <Ionicons name="checkmark-done" size={20} color="white" />
-              <AppText style={styles.closeConvText}>
-                {language === 'en' ? 'Close' : language === 'he' ? 'סגור' : 'إغلاق'}
-              </AppText>
+              {closeMutation.isPending
+                ? <ActivityIndicator size="small" color="white" />
+                : <Ionicons name="checkmark-done" size={20} color="white" />}
+              <AppText style={styles.closeText}>{t.closeConversation}</AppText>
             </TouchableOpacity>
           </LinearGradient>
-          
-          <KeyboardAvoidingView 
-            style={styles.chatContainer}
+
+          {mutationError ? (
+            <View style={[styles.errorBanner, { borderColor: colors.error, backgroundColor: colors.surface }]}>
+              <AppText color={colors.error}>{t.actionFailed}</AppText>
+            </View>
+          ) : null}
+
+          <KeyboardAvoidingView
+            style={styles.threadContainer}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
           >
-            {loadingMessages ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary} />
-              </View>
-            ) : messages.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name="chat-outline" size={64} color={colors.textSecondary} />
-                <AppText style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  No messages
-                </AppText>
+            {threadQuery.query.isLoading ? (
+              <View style={styles.centerState}><ActivityIndicator size="large" color={colors.primary} /></View>
+            ) : threadQuery.query.isError && threadQuery.messages.length === 0 ? (
+              <View style={styles.centerState}>
+                <AppText color={colors.error}>{t.threadFailed}</AppText>
+                <TouchableOpacity onPress={() => { void threadQuery.query.refetch(); }}>
+                  <AppText color={colors.primary} variant="label">{t.retry}</AppText>
+                </TouchableOpacity>
               </View>
             ) : (
               <FlatList
                 ref={flatListRef}
-                data={messages}
+                data={threadQuery.messages}
                 keyExtractor={(item) => item.id}
                 renderItem={renderMessage}
-                contentContainerStyle={[styles.messagesList, { paddingBottom: insets.bottom + 80 }]}
-                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-                refreshControl={
+                contentContainerStyle={[styles.messagesContent, { paddingBottom: insets.bottom + 24 }]}
+                ListHeaderComponent={threadQuery.query.isError ? (
+                  <View style={[styles.errorBanner, { borderColor: colors.error, backgroundColor: colors.surface }]}>
+                    <AppText color={colors.error} style={styles.errorText}>{t.refreshFailed}</AppText>
+                    <TouchableOpacity onPress={() => { void threadQuery.query.refetch(); }}>
+                      <AppText color={colors.primary} variant="label">{t.retry}</AppText>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+                ListEmptyComponent={(
+                  <View style={styles.centerState}>
+                    <MaterialCommunityIcons name="chat-outline" size={56} color={colors.textSecondary} />
+                    <AppText color={colors.textSecondary}>{t.noMessages}</AppText>
+                  </View>
+                )}
+                ListFooterComponent={threadQuery.query.hasNextPage ? (
+                  <TouchableOpacity
+                    style={[styles.loadMoreButton, { borderColor: colors.primary }]}
+                    disabled={threadQuery.query.isFetchingNextPage}
+                    onPress={() => { void threadQuery.query.fetchNextPage(); }}
+                  >
+                    {threadQuery.query.isFetchingNextPage
+                      ? <ActivityIndicator size="small" color={colors.primary} />
+                      : <AppText color={colors.primary} variant="label">{t.loadNewer}</AppText>}
+                  </TouchableOpacity>
+                ) : null}
+                refreshControl={(
                   <RefreshControl
-                    refreshing={refreshing}
-                    onRefresh={refreshConversationMessages}
-                    colors={[colors.primary]}
+                    refreshing={threadQuery.query.isRefetching}
+                    onRefresh={() => { void threadQuery.query.refetch(); }}
                     tintColor={colors.primary}
                   />
-                }
+                )}
               />
             )}
-            
-            {/* Reply Input */}
-            <View style={[styles.inputContainer, { backgroundColor: colors.surface, paddingBottom: insets.bottom + spacing.sm }]}>
+
+            <View style={[styles.inputRow, { backgroundColor: colors.surface, paddingBottom: insets.bottom + spacing.sm }]}>
               <AppInput
-                inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary }]}
+                inputStyle={[styles.replyInput, { color: colors.textPrimary }]}
                 placeholder={t.replyPlaceholder}
                 value={reply}
                 onChangeText={setReply}
+                maxLength={4_000}
                 multiline
-                maxLength={1000}
               />
               <TouchableOpacity
-                style={[styles.sendButton, { backgroundColor: colors.primary, opacity: reply.trim() ? 1 : 0.5 }]}
-                onPress={sendReply}
-                disabled={!reply.trim() || sending}
+                style={[
+                  styles.sendButton,
+                  { backgroundColor: colors.primary, opacity: reply.trim() && !appendMutation.isPending ? 1 : 0.5 },
+                ]}
+                disabled={!reply.trim() || appendMutation.isPending}
+                onPress={() => { void sendReply(); }}
               >
-                {sending ? (
-                  <ActivityIndicator size="small" color="white" />
-                ) : (
-                  <Ionicons name="send" size={20} color="white" />
-                )}
+                {appendMutation.isPending
+                  ? <ActivityIndicator size="small" color="white" />
+                  : <Ionicons name="send" size={20} color="white" />}
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
@@ -529,230 +542,115 @@ export default function DevInbox() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1 },
+  centerState: {
+    alignItems: 'center',
     flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
+    gap: spacing.md,
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xxl,
-  },
-  headerTitle: {
-    fontSize: typography.xl,
-    fontWeight: typography.bold,
-    color: 'white',
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  headerBadge: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.sm,
-  },
-  headerBadgeText: {
-    color: 'white',
-    fontSize: typography.sm,
-    fontWeight: typography.bold,
-  },
-  logoutButton: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    gap: spacing.xs,
-  },
-  logoutText: {
-    color: 'white',
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     padding: spacing.xl,
   },
-  emptyText: {
-    fontSize: typography.base,
-    textAlign: 'center',
-    marginTop: spacing.md,
-  },
-  conversationsList: {
-    padding: spacing.md,
-  },
-  conversationItem: {
-    flexDirection: 'row',
+  header: {
     alignItems: 'center',
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+  },
+  headerTitle: { color: 'white', fontSize: typography.xl, fontWeight: typography.bold },
+  headerActions: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+  countBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  countText: { color: 'white', fontWeight: typography.bold },
+  logoutButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.md,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  logoutText: { color: 'white', fontWeight: typography.semibold },
+  listContent: { padding: spacing.md },
+  emptyListContent: { flexGrow: 1, padding: spacing.md },
+  conversationCard: {
+    alignItems: 'center',
     borderRadius: borderRadius.lg,
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+    padding: spacing.md,
     ...shadows.small,
   },
-  avatarContainer: {
-    marginRight: spacing.md,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    color: 'white',
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-  },
-  conversationContent: {
-    flex: 1,
-  },
-  conversationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  categoryIconContainer: {
-    marginRight: spacing.xs,
-  },
-  conversationUserName: {
-    fontSize: typography.base,
-    fontWeight: typography.semibold,
-    flex: 1,
-  },
-  conversationUserId: {
-    fontSize: typography.sm,
-    flex: 1,
-  },
+  avatar: { alignItems: 'center', borderRadius: 24, height: 48, justifyContent: 'center', width: 48 },
+  avatarText: { color: 'white', fontSize: typography.lg, fontWeight: typography.bold },
+  conversationText: { flex: 1, gap: spacing.xs },
+  conversationTitleRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+  userName: { flex: 1 },
   unreadBadge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: 11,
+    justifyContent: 'center',
+    minHeight: 22,
+    minWidth: 22,
     paddingHorizontal: spacing.xs,
   },
-  unreadBadgeText: {
-    color: 'white',
-    fontSize: typography.xs,
-    fontWeight: typography.bold,
-  },
-  conversationMessage: {
-    fontSize: typography.base,
-    marginBottom: spacing.xs,
-  },
-  conversationDate: {
-    fontSize: typography.sm,
-  },
-  modalContainer: {
-    flex: 1,
-  },
-  modalHeader: {
-    flexDirection: 'row',
+  unreadText: { color: 'white', fontSize: typography.xs, fontWeight: typography.bold },
+  errorBanner: {
     alignItems: 'center',
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.md,
-    paddingTop: Platform.OS === 'ios' ? spacing.xxl + 10 : spacing.xxl,
-  },
-  modalBackButton: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    padding: spacing.sm,
     borderRadius: borderRadius.md,
-  },
-  modalTitleContainer: {
-    flex: 1,
-    marginHorizontal: spacing.md,
-  },
-  modalTitle: {
-    fontSize: typography.lg,
-    fontWeight: typography.bold,
-    color: 'white',
-  },
-  closeConvButton: {
+    borderWidth: 1,
     flexDirection: 'row',
+    gap: spacing.sm,
+    margin: spacing.md,
+    padding: spacing.md,
+  },
+  errorText: { flex: 1 },
+  loadMoreButton: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
     borderRadius: borderRadius.md,
-    gap: spacing.xs,
-  },
-  closeConvText: {
-    color: 'white',
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-  },
-  chatContainer: {
-    flex: 1,
-  },
-  messagesList: {
-    padding: spacing.md,
-  },
-  messageContainer: {
-    marginBottom: spacing.sm,
-  },
-  userMessageContainer: {
-    alignItems: 'flex-start',
-  },
-  devMessageContainer: {
-    alignItems: 'flex-end',
-  },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: spacing.md,
-    borderRadius: borderRadius.lg,
-    ...shadows.small,
-  },
-  userBubble: {
-    borderBottomLeftRadius: borderRadius.xs,
-  },
-  devBubble: {
-    borderBottomRightRadius: borderRadius.xs,
-  },
-  messageText: {
-    fontSize: typography.base,
-    lineHeight: typography.base * 1.4,
-  },
-  messageTime: {
-    fontSize: typography.xs,
-    marginTop: spacing.xs,
-    alignSelf: 'flex-end',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: spacing.md,
-    ...shadows.medium,
-  },
-  input: {
-    flex: 1,
-    minHeight: 44,
-    maxHeight: 120,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.lg,
-    fontSize: typography.base,
-    marginRight: spacing.sm,
-  },
-  sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    borderWidth: 1,
     justifyContent: 'center',
+    marginVertical: spacing.md,
+    minHeight: 44,
+  },
+  modalHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.md, padding: spacing.md },
+  headerButton: {
     alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.md,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  modalTitle: { color: 'white', flex: 1, fontSize: typography.lg, fontWeight: typography.bold },
+  closeButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: borderRadius.md,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  closeText: { color: 'white', fontSize: typography.sm, fontWeight: typography.semibold },
+  threadContainer: { flex: 1 },
+  messagesContent: { flexGrow: 1, padding: spacing.md },
+  messageRow: { marginBottom: spacing.sm },
+  devRow: { alignItems: 'flex-end' },
+  userRow: { alignItems: 'flex-start' },
+  messageBubble: { borderRadius: borderRadius.lg, maxWidth: '82%', padding: spacing.md, ...shadows.small },
+  inputRow: { alignItems: 'flex-end', flexDirection: 'row', padding: spacing.md, ...shadows.medium },
+  replyInput: { flex: 1, maxHeight: 120, minHeight: 44 },
+  sendButton: {
+    alignItems: 'center',
+    borderRadius: 22,
+    height: 44,
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
+    width: 44,
   },
 });
-

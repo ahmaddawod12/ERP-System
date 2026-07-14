@@ -1,13 +1,21 @@
-﻿/**
- * Server component wrapper — exports static metadata and Suspense boundary.
- * Client logic lives in page-client.tsx.
- */
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
+
 import LoginClient from "./page-client";
+import { readWebsiteSession } from "@/lib/dal/session";
+import { decideWorkspaceEntry } from "@/lib/dal/workspace-routing";
 
 export const metadata = { title: "Login | Smart-Job" };
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const session = await readWebsiteSession();
+  if (session) {
+    const decision = decideWorkspaceEntry(session.viewer.workspaces);
+    if (decision.kind === "onboarding") redirect("/onboarding");
+    if (decision.kind === "select") redirect("/app/select-company");
+    redirect(`/app/c/${decision.companyId}`);
+  }
+
   return (
     <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><p>Loading…</p></div>}>
       <LoginClient />

@@ -7,6 +7,7 @@ export const ROUTES = {
   basicHome: '/BasicHomepage',
   devInbox: '/DevInbox',
   settings: '/Settings',
+  pendingWork: '/PendingWork',
   supportChat: '/SupportChat',
   workerJobs: '/Workerjob',
   userJobs: '/Userjob',

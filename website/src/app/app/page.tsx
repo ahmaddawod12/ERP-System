@@ -1,17 +1,19 @@
-/**
- * N1: Server component wrapper — exports static metadata and Suspense boundary.
- * Client logic lives in page-client.tsx.
- */
-import { Suspense } from "react";
-import { LoadingState } from "@/components/states/loading-state";
-import AppOverviewClient from "./page-client";
+import { redirect } from "next/navigation";
+
+import { requireWebsiteSession } from "@/lib/dal/session";
+import { decideWorkspaceEntry } from "@/lib/dal/workspace-routing";
 
 export const metadata = { title: "Dashboard | Smart-Job" };
 
-export default function AppOverviewPage() {
-  return (
-    <Suspense fallback={<LoadingState label="Loading dashboard…" />}>
-      <AppOverviewClient />
-    </Suspense>
-  );
+export default async function AppEntryPage() {
+  const { viewer } = await requireWebsiteSession("/app");
+  const decision = decideWorkspaceEntry(viewer.workspaces);
+
+  if (decision.kind === "onboarding") {
+    redirect("/onboarding");
+  }
+  if (decision.kind === "select") {
+    redirect("/app/select-company");
+  }
+  redirect(`/app/c/${decision.companyId}`);
 }

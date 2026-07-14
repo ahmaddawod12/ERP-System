@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View,
   TouchableOpacity,
   StyleSheet,
@@ -12,39 +12,28 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
-import { auth, functions, httpsCallable } from '../../../firebase';
 import { colors as themeColors, getColors, shadows } from '../../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer } from '../../../components';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import { scopedKey, storage } from '../../../contexts/mmkv-storage';
-import { safeJsonParse } from '../../../utils/helpers';
+import { logger } from '../../../utils/logger';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { fetchRecordById } from '../../../utils/read-model';
-import { uploadJobFilesForStorage } from '../../jobs/lib/job-file-utils';
-import type { DateLike, Job, JobItem } from '../../../types';
+import { useJobsInfinite } from '../../jobs/lib/use-jobs-infinite';
+import type { MobileJobSummary } from '../../jobs/lib/job-list-model';
+import type { DateLike } from '../../../types';
 import type { DateFilterRange } from '../../../components/forms/DateFilter';
 import { ROUTES } from '../../../navigation/routes';
 
-type WorkerJobRecord = Job & {
+type WorkerJobRecord = MobileJobSummary & {
   workDescription?: string;
   submittedAt?: DateLike;
   dueDate?: string;
   timestamp?: DateLike;
-  partsUsed?: JobItem[];
 };
-
-type PendingWorkerJob = {
-  companyId?: string;
-  jobId?: string;
-  jobData?: Partial<WorkerJobRecord>;
-};
-
-function getWorkerPendingJobsStorageKey() {
-  return scopedKey('pendingWorkerJobs');
-}
 
 function getWorkerDraftStorageKey(jobId: string | null | undefined) {
   const normalizedJobId = String(jobId || '').trim();
@@ -66,23 +55,12 @@ export default function Workerjob() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const insets = useSafeAreaInsets();
-  const {
-    profile,
-    jobs: cachedJobs,
-    getUid,
-    getCompanyId,
-    updateJob,
-    getDataForDateRange,
-  } = useCache();
+  const { user } = useSession();
+  const { workspace } = useTenant();
   const colors = getColors(isDarkMode);
 
   // ─── State ──────────────────────────────────────────────────────
-  const [jobs, setJobs] = useState<WorkerJobRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const hasInitialLoadedRef = useRef(false);
   const [isOnline, setIsOnline] = useState(true);
-  const [pendingJobCount, setPendingJobCount] = useState(0);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [selectedJobDetails, setSelectedJobDetails] = useState<WorkerJobRecord | null>(null);
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilterRange>({
@@ -90,6 +68,17 @@ export default function Workerjob() {
     startDate: new Date(new Date().setDate(new Date().getDate() - 7)),
     endDate: new Date(),
     label: 'Last 7 Days',
+  });
+  const jobsFilters = useMemo(() => ({
+    status: ['pending', 'waiting', 'finished', 'denied'] as const,
+    dateFrom: dateFilter.startDate,
+    dateTo: dateFilter.type === 'lastMonth' ? dateFilter.endDate : undefined,
+    pageSize: 50,
+  }), [dateFilter.endDate, dateFilter.startDate, dateFilter.type]);
+  const { query: jobsQuery, jobs } = useJobsInfinite({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    filters: jobsFilters,
   });
 
   // ─── Translations ───────────────────────────────────────────────
@@ -106,9 +95,6 @@ export default function Workerjob() {
     location: 'Location',
     description: 'Description',
     offlineMode: 'Offline Mode',
-    pendingJobs: 'Pending Jobs',
-    syncSuccess: 'Successfully synced pending jobs!',
-    syncError: 'Some jobs failed to sync. They will be retried later.',
     partsUsed: 'Parts Used',
     noParts: 'No parts used',
     close: 'Close',
@@ -124,7 +110,6 @@ export default function Workerjob() {
     noJobs: 'אין משימות מוקצות עדיין',
     pending: 'ממתין',
     waiting: 'ממתין לאישור',
-    accepted: 'אושר',
     denied: 'נדחה',
     assignedBy: 'הוקצה על ידי',
     clientName: 'שם הלקוח',
@@ -132,11 +117,7 @@ export default function Workerjob() {
     timeWorked: 'שעות עבודה',
     location: 'מיקום',
     description: 'תיאור',
-    markReceived: 'סמן כהתקבל',
     offlineMode: 'מצב לא מקוון',
-    pendingJobs: 'משימות ממתינות',
-    syncSuccess: 'המשימות הממתינות סונכרנו בהצלחה!',
-    syncError: 'חלק מהמשימות נכשלו בסנכרון. הן ינסו שוב מאוחר יותר.',
     partsUsed: 'חלקים בשימוש',
     noParts: 'לא נעשה שימוש בחלקים',
     close: 'סגור',
@@ -152,7 +133,6 @@ export default function Workerjob() {
     noJobs: 'لا توجد مهام معينة بعد',
     pending: 'قيد الانتظار',
     waiting: 'في انتظار الموافقة',
-    accepted: 'مقبول',
     denied: 'مرفوض',
     assignedBy: 'تم التعيين بواسطة',
     clientName: 'اسم العميل',
@@ -160,11 +140,7 @@ export default function Workerjob() {
     timeWorked: 'وقت العمل',
     location: 'الموقع',
     description: 'وصف',
-    markReceived: 'وضع علامة كمستلم',
     offlineMode: 'وضع عدم الاتصال',
-    pendingJobs: 'المهام المعلقة',
-    syncSuccess: 'تم مزامنة المهام المعلقة بنجاح!',
-    syncError: 'فشلت بعض المهام في المزامنة. سيتم المحاولة مرة أخرى لاحقاً.',
     partsUsed: 'القطع المستخدمة',
     noParts: 'لم يتم استخدام قطع',
     close: 'إغلاق',
@@ -186,7 +162,9 @@ export default function Workerjob() {
     return hoursDiff <= 24;
   };
 
-  const canEditJob = (job: WorkerJobRecord) => job.status !== 'finished';
+  const canCompleteJob = (job: WorkerJobRecord) => (
+    job.status === 'pending' || job.status === 'waiting'
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -202,218 +180,36 @@ export default function Workerjob() {
     switch (status) {
       case 'pending': return t.pending;
       case 'waiting': return t.waiting;
-      case 'finished': return language === 'en' ? 'Finished' : language === 'he' ? 'Ã—â€Ã—â€¢Ã—Â©Ã—Å“Ã—Â' : 'Ã™â€¦Ã™â€ Ã˜ÂªÃ™â€¡Ã™Å ';
+      case 'finished': return language === 'en' ? 'Finished' : language === 'he' ? 'הושלם' : 'منتهي';
       case 'denied': return t.denied;
       default: return status || t.pending;
     }
   };
 
-  const checkPendingJobCount = async () => {
-    try {
-      const pending = storage.getString(getWorkerPendingJobsStorageKey());
-      if (pending) {
-        setPendingJobCount((safeJsonParse<PendingWorkerJob[]>(pending, []) || []).length);
-      }
-    } catch (error) {
-      console.error('Error checking pending jobs:', error);
-    }
-  };
-
-  /**
-   * Sync offline-queued jobs. These were saved when the worker submitted a job
-   * while offline. Each entry contains the full jobData that was already built
-   * by FillJob (or the inline modal). We re-submit them through the backend.
-   */
-  const syncPendingJobs = async () => {
-    try {
-      const pending = storage.getString(getWorkerPendingJobsStorageKey());
-      if (!pending) return;
-      const pendingArray = safeJsonParse<PendingWorkerJob[]>(pending, []) || [];
-      if (pendingArray.length === 0) return;
-
-      setIsSyncing(true);
-      const failedJobs: PendingWorkerJob[] = [];
-
-      for (const pendingJob of pendingArray) {
-        try {
-          const companyId = pendingJob.companyId || getCompanyId();
-          const jobId = pendingJob.jobId;
-          const user = auth.currentUser;
-          if (!companyId || !jobId) {
-            throw new Error('Missing companyId or jobId for pending worker job');
-          }
-          if (!user?.uid) {
-            throw new Error('Missing user session for pending worker job');
-          }
-
-          const existingData = await fetchRecordById(companyId, jobId) as Partial<WorkerJobRecord> | null;
-
-          if (existingData) {
-            const uploadResult = await uploadJobFilesForStorage(
-              companyId,
-              jobId,
-              Array.isArray(pendingJob.jobData?.photos)
-                ? pendingJob.jobData.photos as Array<string | { storagePath?: string; uri?: string }>
-                : [],
-              (pendingJob.jobData?.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
-            );
-            const updatedJob = {
-              ...existingData,
-              ...pendingJob.jobData,
-              photos: uploadResult.photoRefs.length > 0 ? uploadResult.photoRefs : pendingJob.jobData?.photos,
-              signature: uploadResult.signatureRef ?? pendingJob.jobData?.signature,
-              status: 'waiting',
-              submittedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            updateJob(jobId, updatedJob);
-            const updateJobFn = httpsCallable(functions, 'updateJobV1');
-            await updateJobFn({ companyId, jobId, ...updatedJob });
-          } else {
-            // Job no longer exists — skip
-            console.warn('Job not found during sync, skipping:', jobId);
-          }
-        } catch (error) {
-          console.error('Error syncing job:', error);
-          failedJobs.push(pendingJob);
-        }
-      }
-
-      if (failedJobs.length > 0) {
-        storage.set(getWorkerPendingJobsStorageKey(), JSON.stringify(failedJobs));
-        setPendingJobCount(failedJobs.length);
-        alert.error(t.syncError || 'Some jobs failed to sync');
-      } else {
-        storage.remove(getWorkerPendingJobsStorageKey());
-        setPendingJobCount(0);
-        alert.success(t.syncSuccess || 'All jobs synced successfully!');
-        void loadJobs();
-      }
-    } catch (error) {
-      console.error('Error syncing pending jobs:', error);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const loadJobs = useCallback(async () => {
-    try {
-      const user = auth.currentUser;
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-
-      const uid = getUid();
-      const companyId = getCompanyId();
-      if (!companyId) {
-        setLoading(false);
-        return;
-      }
-
-      const ninetyDaysAgoMs = Date.now() - 90 * 24 * 60 * 60 * 1000;
-
-      // Beyond 90 days - fetch from archive/backend.
-      if (dateFilter.startDate.getTime() < ninetyDaysAgoMs) {
-        const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs') as WorkerJobRecord[];
-        const filtered = olderJobs
-          .filter((job) => job.wid === profile?.wid)
-          .sort((a, b) => getDateLikeTime(b.finishedAt || b.createdAt) - getDateLikeTime(a.finishedAt || a.createdAt));
-        setJobs(filtered);
-        setLoading(false);
-        return;
-      }
-
-      // Recent data — use cache
-      const allCachedJobs = (cachedJobs || []) as WorkerJobRecord[];
-      const pending = allCachedJobs.filter(job => {
-        if (job.status !== 'pending' && job.status !== 'waiting') return false;
-        const createdAtMs = getDateLikeTime(job.createdAt);
-        return createdAtMs >= dateFilter.startDate.getTime() && createdAtMs <= dateFilter.endDate.getTime();
-      });
-      const finished = allCachedJobs.filter(job => {
-        if (job.status !== 'finished') return false;
-        const finishedAtMs = getDateLikeTime(job.finishedAt);
-        return finishedAtMs >= dateFilter.startDate.getTime() && finishedAtMs <= dateFilter.endDate.getTime();
-      });
-
-      const jobsList = [...pending, ...finished].sort(
-        (a, b) => getDateLikeTime(b.finishedAt || b.createdAt) - getDateLikeTime(a.finishedAt || a.createdAt)
-      );
-      setJobs(jobsList);
-      setLoading(false);
-    } catch (error) {
-      if (auth.currentUser) console.error('Error loading jobs:', error);
-      setLoading(false);
-    }
-  }, [cachedJobs, dateFilter, getUid, getCompanyId, getDataForDateRange, profile?.wid]);
-
   // ─── Data Loading ───────────────────────────────────────────────────
 
   useEffect(() => {
-    const initializeData = async () => {
-      await loadJobs();
-      hasInitialLoadedRef.current = true;
-    };
-    void initializeData();
-  }, [dateFilter, loadJobs]);
+    if (jobsQuery.error) {
+      logger.warn('Assigned jobs refresh failed; retaining cached query data', jobsQuery.error);
+    }
+  }, [jobsQuery.error]);
 
+  // The outbox provider owns synchronization. This listener only drives offline UI.
   useEffect(() => {
-    if (!hasInitialLoadedRef.current) return;
-    void loadJobs();
-  }, [cachedJobs, loadJobs]);
-
-  // Network state listener — sync pending offline jobs when back online
-  useEffect(() => {
-    let previousOnlineState = true;
     const unsubscribe = NetInfo.addEventListener((state) => {
-      const currentOnlineState = Boolean(state.isConnected);
-      if (!previousOnlineState && currentOnlineState) {
-        void syncPendingJobs();
-      }
-      previousOnlineState = currentOnlineState;
-      setIsOnline(currentOnlineState);
+      setIsOnline(Boolean(state.isConnected && state.isInternetReachable !== false));
     });
-    void checkPendingJobCount();
     return () => unsubscribe();
   }, []);
 
   // ─── Actions ────────────────────────────────────────────────────
 
-  const handleMoveToWaiting = async (job: WorkerJobRecord) => {
-    try {
-      const companyId = getCompanyId();
-      if (!companyId) {
-        alert.error('Error', 'Company not found');
-        return;
-      }
-
-      const updates = {
-        status: 'waiting',
-        wname: profile?.name || '',
-      };
-
-      const updateJobFn = httpsCallable(functions, 'updateJobV1');
-      await updateJobFn({ companyId, jobId: job.id, ...updates });
-      updateJob(job.id, updates);
-
-      alert.success('Success',
-        language === 'en' ? 'Job moved to waiting'
-          : language === 'he' ? 'המשימה סומנה כהתקבלה'
-          : 'تم وضع علامة كمستلم'
-      );
-    } catch (error) {
-      console.error('Error updating job:', error);
-      alert.error('Error', 'Failed to update job');
-    }
-  };
-
-  const handleFillDetails = async (job: WorkerJobRecord) => {
+  const handleFillDetails = (job: WorkerJobRecord) => {
     // Clear any existing draft for this job to prevent loading old data
     try {
       storage.remove(getWorkerDraftStorageKey(job.id));
     } catch (error) {
-      console.error('Error clearing draft:', error);
+      logger.warn('Could not clear the assigned-job draft', error);
     }
 
     // Navigate to FillJob — it handles the full form
@@ -423,6 +219,8 @@ export default function Workerjob() {
         mode: 'worker',
         job: JSON.stringify({
           id: job.id,
+          jobNo: job.jobNo,
+          entityVersion: job.entityVersion,
           title: job.title || '',
           timeFrom: job.timeFrom || '',
           timeTo: job.timeTo || '',
@@ -430,6 +228,7 @@ export default function Workerjob() {
           description: job.workDescription || job.description || '',
           cname: job.cname || '',
           cphone: job.cphone || '',
+          cid: job.cid || null,
           photos: job.photos || [],
           signingPerson: job.signingPerson || '',
           signature: job.signature || null,
@@ -523,7 +322,7 @@ export default function Workerjob() {
 
   // ─── Render ─────────────────────────────────────────────────────
 
-  if (loading) {
+  if (jobsQuery.isLoading && jobs.length === 0) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.secondary} />
@@ -540,16 +339,6 @@ export default function Workerjob() {
         <View style={styles.offlineBanner}>
           <MaterialCommunityIcons name="wifi-off" size={20} color="#fff" />
           <AppText style={styles.offlineBannerText}>{t.offlineMode}</AppText>
-        </View>
-      )}
-
-      {/* Pending Jobs Indicator */}
-      {isOnline && pendingJobCount > 0 && (
-        <View style={styles.pendingJobsBanner}>
-          <MaterialCommunityIcons name="cloud-upload" size={20} color="#fff" />
-          <AppText style={styles.pendingJobsText}>
-            {t.pendingJobs}: {pendingJobCount}
-          </AppText>
         </View>
       )}
 
@@ -575,9 +364,34 @@ export default function Workerjob() {
           </LinearGradient>
         </TouchableOpacity>
 
-        {jobs.length === 0 ? (
+        {jobsQuery.isError && (
+          <View style={[styles.queryErrorBanner, { backgroundColor: colors.backgroundElevated, borderColor: colors.error }]}>
+            <AppText style={[styles.queryErrorText, { color: colors.textPrimary }]}>
+              {language === 'en'
+                ? 'Jobs could not be refreshed. Saved results remain available.'
+                : language === 'he'
+                  ? 'לא ניתן היה לרענן את המשימות. התוצאות השמורות נשארו זמינות.'
+                  : 'تعذّر تحديث المهام. ستبقى النتائج المحفوظة متاحة.'}
+            </AppText>
+            <TouchableOpacity
+              style={[styles.retryButton, { backgroundColor: colors.secondary }]}
+              onPress={() => { void jobsQuery.refetch(); }}
+              disabled={jobsQuery.isFetching}
+            >
+              {jobsQuery.isFetching ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <AppText style={styles.retryButtonText}>
+                  {language === 'en' ? 'Retry' : language === 'he' ? 'נסה שוב' : 'إعادة المحاولة'}
+                </AppText>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {jobs.length === 0 && !jobsQuery.isError ? (
           <AppText style={styles.emptyText}>{t.noJobs}</AppText>
-        ) : (
+        ) : jobs.length > 0 ? (
           jobs.map((job) => (
             <TouchableOpacity
               key={job.id}
@@ -600,47 +414,13 @@ export default function Workerjob() {
 
                 {/* Action Icons */}
                 <View style={styles.actionIcons}>
-                  {job.status === 'pending' && (
+                  {canCompleteJob(job) && (
                     <TouchableOpacity
                       style={[styles.iconButton, styles.receiveIconButton]}
-                      onPress={(e) => { e.stopPropagation(); handleMoveToWaiting(job); }}
+                      onPress={(e) => { e.stopPropagation(); handleFillDetails(job); }}
                       activeOpacity={0.7}
                     >
-                      <MaterialCommunityIcons name="check-circle" size={24} color="white" />
-                    </TouchableOpacity>
-                  )}
-                  {job.status === 'denied' && (
-                    <TouchableOpacity
-                      style={[styles.iconButton, styles.fillIconButton, !canEditJob(job) && styles.disabledIconButton]}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        if (canEditJob(job)) handleFillDetails(job);
-                        else alert.warning(
-                          language === 'en' ? 'Cannot Edit' : language === 'he' ? 'לא ניתן לערוך' : 'لا يمكن التعديل',
-                          language === 'en' ? 'Finished jobs cannot be edited by workers.' : language === 'he' ? 'משימות שהסתיימו לא ניתן לערוך על ידי עובדים.' : 'لا يمكن للعمال تعديل المهام المنتهية.'
-                        );
-                      }}
-                      activeOpacity={0.7}
-                      disabled={!canEditJob(job)}
-                    >
-                      <MaterialCommunityIcons name="pencil-box" size={24} color="white" />
-                    </TouchableOpacity>
-                  )}
-                  {job.status === 'waiting' && (
-                    <TouchableOpacity
-                      style={[styles.iconButton, styles.editIconButton, !canEditJob(job) && styles.disabledIconButton]}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        if (canEditJob(job)) handleFillDetails(job);
-                        else alert.warning(
-                          language === 'en' ? 'Cannot Edit' : language === 'he' ? 'לא ניתן לערוך' : 'لا يمكن التعديל',
-                          language === 'en' ? 'Finished jobs cannot be edited by workers.' : language === 'he' ? 'משימות שהסתיימו לא ניתן לערוך על ידי עובדים.' : 'لا يمكن للعمال تعديل المهام المنتهية.'
-                        );
-                      }}
-                      activeOpacity={0.7}
-                      disabled={!canEditJob(job)}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={24} color="white" />
+                      <MaterialCommunityIcons name="clipboard-check" size={24} color="white" />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -662,7 +442,7 @@ export default function Workerjob() {
               )}
               {job.dueDate && (
                 <AppText style={[styles.jobDetails, { color: colors.textSecondary }]}>
-                  {language === 'en' ? 'Due Date' : language === 'he' ? 'תאריך יעד' : 'تاريخ الاستحقاق'}: {job.dueDate}
+                  {language === 'en' ? 'Due Date' : language === 'he' ? 'תאריך יעד' : 'تاريخ الاستحقاق'}: {new Date(job.dueDate).toLocaleDateString()}
                 </AppText>
               )}
               {job.location && (
@@ -706,22 +486,24 @@ export default function Workerjob() {
               </View>
             </TouchableOpacity>
           ))
+        ) : null}
+
+        {jobsQuery.hasNextPage && (
+          <TouchableOpacity
+            style={[styles.loadMoreButton, { backgroundColor: colors.secondary }]}
+            onPress={() => { void jobsQuery.fetchNextPage(); }}
+            disabled={jobsQuery.isFetchingNextPage}
+          >
+            {jobsQuery.isFetchingNextPage ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <AppText style={styles.loadMoreText}>
+                {language === 'en' ? 'Load more' : language === 'he' ? 'טען עוד' : 'تحميل المزيد'}
+              </AppText>
+            )}
+          </TouchableOpacity>
         )}
       </ScrollableContainer>
-
-      {/* Syncing Overlay */}
-      {isSyncing && (
-        <View style={styles.syncingOverlay}>
-          <View style={styles.syncingContainer}>
-            <ActivityIndicator size="large" color="#fff" />
-            <AppText style={styles.syncingText}>
-              {language === 'en' ? 'Syncing pending jobs...'
-                : language === 'he' ? 'מסנכרן משימות ממתינות...'
-                : 'مزامنة المهام المعلقة...'}
-            </AppText>
-          </View>
-        </View>
-      )}
 
       {/* Job Details Modal */}
       <ViewJobDetails
@@ -790,23 +572,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   offlineBannerText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  pendingJobsBanner: {
-    backgroundColor: '#f59e0b',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    marginTop: Platform.OS === 'ios' ? 100 : 88,
-    marginHorizontal: 20,
-    borderRadius: 8,
-    gap: 8,
-  },
-  pendingJobsText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
@@ -897,16 +662,6 @@ const styles = StyleSheet.create({
   },
   receiveIconButton: {
     backgroundColor: '#3b82f6',
-  },
-  fillIconButton: {
-    backgroundColor: '#10b981',
-  },
-  editIconButton: {
-    backgroundColor: '#f59e0b',
-  },
-  disabledIconButton: {
-    backgroundColor: '#9ca3af',
-    opacity: 0.5,
   },
   newBadge: {
     backgroundColor: '#EF4444',
@@ -1019,30 +774,44 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 40,
   },
-  syncingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+  queryErrorBanner: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    gap: 12,
+  },
+  queryErrorText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    minWidth: 88,
+    minHeight: 40,
+    borderRadius: 10,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 9999,
+    paddingHorizontal: 16,
   },
-  syncingContainer: {
-    backgroundColor: '#1f2937',
-    borderRadius: 16,
-    padding: 32,
-    alignItems: 'center',
-    minWidth: 280,
-  },
-  syncingText: {
+  retryButtonText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 16,
-    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  loadMoreButton: {
+    minHeight: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    marginBottom: 20,
+    paddingHorizontal: 20,
+  },
+  loadMoreText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

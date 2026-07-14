@@ -15,6 +15,7 @@ import type {
   TierValue,
   SubStatusValue,
 } from '@smart-job/contracts';
+import type { ClientDeleteResult } from '@smart-job/api-contracts';
 
 // Re-export contract types so consumers can import from one place
 export type { RoleTitle, JobStatusValue, DocTypeCode, TierValue, SubStatusValue };
@@ -77,6 +78,8 @@ export interface Subscription {
 // ── Client ─────────────────────────────────────────────────────────────────
 export interface Client {
   id: string;
+  /** Opaque optimistic-concurrency token returned by the API. */
+  entityVersion?: string;
   cname: string;
   cphone?: string;
   /** @deprecated Legacy alias — read cname instead */
@@ -96,6 +99,10 @@ export interface Client {
 // ── Job ────────────────────────────────────────────────────────────────────
 export interface Job {
   id: string;
+  /** Public sequential job number. */
+  jobNo?: number;
+  /** Opaque optimistic-concurrency token returned by the API. */
+  entityVersion?: string;
   status: JobStatusValue;
   title?: string;
   description?: string;
@@ -348,7 +355,7 @@ export interface CacheContextValue {
   getCompanyId: () => Maybe<string>;
 
   // Initialization
-  initializeCache: (uid: string) => Promise<any>;
+  initializeCache: (uid: string, companyId: string, role: string) => Promise<any>;
   clearCache: () => void;
 
   // Profile & Inventory
@@ -371,10 +378,10 @@ export interface CacheContextValue {
   addDocument: (data: any) => Promise<any>;
 
   // Clients
-  fetchClients: (companyId?: string) => Promise<any>;
-  addClient: (data: any) => Promise<any>;
-  updateClient: (clientId: string, data: any) => Promise<void>;
-  deleteClient: (clientId: string) => Promise<void>;
+  fetchClients: (companyId?: string) => Promise<Client[]>;
+  addClient: (data: unknown) => Promise<Client>;
+  updateClient: (clientId: string, data: unknown) => Promise<Client>;
+  deleteClient: (clientId: string, entityVersion?: string) => Promise<ClientDeleteResult>;
 
   // Data queries
   getDataForMonth: (monthDate: Date, dataType: string) => Promise<any[]>;

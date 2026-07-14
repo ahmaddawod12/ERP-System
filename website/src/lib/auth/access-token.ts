@@ -20,7 +20,22 @@ export interface SupabaseUserRecord {
   tokensValidAfterTime?: string | null;
 }
 
+interface SupabaseAdminUserPayload {
+  id: string;
+  banned_until?: unknown;
+  deleted_at?: unknown;
+}
+
 const BEARER_PREFIX = "Bearer ";
+
+function isSupabaseAdminUserPayload(value: unknown): value is SupabaseAdminUserPayload {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && typeof (value as { id?: unknown }).id === "string"
+      && (value as { id: string }).id.trim(),
+  );
+}
 
 export function parseBearerToken(header: string | null) {
   if (!header) return null;
@@ -118,28 +133,27 @@ export async function getSupabaseUserByUid(uid: string): Promise<SupabaseUserRec
     throw new ApiRouteError(401, "invalid_session", "Session user is no longer valid");
   }
 
-  const payload = (await response.json().catch(() => null)) as {
-    user?: {
-      banned_until?: unknown;
-      deleted_at?: unknown;
-      updated_at?: unknown;
-      last_sign_in_at?: unknown;
-    };
-  } | null;
-  const user = payload?.user;
-  if (!user) {
+  const payload = (await response.json().catch(() => null)) as
+    | ({ user?: unknown } & Partial<SupabaseAdminUserPayload>)
+    | null;
+  const user = isSupabaseAdminUserPayload(payload?.user)
+    ? payload.user
+    : isSupabaseAdminUserPayload(payload)
+      ? payload
+      : null;
+  if (!user || user.id.trim() !== normalizedUid) {
     throw new ApiRouteError(401, "invalid_session", "Session user is no longer valid");
   }
 
   const nowMs = Date.now();
   const bannedUntilMs = Date.parse(String(user.banned_until || ""));
   const disabled = Boolean(user.deleted_at) || (Number.isFinite(bannedUntilMs) && bannedUntilMs > nowMs);
-  const updatedAt = String(user.updated_at || "").trim();
-  const lastSignInAt = String(user.last_sign_in_at || "").trim();
-  const tokensValidAfterTime = updatedAt || lastSignInAt || null;
-
   return {
     disabled,
-    tokensValidAfterTime,
+    // Supabase user timestamps are profile/audit timestamps, not token
+    // revocation markers. Strong revocation is enforced by the target opaque
+    // web-session store; until then, rely on the access-token expiry instead
+    // of rejecting healthy sessions after ordinary user updates.
+    tokensValidAfterTime: null,
   };
 }

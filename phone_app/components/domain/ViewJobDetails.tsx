@@ -20,9 +20,9 @@ import type { DateLike, JobFileRef } from '../../types';
 import { resolveJobFileUri } from '../../modules/jobs/lib/job-file-utils';
 
 interface PartUsed {
-  id?: string;
+  id?: string | number;
   name?: string;
-  quantity?: number;
+  quantity?: string | number;
 }
 
 interface JobData {

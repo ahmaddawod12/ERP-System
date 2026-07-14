@@ -5,27 +5,34 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
-  Modal,
   FlatList,
 } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { randomUUID } from 'expo-crypto';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, functions, httpsCallable } from '../../../firebase';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
 import { AppButton, AppCard, AppEmptyState, AppInput, AppText, GlobalHeader, ScreenHeroCard, SearchInput } from '../../../components';
 import { useScrollHandler } from '../../../contexts/HeaderContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { fetchUserInventoryParts } from '../../../utils/read-model';
-import type { InventoryPart } from '../../../types';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
+import { logger } from '../../../utils/logger';
+import { StableInventoryActionKeys } from '../lib/inventory-action-keys';
+import {
+  mapInventoryPartSummary,
+  resolveInventoryReadScope,
+  type MobileInventoryPart,
+} from '../lib/inventory-list-model';
+import { useInventoryInfinite } from '../lib/use-inventory-infinite';
+import { useInventoryMutations } from '../lib/use-inventory-mutations';
 
 interface PartRowProps {
-  part: InventoryPart;
+  part: MobileInventoryPart;
   colors: ReturnType<typeof getColors>;
   isDarkMode: boolean;
+  disabled: boolean;
   t: Record<string, string>;
   onRemove: (id: string | number) => void;
   onUse: (id: string | number, amount: number) => void;
@@ -36,6 +43,7 @@ const InventoryPartRow = memo(function InventoryPartRow({
   part,
   colors,
   isDarkMode,
+  disabled,
   t,
   onRemove,
   onUse,
@@ -104,6 +112,7 @@ const InventoryPartRow = memo(function InventoryPartRow({
               borderColor: colors.secondary,
               borderWidth: 1,
             }]}
+            disabled={disabled}
             onPress={() => { setShowAdd(true); setShowUse(false); }}
           >
             <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>+ {t.add}</AppText>
@@ -114,6 +123,7 @@ const InventoryPartRow = memo(function InventoryPartRow({
               borderColor: colors.secondary,
               borderWidth: 1,
             }]}
+            disabled={disabled}
             onPress={() => { setShowUse(true); setShowAdd(false); }}
           >
             <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>- {t.use}</AppText>
@@ -124,6 +134,7 @@ const InventoryPartRow = memo(function InventoryPartRow({
               borderColor: '#ef4444',
               borderWidth: 1,
             }]}
+            disabled={disabled}
             onPress={() => {
               alert.confirm(
                 t.confirmRemove,
@@ -151,7 +162,7 @@ const InventoryPartRow = memo(function InventoryPartRow({
             colors={colors}
           />
           <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={handleUse} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
+            <TouchableOpacity disabled={disabled} onPress={handleUse} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
               <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
             </TouchableOpacity>
             <TouchableOpacity
@@ -175,7 +186,7 @@ const InventoryPartRow = memo(function InventoryPartRow({
             colors={colors}
           />
           <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={handleAdd} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
+            <TouchableOpacity disabled={disabled} onPress={handleAdd} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
               <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
             </TouchableOpacity>
             <TouchableOpacity
@@ -192,42 +203,26 @@ const InventoryPartRow = memo(function InventoryPartRow({
 });
 
 export default function WorkerInventory() {
-  const { wid: rawWorkerId } = useLocalSearchParams();
-  const wid = Array.isArray(rawWorkerId) ? rawWorkerId[0] : rawWorkerId;
-  const [inventory, setInventory] = useState<InventoryPart[]>([]);
-  // Manager/Worker role: select from company parts
-  const [showCompanyPicker, setShowCompanyPicker] = useState(false);
-  const [companyParts, setCompanyParts] = useState<InventoryPart[]>([]);
-  const [companyPickerSearch, setCompanyPickerSearch] = useState('');
-  const [selectedCompanyPart, setSelectedCompanyPart] = useState<InventoryPart | null>(null);
-  const [addQuantity, setAddQuantity] = useState('');
-  const [addLowThreshold, setAddLowThreshold] = useState('');
+  const [inventory, setInventory] = useState<MobileInventoryPart[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoadingInventory, setIsLoadingInventory] = useState(true);
-  const [isLoadingCompanyParts, setIsLoadingCompanyParts] = useState(false);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
 
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { scrollProps } = useScrollHandler();
-  const {
-    inventory: cachedInventory,
-    companyInventory: cachedCompanyInventory,
-    getUid,
-    getCompanyId,
-    updateInventory,
-    isLoading: cacheLoading
-  } = useCache();
+  const { user } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
   const colors = getColors(isDarkMode);
+  const [actionKeys] = useState(() => new StableInventoryActionKeys(() => randomUUID()));
+
+  useEffect(() => {
+    actionKeys.reset();
+  }, [actionKeys, user?.id, workspace?.companyId]);
 
   const inventoryRef = useRef(inventory);
-  const updateInventoryRef = useRef(updateInventory);
-  const widRef = useRef(wid);
 
   useEffect(() => { inventoryRef.current = inventory; }, [inventory]);
-  useEffect(() => { updateInventoryRef.current = updateInventory; }, [updateInventory]);
-  useEffect(() => { widRef.current = wid; }, [wid]);
 
   const t = language === 'en' ? {
     title: 'Cooling Parts',
@@ -279,6 +274,12 @@ export default function WorkerInventory() {
     noActiveCompanyParts: 'No active company parts found',
     alreadyInInventory: 'This part is already in your inventory',
     companyPartId: 'Company ID',
+    catalogUnavailable: 'Adding new company parts is temporarily unavailable until a secure catalog transfer API is added. You can still adjust parts already assigned to you.',
+    loadingInventory: 'Loading inventory...',
+    loadFailed: 'Inventory could not be loaded. Check your connection and try again.',
+    refreshFailed: 'Inventory could not be refreshed. Saved results remain available.',
+    retry: 'Retry',
+    loadMore: 'Load more',
   } : language === 'he' ? {
     title: 'חלקי קירור',
     subtitle: 'מנהל מלאי',
@@ -329,6 +330,12 @@ export default function WorkerInventory() {
     noActiveCompanyParts: 'לא נמצאו חלקי חברה פעילים',
     alreadyInInventory: 'חלק זה כבר נמצא במלאי שלך',
     companyPartId: 'מזהה חברה',
+    catalogUnavailable: 'הוספת חלקים חדשים ממלאי החברה אינה זמינה זמנית עד להוספת ממשק העברה מאובטח. עדיין ניתן לעדכן חלקים שכבר הוקצו לך.',
+    loadingInventory: 'טוען מלאי...',
+    loadFailed: 'לא ניתן היה לטעון את המלאי. בדוק את החיבור ונסה שוב.',
+    refreshFailed: 'לא ניתן היה לרענן את המלאי. התוצאות השמורות נשארו זמינות.',
+    retry: 'נסה שוב',
+    loadMore: 'טען עוד',
   } : {
     title: 'قطع التبريد',
     subtitle: 'مدير المخزون',
@@ -379,191 +386,118 @@ export default function WorkerInventory() {
     noActiveCompanyParts: 'لم يتم العثور على قطع شركة مفعّلة',
     alreadyInInventory: 'هذه القطعة موجودة بالفعل في مخزونك',
     companyPartId: 'معرّف الشركة',
+    catalogUnavailable: 'إضافة قطع جديدة من مخزون الشركة غير متاحة مؤقتًا حتى تتوفر واجهة نقل آمنة. لا يزال بإمكانك تعديل القطع المخصصة لك.',
+    loadingInventory: 'جارٍ تحميل المخزون...',
+    loadFailed: 'تعذر تحميل المخزون. تحقق من الاتصال وحاول مرة أخرى.',
+    refreshFailed: 'تعذر تحديث المخزون. ستبقى النتائج المحفوظة متاحة.',
+    retry: 'إعادة المحاولة',
+    loadMore: 'تحميل المزيد',
   };
 
-  // ─── Load inventory data ─────────────────────────────────────
+  const readScope = resolveInventoryReadScope(workspace);
+  const inventoryFilters = useMemo(() => ({
+    search: debouncedSearchQuery,
+    pageSize: 50,
+  }), [debouncedSearchQuery]);
+  const { query: inventoryQuery, parts: apiInventory } = useInventoryInfinite({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    scope: 'member',
+    filters: inventoryFilters,
+    enabled: tenantStatus === 'ready' && readScope === 'member',
+  });
+  const { adjustMutation } = useInventoryMutations({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+  });
+
   useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim().slice(0, 80));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-    const targetUid = wid || getUid() || user.uid;
+  useEffect(() => {
+    setInventory(apiInventory);
+  }, [apiInventory]);
 
-    // If viewing own inventory (not worker's), use cached data
-    if (!wid) {
-      if (!cacheLoading) {
-        const partsArray = Array.isArray(cachedInventory) ? cachedInventory : [];
-        setInventory(partsArray);
-        setIsLoadingInventory(false);
-      }
-    } else {
-      const companyId = getCompanyId();
-      if (!companyId) {
-        setInventory([]);
-        setIsLoadingInventory(false);
-        return;
-      }
-
-      void fetchUserInventoryParts(companyId, targetUid)
-        .then((partsArray) => {
-          setInventory(partsArray);
-        })
-        .catch((error) => {
-          console.log('Worker inventory fetch error:', error?.message || error);
-          setInventory([]);
-        })
-        .finally(() => {
-          setIsLoadingInventory(false);
-        });
+  useEffect(() => {
+    if (inventoryQuery.error) {
+      logger.warn('Member inventory refresh failed; retaining cached query data', inventoryQuery.error);
     }
+  }, [inventoryQuery.error]);
 
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
+  const mutateStock = useCallback((
+    part: MobileInventoryPart,
+    quantityDelta: number,
+    success: () => void,
+  ) => {
+    const body = {
+      stockEntityVersion: part.stockEntityVersion,
+      quantityDelta,
     };
-  }, [wid]);
-
-  // Update inventory from cache when it changes
-  useEffect(() => {
-    if (!wid && !cacheLoading) {
-      const partsArray = Array.isArray(cachedInventory) ? cachedInventory : [];
-      setInventory(partsArray);
-      setIsLoadingInventory(false);
-    }
-  }, [cachedInventory, cacheLoading, wid]);
-
-  // ─── Load company parts for manager/worker when picker opens ─
-  const loadCompanyParts = useCallback(async () => {
-    setIsLoadingCompanyParts(true);
-    try {
-      const parts = Array.isArray(cachedCompanyInventory) ? cachedCompanyInventory : [];
-      setCompanyParts(parts);
-    } catch (error) {
-      console.error('Error loading company parts:', error);
-    } finally {
-      setIsLoadingCompanyParts(false);
-    }
-  }, [cachedCompanyInventory]);
-
-  // ─── Persist inventory through backend & cache ─────────────────────
-  const persistInventory = useCallback(async (updatedInventory: InventoryPart[]) => {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    const targetUid = widRef.current || getUid() || user.uid;
-    const companyId = getCompanyId();
-    if (!companyId) {
-      throw new Error('Company ID not found');
-    }
-
-    if (!widRef.current) {
-      await updateInventoryRef.current(updatedInventory);
-    } else {
-      const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
-      await updateInventoryFn({
-        companyId,
-        action: 'replaceParts',
-        scope: 'user',
-        targetUid,
-        parts: Array.isArray(updatedInventory) ? updatedInventory : [],
-      });
-    }
-  }, [getUid, getCompanyId]);
-
-  // ─── MANAGER/WORKER: Add part from company parts ─────────────
-  const handleOpenCompanyPicker = () => {
-    loadCompanyParts();
-    setShowCompanyPicker(true);
-    setCompanyPickerSearch('');
-    setSelectedCompanyPart(null);
-    setAddQuantity('');
-    setAddLowThreshold('');
-  };
-
-  const handleSelectCompanyPart = (companyPart: InventoryPart) => {
-    // Check if already in inventory (no duplicate IDs allowed)
-    const exists = inventory.find(p => p.id === companyPart.id);
-    if (exists) {
-      alert.warning('Warning', t.alreadyInInventory);
-      return;
-    }
-    setSelectedCompanyPart(companyPart);
-  };
-
-  const handleAddCompanyPart = async () => {
-    if (!selectedCompanyPart || !addQuantity || !addLowThreshold) {
-      alert.error('Error', t.fillAllFields);
-      return;
-    }
-
-    const qty = parseInt(addQuantity, 10);
-    const lowThres = parseInt(addLowThreshold, 10);
-    if (!qty || qty <= 0 || Number.isNaN(lowThres) || lowThres < 0) {
-      alert.warning(t.invalidAmount, t.amountMustBePositive);
-      return;
-    }
-
-    try {
-      const part: InventoryPart = {
-        id: selectedCompanyPart.id, // Same ID as company part — source of truth
-        name: selectedCompanyPart.name,
-        quantity: qty,
-        lowThreshold: lowThres,
-        dateAdded: new Date().toISOString(),
-      };
-
-      const updated = [...inventory, part];
-      await persistInventory(updated);
-      setInventory(updated);
-
-      alert.success(t.partAddedSuccess, `${part.name} ${t.partAddedMessage}`);
-      setShowCompanyPicker(false);
-      setSelectedCompanyPart(null);
-      setAddQuantity('');
-      setAddLowThreshold('');
-    } catch (error) {
-      console.error('Error adding company part:', error);
-      alert.error('Error', 'Failed to add part. Please try again.');
-    }
-  };
+    const action = `member:adjust:${part.partId}`;
+    const key = actionKeys.keyFor(action, JSON.stringify(body));
+    void adjustMutation.mutateAsync({
+      scope: 'member',
+      partId: part.partId,
+      body,
+      idempotencyKey: key,
+    }).then((updated) => {
+      actionKeys.complete(action, key);
+      const mapped = mapInventoryPartSummary(updated);
+      setInventory((current) => current.map((candidate) => (
+        candidate.partId === mapped.partId ? mapped : candidate
+      )));
+      success();
+    }).catch((error: unknown) => {
+      logger.error('Member inventory mutation failed', error);
+      alert.error('Error', error instanceof Error ? error.message : 'Failed to update inventory.');
+    });
+  }, [actionKeys, adjustMutation, alert]);
 
   // ─── Common: Use Part ────────────────────────────────────────
   const handleUsePart = useCallback((id: string | number, amount: number) => {
     const part = inventoryRef.current.find(p => p.id === id);
     if (!part) return;
-    const updated = inventoryRef.current.map((p) =>
-      p.id === id ? { ...p, quantity: Math.max(0, p.quantity - amount) } : p
+    const quantityDelta = -Math.min(amount, part.quantity);
+    if (quantityDelta === 0) {
+      alert.warning(t.invalidAmount, t.amountMustBePositive);
+      return;
+    }
+    mutateStock(
+      part,
+      quantityDelta,
+      () => alert.success(t.partUsedSuccess, `${amount} ${t.partUsedMessage} ${part.name}`),
     );
-    setInventory(updated);
-    void persistInventory(updated);
-
-    alert.success(t.partUsedSuccess, `${amount} ${t.partUsedMessage} ${part.name}`);
-  }, [alert, t, persistInventory]);
+  }, [alert, t, mutateStock]);
 
   // ─── Common: Add Quantity ────────────────────────────────────
   const handleAddQuantityToPart = useCallback((id: string | number, amount: number) => {
     const part = inventoryRef.current.find(p => p.id === id);
     if (!part) return;
-    const updated = inventoryRef.current.map((p) =>
-      p.id === id ? { ...p, quantity: p.quantity + amount } : p
+    mutateStock(
+      part,
+      amount,
+      () => alert.success(t.quantityAddedSuccess, `${amount} ${t.quantityAddedMessage} ${part.name}`),
     );
-    setInventory(updated);
-    void persistInventory(updated);
-
-    alert.success(t.quantityAddedSuccess, `${amount} ${t.quantityAddedMessage} ${part.name}`);
-  }, [alert, t, persistInventory]);
+  }, [alert, t, mutateStock]);
 
   // ─── Common: Remove Part from inventory ──────────────────────
   const handleRemovePart = useCallback((id: string | number) => {
     const part = inventoryRef.current.find(p => p.id === id);
     if (!part) return;
-    const updated = inventoryRef.current.filter((p) => p.id !== id);
-    setInventory(updated);
-    void persistInventory(updated);
-
-    alert.success(t.partRemovedSuccess, `${part.name} ${t.partRemovedMessage}`);
-  }, [alert, t, persistInventory]);
+    if (part.quantity <= 0) {
+      alert.warning(t.invalidAmount, t.amountMustBePositive);
+      return;
+    }
+    mutateStock(
+      part,
+      -part.quantity,
+      () => alert.success(t.partRemovedSuccess, `${part.name} ${t.partRemovedMessage}`),
+    );
+  }, [alert, t, mutateStock]);
 
   // ─── Filtering ───────────────────────────────────────────────
   const safeInventory = Array.isArray(inventory) ? inventory : [];
@@ -574,42 +508,23 @@ export default function WorkerInventory() {
     (part) => part.quantity > (part.lowThreshold || 0)
   );
 
-  const filteredLowStockParts = lowStockParts.filter((part) =>
-    part.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-  const filteredNormalStockParts = normalStockParts.filter((part) =>
-    part.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  // Company parts filter (for picker — only active, not already in inventory)
-  const filteredCompanyParts = companyParts
-    .filter(p => p.active !== false)
-    .filter(p => !inventory.find(inv => inv.id === p.id))
-    .filter(p =>
-      companyPickerSearch
-        ? p.name.toLowerCase().includes(companyPickerSearch.toLowerCase()) ||
-          String(p.id).includes(companyPickerSearch)
-        : true
-    );
-
   const listData = useMemo(
-    () => [...filteredLowStockParts, ...filteredNormalStockParts],
-    [filteredLowStockParts, filteredNormalStockParts]
+    () => [...lowStockParts, ...normalStockParts],
+    [lowStockParts, normalStockParts]
   );
 
-  const renderItem = useCallback(({ item }: { item: InventoryPart }) => (
+  const renderItem = useCallback(({ item }: { item: MobileInventoryPart }) => (
     <InventoryPartRow
       part={item}
       colors={colors}
       isDarkMode={isDarkMode}
+      disabled={adjustMutation.isPending}
       t={t}
       onRemove={handleRemovePart}
       onUse={handleUsePart}
       onAddQuantity={handleAddQuantityToPart}
     />
-  ), [colors, isDarkMode, t, handleRemovePart, handleUsePart, handleAddQuantityToPart]);
-
-  const hasListContent = !isLoadingInventory && !cacheLoading && inventory.length > 0;
+  ), [colors, isDarkMode, adjustMutation.isPending, t, handleRemovePart, handleUsePart, handleAddQuantityToPart]);
 
   const ListHeader = useCallback(() => (
     <View>
@@ -646,35 +561,70 @@ export default function WorkerInventory() {
         </AppCard>
       )}
 
-      {/* Add from Company Parts */}
+      {/* A secure company catalog/transfer API is required before adding new parts. */}
       <AppButton
         title={`+ ${t.addFromCompany}`}
-        onPress={handleOpenCompanyPicker}
+        onPress={() => undefined}
+        disabled
         style={styles.addButton}
       />
+      <AppCard style={[styles.catalogNotice, { borderColor: colors.border }]}>
+        <MaterialCommunityIcons name="shield-lock-outline" size={20} color={colors.textSecondary} />
+        <AppText style={[styles.catalogNoticeText, { color: colors.textSecondary }]}>
+          {t.catalogUnavailable}
+        </AppText>
+      </AppCard>
 
-      {hasListContent && (
-        <SearchInput
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder={t.searchParts}
-          colors={colors}
-          style={styles.searchInput}
-        />
-      )}
+      <SearchInput
+        value={searchQuery}
+        onChangeText={(value) => setSearchQuery(value.slice(0, 80))}
+        placeholder={t.searchParts}
+        colors={colors}
+        style={styles.searchInput}
+      />
+
+      {inventoryQuery.isError && inventory.length > 0 ? (
+        <AppCard style={[styles.queryErrorCard, { borderColor: colors.error }]}>
+          <AppText style={{ color: colors.textPrimary }}>{t.refreshFailed}</AppText>
+          <AppButton
+            title={t.retry}
+            size="sm"
+            loading={inventoryQuery.isFetching}
+            onPress={() => { void inventoryQuery.refetch(); }}
+            style={styles.retryButton}
+          />
+        </AppCard>
+      ) : null}
     </View>
-  ), [t, colors, isDarkMode, safeInventory, lowStockParts, searchQuery, hasListContent, handleOpenCompanyPicker]);
+  ), [t, colors, isDarkMode, safeInventory, lowStockParts, searchQuery, inventoryQuery, inventory.length]);
 
   const ListEmpty = useCallback(() => {
-    if (isLoadingInventory || cacheLoading) {
+    if (inventoryQuery.isLoading) {
       return (
         <View style={[styles.emptyCard, { backgroundColor: colors.surface }]}>
           <ActivityIndicator size="large" color={colors.secondary} />
-          <AppText style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>Loading inventory...</AppText>
+          <AppText style={[styles.emptyTitle, { color: colors.textSecondary, marginTop: 16 }]}>{t.loadingInventory}</AppText>
         </View>
       );
     }
-    if (inventory.length === 0) {
+    if (inventoryQuery.isError) {
+      return (
+        <AppEmptyState
+          icon="cloud-alert-outline"
+          title={t.loadFailed}
+          action={
+            <AppButton
+              title={t.retry}
+              loading={inventoryQuery.isFetching}
+              onPress={() => { void inventoryQuery.refetch(); }}
+              style={{ marginTop: spacing.sm }}
+            />
+          }
+          style={[styles.emptyCard, { backgroundColor: colors.surface }]}
+        />
+      );
+    }
+    if (!searchQuery.trim()) {
       return (
         <AppEmptyState
           icon="package-variant"
@@ -685,7 +635,7 @@ export default function WorkerInventory() {
       );
     }
     return <AppEmptyState title={t.noResults} style={[styles.emptyCard, { backgroundColor: colors.surface }]} />;
-  }, [isLoadingInventory, cacheLoading, inventory.length, colors, t]);
+  }, [inventoryQuery, searchQuery, colors, t]);
 
   // ─── Render ──────────────────────────────────────────────────
   return (
@@ -703,6 +653,17 @@ export default function WorkerInventory() {
         }}
         ListHeaderComponent={ListHeader}
         ListEmptyComponent={ListEmpty}
+        ListFooterComponent={inventoryQuery.hasNextPage ? (
+          <AppButton
+            title={t.loadMore}
+            loading={inventoryQuery.isFetchingNextPage}
+            disabled={inventoryQuery.isFetchingNextPage}
+            onPress={() => { void inventoryQuery.fetchNextPage(); }}
+            style={styles.loadMoreButton}
+          />
+        ) : null}
+        refreshing={inventoryQuery.isRefetching && !inventoryQuery.isFetchingNextPage}
+        onRefresh={() => { void inventoryQuery.refetch(); }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="always"
         initialNumToRender={10}
@@ -710,122 +671,6 @@ export default function WorkerInventory() {
         windowSize={5}
         {...scrollProps}
       />
-
-      {/* ─── Company Parts Picker Modal (Manager/Worker) ─── */}
-      <Modal
-        visible={showCompanyPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => {
-          setShowCompanyPicker(false);
-        }}
-      >
-        <View style={[styles.pickerOverlay, { backgroundColor: colors.background }]}>
-          <View style={[styles.pickerHeader, { borderBottomColor: colors.border }]}>
-            <AppText style={[styles.pickerTitle, { color: colors.textPrimary }]}>
-              {selectedCompanyPart ? selectedCompanyPart.name : t.selectCompanyPart}
-            </AppText>
-            <TouchableOpacity
-              onPress={() => {
-                setShowCompanyPicker(false);
-                setSelectedCompanyPart(null);
-              }}
-              style={[styles.pickerCloseBtn, { backgroundColor: colors.surface }]}
-            >
-              <MaterialCommunityIcons name="close" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-
-          {selectedCompanyPart ? (
-            // Part selected → show quantity/threshold form
-            <View style={styles.pickerForm}>
-              <View style={[styles.selectedPartBanner, { backgroundColor: colors.secondary + '15' }]}>
-                <View style={[styles.idBadge, { backgroundColor: colors.secondary + '30' }]}>
-                  <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{selectedCompanyPart.id}</AppText>
-                </View>
-                <AppText style={[styles.selectedPartName, { color: colors.textPrimary }]}>{selectedCompanyPart.name}</AppText>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.initialQuantity}</AppText>
-                <AppInput
-                  value={addQuantity}
-                  onChangeText={setAddQuantity}
-                  placeholder={t.howMany}
-                  keyboardType="numeric"
-                  autoFocus
-                  colors={colors}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <AppText style={[styles.formLabel, { color: colors.textSecondary }]}>{t.lowStockAlert}</AppText>
-                <AppInput
-                  value={addLowThreshold}
-                  onChangeText={setAddLowThreshold}
-                  placeholder={t.alertAt}
-                  keyboardType="numeric"
-                  colors={colors}
-                />
-              </View>
-
-              <View style={styles.formButtonRow}>
-                <TouchableOpacity onPress={handleAddCompanyPart} style={[styles.formPrimaryButton, { backgroundColor: colors.secondary }]}>
-                  <AppText style={styles.formPrimaryButtonText}>{t.add}</AppText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setSelectedCompanyPart(null)}
-                  style={[styles.formSecondaryButton, { backgroundColor: colors.background, borderColor: colors.border }]}
-                >
-                  <AppText style={[styles.formSecondaryButtonText, { color: colors.textPrimary }]}>{t.back}</AppText>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            // No selection yet → show list of company parts
-            <>
-              <AppInput
-                value={companyPickerSearch}
-                onChangeText={setCompanyPickerSearch}
-                placeholder={t.searchCompanyParts}
-                colors={colors}
-                containerStyle={styles.pickerSearch}
-              />
-
-              {isLoadingCompanyParts ? (
-                <View style={styles.pickerEmpty}>
-                  <ActivityIndicator size="large" color={colors.secondary} />
-                </View>
-              ) : filteredCompanyParts.length === 0 ? (
-                <View style={styles.pickerEmpty}>
-                  <MaterialCommunityIcons name="package-variant" size={48} color={colors.textLight} />
-                  <AppText style={[styles.pickerEmptyText, { color: colors.textSecondary }]}>
-                    {companyParts.length === 0 ? t.noCompanyParts : t.noActiveCompanyParts}
-                  </AppText>
-                </View>
-              ) : (
-                <FlatList
-                  data={filteredCompanyParts}
-                  keyExtractor={(item) => String(item.id)}
-                  contentContainerStyle={styles.pickerList}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={[styles.pickerItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                      onPress={() => handleSelectCompanyPart(item)}
-                    >
-                      <View style={[styles.idBadge, { backgroundColor: colors.secondary + '20' }]}>
-                        <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{item.id}</AppText>
-                      </View>
-                      <AppText style={[styles.pickerItemName, { color: colors.textPrimary }]}>{item.name}</AppText>
-                      <MaterialCommunityIcons name="plus-circle-outline" size={24} color={colors.secondary} />
-                    </TouchableOpacity>
-                  )}
-                />
-              )}
-            </>
-          )}
-        </View>
-      </Modal>
 
       <GlobalHeader />
     </View>
@@ -868,6 +713,30 @@ const styles = StyleSheet.create({
   },
   addButton: {
     marginBottom: spacing.md,
+  },
+  catalogNotice: {
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  catalogNoticeText: {
+    flex: 1,
+    fontSize: typography.sm,
+    lineHeight: 20,
+  },
+  queryErrorCard: {
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    gap: spacing.sm,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+  },
+  loadMoreButton: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
   },
   formLabel: {
     fontSize: typography.sm,

@@ -120,18 +120,20 @@ export async function markTaskCompleted(taskId: string, options: TaskCompletionO
   const previewUrl = options.taskType === 'preview' ? options.resultUrl || null : null;
   const generateUrl = options.taskType === 'generate' ? options.resultUrl || null : null;
 
-  await runSharedSqlQuery(
+  const result = await runSharedSqlQuery(
     `
       UPDATE document_tasks
       SET status = 'completed',
-          preview_url = $2,
-          generate_url = $3,
-          storage_path = $4,
-          pdf_size = $5,
+          preview_url = COALESCE(preview_url, $2),
+          generate_url = COALESCE(generate_url, $3),
+          storage_path = COALESCE(storage_path, $4),
+          pdf_size = COALESCE(pdf_size, $5),
           error = NULL,
           completed_at = NOW(),
           request_payload = COALESCE(request_payload, '{}'::jsonb) || $6::jsonb
       WHERE task_key = $1
+        AND status IN ('processing', 'completed')
+        AND (storage_path IS NULL OR storage_path = $4)
     `,
     [
       String(taskId || '').trim(),
@@ -141,6 +143,28 @@ export async function markTaskCompleted(taskId: string, options: TaskCompletionO
       options.pdfSize ?? null,
       JSON.stringify(payloadPatch),
     ],
+  );
+  if (!result || result.rowCount !== 1) {
+    const error: any = new Error('Document task finalization conflicted with existing state');
+    error.code = 'document_task_finalization_conflict';
+    error.retryable = false;
+    throw error;
+  }
+}
+
+export async function markTaskRetryable(taskId: string, errorMessage?: string): Promise<void> {
+  if (!isSqlTaskStoreEnabled()) return;
+
+  await runSharedSqlQuery(
+    `
+      UPDATE document_tasks
+      SET status = 'queued',
+          processing_started_at = NULL,
+          error = $2
+      WHERE task_key = $1
+        AND status = 'processing'
+    `,
+    [String(taskId || '').trim(), String(errorMessage || 'Temporary processing failure')],
   );
 }
 
@@ -154,6 +178,7 @@ export async function markTaskFailed(taskId: string, errorMessage?: string): Pro
           error = $2,
           completed_at = NOW()
       WHERE task_key = $1
+        AND status <> 'completed'
     `,
     [String(taskId || '').trim(), String(errorMessage || 'Task failed')],
   );

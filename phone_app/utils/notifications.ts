@@ -1,10 +1,10 @@
 /**
- * Push Notification Utilities - Firebase Cloud Messaging + Notifee
+ * Push Notification Utilities - Firebase Cloud Messaging + NotifyKit
  * 
  * Uses @react-native-firebase/messaging for FCM (token management, background messages)
- * Uses @notifee/react-native for local notifications (foreground display, advanced features)
+ * Uses react-native-notify-kit for local notifications (foreground display, advanced features)
  * 
- * Tokens are stored as native FCM tokens in user profile: users/{uid}/data/profile.pushToken
+ * Native FCM tokens are registered through the authenticated Smart-Job API.
  * 
  * SETUP REQUIREMENTS:
  * - iOS: APNs key uploaded to Firebase Console
@@ -13,11 +13,9 @@
  */
 
 import { Platform, PermissionsAndroid } from 'react-native';
-import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notifee/react-native';
-import { 
-  auth,
-  functions,
-  httpsCallable,
+import notifyKit, { AndroidImportance, AndroidVisibility, EventType } from 'react-native-notify-kit';
+import type { PushTokenPlatform } from '@smart-job/api-contracts';
+import {
   messaging,
   getToken,
   requestPermission,
@@ -31,14 +29,15 @@ import {
   getAPNSToken,
   AuthorizationStatus
 } from '../firebase';
-import { mmkvHelpers, CACHE_KEYS } from '../contexts/mmkv-storage';
+import { upsertViewerPushToken } from '../lib/api/push-tokens';
+import type { NotificationData } from '../lib/notifications/audience';
 import { logger } from './logger';
 
-// Default Android notification channel ID
-const DEFAULT_CHANNEL_ID = 'smart_job_default';
+// Android persists channel settings across upgrades, so use a new ID instead
+// of reusing the legacy channel that exposed notification content publicly.
+const DEFAULT_CHANNEL_ID = 'smart_job_private_v2';
 let notificationInitializationPromise: Promise<boolean> | null = null;
-
-type NotificationData = Record<string, string>;
+let initialNotificationConsumed = false;
 
 function normalizeNotificationData(data?: Record<string, unknown> | null): NotificationData {
   if (!data) {
@@ -53,44 +52,44 @@ function normalizeNotificationData(data?: Record<string, unknown> | null): Notif
   );
 }
 
-function cacheRegisteredPushToken(pushToken: string): void {
-  const cachedProfile = mmkvHelpers.getObject<Record<string, unknown>>(CACHE_KEYS.PROFILE);
-  if (!cachedProfile) {
-    return;
-  }
-
-  mmkvHelpers.setObject(CACHE_KEYS.PROFILE, {
-    ...cachedProfile,
-    pushToken,
-  });
+function nativePushPlatform(): PushTokenPlatform | null {
+  return Platform.OS === 'ios' || Platform.OS === 'android'
+    ? Platform.OS
+    : null;
 }
 
-async function persistPushToken(pushToken: string): Promise<void> {
-  const updatePushTokenFn = httpsCallable(functions, 'updatePushTokenV1');
-  await updatePushTokenFn({
-    pushToken,
-    pushTokenPlatform: Platform.OS,
-    pushTokenType: 'fcm',
-  });
-  cacheRegisteredPushToken(pushToken);
+async function persistPushToken(pushToken: string, userId: string): Promise<void> {
+  const platform = nativePushPlatform();
+  if (!platform) {
+    throw new Error('Push-token registration is available only on iOS and Android');
+  }
+  await upsertViewerPushToken(userId, pushToken, platform);
 }
 
 /**
- * Initialize Notifee by creating the default Android notification channel
+ * Initialize NotifyKit and create the default Android notification channel
  * This should be called early in app initialization
  */
 export async function initializeNotifications(): Promise<boolean> {
   if (!notificationInitializationPromise) {
     notificationInitializationPromise = (async () => {
       try {
+        if (Platform.OS === 'ios') {
+          // RNFirebase owns remote FCM delivery/open events in this app. Keep
+          // NotifyKit scoped to notifications created locally by this module.
+          await notifyKit.setNotificationConfig({
+            ios: { handleRemoteNotifications: false },
+          });
+        }
+
         // Create the default Android notification channel once per app process.
         if (Platform.OS === 'android') {
-          await notifee.createChannel({
+          await notifyKit.createChannel({
             id: DEFAULT_CHANNEL_ID,
             name: 'Smart Job Notifications',
             description: 'Job assignments, updates, and alerts',
             importance: AndroidImportance.HIGH,
-            visibility: AndroidVisibility.PUBLIC,
+            visibility: AndroidVisibility.PRIVATE,
             sound: 'default',
             vibration: true,
             vibrationPattern: [300, 500], // [vibrate 300ms, pause 500ms] - MUST be even number of POSITIVE values
@@ -168,7 +167,7 @@ export async function getFCMToken(): Promise<string | null> {
     const fcmToken = await getToken(messaging);
     
     if (fcmToken) {
-      logger.debug('🔑 FCM Token obtained:', fcmToken.substring(0, 30) + '...');
+      logger.debug('FCM token obtained');
       return fcmToken;
     }
     
@@ -181,10 +180,10 @@ export async function getFCMToken(): Promise<string | null> {
 
 /**
  * Register push token for the current user
- * Saves native FCM token to Firestore user profile
+ * Saves the native FCM token through the authenticated Smart-Job API
  * Always overwrites existing token (handles token rotation)
  * 
- * @param {string} userId - User's Firebase Auth UID
+ * @param {string} userId - Current Supabase Auth user ID
  * @returns {Promise<boolean>} Success status
  */
 export async function registerPushTokenForUser(userId: string): Promise<boolean> {
@@ -202,29 +201,14 @@ export async function registerPushTokenForUser(userId: string): Promise<boolean>
       return false;
     }
 
-    // Quick client-side check to skip if token hasn't changed
-    const cachedProfile = mmkvHelpers.getObject<{ pushToken?: string }>(CACHE_KEYS.PROFILE);
-    if (cachedProfile?.pushToken === fcmToken) {
-      logger.debug('FCM token unchanged - skipping update');
-      return true;
-    }
+    await persistPushToken(fcmToken, userId);
 
-    const activeUserId = auth.currentUser?.uid;
-    if (!activeUserId || activeUserId !== userId) {
-      logger.debug('Skipping push token registration because the active auth session changed');
-      return false;
-    }
-
-    // Use Cloud Function to update push token (profile is read-only from client)
-    await persistPushToken(fcmToken);
-
-    logger.debug(`✅ FCM token registered for ${userId}`);
+    logger.debug('FCM token registered for the authenticated user');
     return true;
   } catch (error) {
     logger.error('Error registering push token:', error);
     
-    // If profile doesn't exist, the CF will throw not-found - this is expected for new users
-    if ((error as { code?: string }).code === 'functions/not-found' || (error as { code?: string }).code === 'not-found') {
+    if ((error as { code?: string }).code === 'PROFILE_NOT_FOUND') {
       logger.warn('User profile not found - push token registration skipped');
     }
     
@@ -233,7 +217,7 @@ export async function registerPushTokenForUser(userId: string): Promise<boolean>
 }
 
 /**
- * Display a local notification using Notifee
+ * Display a local notification using NotifyKit
  * This is used to show notifications when app is in foreground
  * 
  * @param {Object} notification - Notification data
@@ -252,13 +236,14 @@ export async function displayLocalNotification({ title, body, data = {} }: Local
     const androidNotification: Record<string, unknown> = {
       channelId: DEFAULT_CHANNEL_ID,
       importance: AndroidImportance.HIGH,
+      visibility: AndroidVisibility.PRIVATE,
       pressAction: {
         id: 'default',
       },
       color: '#00ACC1',
       sound: 'default',
     };
-    await notifee.displayNotification({
+    await notifyKit.displayNotification({
       title: title,
       body: body,
       data: data,
@@ -284,21 +269,44 @@ export async function displayLocalNotification({ title, body, data = {} }: Local
  * Call this in your root component (e.g., _layout.js or index.js)
  * 
  * Handles:
- * - Foreground messages (displays local notification via Notifee)
+ * - Foreground messages (displays local notification via NotifyKit)
  * - Background/quit message handling
  * - Notification tap interactions
- * 
+ *
+ * @param {string} userId - Current Supabase user identity for token refresh
  * @param {Function} onNotificationReceived - Called when notification is received while app is in foreground
  * @param {Function} onNotificationTapped - Called when user taps on notification
  * @returns {Function} Cleanup function to remove listeners
  */
-interface NotificationTapEvent {
+export interface NotificationTapEvent {
   type: 'background' | 'quit' | 'foreground';
   data: NotificationData;
   notification: unknown;
 }
 
+export type NotificationPayloadGuard = (
+  data: NotificationData,
+) => Promise<boolean>;
+
+async function isAcceptedNotification(
+  data: NotificationData,
+  guard: NotificationPayloadGuard,
+): Promise<boolean> {
+  try {
+    const accepted = await guard(data);
+    if (!accepted) {
+      logger.warn('Ignoring notification outside the restored user and tenant scope');
+    }
+    return accepted;
+  } catch (error) {
+    logger.warn('Ignoring notification because its audience could not be verified:', error);
+    return false;
+  }
+}
+
 export function setupNotificationListeners(
+  userId: string,
+  guard: NotificationPayloadGuard,
   onNotificationReceived?: (message: unknown) => void,
   onNotificationTapped?: (event: NotificationTapEvent) => void,
 ): () => void {
@@ -309,18 +317,22 @@ export function setupNotificationListeners(
 
   // 1. Foreground message handler (FCM)
   // When app is in foreground, FCM won't display notifications automatically
-  // We use Notifee to display them
+  // We use NotifyKit to display them
   const unsubscribeForeground = onMessage(messaging, async (remoteMessage) => {
-    logger.debug('📬 FCM foreground message received:', remoteMessage);
+    logger.debug('FCM foreground message received');
     
     const { notification, data } = remoteMessage;
-    
+    const normalizedData = normalizeNotificationData(data);
+    if (!(await isAcceptedNotification(normalizedData, guard))) {
+      return;
+    }
+
     if (notification) {
-      // Display notification using Notifee
+      // Display notification using NotifyKit
       await displayLocalNotification({
         title: notification.title || 'New Notification',
         body: notification.body || '',
-        data: normalizeNotificationData(data),
+        data: normalizedData,
       });
     }
     
@@ -335,46 +347,56 @@ export function setupNotificationListeners(
 
   // 3. Notification opened app (from background state)
   const unsubscribeNotificationOpened = onNotificationOpenedApp(messaging, (remoteMessage) => {
-    logger.debug('👆 Notification opened app from background:', remoteMessage);
-    
-    if (onNotificationTapped) {
-      onNotificationTapped({
-        type: 'background',
-        data: normalizeNotificationData(remoteMessage.data),
-        notification: remoteMessage.notification,
-      });
-    }
+    const data = normalizeNotificationData(remoteMessage.data);
+    void isAcceptedNotification(data, guard).then((accepted) => {
+      if (accepted && onNotificationTapped) {
+        onNotificationTapped({
+          type: 'background',
+          data,
+          notification: remoteMessage.notification,
+        });
+      }
+    });
   });
   unsubscribers.push(unsubscribeNotificationOpened);
 
-  // 4. Check if app was opened from a quit state by notification
-  getInitialNotification(messaging)
-    .then((remoteMessage) => {
+  // 4. Check if app was opened from a quit state by notification. Listener
+  // recreation during tenant switching must never replay the cold-start tap.
+  if (!initialNotificationConsumed) {
+    initialNotificationConsumed = true;
+    getInitialNotification(messaging)
+    .then(async (remoteMessage) => {
       if (remoteMessage) {
-        logger.debug('🚀 App opened from quit state by notification:', remoteMessage);
-        
-        if (onNotificationTapped) {
+        const data = normalizeNotificationData(remoteMessage.data);
+        if (await isAcceptedNotification(data, guard) && onNotificationTapped) {
           onNotificationTapped({
             type: 'quit',
-            data: normalizeNotificationData(remoteMessage.data),
+            data,
             notification: remoteMessage.notification,
           });
         }
       }
-    });
+      });
+  }
 
-  // 5. Notifee foreground event handler (for notification interactions)
-  const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
-    logger.debug('🔔 Notifee foreground event:', type, detail);
+  // 5. NotifyKit foreground event handler (for notification interactions)
+  const unsubscribeNotifyKit = notifyKit.onForegroundEvent(({ type, detail }) => {
+    logger.debug('NotifyKit foreground event:', type);
     
     switch (type) {
       case EventType.PRESS:
-        // User pressed on notification
-        if (onNotificationTapped) {
-          onNotificationTapped({
-            type: 'foreground',
-            data: normalizeNotificationData(detail.notification?.data),
-            notification: detail.notification,
+        // Validate again because the active identity or tenant may have
+        // changed since this local notification was displayed.
+        {
+          const data = normalizeNotificationData(detail.notification?.data);
+          void isAcceptedNotification(data, guard).then((accepted) => {
+            if (accepted && onNotificationTapped) {
+              onNotificationTapped({
+                type: 'foreground',
+                data,
+                notification: detail.notification,
+              });
+            }
           });
         }
         break;
@@ -386,20 +408,14 @@ export function setupNotificationListeners(
         break;
     }
   });
-  unsubscribers.push(unsubscribeNotifee);
+  unsubscribers.push(unsubscribeNotifyKit);
 
-  // 6. Token refresh listener — P1-8: save refreshed tokens to server
+  // 6. Persist refreshed native FCM tokens through the authenticated API.
   const unsubscribeTokenRefresh = onTokenRefresh(messaging, async (newToken) => {
-    logger.debug('🔄 FCM token refreshed:', newToken.substring(0, 30) + '...');
-    const activeUserId = auth.currentUser?.uid;
-    if (!activeUserId) {
-      logger.debug('Skipping refreshed FCM token sync because no user is authenticated');
-      return;
-    }
-
+    logger.debug('FCM token refreshed');
     try {
-      await persistPushToken(newToken);
-      logger.debug('✅ Refreshed FCM token saved to server');
+      await persistPushToken(newToken, userId);
+      logger.debug('Refreshed FCM token saved to server');
     } catch (err) {
       logger.error('Failed to save refreshed FCM token:', err);
     }
@@ -417,34 +433,12 @@ export function setupNotificationListeners(
 }
 
 /**
- * Get the last notification that opened the app (from quit state)
- * Call this on app startup to check if app was opened from a notification
- * 
- * @returns {Promise<Object|null>} Notification data or null
- */
-export async function getLastNotificationResponse(): Promise<{ data: NotificationData; notification: unknown } | null> {
-  try {
-    const remoteMessage = await getInitialNotification(messaging);
-    if (remoteMessage) {
-      return {
-        data: normalizeNotificationData(remoteMessage.data),
-        notification: remoteMessage.notification,
-      };
-    }
-    return null;
-  } catch (error) {
-    logger.error('Error getting initial notification:', error);
-    return null;
-  }
-}
-
-/**
  * Clear all notifications from the notification center
  * @returns {Promise<void>}
  */
 export async function clearAllNotifications(): Promise<void> {
   try {
-    await notifee.cancelAllNotifications();
+    await notifyKit.cancelAllNotifications();
     logger.debug('✅ All notifications cleared');
   } catch (error) {
     logger.error('Error clearing notifications:', error);
@@ -458,7 +452,7 @@ export async function clearAllNotifications(): Promise<void> {
  */
 export async function setBadgeCount(count: number): Promise<void> {
   try {
-    await notifee.setBadgeCount(count);
+    await notifyKit.setBadgeCount(count);
     logger.debug(`✅ Badge count set to ${count}`);
   } catch (error) {
     logger.error('Error setting badge count:', error);
@@ -471,7 +465,7 @@ export async function setBadgeCount(count: number): Promise<void> {
  */
 export async function getBadgeCount(): Promise<number> {
   try {
-    const count = await notifee.getBadgeCount();
+    const count = await notifyKit.getBadgeCount();
     return count;
   } catch (error) {
     logger.error('Error getting badge count:', error);
@@ -493,7 +487,7 @@ export async function areNotificationsEnabled(): Promise<boolean> {
       );
     } else {
       // For Android, check the notification settings
-      const settings = await notifee.getNotificationSettings();
+      const settings = await notifyKit.getNotificationSettings();
       return settings.authorizationStatus >= 1; // AUTHORIZED or PROVISIONAL
     }
   } catch (error) {
@@ -566,7 +560,7 @@ export async function getAPNsToken(): Promise<string | null> {
   try {
     const apnsToken = await getAPNSToken(messaging);
     if (apnsToken) {
-      logger.debug('🍎 APNs token:', apnsToken.substring(0, 30) + '...');
+      logger.debug('APNs token obtained');
     }
     return apnsToken;
   } catch (error) {

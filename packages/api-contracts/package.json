@@ -1,0 +1,41 @@
+{
+  "name": "@smart-job/api-contracts",
+  "version": "0.1.0",
+  "description": "Runtime-validated HTTP contracts for Smart-Job ERP services and clients",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./legacy-edge-characterization": {
+      "types": "./dist/legacy-edge-contract.d.ts",
+      "import": "./dist/legacy-edge-contract.js",
+      "default": "./dist/legacy-edge-contract.js"
+    }
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test --experimental-strip-types tests/*.test.mts"
+  },
+  "dependencies": {
+    "@smart-job/contracts": "file:../contracts",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "PRIVATE",
+  "private": true
+}

@@ -5,6 +5,9 @@ const repoRoot = process.cwd();
 
 const protectedPaths = [
   "packages/contracts",
+  "packages/api-contracts",
+  "cloudrun-api/src",
+  "cloudrun-tax/src",
   "website/src",
   "website/tests",
   "phone_app/components",

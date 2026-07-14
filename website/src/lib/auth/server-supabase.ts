@@ -1,19 +1,21 @@
 /**
  * Server-side Supabase Auth helpers.
  *
- * These functions run only on the server and use the non-public environment
- * variables (SUPABASE_URL / SUPABASE_ANON_KEY) to talk to Supabase Auth.
+ * These functions run only on the server and use server-scoped environment
+ * variables (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY) to talk to Supabase Auth.
  * They centralize signup, password reset, and session creation so that the
  * public anon key is not required by browser code for auth flows.
  */
 
 function getServerSupabaseConfig() {
   const url = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
-  const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
-  if (!url || !anonKey) {
-    throw new Error("Supabase auth is not configured on the server (SUPABASE_URL and SUPABASE_ANON_KEY are required)");
+  const publishableKey = String(
+    process.env.SUPABASE_PUBLISHABLE_KEY || "",
+  ).trim();
+  if (!url || !/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey)) {
+    throw new Error("Supabase auth is not configured on the server (SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required)");
   }
-  return { url, anonKey };
+  return { url, publishableKey };
 }
 
 export type SupabaseAuthResponse = {
@@ -26,6 +28,10 @@ export type SupabaseAuthResponse = {
     access_token?: string;
     [key: string]: unknown;
   } | null;
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  expires_at?: number;
   error?: string;
   error_description?: string;
   msg?: string;
@@ -38,12 +44,12 @@ function extractErrorMessage(payload: SupabaseAuthResponse): string {
 }
 
 export async function serverSignUp(email: string, password: string): Promise<SupabaseAuthResponse> {
-  const { url, anonKey } = getServerSupabaseConfig();
+  const { url, publishableKey } = getServerSupabaseConfig();
   const response = await fetch(`${url}/auth/v1/signup`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: anonKey,
+      apikey: publishableKey,
     },
     body: JSON.stringify({ email, password }),
   });
@@ -54,17 +60,17 @@ export async function serverSignUp(email: string, password: string): Promise<Sup
   return payload;
 }
 
-export async function serverSendPasswordReset(email: string, redirectTo?: string): Promise<void> {
-  const { url, anonKey } = getServerSupabaseConfig();
+export async function serverSendPasswordReset(email: string, redirectTo: string): Promise<void> {
+  const { url, publishableKey } = getServerSupabaseConfig();
   const response = await fetch(`${url}/auth/v1/recover`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: anonKey,
+      apikey: publishableKey,
     },
     body: JSON.stringify({
       email,
-      ...(redirectTo ? { redirect_to: redirectTo } : {}),
+      redirect_to: redirectTo,
     }),
   });
   const payload = (await response.json().catch(() => ({}))) as SupabaseAuthResponse;
@@ -74,12 +80,12 @@ export async function serverSendPasswordReset(email: string, redirectTo?: string
 }
 
 export async function serverResetPassword(accessToken: string, password: string): Promise<SupabaseAuthResponse> {
-  const { url, anonKey } = getServerSupabaseConfig();
+  const { url, publishableKey } = getServerSupabaseConfig();
   const response = await fetch(`${url}/auth/v1/user`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
-      apikey: anonKey,
+      apikey: publishableKey,
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ password }),
@@ -89,4 +95,41 @@ export async function serverResetPassword(accessToken: string, password: string)
     throw new Error(extractErrorMessage(payload));
   }
   return payload;
+}
+
+export async function serverVerifyEmailTokenHash(
+  tokenHash: string,
+  type: "email" | "recovery",
+): Promise<SupabaseAuthResponse> {
+  const { url, publishableKey } = getServerSupabaseConfig();
+  const response = await fetch(`${url}/auth/v1/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: publishableKey,
+    },
+    body: JSON.stringify({ token_hash: tokenHash, type }),
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => ({}))) as SupabaseAuthResponse;
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload));
+  }
+  return payload;
+}
+
+export async function serverRevokeAuthSession(accessToken: string): Promise<void> {
+  const { url, publishableKey } = getServerSupabaseConfig();
+  const response = await fetch(`${url}/auth/v1/logout?scope=local`, {
+    method: "POST",
+    headers: {
+      apikey: publishableKey,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok && response.status !== 401) {
+    const payload = (await response.json().catch(() => ({}))) as SupabaseAuthResponse;
+    throw new Error(extractErrorMessage(payload));
+  }
 }

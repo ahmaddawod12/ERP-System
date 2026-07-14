@@ -1,21 +1,26 @@
 import express from 'express';
-import { Storage } from '@google-cloud/storage';
 import { getEmailServiceInstance, getDocumentTitle } from './emailService';
 import generateDocumentHTML from './htmlTemplate';
-import { bumpCompanyDocumentsVersion } from './company-sync-store';
 import { createBrowserPool, isTransientProcessingError } from './browser-pool';
 import { createCompanyLogoFetcher } from './logo-cache';
 import { installStructuredLogging } from './logging';
 import { createPubSubVerifier } from './pubsub-auth';
 import { registerPreviewRoute } from './routes/preview';
 import { registerGenerateRoute } from './routes/generate';
+import { createCompanyFileStorageFromEnv } from './company-file-storage';
+import { persistPdfBeforeFinalize } from './pdf-storage-workflow';
+import {
+  buildGeneratedDocumentObjectPath,
+  buildPreviewObjectPath,
+} from './storage-paths';
+import { closeSharedSqlPool } from './sql-store';
 
 /**
  * Cloud Run Service: PDF Document Generator & Preview (Merged)
  * 
  * Single service handling both PDF generation and preview using shared Puppeteer browser.
- * - /generate - Generates final PDFs and saves to Firestore + Storage
- * - /preview - Generates preview PDFs with temporary storage
+ * - /generate - Generates final PDFs in private Supabase Storage
+ * - /preview - Generates temporary previews in private Supabase Storage
  * 
  * Configuration:
  * - Min instances: 0 (scale to zero when idle)
@@ -36,13 +41,9 @@ import { registerGenerateRoute } from './routes/generate';
 
 installStructuredLogging('cloudrun-pdf');
 
-const STORAGE_BUCKET = process.env.STORAGE_BUCKET;
-if (!STORAGE_BUCKET) {
-  throw new Error('STORAGE_BUCKET environment variable is required');
-}
-
-// Initialize storage client.
-const storage = new Storage();
+// The PDF worker is a trusted server component. Its secret key is used only
+// for private Storage operations and is never returned or logged.
+const companyFileStorage = createCompanyFileStorageFromEnv();
 
 const app = express();
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '1mb';
@@ -114,8 +115,7 @@ const verifyPubSubRequest = createPubSubVerifier({
 });
 
 const fetchCompanyLogo = createCompanyLogoFetcher({
-  storage,
-  bucketName: STORAGE_BUCKET,
+  storage: companyFileStorage,
   maxLogoSize: MAX_LOGO_SIZE,
 });
 
@@ -129,6 +129,8 @@ const {
   completeDocumentGeneration: completeSqlDocumentGeneration,
   failDocumentGeneration: failSqlDocumentGeneration,
   isSqlDocumentStoreEnabled,
+  resolveCompanyStorageContext: resolveSqlCompanyStorageContext,
+  resolveDocumentStorageContext: resolveSqlDocumentStorageContext,
 } = require('./document-store');
 const {
   getUserProfileForCompany,
@@ -140,6 +142,7 @@ const {
   markTaskCompleted: markSqlTaskCompleted,
   markTaskFailed: markSqlTaskFailed,
   markTaskProcessing: markSqlTaskProcessing,
+  markTaskRetryable: markSqlTaskRetryable,
 } = require('./task-store');
 
 if (IS_PRODUCTION && !isSqlTaskStoreEnabled()) {
@@ -201,6 +204,7 @@ async function processPreviewTask(taskData) {
     if (!requesterProfile.companyId || requesterProfile.companyId !== companyId) {
       throw new Error('Requester company mismatch');
     }
+    const storageContext = await resolveSqlCompanyStorageContext(companyId);
 
     const acquiredGen = await acquireTab(taskId, 'preview');
     tabAcquired = true;
@@ -212,8 +216,8 @@ async function processPreviewTask(taskData) {
       throw new Error(`Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed`);
     }
     
-    // Fetch logo from Firebase Storage (cached, size-validated)
-    let logoUrl = await fetchCompanyLogo(companyId, taskId, 'preview');
+    // Fetch logo from the private company-file bucket (cached, size-validated).
+    const logoUrl = await fetchCompanyLogo(storageContext.internalCompanyId, taskId, 'preview');
     
     // Generate HTML - for preview, confirmationNumber is empty (not yet approved by Tax Authority)
     const html = generateDocumentHTML(buildHtmlPayload({
@@ -254,48 +258,34 @@ async function processPreviewTask(taskData) {
       throw new Error('Generated PDF is empty');
     }
     
-    const pdfSize = pdfBuffer.length;
-    
-    // Upload to Firebase Storage (temporary preview)
-    const timestamp = Date.now();
-    const previewId = `preview_${documentType}_${timestamp}`;
-    const fileName = `${previewId}.pdf`;
-    const filePath = `previews/${uid}/${fileName}`;
-    
-    const bucket = storage.bucket(STORAGE_BUCKET);
-    const file = bucket.file(filePath);
-    
-    await file.save(pdfBuffer, {
+    const pdfBytes = Buffer.from(pdfBuffer);
+    const pdfSize = pdfBytes.length;
+    const filePath = buildPreviewObjectPath(storageContext.internalCompanyId, uid, taskId);
+    const persisted = await persistPdfBeforeFinalize({
+      storage: companyFileStorage,
+      objectPath: filePath,
+      bytes: pdfBytes,
       metadata: {
-        contentType: 'application/pdf',
-        metadata: {
-          documentType,
-          createdBy: uid,
-          createdAt: new Date().toISOString(),
-          isPreview: 'true',
-          taskId,
-          expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString(),
-        }
-      }
+        documentType: String(documentType),
+        createdBy: String(uid),
+        createdAt: new Date().toISOString(),
+        isPreview: 'true',
+        taskId: String(taskId),
+        expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString(),
+      },
+      signedUrlExpiries: { preview: PREVIEW_URL_EXPIRATION },
+      finalize: async (signedUrls) => {
+        await markSqlTaskCompleted(taskId, {
+          taskType: 'preview',
+          resultUrl: signedUrls.preview,
+          storagePath: filePath,
+          pdfSize,
+        });
+      },
     });
-    const [downloadUrl] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + PREVIEW_URL_EXPIRATION * 1000,
-    });
+    const downloadUrl = persisted.signedUrls.preview;
     
     const totalTime = Date.now() - startTime;
-    
-    try {
-      await markSqlTaskCompleted(taskId, {
-        taskType: 'preview',
-        resultUrl: downloadUrl,
-        storagePath: filePath,
-        pdfSize,
-      });
-    } catch (sqlTaskError) {
-      console.warn(`[preview:${taskId}] Failed to mirror completed status to SQL`, { error: sqlTaskError.message });
-    }
     
     console.log(`[preview:${taskId}] Completed`, { pdfSize, totalTime });
     return { success: true, taskId, previewURL: downloadUrl, pdfSize };
@@ -310,10 +300,15 @@ async function processPreviewTask(taskData) {
       releaseTab(taskId, 'preview');
     }
     
+    const retryable = isTransientProcessingError(error);
     try {
-      await markSqlTaskFailed(taskId, error.message);
+      if (retryable) {
+        await markSqlTaskRetryable(taskId, error.message);
+      } else {
+        await markSqlTaskFailed(taskId, error.message);
+      }
     } catch (sqlTaskError) {
-      console.warn(`[preview:${taskId}] Failed to mirror failed status to SQL`, { error: sqlTaskError.message });
+      console.warn(`[preview:${taskId}] Failed to persist task error state`, { error: sqlTaskError.message });
     }
     
     throw error;
@@ -340,9 +335,8 @@ async function processGenerateTask(taskData) {
   let page = null;
   let tabAcquired = false;
   let userRole = null;
-  let savedGeneratedFile = null;
   let documentFinalized = false;
-  let finalizedDocumentCode = null;
+  let documentStorageContext = null;
   
   try {
     if (!uid || !companyId) {
@@ -399,7 +393,11 @@ async function processGenerateTask(taskData) {
     if (!normalizedDocumentId || !documentDocId) {
       throw new Error('Invalid document ID');
     }
-    finalizedDocumentCode = documentDocId;
+    documentStorageContext = await resolveSqlDocumentStorageContext(
+      companyId,
+      documentDocId,
+      documentType,
+    );
     
     if (!documentData) {
       throw new Error('Document data is required');
@@ -439,8 +437,8 @@ async function processGenerateTask(taskData) {
       totalWithVat = totalBeforeVat + vatAmount;
     }
     
-    // Fetch logo from Firebase Storage (cached, size-validated)
-    let logoUrl = await fetchCompanyLogo(companyId, taskId, 'generate');
+    // Fetch logo from the private company-file bucket (cached, size-validated).
+    const logoUrl = await fetchCompanyLogo(documentStorageContext.internalCompanyId, taskId, 'generate');
     
     // Generate HTML with all document data including confirmation number
     const html = generateDocumentHTML({
@@ -478,46 +476,36 @@ async function processGenerateTask(taskData) {
       throw new Error('Generated PDF is empty');
     }
     
-    const pdfSize = pdfBuffer.length;
-    
-    // Upload to Storage (permanent)
-    const fileName = `${normalizedDocumentId}.pdf`;
-    const bucket = storage.bucket(STORAGE_BUCKET);
-    const filePath = `companies/${companyId}/documents/${fileName}`;
-    const file = bucket.file(filePath);
-    
-    await file.save(pdfBuffer, {
+    const pdfBytes = Buffer.from(pdfBuffer);
+    const pdfSize = pdfBytes.length;
+    const filePath = buildGeneratedDocumentObjectPath(
+      documentStorageContext.internalCompanyId,
+      documentStorageContext.internalDocumentId,
+    );
+    const persisted = await persistPdfBeforeFinalize({
+      storage: companyFileStorage,
+      objectPath: filePath,
+      bytes: pdfBytes,
       metadata: {
-        contentType: 'application/pdf',
-        metadata: {
-          documentType,
-          documentId: normalizedDocumentId,
-          createdBy: uid,
-          generatedAt: new Date().toISOString(),
-          pdfSize: pdfSize.toString(),
-        }
+        documentType: String(documentType),
+        documentId: normalizedDocumentId,
+        createdBy: String(uid),
+        generatedAt: new Date().toISOString(),
+        pdfSize: pdfSize.toString(),
       },
-      preconditionOpts: { ifGenerationMatch: 0 },
+      signedUrlExpiries: {
+        task: GENERATED_TASK_URL_EXPIRATION,
+        email: GENERATED_EMAIL_URL_EXPIRATION,
+      },
+      finalize: async () => completeSqlDocumentGeneration({
+        internalCompanyId: documentStorageContext.internalCompanyId,
+        internalDocumentId: documentStorageContext.internalDocumentId,
+        storagePath: filePath,
+        documentType,
+      }),
     });
-    savedGeneratedFile = file;
-    const [taskDownloadURL] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + GENERATED_TASK_URL_EXPIRATION * 1000,
-    });
-    const [emailDownloadURL] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + GENERATED_EMAIL_URL_EXPIRATION * 1000,
-    });
-    
-    await completeSqlDocumentGeneration({
-      companyId,
-      documentId: documentDocId,
-      storagePath: filePath,
-      documentType,
-    });
-    await bumpCompanyDocumentsVersion(companyId);
+    const taskDownloadURL = persisted.signedUrls.task;
+    const emailDownloadURL = persisted.signedUrls.email;
     console.log(`[generate:${taskId}] Document finalized in SQL`, { documentType, documentNumber, userRole });
     documentFinalized = true;
 
@@ -567,21 +555,17 @@ async function processGenerateTask(taskData) {
     
     const totalTime = Date.now() - startTime;
     
-    try {
-      await markSqlTaskCompleted(taskId, {
-        taskType: 'generate',
-        resultUrl: taskDownloadURL,
-        storagePath: filePath,
-        pdfSize,
-        publicDocumentId: normalizedDocumentId,
-        emailSent,
-        emailMessageId,
-        emailError,
-        emailRecipient: client.email || null,
-      });
-    } catch (sqlTaskError) {
-      console.warn(`[generate:${taskId}] Failed to mirror completed status to SQL`, { error: sqlTaskError.message });
-    }
+    await markSqlTaskCompleted(taskId, {
+      taskType: 'generate',
+      resultUrl: taskDownloadURL,
+      storagePath: filePath,
+      pdfSize,
+      publicDocumentId: normalizedDocumentId,
+      emailSent,
+      emailMessageId,
+      emailError,
+      emailRecipient: client.email || null,
+    });
     
     console.log(`[generate:${taskId}] Completed`, { documentId: normalizedDocumentId, pdfSize, totalTime, emailSent });
     return { success: true, taskId, documentId: normalizedDocumentId, downloadURL: taskDownloadURL, pdfSize, emailSent };
@@ -596,20 +580,12 @@ async function processGenerateTask(taskData) {
       releaseTab(taskId, 'generate');
     }
 
-    if (savedGeneratedFile && !documentFinalized) {
-      try {
-        await savedGeneratedFile.delete({ ignoreNotFound: true });
-        console.warn(`[generate:${taskId}] Deleted orphaned generated PDF after finalize failure`);
-      } catch (cleanupError) {
-        console.error(`[generate:${taskId}] Failed to delete orphaned generated PDF:`, cleanupError.message);
-      }
-    }
-    
-    if (companyId && finalizedDocumentCode) {
+    const retryable = isTransientProcessingError(error);
+    if (!retryable && !documentFinalized && documentStorageContext) {
       try {
         await failSqlDocumentGeneration({
-          companyId,
-          documentId: finalizedDocumentCode,
+          internalCompanyId: documentStorageContext.internalCompanyId,
+          internalDocumentId: documentStorageContext.internalDocumentId,
           errorMessage: error.message,
         });
       } catch (sqlDocumentError) {
@@ -618,9 +594,13 @@ async function processGenerateTask(taskData) {
     }
 
     try {
-      await markSqlTaskFailed(taskId, error.message);
+      if (retryable) {
+        await markSqlTaskRetryable(taskId, error.message);
+      } else {
+        await markSqlTaskFailed(taskId, error.message);
+      }
     } catch (sqlTaskError) {
-      console.warn(`[generate:${taskId}] Failed to mirror failed status to SQL`, { error: sqlTaskError.message });
+      console.warn(`[generate:${taskId}] Failed to persist task error state`, { error: sqlTaskError.message });
     }
     
     throw error;
@@ -680,6 +660,8 @@ function shutdown(signal: string) {
       try {
         await browserPool.close();
         console.log('Browser pool closed');
+        await closeSharedSqlPool();
+        console.log('SQL pool closed');
       } catch (error) {
         console.error('Error during browser pool shutdown:', error);
       }

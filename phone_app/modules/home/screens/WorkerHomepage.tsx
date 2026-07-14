@@ -1,19 +1,30 @@
 import { ROUTES } from '../../../navigation/routes';
-import { StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { getColors, spacing } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { isSubscriptionActive, isModuleEnabled } from '../../shared';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import {
+  AppButton,
+  AppCard,
   AppEmptyState,
+  AppText,
   DashboardActionCard,
   DashboardShell,
   GlobalHeader,
 } from '../../../components';
 import type { IconLibrary } from '../../../components/primitives/AppIcon';
+import { logger } from '../../../utils/logger';
+import NotAvailableScreen from '../../shared/NotAvailableScreen';
+import {
+  bootstrapCountValues,
+  canLoadWorkerBootstrap,
+} from '../lib/home-bootstrap-model';
+import { useCompanyBootstrap } from '../lib/use-company-bootstrap';
 
 const translations = {
   en: {
@@ -81,17 +92,59 @@ const translations = {
   },
 };
 
+const bootstrapTranslations = {
+  en: {
+    jobsMetric: 'Assigned jobs',
+    inventoryMetric: 'Parts',
+    loadingCounts: 'Loading live dashboard totals...',
+    loadFailed: 'Dashboard totals could not be loaded.',
+    refreshFailed: 'Dashboard totals could not be refreshed. Saved totals remain visible.',
+    retry: 'Retry',
+  },
+  he: {
+    jobsMetric: 'משימות מוקצות',
+    inventoryMetric: 'חלקים',
+    loadingCounts: 'טוען נתוני לוח בקרה עדכניים...',
+    loadFailed: 'לא ניתן היה לטעון את נתוני לוח הבקרה.',
+    refreshFailed: 'לא ניתן היה לרענן את הנתונים. הנתונים השמורים נשארו מוצגים.',
+    retry: 'נסה שוב',
+  },
+  ar: {
+    jobsMetric: 'المهام المعيّنة',
+    inventoryMetric: 'القطع',
+    loadingCounts: 'جارٍ تحميل إجماليات لوحة التحكم...',
+    loadFailed: 'تعذر تحميل إجماليات لوحة التحكم.',
+    refreshFailed: 'تعذر تحديث الإجماليات. ستبقى القيم المحفوظة ظاهرة.',
+    retry: 'إعادة المحاولة',
+  },
+};
+
 export default function WorkerHomepage() {
   const router = useRouter();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const { subscription } = useCache();
+  const { user } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
+  const bt = bootstrapTranslations[language] || bootstrapTranslations.en;
 
-  const hasTeam = isModuleEnabled(subscription ?? null, 'team');
-  const hasInventory = isModuleEnabled(subscription ?? null, 'teaminventory');
-  const subActive = isSubscriptionActive(subscription ?? null);
+  const enabledModules = new Set(workspace?.enabledModules ?? []);
+  const hasJobs = enabledModules.has('solojob');
+  const hasInventory = enabledModules.has('inventory');
+  const workspaceActive = canLoadWorkerBootstrap(workspace);
+  const bootstrapQuery = useCompanyBootstrap({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    enabled: tenantStatus === 'ready' && workspaceActive,
+  });
+  const countValues = bootstrapCountValues(bootstrapQuery.data?.counts);
+
+  useEffect(() => {
+    if (bootstrapQuery.error) {
+      logger.warn('Worker dashboard bootstrap refresh failed; retaining cached totals', bootstrapQuery.error);
+    }
+  }, [bootstrapQuery.error]);
 
   const cards: Array<{
     key: string;
@@ -103,7 +156,7 @@ export default function WorkerHomepage() {
     badge: string;
     onPress: () => void;
   }> = [
-    ...(hasTeam
+    ...(hasJobs
       ? [{
           key: 'my-jobs',
           title: t.myJobs,
@@ -129,7 +182,11 @@ export default function WorkerHomepage() {
       : []),
   ];
 
-  if (!subActive) {
+  if (workspace && workspace.role !== 'worker') {
+    return <NotAvailableScreen reason="role" />;
+  }
+
+  if (!workspaceActive) {
     return (
       <View style={[styles.lockedContainer, { backgroundColor: colors.background }]}> 
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
@@ -156,10 +213,30 @@ export default function WorkerHomepage() {
         heroIconLibrary="material"
         metrics={[
           { label: t.roleMetric, value: t.roleValue },
-          { label: t.scopeMetric, value: t.scopeValue },
-          { label: t.moduleMetric, value: String(cards.length) },
+          { label: bt.jobsMetric, value: countValues.jobs },
+          { label: bt.inventoryMetric, value: countValues.inventoryParts },
         ]}
       >
+        {bootstrapQuery.isLoading ? (
+          <AppCard style={styles.bootstrapStateCard}>
+            <ActivityIndicator size="small" color={colors.secondary} />
+            <AppText color={colors.textSecondary}>{bt.loadingCounts}</AppText>
+          </AppCard>
+        ) : null}
+        {bootstrapQuery.isError ? (
+          <AppCard style={[styles.bootstrapStateCard, { borderColor: colors.error }]}>
+            <AppText color={colors.textPrimary}>
+              {bootstrapQuery.data ? bt.refreshFailed : bt.loadFailed}
+            </AppText>
+            <AppButton
+              title={bt.retry}
+              size="sm"
+              loading={bootstrapQuery.isFetching}
+              onPress={() => { void bootstrapQuery.refetch(); }}
+              style={styles.retryButton}
+            />
+          </AppCard>
+        ) : null}
         {cards.length > 0 ? (
           cards.map((card) => (
             <DashboardActionCard
@@ -194,5 +271,14 @@ const styles = StyleSheet.create({
   },
   lockedState: {
     marginBottom: spacing.xxl,
+  },
+  bootstrapStateCard: {
+    alignItems: 'center',
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  retryButton: {
+    marginLeft: 'auto',
   },
 });

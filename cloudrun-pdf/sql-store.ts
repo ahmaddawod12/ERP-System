@@ -43,3 +43,11 @@ export async function runSharedSqlQuery(queryText: string, values: unknown[]): P
   }
   return activePool.query(queryText, values);
 }
+
+export async function closeSharedSqlPool(): Promise<void> {
+  const activePool = pool;
+  pool = null;
+  if (activePool) {
+    await activePool.end();
+  }
+}

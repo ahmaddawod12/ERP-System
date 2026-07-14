@@ -1,15 +1,16 @@
 import { ROUTES } from '../../../navigation/routes';
-import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import type { BusinessProfile } from '@smart-job/api-contracts';
 import { borderRadius, getColors, spacing } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { callHttpFunction } from '../../../utils/httpFunctions';
-import { isSubscriptionActive, isModuleEnabled } from '../../shared';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import {
+  AppButton,
   AppCard,
   AppEmptyState,
   AppText,
@@ -18,6 +19,10 @@ import {
   GlobalHeader,
 } from '../../../components';
 import type { IconLibrary } from '../../../components/primitives/AppIcon';
+import { logger } from '../../../utils/logger';
+import NotAvailableScreen from '../../shared/NotAvailableScreen';
+import { canLoadBasicProfile } from '../lib/home-bootstrap-model';
+import { useBusinessProfile } from '../lib/use-business-profile';
 
 const translations = {
   en: {
@@ -154,22 +159,28 @@ const translations = {
   },
 };
 
-interface BusinessInfo {
-  heName: string;
-  enName: string;
-  vatNumber: string;
-  businessType: string;
-  address: string;
-  city: string;
-  businessEmail: string;
-  businessPhone: string;
-  businessFax: string;
-  accountantName: string;
-  accountantEmail: string;
-  accountantPhone: string;
-}
+const profileStatusTranslations = {
+  en: {
+    loading: 'Loading the company profile...',
+    loadFailed: 'The company profile could not be loaded.',
+    refreshFailed: 'The company profile could not be refreshed. Saved details remain visible.',
+    retry: 'Retry',
+  },
+  he: {
+    loading: 'טוען את פרופיל החברה...',
+    loadFailed: 'לא ניתן היה לטעון את פרופיל החברה.',
+    refreshFailed: 'לא ניתן היה לרענן את פרופיל החברה. הפרטים השמורים נשארו מוצגים.',
+    retry: 'נסה שוב',
+  },
+  ar: {
+    loading: 'جارٍ تحميل ملف الشركة...',
+    loadFailed: 'تعذر تحميل ملف الشركة.',
+    refreshFailed: 'تعذر تحديث ملف الشركة. ستبقى التفاصيل المحفوظة ظاهرة.',
+    retry: 'إعادة المحاولة',
+  },
+};
 
-const compactSections = (t: typeof translations.en, businessInfo: BusinessInfo | null) => [
+const compactSections = (t: typeof translations.en, businessInfo: BusinessProfile | null) => [
   {
     title: t.companySection,
     items: [
@@ -199,46 +210,31 @@ const compactSections = (t: typeof translations.en, businessInfo: BusinessInfo |
   },
 ].filter((section) => section.items.length > 0);
 
-function normalizeBusinessInfo(data: unknown): BusinessInfo | null {
-  if (!data || typeof data !== 'object') {
-    return null;
-  }
-
-  const d = data as Record<string, unknown>;
-  return {
-    heName: String(d.he_name || ''),
-    enName: String(d.en_name || ''),
-    vatNumber: String(d.vat_number || ''),
-    businessType: String(d.business_type || ''),
-    address: String(d.address || ''),
-    city: String(d.city || ''),
-    businessEmail: String(d.business_email || ''),
-    businessPhone: String(d.business_phone || ''),
-    businessFax: String(d.business_fax || ''),
-    accountantName: String(d.accountant_name || ''),
-    accountantEmail: String(d.accountant_email || ''),
-    accountantPhone: String(d.accountant_phone || ''),
-  };
-}
-
 export default function BasicHomepage() {
   const router = useRouter();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const { subscription, getCompanyId } = useCache();
-  const [businessInfo, setBusinessInfo] = useState<BusinessInfo | null>(null);
+  const { user } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
   const [activeTab, setActiveTab] = useState('business');
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
-  const companyId = getCompanyId();
+  const profileStatus = profileStatusTranslations[language] || profileStatusTranslations.en;
 
-  const hasDocs = isModuleEnabled(subscription ?? null, 'documents');
-  const subActive = isSubscriptionActive(subscription ?? null);
+  const enabledModules = new Set(workspace?.enabledModules ?? []);
+  const hasDocs = enabledModules.has('documents');
+  const basicProfileAllowed = canLoadBasicProfile(workspace);
+  const profileQuery = useBusinessProfile({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    enabled: tenantStatus === 'ready' && basicProfileAllowed,
+  });
+  const businessInfo = profileQuery.data ?? null;
 
-  const availableTabs: string[] = [
-    'business',
-    ...(hasDocs ? ['documents'] : []),
-  ];
+  const availableTabs = useMemo(
+    () => ['business', ...(hasDocs ? ['documents'] : [])],
+    [hasDocs],
+  );
 
   useEffect(() => {
     if (availableTabs.length > 0 && !availableTabs.includes(activeTab)) {
@@ -247,28 +243,10 @@ export default function BasicHomepage() {
   }, [activeTab, availableTabs]);
 
   useEffect(() => {
-    if (!companyId) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const bootstrap = await callHttpFunction<{ businessInfo?: Record<string, unknown> | null }>('readModelV1', {
-          kind: 'bootstrap',
-          companyId,
-          includeCollections: false,
-        });
-        if (cancelled) return;
-        setBusinessInfo(normalizeBusinessInfo(bootstrap?.businessInfo));
-      } catch (error) {
-        console.warn('BasicHomepage: failed to load business info', error instanceof Error ? error.message : String(error));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId]);
+    if (profileQuery.error) {
+      logger.warn('Basic dashboard profile refresh failed; retaining cached details', profileQuery.error);
+    }
+  }, [profileQuery.error]);
 
   const tabItems: Array<{ key: string; label: string; icon: string; iconLibrary: IconLibrary }> = [
     { key: 'business', label: t.businessTab, icon: 'domain', iconLibrary: 'material' as IconLibrary },
@@ -319,7 +297,11 @@ export default function BasicHomepage() {
     },
   ];
 
-  if (!subActive) {
+  if (workspace && workspace.role !== 'basic') {
+    return <NotAvailableScreen reason="role" />;
+  }
+
+  if (!basicProfileAllowed) {
     return (
       <View style={[styles.lockedContainer, { backgroundColor: colors.background }]}> 
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
@@ -353,7 +335,31 @@ export default function BasicHomepage() {
         activeTab={activeTab}
         onTabPress={setActiveTab}
       >
-        {activeTab === 'business' ? (
+        {activeTab === 'business' && profileQuery.isLoading ? (
+          <AppCard style={styles.profileStateCard}>
+            <ActivityIndicator size="small" color={colors.secondary} />
+            <AppText color={colors.textSecondary} style={styles.profileStateText}>
+              {profileStatus.loading}
+            </AppText>
+          </AppCard>
+        ) : null}
+        {activeTab === 'business' && profileQuery.isError ? (
+          <AppCard style={[styles.profileStateCard, { borderColor: colors.error }]}>
+            <AppText color={colors.textPrimary} style={styles.profileStateText}>
+              {profileQuery.data ? profileStatus.refreshFailed : profileStatus.loadFailed}
+            </AppText>
+            <AppButton
+              title={profileStatus.retry}
+              size="sm"
+              loading={profileQuery.isFetching}
+              onPress={() => { void profileQuery.refetch(); }}
+              style={styles.retryButton}
+            />
+          </AppCard>
+        ) : null}
+        {activeTab === 'business'
+          && !profileQuery.isLoading
+          && (!profileQuery.isError || profileQuery.data !== undefined) ? (
           <AppCard style={styles.infoCard} tone="muted">
             <View style={styles.infoHeader}>
               <View style={[styles.infoIconWrap, { backgroundColor: `${colors.primary}14`, borderColor: `${colors.primary}24` }]}>
@@ -406,7 +412,7 @@ export default function BasicHomepage() {
               />
             )}
           </AppCard>
-        ) : documentCards.length > 0 ? (
+        ) : activeTab === 'documents' && documentCards.length > 0 ? (
           documentCards.map((card) => (
             <DashboardActionCard
               key={card.key}
@@ -420,9 +426,9 @@ export default function BasicHomepage() {
               onPress={card.onPress}
             />
           ))
-        ) : (
+        ) : activeTab === 'documents' ? (
           <AppEmptyState title={t.emptyTitle} subtitle={t.emptySubtitle} />
-        )}
+        ) : null}
       </DashboardShell>
       <GlobalHeader />
     </View>
@@ -440,6 +446,18 @@ const styles = StyleSheet.create({
   },
   lockedState: {
     marginBottom: spacing.xxl,
+  },
+  profileStateCard: {
+    alignItems: 'center',
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  profileStateText: {
+    flex: 1,
+  },
+  retryButton: {
+    marginLeft: 'auto',
   },
   infoCard: {
     borderRadius: borderRadius.xxl,

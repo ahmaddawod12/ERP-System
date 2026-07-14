@@ -9,7 +9,8 @@
  * - 210: Return Certificate
  * - 330: Refund Document
  * 
- * Uses Pub/Sub architecture with publishPreviewTask and publishGenerateTask
+ * Uses Cloud API tasks for non-tax preview/generation and the dedicated tax
+ * workflow for type 305.
  */
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
@@ -549,7 +550,7 @@ export default function CreateDocument() {
     }
   };
 
-  // Initialize document task hook for Pub/Sub
+  // Initialize the non-tax Cloud API publisher and shared task poller.
   const {
     publishPreview,
     publishGenerate,
@@ -631,7 +632,8 @@ export default function CreateDocument() {
   });
 
   // Build document data for API
-  const buildDocumentData = () => {
+  const buildDocumentData = (clientOverride?: Client | null) => {
+    const resolvedClient = clientOverride ?? selectedClientObj;
     const incomeItems = items
       .filter(item => item.description.trim() && toText(item.price) && Number(item.price) > 0)
       .map(item => ({
@@ -648,7 +650,7 @@ export default function CreateDocument() {
       address: `${formData.customerAddress || ''} ${formData.customerCity || ''}`.trim(),
       city: formData.customerCity || '',
       id: formData.customerId || '',
-      ...(selectedClientObj && { clientId: selectedClientObj.id }),
+      ...(resolvedClient && { clientId: resolvedClient.id }),
     };
 
     // Add VAT number - required for taxInvoice, optional for all others
@@ -683,7 +685,7 @@ export default function CreateDocument() {
   };
 
   // Auto-save new client or update existing client with missing fields
-  const autoSaveNewClient = async () => {
+  const autoSaveNewClient = async (): Promise<Client | null> => {
     if (selectedClientObj && formData.customerName.trim()) {
       // Update existing client with any newly filled fields
       try {
@@ -701,6 +703,7 @@ export default function CreateDocument() {
       } catch (e) {
         console.log('Update client failed (non-critical):', e);
       }
+      return selectedClientObj;
     } else if (!selectedClientObj && formData.customerName.trim()) {
       // Save as new client
       try {
@@ -714,11 +717,13 @@ export default function CreateDocument() {
         if (savedClient) {
           setSelectedClientObj(savedClient);
           setFormData(prev => ({ ...prev, customerId: savedClient.id }));
+          return savedClient;
         }
       } catch (e) {
         console.log('Auto-save client failed (non-critical):', e);
       }
     }
+    return null;
   };
 
   // Handle preview
@@ -755,7 +760,7 @@ export default function CreateDocument() {
     if (isSubmitting) return;
 
     // Auto-save new client before generating
-    await autoSaveNewClient();
+    const resolvedClient = await autoSaveNewClient();
 
     // Special handling for Tax Invoice (requires Tax Authority approval)
     if (documentType === DOC_TYPE.TAX_INVOICE) {
@@ -767,7 +772,7 @@ export default function CreateDocument() {
     alert.loading();
 
     try {
-      const documentData = buildDocumentData();
+      const documentData = buildDocumentData(resolvedClient);
 
       if (!companyId) {
         setIsSubmitting(false);

@@ -794,12 +794,29 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * 3. If not, try to get from cached profile or fetch from backend (first login)
    * 4. Setup sync polling for version changes
    */
-  const initializeCache = useCallback(async (userId: string) => {
+  const initializeCache = useCallback(async (
+    userId: string,
+    selectedCompanyId: string,
+    selectedRole: string,
+  ) => {
     logger.debug(`?? Initializing cache...`);
     setIsLoading(true);
     
     try {
       resetCacheState();
+
+      const normalizedCompanyId = String(selectedCompanyId || '').trim();
+      const normalizedRole = String(selectedRole || '').trim().toLowerCase();
+      if (!userId || !/^\d+$/.test(normalizedCompanyId) || !normalizedRole) {
+        throw new Error('An authenticated user and selected workspace are required');
+      }
+
+      // The explicit TenantProvider selection is the sole cache scope. Identity
+      // metadata is global, so set it before reading the tenant-scoped cache.
+      mmkvHelpers.setString(CACHE_KEYS.UID, userId);
+      mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, normalizedRole);
+      mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, normalizedCompanyId);
+      setMmkvScope(userId, normalizedCompanyId);
 
       // STEP 1: Load from local cache first
       const cachedData = loadFromLocalCache(userId) as {
@@ -815,14 +832,21 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       };
       
       // STEP 2: Determine uid (UID), role, and companyId
-      let uid = userId || cachedData.uid;
-      let role = cachedData.role;
-      let companyId = cachedData.companyId;
+      let uid = userId;
+      let role: string | null = normalizedRole;
+      let companyId: string | null = normalizedCompanyId;
       let profileData = cachedData.profile;
-      let shouldForceFreshBootstrap = !cachedData.hasCache;
+      let shouldForceFreshBootstrap = !cachedData.hasCache
+        || cachedData.companyId !== normalizedCompanyId
+        || cachedData.role !== normalizedRole;
 
       if (uid && cachedData.hasCache && !cachedData.identityMismatch) {
-        const resolvedProfile = await fetchDataFromBackend('profile', uid, '', role || '');
+        const resolvedProfile = await fetchDataFromBackend(
+          'profile',
+          uid,
+          normalizedCompanyId,
+          normalizedRole,
+        );
 
         if (!resolvedProfile) {
           console.error('Could not resolve profile from backend');
@@ -833,11 +857,9 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         const resolvedRole = typeof resolvedProfile.role === 'string'
           ? resolvedProfile.role.toLowerCase()
           : null;
-        const resolvedCompanyId = typeof resolvedProfile.companyId === 'string'
-          ? resolvedProfile.companyId.trim() || null
-          : null;
-        const companyMismatch = isScopedCacheCompanyMismatch(companyId, resolvedCompanyId);
-        const roleMismatch = Boolean(role && resolvedRole && role !== resolvedRole);
+        const resolvedCompanyId = normalizedCompanyId;
+        const companyMismatch = cachedData.companyId !== normalizedCompanyId;
+        const roleMismatch = Boolean(resolvedRole && resolvedRole !== normalizedRole);
 
         if (companyMismatch || roleMismatch || !profileData) {
           console.warn('[CACHE] Refreshing scoped cache metadata from live profile', {
@@ -848,8 +870,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             roleMismatch,
           });
           profileData = resolvedProfile;
-          role = resolvedRole || role;
-          companyId = resolvedCompanyId;
+          role = normalizedRole;
+          companyId = normalizedCompanyId;
           shouldForceFreshBootstrap = true;
 
           setMmkvScope(uid, companyId);
@@ -863,8 +885,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       } else {
         // Try to get from cached profile
         if (profileData && !role) {
-          role = profileData.role;
-          companyId = profileData.companyId;
+          role = normalizedRole;
+          companyId = normalizedCompanyId;
         }
         
         // Use authenticated UID directly (no email-to-uid derivation)
@@ -883,8 +905,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             return null;
           }
           
-          role = profileData.role;
-          companyId = profileData.companyId;
+          role = normalizedRole;
+          companyId = normalizedCompanyId;
           
           // Save profile to local cache
           saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
@@ -897,6 +919,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         }
 
       }
+
+      // Never allow a profile/cache response to replace the explicit tenant.
+      role = normalizedRole;
+      companyId = normalizedCompanyId;
 
       // Save metadata to local cache using the authenticated user as the source of truth.
       setMmkvScope(uid, companyId);
@@ -1137,6 +1163,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     updateClient,
     deleteClient,
   } = useCacheClientActions({
+    getUid,
     getCompanyId,
     clients,
     saveToLocalCache,

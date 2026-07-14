@@ -26,7 +26,7 @@ CREATE OR REPLACE FUNCTION private.register_business_account(
   p_created_at TIMESTAMPTZ
 ) RETURNS TABLE (
   company_id UUID,
-  public_company_id INTEGER
+  public_company_id BIGINT
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -97,7 +97,7 @@ BEGIN
     updated_at
   ) VALUES (
     v_company_id,
-    p_tier,
+    p_tier::public.subscription_tier,
     'active',
     COALESCE(p_enabled_modules, '{}'::jsonb),
     p_created_at
@@ -121,7 +121,7 @@ BEGIN
     p_created_at
   );
 
-  SELECT allocate_company_counter(v_company_id, 'member_no'::counter_key)
+  SELECT private.allocate_company_counter(v_company_id, 'member_no')
   INTO v_member_no;
 
   INSERT INTO company_memberships (
@@ -139,7 +139,7 @@ BEGIN
     v_company_id,
     p_user_id,
     v_member_no,
-    p_role,
+    p_role::public.membership_role,
     'active',
     p_display_name,
     p_phone_number,
@@ -182,7 +182,7 @@ CREATE OR REPLACE FUNCTION public.register_business_account(
   p_created_at TIMESTAMPTZ
 ) RETURNS TABLE (
   company_id UUID,
-  public_company_id INTEGER
+  public_company_id BIGINT
 )
 LANGUAGE sql
 SECURITY INVOKER

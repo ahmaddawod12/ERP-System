@@ -7,7 +7,7 @@ const monorepoRoot = dirname(rootDir);
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  transpilePackages: ["@smart-job/contracts"],
+  transpilePackages: ["@smart-job/contracts", "@smart-job/api-contracts"],
   turbopack: {
     root: monorepoRoot,
   },

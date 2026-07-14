@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Modal,
   Platform,
@@ -8,8 +9,8 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { randomUUID } from 'expo-crypto';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { functions, httpsCallable } from '../../../firebase';
 import {
   borderRadius,
   getColors,
@@ -18,16 +19,18 @@ import {
   type ColorPalette,
 } from '../../../theme';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-
-interface InventoryPayload {
-  action: 'addPart' | 'togglePart' | 'updatePart';
-  partName?: string;
-  quantity?: number;
-  partId?: number;
-}
+import { logger } from '../../../utils/logger';
+import { StableInventoryActionKeys } from '../lib/inventory-action-keys';
+import {
+  resolveInventoryReadScope,
+  type MobileInventoryPart,
+} from '../lib/inventory-list-model';
+import { useInventoryInfinite } from '../lib/use-inventory-infinite';
+import { useInventoryMutations } from '../lib/use-inventory-mutations';
 import {
   AppButton,
   AppCard,
@@ -38,10 +41,8 @@ import {
   SearchInput,
   AppText,
   GlobalHeader,
-  LoadingSpinner,
   ScreenHeroCard,
 } from '../../../components';
-import type { InventoryPart } from '../../../types';
 
 const translations = {
   en: {
@@ -67,6 +68,10 @@ const translations = {
     noParts: 'No parts yet',
     noResults: 'No matching parts',
     loading: 'Loading parts...',
+    loadFailed: 'Inventory could not be loaded. Check your connection and try again.',
+    refreshFailed: 'Inventory could not be refreshed. Saved results remain available.',
+    retry: 'Retry',
+    loadMore: 'Load more',
     duplicateName: 'A part with this name already exists.',
     requiredName: 'Please enter a part name.',
     updateSuccess: 'Part updated successfully.',
@@ -97,6 +102,10 @@ const translations = {
     noParts: 'אין חלקים עדיין',
     noResults: 'לא נמצאו חלקים תואמים',
     loading: 'טוען חלקים...',
+    loadFailed: 'לא ניתן היה לטעון את המלאי. בדוק את החיבור ונסה שוב.',
+    refreshFailed: 'לא ניתן היה לרענן את המלאי. התוצאות השמורות נשארו זמינות.',
+    retry: 'נסה שוב',
+    loadMore: 'טען עוד',
     duplicateName: 'חלק עם שם זה כבר קיים.',
     requiredName: 'יש להזין שם חלק.',
     updateSuccess: 'החלק עודכן בהצלחה.',
@@ -127,6 +136,10 @@ const translations = {
     noParts: 'لا توجد قطع بعد',
     noResults: 'لا توجد قطع مطابقة',
     loading: 'جاري تحميل القطع...',
+    loadFailed: 'تعذر تحميل المخزون. تحقق من الاتصال وحاول مرة أخرى.',
+    refreshFailed: 'تعذر تحديث المخزون. ستبقى النتائج المحفوظة متاحة.',
+    retry: 'إعادة المحاولة',
+    loadMore: 'تحميل المزيد',
     duplicateName: 'يوجد قطعة بهذا الاسم بالفعل.',
     requiredName: 'يرجى إدخال اسم القطعة.',
     updateSuccess: 'تم تحديث القطعة بنجاح.',
@@ -136,53 +149,74 @@ const translations = {
   },
 };
 
-const filters = ['all', 'active', 'disabled'];
+const filters = ['all', 'active', 'disabled'] as const;
+type InventoryFilter = (typeof filters)[number];
 
 export default function CompanyInventory() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId, companyInventory } = useCache();
+  const { user } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
   const palette = getColors(isDarkMode);
   const t = translations[language] || translations.en;
 
-  // I9: Use CacheContext-managed company inventory instead of direct listener
-  const companyParts = companyInventory;
-  const loading = false; // CacheContext handles loading state
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [filter, setFilter] = useState<InventoryFilter>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [newPartName, setNewPartName] = useState('');
-  const [editingPart, setEditingPart] = useState<InventoryPart | null>(null);
+  const [editingPart, setEditingPart] = useState<MobileInventoryPart | null>(null);
   const [editName, setEditName] = useState('');
+  const [actionKeys] = useState(() => new StableInventoryActionKeys(() => randomUUID()));
 
-  const filteredParts = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    return companyParts
-      .filter((part) => {
-        const active = part.active !== false;
-        if (filter === 'active' && !active) return false;
-        if (filter === 'disabled' && active) return false;
-        if (!query) return true;
-        return String(part.name || '').toLowerCase().includes(query) || String(part.id || '').includes(query);
-      })
-      .sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
-  }, [companyParts, filter, searchQuery]);
+  useEffect(() => {
+    actionKeys.reset();
+  }, [actionKeys, user?.id, workspace?.companyId]);
+
+  const readScope = resolveInventoryReadScope(workspace);
+  const canManageCompanyInventory = readScope === 'company'
+    && (workspace?.role === 'manager' || workspace?.role === 'dev');
+  const inventoryFilters = useMemo(() => ({
+    status: filter === 'active' ? 'active' as const : filter === 'disabled' ? 'inactive' as const : undefined,
+    search: debouncedSearchQuery,
+    pageSize: 50,
+  }), [debouncedSearchQuery, filter]);
+  const { query: inventoryQuery, parts: companyParts } = useInventoryInfinite({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    scope: 'company',
+    filters: inventoryFilters,
+    enabled: tenantStatus === 'ready' && readScope === 'company',
+  });
+  const { createMutation, updateMutation } = useInventoryMutations({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+  });
+  const filteredParts = companyParts;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim().slice(0, 80));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (inventoryQuery.error) {
+      logger.warn('Company inventory refresh failed; retaining cached query data', inventoryQuery.error);
+    }
+  }, [inventoryQuery.error]);
 
   const activeCount = useMemo(() => companyParts.filter((part) => part.active !== false).length, [companyParts]);
   const disabledCount = useMemo(() => companyParts.filter((part) => part.active === false).length, [companyParts]);
 
-  const callInventoryFn = async (payload: InventoryPayload) => {
-    const companyId = getCompanyId();
-    if (!companyId) {
-      throw new Error('Company ID not found.');
-    }
-    const updateInventoryFn = httpsCallable(functions, 'updateInventoryV1');
-    return updateInventoryFn({ companyId, scope: 'company', ...payload });
-  };
-
   const addPart = async () => {
+    if (!canManageCompanyInventory) {
+      alert.error('Error', 'Only workspace managers can change company inventory.');
+      return;
+    }
     const partName = newPartName.trim();
     if (!partName) {
       alert.error('Error', t.requiredName);
@@ -198,17 +232,26 @@ export default function CompanyInventory() {
     }
 
     try {
-      await callInventoryFn({ action: 'addPart', partName, quantity: 0 });
+      const body = {
+        name: partName,
+        initialQuantity: 0,
+        lowThreshold: 0,
+        unit: null,
+      } as const;
+      const action = 'part:create';
+      const key = actionKeys.keyFor(action, JSON.stringify(body));
+      await createMutation.mutateAsync({ body, idempotencyKey: key });
+      actionKeys.complete(action, key);
       alert.success('Success', t.addSuccess);
       setNewPartName('');
       setShowAddModal(false);
     } catch (error) {
-      console.error('CompanyInventory addPart error:', error);
+      logger.error('Company inventory add-part failed', error);
       alert.error('Error', error instanceof Error ? error.message : 'Failed to add part.');
     }
   };
 
-  const togglePart = (part: InventoryPart) => {
+  const togglePart = (part: MobileInventoryPart) => {
     const nextActionLabel = part.active === false ? t.enable : t.disable;
     const confirmMessage = part.active === false ? t.toggleConfirmEnable : t.toggleConfirmDisable;
 
@@ -217,12 +260,24 @@ export default function CompanyInventory() {
       {
         text: nextActionLabel,
         style: part.active === false ? 'default' : 'destructive',
-        onPress: async () => {
+         onPress: async () => {
+          if (!canManageCompanyInventory) return;
           try {
-            await callInventoryFn({ action: 'togglePart', partId: Number(part.id) });
+            const body = {
+              entityVersion: part.entityVersion,
+              active: part.active === false,
+            };
+            const action = `part:toggle:${part.partId}`;
+            const key = actionKeys.keyFor(action, JSON.stringify(body));
+            await updateMutation.mutateAsync({
+              partId: part.partId,
+              body,
+              idempotencyKey: key,
+            });
+            actionKeys.complete(action, key);
             alert.success('Success', t.updateSuccess);
           } catch (error) {
-            console.error('CompanyInventory togglePart error:', error);
+            logger.error('Company inventory toggle failed', error);
             alert.error('Error', error instanceof Error ? error.message : 'Failed to update part.');
           }
         },
@@ -230,7 +285,7 @@ export default function CompanyInventory() {
     ]);
   };
 
-  const startEdit = (part: InventoryPart) => {
+  const startEdit = (part: MobileInventoryPart) => {
     setEditingPart(part);
     setEditName(part.name || '');
     setShowEditModal(true);
@@ -238,7 +293,7 @@ export default function CompanyInventory() {
 
   const saveEdit = async () => {
     const partName = editName.trim();
-    if (!editingPart) return;
+    if (!editingPart || !canManageCompanyInventory) return;
     if (!partName) {
       alert.error('Error', t.requiredName);
       return;
@@ -255,22 +310,29 @@ export default function CompanyInventory() {
     }
 
     try {
-      await callInventoryFn({
-        action: 'updatePart',
-        partId: Number(editingPart.id),
-        partName,
+      const body = {
+        entityVersion: editingPart.entityVersion,
+        name: partName,
+      };
+      const action = `part:update:${editingPart.partId}`;
+      const key = actionKeys.keyFor(action, JSON.stringify(body));
+      await updateMutation.mutateAsync({
+        partId: editingPart.partId,
+        body,
+        idempotencyKey: key,
       });
+      actionKeys.complete(action, key);
       alert.success('Success', t.updateSuccess);
       setShowEditModal(false);
       setEditingPart(null);
       setEditName('');
     } catch (error) {
-      console.error('CompanyInventory saveEdit error:', error);
+      logger.error('Company inventory rename failed', error);
       alert.error('Error', error instanceof Error ? error.message : 'Failed to rename part.');
     }
   };
 
-  const renderPart = ({ item }: { item: InventoryPart }) => {
+  const renderPart = ({ item }: { item: MobileInventoryPart }) => {
     const quantity = Number(item.quantity || 0);
     const threshold = Number(item.lowThreshold || 0);
     const lowStock = threshold > 0 && quantity <= threshold;
@@ -325,22 +387,26 @@ export default function CompanyInventory() {
 
         <AppDivider style={styles.partDivider} />
 
-        <View style={styles.partActions}>
-          <AppButton
-            title={t.edit}
-            variant="secondary"
-            iconLeft={{ name: 'create-outline' }}
-            onPress={() => startEdit(item)}
-            style={styles.partActionButton}
-          />
-          <AppButton
-            title={item.active === false ? t.enable : t.disable}
-            variant={item.active === false ? 'primary' : 'destructive'}
-            iconLeft={{ name: item.active === false ? 'checkmark-circle-outline' : 'close-circle-outline' }}
-            onPress={() => togglePart(item)}
-            style={styles.partActionButton}
-          />
-        </View>
+        {canManageCompanyInventory ? (
+          <View style={styles.partActions}>
+            <AppButton
+              title={t.edit}
+              variant="secondary"
+              iconLeft={{ name: 'create-outline' }}
+              onPress={() => startEdit(item)}
+              disabled={updateMutation.isPending}
+              style={styles.partActionButton}
+            />
+            <AppButton
+              title={item.active === false ? t.enable : t.disable}
+              variant={item.active === false ? 'primary' : 'destructive'}
+              iconLeft={{ name: item.active === false ? 'checkmark-circle-outline' : 'close-circle-outline' }}
+              onPress={() => togglePart(item)}
+              disabled={updateMutation.isPending}
+              style={styles.partActionButton}
+            />
+          </View>
+        ) : null}
       </AppCard>
     );
   };
@@ -358,7 +424,7 @@ export default function CompanyInventory() {
             paddingTop: Platform.OS === 'ios' ? 108 : 96,
             paddingHorizontal: spacing.lg,
             paddingBottom: spacing.xxxl + 80,
-            flexGrow: filteredParts.length === 0 && !loading ? 1 : 0,
+            flexGrow: filteredParts.length === 0 && !inventoryQuery.isLoading ? 1 : 0,
           }}
           ListHeaderComponent={
             <View style={styles.headerArea}>
@@ -406,41 +472,82 @@ export default function CompanyInventory() {
 
               <SearchInput
                 value={searchQuery}
-                onChangeText={setSearchQuery}
+                onChangeText={(value) => setSearchQuery(value.slice(0, 80))}
                 placeholder={t.search}
                 colors={palette}
                 style={styles.searchInput}
               />
 
-              <AppButton
-                title={t.addPart}
-                iconLeft={{ name: 'add-circle-outline' }}
-                onPress={() => setShowAddModal(true)}
-              />
+              {canManageCompanyInventory ? (
+                <AppButton
+                  title={t.addPart}
+                  iconLeft={{ name: 'add-circle-outline' }}
+                  onPress={() => setShowAddModal(true)}
+                  disabled={createMutation.isPending}
+                />
+              ) : null}
+
+              {inventoryQuery.isError && companyParts.length > 0 ? (
+                <AppCard style={[styles.queryErrorCard, { borderColor: palette.error }]}>
+                  <AppText variant="caption" color={palette.textPrimary}>
+                    {t.refreshFailed}
+                  </AppText>
+                  <AppButton
+                    title={t.retry}
+                    size="sm"
+                    onPress={() => { void inventoryQuery.refetch(); }}
+                    loading={inventoryQuery.isFetching}
+                    style={styles.retryButton}
+                  />
+                </AppCard>
+              ) : null}
             </View>
           }
           ListEmptyComponent={
-            loading ? (
+            inventoryQuery.isLoading ? (
               <View style={styles.loadingWrap}>
-                <LoadingSpinner text={t.loading} />
+                <ActivityIndicator size="large" color={palette.secondary} />
+                <AppText variant="body" color={palette.textSecondary}>{t.loading}</AppText>
               </View>
-            ) : companyParts.length === 0 ? (
+            ) : inventoryQuery.isError ? (
+              <AppEmptyState
+                icon="cloud-alert-outline"
+                title={t.loadFailed}
+                action={
+                  <AppButton
+                    title={t.retry}
+                    onPress={() => { void inventoryQuery.refetch(); }}
+                    loading={inventoryQuery.isFetching}
+                    style={{ marginTop: spacing.sm }}
+                  />
+                }
+              />
+            ) : !searchQuery.trim() && filter === 'all' ? (
               <AppEmptyState
                 icon="package-variant-closed-plus"
                 title={t.noParts}
                 subtitle={t.subtitle}
-                action={
+                action={canManageCompanyInventory ? (
                   <AppButton
                     title={t.addPart}
                     onPress={() => setShowAddModal(true)}
                     style={{ marginTop: spacing.sm }}
                   />
-                }
+                ) : undefined}
               />
-            ) : (
-              <AppEmptyState icon="magnify-close" title={t.noResults} />
-            )
+            ) : <AppEmptyState icon="magnify-close" title={t.noResults} />
           }
+          ListFooterComponent={inventoryQuery.hasNextPage ? (
+            <AppButton
+              title={t.loadMore}
+              onPress={() => { void inventoryQuery.fetchNextPage(); }}
+              loading={inventoryQuery.isFetchingNextPage}
+              disabled={inventoryQuery.isFetchingNextPage}
+              style={styles.loadMoreButton}
+            />
+          ) : null}
+          refreshing={inventoryQuery.isRefetching && !inventoryQuery.isFetchingNextPage}
+          onRefresh={() => { void inventoryQuery.refetch(); }}
         />
       </View>
 
@@ -457,7 +564,7 @@ export default function CompanyInventory() {
             />
             <View style={styles.modalActions}>
               <AppButton title={t.cancel} variant="secondary" onPress={() => setShowAddModal(false)} />
-              <AppButton title={t.save} onPress={addPart} />
+               <AppButton title={t.save} onPress={addPart} loading={createMutation.isPending} />
             </View>
           </AppCard>
         </View>
@@ -476,7 +583,7 @@ export default function CompanyInventory() {
             />
             <View style={styles.modalActions}>
               <AppButton title={t.cancel} variant="secondary" onPress={() => setShowEditModal(false)} />
-              <AppButton title={t.save} onPress={saveEdit} />
+              <AppButton title={t.save} onPress={saveEdit} loading={updateMutation.isPending} />
             </View>
           </AppCard>
         </View>
@@ -517,6 +624,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: spacing.xxxl,
+    gap: spacing.sm,
+  },
+  queryErrorCard: {
+    borderWidth: 1,
+    gap: spacing.sm,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+  },
+  loadMoreButton: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
   },
   partCard: {
     marginBottom: spacing.md,

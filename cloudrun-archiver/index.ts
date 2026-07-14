@@ -12,6 +12,7 @@ import {
   listCompanyPublicIds,
 } from '@smart-job/db';
 import { getTargetMonth } from './archive-month';
+import { runUploadCleanupStartup } from './upload-cleanup';
 
 /**
  * Cloud Run Job: Firestore → Cloud Storage Archiver
@@ -542,6 +543,10 @@ async function main() {
   console.log('='.repeat(60));
   console.log('🚀 Smart-Job Archiver - Active Backend → Cloud Storage Migration');
   console.log('='.repeat(60));
+
+  // File cleanup is an independent maintenance phase. Its helper catches and
+  // reports failures so monthly GCS archive work always continues.
+  await runUploadCleanupStartup();
 
   const target = getTargetMonth(new Date(), MONTHS_LOOKBACK);
   console.log(`📅 Target month: ${target.year}-${target.month}`);

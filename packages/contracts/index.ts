@@ -106,6 +106,20 @@ export const ACCOUNT_TYPE_VALUES = Object.freeze([
   AccountType.Business,
 ] as const);
 
+export const RegistrationMode = Object.freeze({
+  Basic: 'basic',
+  Solo: 'solo',
+  Business: 'business',
+} as const);
+
+export type RegistrationModeValue = (typeof RegistrationMode)[keyof typeof RegistrationMode];
+
+export const REGISTRATION_MODE_VALUES = Object.freeze([
+  RegistrationMode.Basic,
+  RegistrationMode.Solo,
+  RegistrationMode.Business,
+] as const);
+
 export const Tier = Object.freeze({
   Basic: 'Basic',
   Solo: 'Solo',
@@ -181,6 +195,7 @@ export function getEnabledModulesForTier(tier?: string | null) {
   return {
     team: isTeamOrAbove,
     solojob: !isBasic,
+    clients: true,
     documents: true,
     teaminventory: isTeamOrAbove,
     companyinventory: isTeamOrAbove,

@@ -26,7 +26,7 @@ import {
   validateEmail,
 } from "../shared-edge-helpers.ts";
 
-const ROLE_VALUES = Object.values(Role);
+const ROLE_VALUES: readonly string[] = Object.values(Role);
 const ACCOUNT_TYPE_VALUES = Object.values(AccountType);
 
 function normalizeRole(roleRaw: unknown): string | null {
@@ -319,8 +319,8 @@ export async function registerBusinessV1(payload: any, ctx: EdgeFunctionContext)
     p_en_name: enName,
     p_vat_number: vatNumber || null,
     p_business_type: businessType || null,
-    p_city,
-    p_address,
+    p_city: city,
+    p_address: address,
     p_business_email: businessEmail,
     p_business_phone: businessPhone,
     p_business_fax: businessFax,

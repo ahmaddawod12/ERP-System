@@ -26,17 +26,10 @@ export default function ForgotPasswordClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      const redirectTo = typeof window !== "undefined"
-        ? `${window.location.origin}/reset-password`
-        : "";
-
       const response = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: values.email,
-          redirectTo,
-        }),
+        body: JSON.stringify({ email: values.email }),
       });
       const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!response.ok || !payload.ok) {

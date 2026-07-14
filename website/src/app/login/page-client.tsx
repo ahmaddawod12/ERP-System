@@ -6,7 +6,11 @@ import { ArrowRight, CheckCircle2, ShieldCheck, Wrench } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { signInWithConfiguredProvider } from "@/lib/firebase/client-auth";
+import {
+  WebSessionCurrentSchema,
+  createApiResponseSchema,
+  type WorkspaceSummary,
+} from "@smart-job/api-contracts";
 import { PublicLayout } from "@/components/layout/public-layout";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -20,10 +24,32 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+const loginResponseSchema = createApiResponseSchema(WebSessionCurrentSchema);
+
+function workspaceDestination(workspaces: readonly WorkspaceSummary[]): string {
+  if (workspaces.length === 0) return "/onboarding";
+  if (workspaces.length === 1) return `/app/c/${workspaces[0].companyId}`;
+  return "/app/select-company";
+}
+
+function safeOpaqueReturnPath(value: string | null): string | null {
+  if (value === "/onboarding" || value === "/app/select-company") return value;
+  return value && /^\/app\/c\/[1-9]\d*(?:\/[^/?#]+)*\/?$/.test(value)
+    ? value
+    : null;
+}
+
 export default function LoginClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useAppToast();
+  const verificationNotice = searchParams.get("verified") === "1"
+    ? { tone: "success", message: "Email verified. You can sign in now." }
+    : searchParams.get("verification") === "pending"
+      ? { tone: "info", message: "Check your email and confirm your address before signing in." }
+      : searchParams.get("error") === "confirmation_failed"
+        ? { tone: "error", message: "That confirmation link is invalid or expired. Request a new account email if needed." }
+        : null;
   const {
     register,
     handleSubmit,
@@ -32,14 +58,27 @@ export default function LoginClient() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await signInWithConfiguredProvider(values.email, values.password);
-      const redirect = searchParams.get("redirect");
-      // Validate redirect is a safe internal path (no protocol-relative URLs like //evil.com)
-      if (redirect && redirect.startsWith("/") && !redirect.startsWith("//")) {
-        router.push(redirect);
-        return;
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const parsed = loginResponseSchema.safeParse(
+        await response.json().catch(() => null),
+      );
+      if (!parsed.success) {
+        throw new Error("The server returned an invalid sign-in response.");
       }
-      router.push("/app");
+      if (!parsed.data.ok) {
+        throw new Error(parsed.data.error.message);
+      }
+
+      const requested = safeOpaqueReturnPath(searchParams.get("redirect"));
+      router.replace(
+        requested ?? workspaceDestination(parsed.data.data.viewer.workspaces),
+      );
+      router.refresh();
     } catch (error) {
       toast({
         title: "Login failed",
@@ -60,6 +99,21 @@ export default function LoginClient() {
             <p className="mt-2 text-center text-sm leading-7 text-slate-600 dark:text-slate-300">
               Welcome back. Continue to your Smart-Job ERP workspace.
             </p>
+
+            {verificationNotice ? (
+              <p
+                role={verificationNotice.tone === "error" ? "alert" : "status"}
+                className={
+                  verificationNotice.tone === "success"
+                    ? "mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+                    : verificationNotice.tone === "error"
+                      ? "mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+                      : "mt-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300"
+                }
+              >
+                {verificationNotice.message}
+              </p>
+            ) : null}
 
             <form className="mt-7 grid gap-4" onSubmit={handleSubmit(onSubmit)}>
               <Input label="Email" type="email" {...register("email")} error={errors.email?.message} />

@@ -2,14 +2,18 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the active June 22, 2026 architecture:
+It reflects the active July 13, 2026 architecture and the pre-launch backend
+migration foundation:
 
 - Supabase Auth for website and mobile sign-in
 - Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
 - PostgreSQL as the primary company-scoped ERP persistence layer
 - Firestore and Cloud Storage for compatibility, rules, operations, and files
 - Cloud Run services for PDF generation and archiving
-- Supabase Edge Functions migration work in parallel
+- Supabase Edge Functions remain the active application gateway during migration
+- `cloudrun-api` and `cloudrun-tax` are local/test foundations only until the
+  domain-routing and deployment checkpoints are approved; the database/security
+  foundation itself is now implemented
 
 ## 1. Repository Components
 
@@ -18,9 +22,12 @@ ERP-System/
 |-- website/             Next.js website
 |-- phone_app/           Expo mobile app
 |-- supabase/functions/  Edge gateway and endpoint runtime in this repository
+|-- cloudrun-api/        Main Fastify API foundation
+|-- cloudrun-tax/        Stateless Israel tax gateway foundation
 |-- cloudrun-pdf/        PDF preview/generation service
 |-- cloudrun-archiver/   Archive batch job
 |-- packages/contracts/  Shared enums/constants/path helpers
+|-- packages/api-contracts/ Shared Zod HTTP contracts
 |-- packages/db/         PostgreSQL schema, migrations, access layer
 `-- supabase/            Backend gateway runtime and migration work area
 ```
@@ -34,7 +41,9 @@ Install locally:
 - Firebase CLI
 - Google Cloud CLI
 - Java 17 or newer for emulators
-- Docker or Cloud Build access for Cloud Run
+- Docker Desktop for the isolated local Supabase stack, plus Docker or Cloud
+  Build access for future Cloud Run images
+- Supabase CLI
 - EAS CLI for mobile builds
 - PostgreSQL access for SQL-backed development and deploys
 - Supabase project access for auth and migration testing
@@ -88,7 +97,7 @@ Set local shell variables as needed:
 ```bash
 export PROJECT_ID="your-project-id"
 export REGION="us-central1"
-export STORAGE_BUCKET="your-storage-bucket"
+export ARCHIVE_BUCKET="your-archive-bucket"
 export ARTIFACT_REPO="smart-job"
 export PDF_SERVICE="pdf-service"
 export ARCHIVER_JOB="smart-job-archiver"
@@ -99,7 +108,7 @@ PowerShell:
 ```powershell
 $env:PROJECT_ID = "your-project-id"
 $env:REGION = "us-central1"
-$env:STORAGE_BUCKET = "your-storage-bucket"
+$env:ARCHIVE_BUCKET = "your-archive-bucket"
 $env:ARTIFACT_REPO = "smart-job"
 $env:PDF_SERVICE = "pdf-service"
 $env:ARCHIVER_JOB = "smart-job-archiver"
@@ -111,11 +120,15 @@ There is no root package-manager workspace. Install packages individually:
 
 ```bash
 npm --prefix packages/contracts install
-npm --prefix packages/db install
 npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts install
+npm --prefix packages/api-contracts run build
+npm --prefix packages/db install
 npm --prefix packages/db run build
 npm --prefix website install
 npm --prefix phone_app install
+npm --prefix cloudrun-api install
+npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
 npm --prefix cloudrun-archiver install
 ```
@@ -144,6 +157,9 @@ CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SEC
 
 BACKEND_PROJECT_ID=
 BACKEND_EDGE_FUNCTIONS_BASE_URL=
+BACKEND_API_BASE_URL=              # server-only Cloud Run API base; HTTPS except local loopback
+BACKEND_API_TIMEOUT_MS=12000       # optional; maximum 12000
+WEBSITE_ORIGIN=http://localhost:3000
 
 NEXT_PUBLIC_FIREBASE_API_KEY=
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
@@ -169,6 +185,13 @@ Notes:
 - Protected session validation requires both cookies; `__session` metadata alone is not enough to authorize backend proxy calls.
 - `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
 - If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
+- `BACKEND_API_BASE_URL` and `WEBSITE_ORIGIN` enable the new opaque-session
+  BFF entrypoints. The backend base is read only on the server, and mutation
+  Origin headers must exactly match `WEBSITE_ORIGIN`.
+- The opaque-session foundation uses `__Host-sj_web_session` in production
+  (`sj_web_session` on insecure localhost) plus the readable `sj_csrf`
+  double-submit cookie. It is not the active ERP client session until the
+  remaining website data slices are moved off browser bearer transport.
 - Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on the signed cookie-backed session plus in-memory auth transport state.
 - Firebase web/admin vars are still required where Firebase services remain in use.
 
@@ -222,6 +245,7 @@ GCP_SERVICE_ACCOUNT_EMAIL=
 GCP_SERVICE_ACCOUNT_PRIVATE_KEY=
 PUBSUB_VERIFICATION_TOKEN=
 CLOUD_RUN_PDF_SERVICE_URL=
+DOCUMENTS_BUCKET=smart-job-company-files
 ARCHIVE_BUCKET=
 
 TAX_AUTH_URL=
@@ -251,6 +275,7 @@ Rules:
 - The same service account credentials are used by `fetchArchiveMonthV1` to read archive objects from `ARCHIVE_BUCKET` through backend-controlled bucket/path access.
 - `PUBSUB_VERIFICATION_TOKEN` should match the shared verification token expected by `cloudrun-pdf` when that hardening layer is enabled.
 - `CLOUD_RUN_PDF_SERVICE_URL` is required for preview/generate task dispatch from the edge runtime.
+- `DOCUMENTS_BUCKET` must be `smart-job-company-files` so transition-time signed document downloads use the same private bucket as `cloudrun-pdf`.
 - `ARCHIVE_BUCKET` is required if mobile or other clients need archived month retrieval through `fetchArchiveMonthV1`.
 
 ## 8. SQL Setup
@@ -258,7 +283,11 @@ Rules:
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration shape:
-- Empty/new databases apply the optimized baseline migration `0000_optimized_baseline.sql`, then forward hardening migrations in order: `0001_supabase_cost_perf_security_hardening.sql`, `0002_phase1_read_caps.sql`, `0003_phase1_atomic_jobs.sql`, `0004_phase1_atomic_business_registration.sql`, `0005_phase2_trigger_search_path.sql`. The historical incremental migrations before the baseline were intentionally squashed because this database starts empty.
+- Empty/new databases apply the optimized baseline migration
+  `0000_optimized_baseline.sql`, then every journaled forward migration in
+  numeric order through the current Drizzle journal tail. The historical
+  incremental migrations before the baseline were intentionally squashed
+  because this database starts empty.
 - The baseline includes:
   - RLS enabled on all public-schema tables, with client-visible policies only where the app needs direct reads
   - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
@@ -281,11 +310,65 @@ Current migration shape:
   - active membership uniqueness on `(company_id, user_id)` for active memberships only
   - split `inventory_locations` uniqueness for company-only rows vs membership-scoped rows
 
+Migration `0006_api_security_foundation.sql` additionally establishes the future
+main API database boundary:
+
+- `smart_job_api` is a least-privileged login role with explicit grants and
+  bounded statement, lock, and idle-transaction timeouts. The migration does
+  not assign a password; provision it out of band and inject the runtime
+  connection URL through Secret Manager or another environment secret store.
+- `private.set_api_request_context(...)` records the authenticated `sub` and
+  transaction-local timeouts before each API transaction. Role/company access
+  continues to come from SQL membership data.
+- `private.web_sessions` stores SHA-256 session/CSRF hashes and encrypted
+  Supabase credentials; `private.api_idempotency` and
+  `private.file_upload_sessions` store bounded replay and upload-finalization
+  state.
+- `jobs.entity_version` provides opaque optimistic concurrency. The private
+  `complete_job_with_details(...)` RPC validates the expected version and
+  commits the job finish, optional part replacement, inventory consumption,
+  upload-session consumption, attachment rows, and sync-version bumps in one
+  transaction.
+- `smart_job_api` has no general direct write grant on public ERP tables and no
+  execute grant on legacy privileged RPCs that trust caller-provided identity.
+- Migration `0016_upload_session_idempotency_limits.sql` also removes direct
+  runtime writes to `private.file_upload_sessions`. The API must use the narrow
+  prepare/signing-failure RPCs with a prior idempotency claim. Preparation uses
+  a committed 12-session/10-minute user limiter, a transaction-serialized
+  four-pending-session user/workspace quota, and one-minute expiry response
+  floor. Replays sign fresh URLs and three initial signing failures enqueue the
+  canonical manifest for the migration `0009` cleanup worker.
+- Migration `0018_api_client_mutations.sql` adds client entity versions, the
+  default active-list cursor index, reference lookup indexes, and API-only
+  create/update/delete-or-archive functions. Runtime table writes remain
+  revoked. Live acceptance must cover manager/user/basic authority, worker and
+  cross-tenant denial, idempotent replay, stale-version 409, referenced-client
+  archival, unreferenced deletion, and concurrent `client_no` allocation.
+- Migration `0019_api_inventory_mutations.sql` adds part/balance entity
+  versions and API-only inventory mutation RPCs. Runtime table writes remain
+  revoked. Acceptance covers manager versus worker authority, self-member
+  adjustment, cross-tenant denial, idempotent replay, stale and insufficient
+  stock conflicts, concurrent writes, atomic transfer/pick, zero-company/member-stock archive,
+  and same-transaction inventory sync bumps.
+- Migration `0021_api_job_mutations.sql` adds API-only, version-checked job
+  metadata/client/assignee update, manager/dev acceptance, and guarded deletion
+  RPCs. Live acceptance covers SQL-derived tenant/module/role/assignment
+  authority, idempotent replay, stale-version 409, rejection of direct PATCH
+  completion, pending/waiting-only acceptance, and deletion conflicts for
+  certificates, document links, inventory movements, upload sessions, and
+  attachments. The runtime role retains no direct job-table writes.
+
 Database profiling:
 
 - Use `packages/db/perf/profiling.sql` against local or staging data with realistic row counts before adding broad indexes or dropping unused indexes.
 - The profiling checklist uses `pg_stat_statements`, Supabase `index_advisor`, Supabase Security/Performance Advisors, and representative `EXPLAIN (analyze, buffers)` targets for clients, jobs, documents, inventory, tax, and support paths.
 - Schedule `cleanup_expired_operational_rows()` daily through Supabase Scheduled Functions, pg_cron, or an external trusted job if the project accumulates rate-limit, document task, notification, contact, or failed idempotency rows.
+- Migration `0009` exposes service-role-only
+  `queue_expired_file_upload_cleanup(...)`,
+  `claim_file_upload_cleanup_batch(...)`, and
+  `finish_file_upload_cleanup(...)` wrappers. Claims use skip-locked leases and
+  return only canonical session object paths; malformed/cross-prefix manifests
+  and exhausted fifth attempts remain as `cleanup_failed` rows for review.
 
 Minimum steps:
 
@@ -298,6 +381,52 @@ Do not add direct client SQL access for protected ERP operations.
 
 ## 9. Local Development
 
+### Isolated local Supabase
+
+`supabase/config.toml` owns a dedicated Docker Desktop stack with
+`project_id = "smart-job-erp-local"`. It must not reuse containers, volumes, or
+ports from another Supabase project. The reserved ports are:
+
+| Service | Port |
+|---|---:|
+| Shadow database | `55320` |
+| API gateway | `55321` |
+| PostgreSQL | `55322` |
+| Studio | `55323` |
+| Inbucket UI | `55324` |
+| Inbucket SMTP | `55325` |
+| Inbucket POP3 | `55326` |
+| Analytics | `55327` |
+| Pooler (when enabled) | `55329` |
+| Edge inspector | `55883` |
+
+Start and inspect only this project from the repository root:
+
+```powershell
+supabase start
+supabase status
+```
+
+The Supabase CLI migration/seed directories are disabled in
+`supabase/config.toml`; `packages/db/migrations` remains the single application
+migration source. For a clean local database, reset the Supabase database and
+then run Drizzle explicitly:
+
+```powershell
+supabase db reset --local --no-seed
+$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
+$env:DATABASE_SSL_MODE = "disable"
+npm --prefix packages/db run db:migrate
+npm --prefix packages/db run test:integration
+supabase db lint --local --schema public,private --level warning
+```
+
+Do not use `supabase stop --all`; if the stack needs to be stopped, target this
+project from its configured workdir. Never copy local generated API keys or the
+database password into tracked files.
+
+### Package development
+
 Common commands:
 
 ```bash
@@ -308,11 +437,58 @@ npm --prefix website run test
 npm --prefix phone_app run start
 npm --prefix phone_app run typecheck
 npm --prefix phone_app run test
+npm --prefix phone_app run doctor
+
+npm --prefix packages/api-contracts run test
+npm --prefix cloudrun-api run test
+npm --prefix cloudrun-tax run test
 ```
 
 If you use emulators, keep local website origins in `CORS_ALLOWED_ORIGINS` and point client envs to emulator origins explicitly.
 
-## 10. Cloud Run PDF Service
+The mobile notification module uses pinned `react-native-notify-kit` for the
+Notifee-compatible local API surface. Firebase Messaging still owns remote push
+delivery; iOS config therefore uses `handleRemoteNotifications: false`. Rebuild
+the native development client after installing or changing this native module.
+Android uses the versioned private channel `smart_job_private_v2`; keep the new
+ID because Android does not reliably replace privacy settings on an existing
+channel. Push registration generates one UUID-like device ID in SecureStore and
+sends it in both register and clear requests.
+
+## 10. Cloud Run API Foundations
+
+Build and test the non-deployed foundations locally after their file
+dependencies:
+
+```bash
+npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts run build
+npm --prefix packages/db run build
+npm --prefix cloudrun-api run test
+npm --prefix cloudrun-tax run test
+```
+
+`cloudrun-api` now includes the least-privileged Postgres runtime, Supabase
+JWKS/Bearer validation, opaque web sessions, and initial
+viewer/workspace/bootstrap/job-completion routes in addition to its probes and
+HTTP plumbing. Domain routes accept exactly one `Bearer` or `SmartJobSession`
+credential. The isolated runtime integration test is enabled with:
+
+```powershell
+$env:SMART_JOB_TEST_ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
+npm --prefix cloudrun-api run test
+```
+
+The test temporarily provisions a random local `smart_job_api` password and
+removes it during cleanup; no runtime password is committed. `cloudrun-tax`
+provides the stateless probe/configuration shell. Do not point production
+website or mobile traffic at either service yet.
+
+The new API/tax Dockerfiles, Cloud Run service settings, IAM, Artifact Registry, OIDC/WIF, and
+environment rollout remain deployment-configuration changes and require the
+separate implementation checkpoint.
+
+## 11. Cloud Run PDF Service
 
 `cloudrun-pdf/` is responsible for preview and generate flows.
 
@@ -321,18 +497,27 @@ Required deployment concerns:
 - OIDC verification for Pub/Sub push requests
 - optional shared `x-pubsub-token` hardening if configured
 - SQL access for task and document finalization in SQL mode
-- Cloud Storage write permissions
+- `SUPABASE_URL` plus a dedicated server-only `SUPABASE_SECRET_KEY` (`sb_secret_...`)
+- `SUPABASE_STORAGE_BUCKET=smart-job-company-files` (optional because this exact canonical value is the only accepted/default value)
 - environment for tax and document generation as required by the service
 - trusted invocations from `supabase/functions/` for preview/generate task dispatch
+
+The secret key bypasses Storage RLS and must remain in Secret Manager/Cloud Run
+only. Do not expose it to website or mobile bundles and do not log it. Migration
+`0008_pdf_supabase_storage.sql` keeps the canonical bucket private and adds
+`application/pdf` to its existing image MIME allowlist.
 
 Preserve these invariants:
 
 - create-only semantics for new generated PDFs and documents across all document types
-- orphan file cleanup when finalize fails
+- SHA-256 byte verification before an identical duplicate object is reused on retry
+- retain create-only objects across ambiguous signing/SQL failures so a committed row cannot point at a compensating-deleted file; remove only confirmed orphans through operational cleanup
 - canonical `storagePath` persistence instead of durable URLs
 - document finalization must refuse to overwrite an existing SQL `storage_path`
+- object paths use internal company/document UUIDs; preview task keys are hashed before path construction
+- document finalization and `documents_version` advancement share one SQL transaction
 
-## 11. Cloud Run Archiver
+## 12. Cloud Run Archiver
 
 `cloudrun-archiver/` is the monthly archive job.
 
@@ -340,12 +525,23 @@ Required deployment concerns:
 
 - access to source data
 - Cloud Storage archive bucket access
+- `SUPABASE_URL` plus a dedicated `SUPABASE_SECRET_KEY` (`sb_secret_...`) for
+  bounded abandoned-upload cleanup; the opaque key is sent only as `apikey`
+- optional cleanup bounds: `UPLOAD_CLEANUP_BATCH_SIZE` (1-100, default 25),
+  `UPLOAD_CLEANUP_LEASE_SECONDS` (30-900, default 300),
+  `UPLOAD_CLEANUP_CONCURRENCY` (1-10, default 4), and
+  `UPLOAD_CLEANUP_HTTP_TIMEOUT_MS` (1000-12000, default 10000)
 - scheduler or manual job trigger
 - checksum verification before delete
 - image builds must use repo-root Docker context because `cloudrun-archiver` depends on local `packages/db` and `packages/contracts`
 
 Preserve these invariants:
 
+- upload cleanup is a separately reported startup phase and must not block the
+  monthly archive phase
+- cleanup deletes only exact paths from a claimed canonical
+  `smart-job-company-files` manifest; it never recursively deletes a prefix,
+  deletes consumed/finalized work, or reconciles generated PDFs
 - archive manifests are idempotent
 - month exports must drain every read-model page instead of relying on a single large query
 - archive payloads should be streamed to disk/storage instead of loading a full month into memory
@@ -353,7 +549,7 @@ Preserve these invariants:
 - deletion uses only the exact IDs captured in the verified archive
 - manifests must remain resumable: `uploaded_not_deleted` retries verify the archive and can mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches
 
-## 12. Supabase Migration Workspace
+## 13. Supabase Migration Workspace
 
 The `supabase/` directory contains the in-repo backend runtime and migration hardening work.
 
@@ -364,7 +560,12 @@ Use these docs when working there:
 
 If you still operate legacy Firebase backend paths outside this repository, keep rollback paths available until your production rollout is fully complete.
 
-## 13. Deployment Order
+The approved database foundation does not authorize removing those legacy paths.
+New API/tax Dockerfiles and Cloud Run deployment configuration, domain route implementation,
+website/mobile cutovers, remaining non-PDF Storage unification, and final Edge/Firebase
+directory deletion remain separate future approval gates.
+
+## 14. Deployment Order
 
 Recommended high-level order:
 
@@ -383,7 +584,7 @@ CI/CD evidence:
 - Use `.github/workflows/supabase-edge-deploy.yml` for manual Supabase Edge deployments.
 - Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
 
-## 14. Post-Setup Checks
+## 15. Post-Setup Checks
 
 Verify:
 
@@ -398,6 +599,6 @@ Verify:
 - push-token updates and notification paths
 - archive creation and retrieval
 
-## 15. Canonical Documentation Rule
+## 16. Canonical Documentation Rule
 
 If setup or deployment guidance changes, update this file instead of creating another setup-only markdown file.

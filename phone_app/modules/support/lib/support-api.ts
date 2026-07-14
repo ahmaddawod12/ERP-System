@@ -1,64 +1,125 @@
-import { functions, httpsCallable } from '../../../firebase';
+import {
+  SupportConversationClosedResultSchema,
+  SupportConversationCreateRequestSchema,
+  SupportConversationListPageSchema,
+  SupportConversationReadResultSchema,
+  SupportConversationSummarySchema,
+  SupportConversationThreadSchema,
+  SupportMessageCreateRequestSchema,
+  SupportMessageSchema,
+  type CursorPage,
+  type SupportCategory,
+  type SupportConversationSummary,
+} from '@smart-job/api-contracts';
 
-function asDate(value: unknown): Date | null {
-  if (!value) return null;
-  if (value instanceof Date) return value;
-  if (typeof value === 'string' || typeof value === 'number') {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  return null;
+import { requestApi } from '../../../lib/api/client';
+import {
+  buildSupportConversationListPath,
+  buildSupportThreadPath,
+} from './support-query-model';
+
+interface SupportRequestIdentity {
+  readonly uid: string;
+  readonly companyId?: number | null;
 }
 
-function normalizeConversation(item: any) {
-  return {
-    ...item,
-    lastMessageAt: asDate(item?.lastMessageAt) || new Date(),
-    createdAt: asDate(item?.createdAt) || new Date(),
-    updatedAt: asDate(item?.updatedAt) || null,
-    unreadForUser: Number(item?.unreadForUser || 0),
-    unreadForDev: Number(item?.unreadForDev || 0),
-  };
+export function fetchSupportConversationsPage(input: SupportRequestIdentity & {
+  readonly status?: 'open' | 'closed';
+  readonly category?: SupportCategory;
+  readonly afterCursor?: string | null;
+}): Promise<CursorPage<SupportConversationSummary>> {
+  return requestApi(
+    buildSupportConversationListPath(input),
+    SupportConversationListPageSchema,
+    {
+      uid: input.uid,
+      companyId: input.companyId ?? undefined,
+    },
+  );
 }
 
-function normalizeMessage(item: any) {
-  return {
-    ...item,
-    createdAt: asDate(item?.createdAt),
-  };
+export function fetchSupportThreadPage(input: SupportRequestIdentity & {
+  readonly conversationId: string;
+  readonly afterCursor?: string | null;
+}) {
+  return requestApi(
+    buildSupportThreadPath(input.conversationId, input.afterCursor ?? null),
+    SupportConversationThreadSchema,
+    {
+      uid: input.uid,
+      companyId: input.companyId ?? undefined,
+    },
+  );
 }
 
-export async function createSupportConversation(category?: string): Promise<string> {
-  const callable = httpsCallable(functions, 'createSupportConversationV1');
-  const result = await callable({ category: category || 'general' });
-  return ((result.data as { conversationId?: string } | null | undefined)?.conversationId) || '';
+export function createSupportConversation(input: SupportRequestIdentity & {
+  readonly category: SupportCategory;
+  readonly idempotencyKey: string;
+}) {
+  const body = SupportConversationCreateRequestSchema.parse({
+    companyId: input.companyId ?? undefined,
+    category: input.category,
+  });
+  return requestApi(
+    '/api/v1/support/conversations',
+    SupportConversationSummarySchema,
+    {
+      method: 'POST',
+      body,
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId ?? undefined,
+    },
+  );
 }
 
-export async function appendSupportMessage(conversationId: string, text: string): Promise<void> {
-  const callable = httpsCallable(functions, 'appendSupportMessageV1');
-  await callable({ conversationId, text });
+export function appendSupportMessage(input: SupportRequestIdentity & {
+  readonly conversationId: string;
+  readonly text: string;
+  readonly idempotencyKey: string;
+}) {
+  const body = SupportMessageCreateRequestSchema.parse({ text: input.text });
+  return requestApi(
+    `/api/v1/support/conversations/${encodeURIComponent(input.conversationId)}/messages`,
+    SupportMessageSchema,
+    {
+      method: 'POST',
+      body,
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId ?? undefined,
+    },
+  );
 }
 
-export async function markSupportConversationRead(conversationId: string): Promise<void> {
-  const callable = httpsCallable(functions, 'markSupportConversationReadV1');
-  await callable({ conversationId });
+export function markSupportConversationRead(input: SupportRequestIdentity & {
+  readonly conversationId: string;
+  readonly idempotencyKey: string;
+}) {
+  return requestApi(
+    `/api/v1/support/conversations/${encodeURIComponent(input.conversationId)}/read`,
+    SupportConversationReadResultSchema,
+    {
+      method: 'POST',
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId ?? undefined,
+    },
+  );
 }
 
-export async function closeSupportConversation(conversationId: string): Promise<void> {
-  const callable = httpsCallable(functions, 'closeSupportConversationV1');
-  await callable({ conversationId });
-}
-
-export async function listSupportConversations(status = 'open', limit?: number): Promise<any[]> {
-  const callable = httpsCallable(functions, 'listSupportConversationsV1');
-  const result = await callable({ status, limit });
-  const conversations = ((result.data as { conversations?: any[] } | null | undefined)?.conversations) || [];
-  return conversations.map(normalizeConversation);
-}
-
-export async function getSupportConversationThread(conversationId: string): Promise<any[]> {
-  const callable = httpsCallable(functions, 'getSupportConversationThreadV1');
-  const result = await callable({ conversationId });
-  const messages = ((result.data as { messages?: any[] } | null | undefined)?.messages) || [];
-  return messages.map(normalizeMessage);
+export function closeSupportConversation(input: SupportRequestIdentity & {
+  readonly conversationId: string;
+  readonly idempotencyKey: string;
+}) {
+  return requestApi(
+    `/api/v1/support/conversations/${encodeURIComponent(input.conversationId)}/close`,
+    SupportConversationClosedResultSchema,
+    {
+      method: 'POST',
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId ?? undefined,
+    },
+  );
 }

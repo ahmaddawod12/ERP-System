@@ -1,28 +1,38 @@
-import { getSupportConversationThread } from './support-api';
+import type {
+  CursorPage,
+  SupportConversationSummary,
+  SupportConversationThread,
+  SupportMessage,
+} from '@smart-job/api-contracts';
 
-interface RawMessage {
-  id?: string;
-  senderUid?: string;
-  text?: string;
-  createdAt?: Date | null;
+function mergeById<T extends { readonly id: string }>(
+  pages: readonly (readonly T[])[] | undefined,
+): T[] {
+  const items = new Map<string, T>();
+  for (const page of pages ?? []) {
+    for (const item of page) items.set(item.id, item);
+  }
+  return [...items.values()];
 }
 
-export interface ConversationMessage {
-  id: string;
-  senderUid: string;
-  text: string;
-  createdAt: Date | null;
-  source: 'sql';
+export function mergeSupportConversationPages(
+  pages: readonly CursorPage<SupportConversationSummary>[] | undefined,
+): SupportConversationSummary[] {
+  return mergeById(pages?.map((page) => page.items));
 }
 
-export async function loadConversationThread(conversationId: string): Promise<ConversationMessage[]> {
-  const messages = await getSupportConversationThread(conversationId);
-  return messages.map((message: RawMessage) => ({
-    id: message.id || '',
-    senderUid: message.senderUid || '',
-    text: message.text || '',
-    createdAt: message.createdAt || null,
-    source: 'sql' as const,
-  }));
+export function mergeSupportMessagePages(
+  pages: readonly SupportConversationThread[] | undefined,
+): SupportMessage[] {
+  return mergeById(pages?.map((page) => page.messages)).sort((left, right) => (
+    left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+  ));
 }
 
+export function supportDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export type ConversationMessage = SupportMessage;

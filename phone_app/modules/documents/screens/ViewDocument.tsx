@@ -29,8 +29,10 @@ import { DOC_TYPE, DOC_COLORS, DOC_GRADIENTS, DOC_ICONS, getDocumentLabel } from
 import { safeJsonParse } from '../../../utils/helpers';
 import type { AppDocument } from '../../../types';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import { getDocumentDownloadUrl } from '../lib/document-download';
+import type { DocumentHistoryRecord } from '../lib/document-history-model';
 
 // Document type behavior configurations (visual metadata lives in @smart-job/contracts)
 const DOCUMENT_BEHAVIOR_CONFIGS = {
@@ -73,11 +75,12 @@ export default function ViewDocument() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId } = useCache();
+  const { user } = useSession();
+  const { workspace } = useTenant();
   const colors = getColors(isDarkMode);
   
   // Parse document from params (passed from DocumentHistory)
-  const document = safeJsonParse(params.document) as AppDocument | null;
+  const document = safeJsonParse(params.document) as DocumentHistoryRecord | null;
 
   // Translations
   const t = getTranslations(language);
@@ -158,13 +161,14 @@ export default function ViewDocument() {
   const openDocumentPdf = async () => {
     if (!document) return;
     try {
-      const companyId = getCompanyId();
+      const uid = user?.id;
+      const companyId = workspace?.companyId;
       const documentId = document.documentId || document.id;
-      if (!document.storagePath || !companyId || !documentId) {
+      if (!document.hasFile || !uid || !companyId || !documentId) {
         throw new Error('PDF not available');
       }
 
-      const url = await getDocumentDownloadUrl(companyId, documentId);
+      const url = await getDocumentDownloadUrl(uid, companyId, documentId);
 
       if (!url) {
         throw new Error('PDF not available');
@@ -248,7 +252,7 @@ export default function ViewDocument() {
         </View>
 
         {/* Download PDF Button */}
-        {document.storagePath && (
+        {document.hasFile && (
           <TouchableOpacity
             style={styles.downloadButton}
             onPress={() => void openDocumentPdf()}

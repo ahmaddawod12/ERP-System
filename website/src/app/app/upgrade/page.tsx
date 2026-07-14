@@ -1,17 +1,14 @@
-﻿/**
- * N1: Server component wrapper.
- * Client logic lives in page-client.tsx.
- */
-import { Suspense } from "react";
-import { LoadingState } from "@/components/states/loading-state";
-import UpgradeClient from "./page-client";
+import { redirect } from "next/navigation";
+
+import { requireWebsiteSession } from "@/lib/dal/session";
+import { decideWorkspaceEntry } from "@/lib/dal/workspace-routing";
 
 export const metadata = { title: "Upgrade | Smart-Job" };
 
-export default function UpgradePage() {
-  return (
-    <Suspense fallback={<LoadingState label="Loading…" />}>
-      <UpgradeClient />
-    </Suspense>
-  );
+export default async function UpgradeRedirectPage() {
+  const session = await requireWebsiteSession("/app/upgrade");
+  const decision = decideWorkspaceEntry(session.viewer.workspaces);
+  if (decision.kind === "onboarding") redirect("/onboarding");
+  if (decision.kind === "select") redirect("/app/select-company");
+  redirect(`/app/c/${decision.companyId}/upgrade`);
 }

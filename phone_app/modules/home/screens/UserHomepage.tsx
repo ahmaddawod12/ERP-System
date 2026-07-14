@@ -1,20 +1,30 @@
 import { ROUTES } from '../../../navigation/routes';
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { getColors, spacing } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useCache } from '../../../contexts/CacheContext';
-import { isSubscriptionActive, isModuleEnabled } from '../../shared';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import {
+  AppButton,
+  AppCard,
   AppEmptyState,
+  AppText,
   DashboardActionCard,
   DashboardShell,
   GlobalHeader,
 } from '../../../components';
 import type { IconLibrary } from '../../../components/primitives/AppIcon';
+import { logger } from '../../../utils/logger';
+import NotAvailableScreen from '../../shared/NotAvailableScreen';
+import {
+  bootstrapCountValues,
+  canLoadUserBootstrap,
+} from '../lib/home-bootstrap-model';
+import { useCompanyBootstrap } from '../lib/use-company-bootstrap';
 
 const translations = {
   en: {
@@ -32,6 +42,14 @@ const translations = {
     scopeMetric: 'Scope',
     scopeValue: 'Personal',
     moduleMetric: 'Areas',
+    jobsMetric: 'Jobs',
+    clientsMetric: 'Clients',
+    inventoryMetric: 'Parts',
+    documentsMetric: 'Documents',
+    loadingCounts: 'Loading live dashboard totals...',
+    loadFailed: 'Dashboard totals could not be loaded.',
+    refreshFailed: 'Dashboard totals could not be refreshed. Saved totals remain visible.',
+    retry: 'Retry',
     workTab: 'Work',
     documentsTab: 'Documents',
     createJob: 'Create & Fill Job',
@@ -64,6 +82,14 @@ const translations = {
     scopeMetric: 'היקף',
     scopeValue: 'אישי',
     moduleMetric: 'אזורים',
+    jobsMetric: 'משימות',
+    clientsMetric: 'לקוחות',
+    inventoryMetric: 'חלקים',
+    documentsMetric: 'מסמכים',
+    loadingCounts: 'טוען נתוני לוח בקרה עדכניים...',
+    loadFailed: 'לא ניתן היה לטעון את נתוני לוח הבקרה.',
+    refreshFailed: 'לא ניתן היה לרענן את הנתונים. הנתונים השמורים נשארו מוצגים.',
+    retry: 'נסה שוב',
     workTab: 'עבודה',
     documentsTab: 'מסמכים',
     createJob: 'יצירה ומילוי משימה',
@@ -96,6 +122,14 @@ const translations = {
     scopeMetric: 'النطاق',
     scopeValue: 'شخصي',
     moduleMetric: 'المساحات',
+    jobsMetric: 'المهام',
+    clientsMetric: 'العملاء',
+    inventoryMetric: 'القطع',
+    documentsMetric: 'المستندات',
+    loadingCounts: 'جارٍ تحميل إجماليات لوحة التحكم...',
+    loadFailed: 'تعذر تحميل إجماليات لوحة التحكم.',
+    refreshFailed: 'تعذر تحديث الإجماليات. ستبقى القيم المحفوظة ظاهرة.',
+    retry: 'إعادة المحاولة',
     workTab: 'العمل',
     documentsTab: 'المستندات',
     createJob: 'إنشاء وتعبئة مهمة',
@@ -119,17 +153,34 @@ export default function UserHomepage() {
   const router = useRouter();
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
-  const { subscription } = useCache();
+  const { user } = useSession();
+  const { workspace, status: tenantStatus } = useTenant();
   const [activeTab, setActiveTab] = useState('work');
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
 
-  const hasSoloJob = isModuleEnabled(subscription ?? null, 'solojob');
-  const hasDocs = isModuleEnabled(subscription ?? null, 'documents');
-  const subActive = isSubscriptionActive(subscription ?? null);
+  const enabledModules = new Set(workspace?.enabledModules ?? []);
+  const hasSoloJob = enabledModules.has('solojob');
+  const hasDocs = enabledModules.has('documents');
+  const hasInventory = enabledModules.has('inventory');
+  const hasClients = enabledModules.has('clients');
+  const hasWork = hasSoloJob || hasInventory || hasClients;
+  const workspaceActive = canLoadUserBootstrap(workspace);
+  const bootstrapQuery = useCompanyBootstrap({
+    uid: user?.id ?? null,
+    companyId: workspace?.companyId ?? null,
+    enabled: tenantStatus === 'ready' && workspaceActive,
+  });
+  const countValues = bootstrapCountValues(bootstrapQuery.data?.counts);
+
+  useEffect(() => {
+    if (bootstrapQuery.error) {
+      logger.warn('User dashboard bootstrap refresh failed; retaining cached totals', bootstrapQuery.error);
+    }
+  }, [bootstrapQuery.error]);
 
   const availableTabs: string[] = [
-    ...(hasSoloJob ? ['work'] : []),
+    ...(hasWork ? ['work'] : []),
     ...(hasDocs ? ['documents'] : []),
   ];
 
@@ -140,7 +191,7 @@ export default function UserHomepage() {
   }, [activeTab, availableTabs]);
 
   const tabItems: Array<{ key: string; label: string; icon: string; iconLibrary: IconLibrary }> = [
-    ...(hasSoloJob ? [{ key: 'work', label: t.workTab, icon: 'briefcase', iconLibrary: 'material' as IconLibrary }] : []),
+    ...(hasWork ? [{ key: 'work', label: t.workTab, icon: 'briefcase', iconLibrary: 'material' as IconLibrary }] : []),
     ...(hasDocs ? [{ key: 'documents', label: t.documentsTab, icon: 'file-document-multiple', iconLibrary: 'material' as IconLibrary }] : []),
   ];
 
@@ -155,36 +206,36 @@ export default function UserHomepage() {
     onPress: () => void;
   }>> = {
     work: [
-      {
+      ...(hasSoloJob ? [{
         key: 'create-job',
         title: t.createJob,
         description: t.createJobDesc,
         icon: 'briefcase-check',
-        iconLibrary: 'material',
+        iconLibrary: 'material' as IconLibrary,
         accentColor: colors.boxPurple,
         badge: t.workBadge,
         onPress: () => router.push(ROUTES.userJobs),
-      },
-      {
+      }] : []),
+      ...(hasInventory ? [{
         key: 'inventory',
         title: t.inventory,
         description: t.inventoryDesc,
         icon: 'package-variant',
-        iconLibrary: 'material',
+        iconLibrary: 'material' as IconLibrary,
         accentColor: colors.boxOrange,
         badge: t.workBadge,
         onPress: () => router.push(ROUTES.inventory),
-      },
-      {
+      }] : []),
+      ...(hasClients ? [{
         key: 'client-book',
         title: t.clientBook,
         description: t.clientBookDesc,
         icon: 'book-account',
-        iconLibrary: 'material',
+        iconLibrary: 'material' as IconLibrary,
         accentColor: colors.boxPink,
         badge: t.workBadge,
         onPress: () => router.push(ROUTES.clientBook),
-      },
+      }] : []),
     ],
     documents: [
       {
@@ -222,7 +273,11 @@ export default function UserHomepage() {
 
   const activeCards = (cardsByTab as Record<string, typeof cardsByTab.work>)[activeTab] || [];
 
-  if (!subActive) {
+  if (workspace && workspace.role !== 'user') {
+    return <NotAvailableScreen reason="role" />;
+  }
+
+  if (!workspaceActive) {
     return (
       <View style={[styles.lockedContainer, { backgroundColor: colors.background }]}> 
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
@@ -249,30 +304,48 @@ export default function UserHomepage() {
         heroIconLibrary="material"
         metrics={[
           { label: t.roleMetric, value: t.roleValue },
-          { label: t.scopeMetric, value: t.scopeValue },
-          { label: t.moduleMetric, value: String(availableTabs.length) },
+          { label: t.jobsMetric, value: countValues.jobs },
+          { label: t.clientsMetric, value: countValues.clients },
+          { label: t.inventoryMetric, value: countValues.inventoryParts },
+          { label: t.documentsMetric, value: countValues.documents },
         ]}
         tabs={tabItems}
         activeTab={activeTab}
         onTabPress={setActiveTab}
       >
-        {activeCards.length > 0 ? (
-          activeCards.map((card) => (
-            <DashboardActionCard
-              key={card.key}
-              title={card.title}
-              description={card.description}
-              icon={card.icon}
-              iconLibrary={card.iconLibrary}
-              accentColor={card.accentColor}
-              badge={card.badge}
-              ctaLabel={t.open}
-              onPress={card.onPress}
+        {bootstrapQuery.isLoading ? (
+          <AppCard style={styles.bootstrapStateCard}>
+            <ActivityIndicator size="small" color={colors.secondary} />
+            <AppText color={colors.textSecondary}>{t.loadingCounts}</AppText>
+          </AppCard>
+        ) : null}
+        {bootstrapQuery.isError ? (
+          <AppCard style={[styles.bootstrapStateCard, { borderColor: colors.error }]}>
+            <AppText color={colors.textPrimary}>
+              {bootstrapQuery.data ? t.refreshFailed : t.loadFailed}
+            </AppText>
+            <AppButton
+              title={t.retry}
+              size="sm"
+              loading={bootstrapQuery.isFetching}
+              onPress={() => { void bootstrapQuery.refetch(); }}
+              style={styles.retryButton}
             />
-          ))
-        ) : (
-          <AppEmptyState title={t.emptyTitle} subtitle={t.emptySubtitle} />
-        )}
+          </AppCard>
+        ) : null}
+        {activeCards.length > 0 ? activeCards.map((card) => (
+          <DashboardActionCard
+            key={card.key}
+            title={card.title}
+            description={card.description}
+            icon={card.icon}
+            iconLibrary={card.iconLibrary}
+            accentColor={card.accentColor}
+            badge={card.badge}
+            ctaLabel={t.open}
+            onPress={card.onPress}
+          />
+        )) : <AppEmptyState title={t.emptyTitle} subtitle={t.emptySubtitle} />}
       </DashboardShell>
       <GlobalHeader />
     </View>
@@ -290,5 +363,14 @@ const styles = StyleSheet.create({
   },
   lockedState: {
     marginBottom: spacing.xxl,
+  },
+  bootstrapStateCard: {
+    alignItems: 'center',
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  retryButton: {
+    marginLeft: 'auto',
   },
 });

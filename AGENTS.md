@@ -235,27 +235,40 @@ Smart-Job ERP — multi-tenant field-service platform.
 | Path | Type | Runtime |
 |---|---|---|
 | `website/` | Next.js 16 App Router | Node 22 |
-| `phone_app/` | Expo 55 / React Native 0.83.4 | Node 22 / EAS |
+| `phone_app/` | Expo 57 / React Native 0.86 | Node 22 / EAS |
 | `supabase/functions/` | Edge Function HTTP entrypoints | Deno |
 | `supabase/handlers/` | Domain logic called by edge functions | Deno |
+| `cloudrun-api/` | Modular API with dual auth and initial domain routes | Node 22 |
+| `cloudrun-tax/` | Stateless Israel tax gateway foundation | Node 22 |
 | `cloudrun-pdf/` | PDF generation service | Node 22 |
 | `cloudrun-archiver/` | Monthly archive batch job | Node 22 |
 | `packages/contracts/` | Shared enums/constants (`@smart-job/contracts`) | Node |
+| `packages/api-contracts/` | Shared Zod HTTP contracts (`@smart-job/api-contracts`) | Node 22 |
 | `packages/db/` | Drizzle ORM schema + migrations (`@smart-job/db`) | Node 22 |
 
 ---
 
 ## Build order
 
-`packages/contracts` → `packages/db` → everything else.  
+Build `packages/contracts` first. Build `packages/api-contracts` and
+`packages/db` next; `cloudrun-api` needs all three and `cloudrun-tax` needs the
+two contracts packages.
 `contracts` compiled output (`index.js`) must exist before any package that imports it.
+`api-contracts` must be built before either new Fastify service; `db` must also
+be built before `cloudrun-api`.
 
 ```bash
 npm --prefix packages/contracts install
+npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts install
+npm --prefix packages/api-contracts run build
 npm --prefix packages/db install
+npm --prefix packages/db run build
 npm --prefix packages/db run db:migrate   # apply latest SQL migrations first
 npm --prefix website install
 npm --prefix phone_app install
+npm --prefix cloudrun-api install
+npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
 npm --prefix cloudrun-archiver install
 ```
@@ -277,15 +290,25 @@ npm --prefix website run build
 ```bash
 npm --prefix phone_app run typecheck    # tsc --noEmit
 npm --prefix phone_app run test         # node --test --experimental-strip-types tests/*.test.mts
+npm --prefix phone_app run doctor       # Expo dependency/config validation
 npm --prefix phone_app run start        # expo start
 ```
 
-### packages/contracts & packages/db
+Keep the Expo 57-supported React/React DOM 19.2.3 pair. Do not upgrade React
+independently of the React Native renderer; this mobile client does not use
+React Server Components.
+
+### packages/contracts, packages/api-contracts & packages/db
 ```bash
 npm --prefix packages/contracts run typecheck
 npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts run typecheck
+npm --prefix packages/api-contracts run test
+npm --prefix packages/api-contracts run build
 npm --prefix packages/db run typecheck
 npm --prefix packages/db run build
+npm --prefix packages/db run test
+npm --prefix packages/db run test:integration   # requires the isolated local Supabase DB
 npm --prefix packages/db run db:generate   # drizzle-kit generate (new migration from schema change)
 npm --prefix packages/db run db:migrate    # drizzle-kit migrate (apply to DB)
 ```
@@ -296,11 +319,15 @@ Database profiling before broad index work:
 packages/db/perf/profiling.sql
 ```
 
-### cloudrun-pdf / cloudrun-archiver
+### Cloud Run packages
 ```bash
-# cloudrun-pdf depends on a built packages/contracts (file: dependency).
+# Build local file dependencies first.
 # Tests internally run `npm run build` first — never skip build
 npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts run build
+npm --prefix packages/db run build
+npm --prefix cloudrun-api run test
+npm --prefix cloudrun-tax run test
 npm --prefix cloudrun-pdf run test
 npm --prefix cloudrun-archiver run test
 ```
@@ -310,8 +337,33 @@ npm --prefix cloudrun-archiver run test
 # Bash: enable globstar so nested function paths (e.g., tax/callback) are included
 shopt -s globstar
 deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
+deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrations" supabase/handlers/handlers-hardening.test.ts
 supabase functions serve mutation-gateway --env-file supabase/.env
 ```
+
+### Isolated local Supabase stack
+
+The repository-owned Docker Desktop stack uses `project_id = "smart-job-erp-local"`
+from `supabase/config.toml`; do not reuse another project's containers or ports.
+Application migrations remain under `packages/db/migrations` and are intentionally
+disabled in the Supabase CLI migration directory.
+
+```powershell
+supabase start
+supabase status
+
+# Fresh local database: reset the Supabase services first, then apply Drizzle migrations.
+supabase db reset --local --no-seed
+$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
+$env:DATABASE_SSL_MODE = "disable"
+npm --prefix packages/db run db:migrate
+npm --prefix packages/db run test:integration
+supabase db lint --local --schema public,private --level warning
+```
+
+Core ports are API `55321`, PostgreSQL `55322`, Studio `55323`, Inbucket
+`55324`, and Edge inspector `55883`; the full allocation is documented in
+`SETUP.md`. Never use `supabase stop --all` for this project.
 
 ### Repo-level CI scripts
 ```bash
@@ -328,12 +380,15 @@ All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group 
 
 - `repo_guards` → `check-no-ts-nocheck.mjs` + `check-js-syntax.mjs scripts`
 - `packages_contracts` → `npm ci` → typecheck → build
-- `packages_db` → `npm ci` → typecheck → build
+- `packages_api_contracts` → builds `packages/contracts` → `npm ci` → typecheck → test
+- `packages_db` → builds `packages/contracts` → `npm ci` → typecheck → build
 - `website` → builds `packages/contracts` → `npm ci` → **test → typecheck → lint → build** (order matters)
-- `phone_app` → builds `packages/contracts` → `npm ci` → test → typecheck
+- `phone_app` → builds `packages/contracts` → `npm ci` → test → typecheck → Expo Doctor
 - `cloudrun_pdf` → builds `packages/contracts` → `npm ci` → typecheck → test
 - `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
-- `supabase_edge` → `deno check` on all edge `.ts` files (uses `shopt -s globstar` to include nested paths)
+- `cloudrun_api` → builds all three local packages → `npm ci` → typecheck → test
+- `cloudrun_tax` → builds contracts packages → `npm ci` → typecheck → test
+- `supabase_edge` → `deno check` on all edge `.ts` files + hardening tests
 - `perf_budget` → `continue-on-error: true` (never blocks)
 - `cloudrun_images` → Docker build (no push)
 
@@ -348,6 +403,7 @@ Edge deploy (`supabase-edge-deploy.yml`) is **manual `workflow_dispatch` only**.
 - `phone_app/components`, `phone_app/contexts`, `phone_app/tests`, `phone_app/firebase.ts`
 - `phone_app/modules/` (allowlist of legacy files exempted; all new files blocked)
 - `packages/contracts`
+- `packages/api-contracts`, `cloudrun-api/src`, `cloudrun-tax/src`
 
 Do not add `@ts-nocheck` to any file in those paths.
 
@@ -357,21 +413,46 @@ Do not add `@ts-nocheck` to any file in those paths.
 
 ### `website/.env.local`
 ```
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=          # preferred server-side Auth key (sb_publishable_...)
+BACKEND_API_BASE_URL=              # server-only Cloud Run API origin
+BACKEND_API_TIMEOUT_MS=12000       # optional; capped at 12 seconds
+WEBSITE_ORIGIN=                    # exact same-origin/CSRF origin
+WEBSITE_SESSION_SECRET=            # recovery state + transitional cookie signing
+CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
+
+# Transitional legacy website/Edge/Firebase routes only; remove after cutover.
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ALLOW_FIREBASE_AUTH_FALLBACK=false
 SESSION_COOKIE_SECRET=
-WEBSITE_SESSION_SECRET=
-CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
 BACKEND_PROJECT_ID=
 BACKEND_EDGE_FUNCTIONS_BASE_URL=   # optional; defaults to ${SUPABASE_URL}/functions/v1
-NEXT_PUBLIC_FIREBASE_*=            # all Firebase public vars
-FIREBASE_ADMIN_*=                  # service account vars
+NEXT_PUBLIC_FIREBASE_*=
+FIREBASE_ADMIN_*=
 NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
 CLOUDRUN_PDF_URL=
+```
+
+The opaque-session/SSR path must not expose a Supabase access or refresh token
+to browser JavaScript. Legacy anon/service-role variables above exist only for
+the remaining pre-cutover routes; new code uses publishable keys in public/Auth
+contexts and secret keys only in trusted server workloads.
+
+### `cloudrun-api/` env
+```
+DATABASE_URL=                      # must authenticate as smart_job_api
+DATABASE_SSL_MODE=require          # disable only for loopback development
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=          # sb_publishable_...
+SUPABASE_SECRET_KEY=               # sb_secret_...; Storage administration only
+SUPABASE_STORAGE_BUCKET=smart-job-company-files
+SUPABASE_JWT_ISSUER=               # optional; defaults to ${SUPABASE_URL}/auth/v1
+SUPABASE_JWT_AUDIENCE=authenticated
+WEB_SESSION_ENCRYPTION_KEY_BASE64= # exactly 32 random bytes, canonical base64
+WEB_SESSION_ENCRYPTION_KEY_VERSION=
 ```
 
 ### `supabase/.env`
@@ -387,12 +468,15 @@ ALLOW_FIREBASE_AUTH_FALLBACK=false
 JWT_SECRET=                                       # required for edge JWT verification
 TAX_AUTH_URL=, TAX_TOKEN_URL=, TAX_CLIENT_ID=, TAX_CLIENT_SECRET=, ...
 APP_SCHEME=erpsystem
+DOCUMENTS_BUCKET=smart-job-company-files
 ```
 
 ### `phone_app/` env + native files
 ```
 EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_ANON_KEY=
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+EXPO_PUBLIC_BACKEND_API_BASE_URL=
+EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=   # transitional legacy Edge operations
 ```
 Also requires: `phone_app/google-services.json`, `phone_app/GoogleService-Info.plist`
 
@@ -447,6 +531,83 @@ Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(.
 ### Business registration
 `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so the company, profile, subscription, sync state, and owner membership are created in a single transaction.
 
+The new `POST /api/v1/auth/business-registration` path uses migration
+`0010_hardened_api_business_registration.sql` and
+`private.register_api_business_account(...)`. It is first-workspace-only,
+requires verified email plus an idempotency key, derives the authenticated uid,
+role, tier, enabled modules, and public company counter server-side, and commits
+the company/profile/subscription/sync/membership state atomically.
+
+### API database security foundation
+- Migration `0006_api_security_foundation.sql` creates the least-privileged
+  `smart_job_api` runtime role. Its password is never stored in migrations or
+  source control; provision it out of band and inject the runtime connection
+  string through the environment/Secret Manager.
+- Every API transaction must call `private.set_api_request_context(...)` before
+  authenticated SQL work so `request.jwt.claim.sub` and transaction-local
+  statement, lock, and idle-transaction timeouts are set together.
+- `private.web_sessions` stores only token hashes plus encrypted Supabase
+  credentials; `private.api_idempotency` and `private.file_upload_sessions`
+  hold bounded operational state.
+- Jobs carry an opaque positive `entity_version`. Completion must use
+  `private.complete_job_with_details(...)`, which rejects stale versions and
+  atomically finishes the job, replaces optional parts, consumes inventory,
+  consumes an upload session, inserts attachments, and bumps sync versions.
+- Migration `0007_api_job_creation_and_storage.sql` adds atomic API job
+  creation plus the canonical private `smart-job-company-files` upload bucket;
+  migration `0008_pdf_supabase_storage.sql` extends that bucket to generated
+  PDF content, and migration `0009_bounded_upload_session_cleanup.sql` adds the
+  bounded abandoned-upload cleanup protocol.
+- Migration `0010_hardened_api_business_registration.sql` owns the API-only
+  first-workspace registration transaction described above.
+- Do not grant `smart_job_api` direct write access to public ERP tables or
+  execute access to legacy privileged RPCs that trust caller-supplied identity.
+- Migration `0011_api_push_tokens.sql` exposes only self-scoped
+  `private.upsert_api_push_token(...)` and `private.clear_api_push_token()` to
+  `smart_job_api`. Push-token values are write-only API data; never return or
+  log them, and never accept a caller-supplied target user id.
+- Migration `0012_hardened_api_invitations.sql` derives invitation identity,
+  verified email, tenant role, and membership authority in SQL. Create/redeem
+  use separate hashed 10-per-minute buckets, mandatory idempotency, exact
+  company/code row locking, and atomic invite consumption plus membership.
+- Migration `0016_upload_session_idempotency_limits.sql` makes attachment
+  session creation idempotency-key-only: the claim UUID owns one session,
+  replays mint fresh signed URLs, and Postgres enforces 12 new sessions per
+  user per ten minutes plus four active sessions per user/company. Direct
+  runtime writes are revoked; three initial signing failures enqueue bounded
+  cleanup and the final minute before expiry is never returned.
+- Migration `0018_api_client_mutations.sql` gives clients opaque entity
+  versions and exposes only narrow create/update/delete-or-archive functions
+  to `smart_job_api`. Mutations require verified identity and idempotency,
+  derive module/tenant/role authority in SQL, allow manager/user/basic while
+  denying workers, allocate `client_no` through the company counter, and bump
+  `clients_version` atomically. Referenced clients are archived; only
+  unreferenced clients are physically deleted. Default client reads are
+  active-only and accept explicit `active`, `archived`, or `all` filters.
+- Migration `0019_api_inventory_mutations.sql` adds trigger-maintained opaque
+  versions to inventory parts and location balances, hardens tenant validation
+  plus deterministic lock order in shared movement/batch-pick helpers, and
+  exposes only narrow create/update/archive/adjust/transfer/pick RPCs to
+  `smart_job_api`. Company and cross-member mutations require manager/dev;
+  `/inventory/me` adjustments are self-scoped. Archive requires zero company/member
+  stock, picks are unique and capped at 100 items, and sync bumps atomically.
+- Migration `0021_api_job_mutations.sql` exposes only versioned
+  `private.update_api_job(...)`, `private.accept_api_job(...)`, and
+  `private.delete_api_job(...)` to `smart_job_api`. Every route requires
+  verified identity plus `Idempotency-Key`; SQL re-derives tenant, jobs-module,
+  role, and assignment authority. PATCH cannot transition to `finished`.
+  Accept is manager/dev-only from `pending` or `waiting`. Delete rejects
+  certificates and any document, inventory-movement, upload-session, or
+  attachment reference before removing the job and bumping `jobs_version`.
+- The implemented API slices through `0021` join viewer/workspaces/bootstrap;
+  bounded jobs, clients, company inventory, and member inventory reads; atomic
+  job create/complete plus versioned update/accept/delete; attachment upload
+  sessions; opaque web sessions;
+  first-workspace registration; push-token register/clear; and invitation
+  create/redeem plus client create/update/delete-or-archive and inventory
+  create/update/archive/adjust/transfer/pick. Do not describe an in-progress route as available until its
+  contract, SQL migration, and integration tests land together.
+
 ---
 
 ## Per-package conventions
@@ -454,12 +615,58 @@ Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(.
 ### website/
 - `page.tsx` = server component wrapper only — **never add `"use client"` to `page.tsx`**
 - `page-client.tsx` = client shell pattern
-- Auth: Supabase bearer → HttpOnly `__session` cookie. No tokens in `localStorage` or JS-readable cookies.
+- New explicit-tenant routes under `/app/c/{companyId}` use the opaque
+  Postgres-backed session cookie (`__Host-sj_web_session` in production), a
+  server-only DAL/BFF, and Server Components. The overview, jobs, clients, and
+  inventory read slices are implemented; the remaining `/app/*` routes still
+  use the legacy `__session`/`__session_access` transition path.
+- The explicit-tenant clients slice creates, updates, and delete-or-archives
+  only through same-origin opaque-session BFF routes. Keep the initial page
+  server-rendered; browser mutations require exact Origin, double-submit CSRF,
+  stable `Idempotency-Key`, and the current opaque client `entityVersion`.
+- The explicit-tenant inventory slice keeps initial reads server-rendered and
+  exposes manager/dev create/update/archive/company-adjust controls only through
+  same-origin opaque-session BFF routes. Preserve retry-stable idempotency keys,
+  part `entityVersion`, stock `stockEntityVersion`, and `router.refresh()` after
+  confirmed writes; user and worker website inventory views are read-only.
+- Login, `/app` workspace routing, and onboarding now use the opaque session.
+  Onboarding creation/invitation mutations go only through same-origin BFF
+  handlers; do not reintroduce browser Supabase tokens or `/api/callable` there.
+- Mutations on the opaque path require the readable `sj_csrf` cookie to match
+  `X-SJ-CSRF` and require the exact configured `WEBSITE_ORIGIN`. No Supabase
+  token may enter HTML, browser storage, a readable cookie, or browser JSON.
 - Tailwind v4 with `@tailwindcss/postcss`; forms via React Hook Form + Zod v4
 
 ### phone_app/
+- Local notification APIs use pinned `react-native-notify-kit` `10.4.8`.
+  Firebase Messaging remains the remote push transport, so iOS NotifyKit
+  configuration keeps `handleRemoteNotifications: false`; rebuild native dev
+  clients after changing this native dependency.
+- Push register/clear bodies include one UUID-like per-installation `deviceId`
+  stored only in SecureStore. Notification display/open paths fail closed unless
+  payload `uid` matches the restored user and `companyId` matches the current
+  accessible tenant; Android uses a newly versioned PRIVATE channel ID.
 - Local persistence: `react-native-mmkv` — **never `AsyncStorage`** for MMKV-owned surfaces
 - Auth transport tokens: Expo SecureStore — never MMKV, AsyncStorage, localStorage, or JS-readable cookies
+- Migrated job, client, and inventory list queries use the Cloud API with keys
+  containing both `uid` and `companyId`, bounded cursors/search, and stale-data
+  retention. Inventory writes also use the Cloud API: manager/dev may mutate
+  company parts, users remain read-only, and workers adjust only their own
+  `/inventory/me` stock. Use Expo Crypto UUID idempotency keys plus the opaque
+  part/stock versions and invalidate only the active tenant query prefix. Keep
+  the company catalog picker disabled until its scoped transfer UI is complete.
+- Client Book and cache client create/update/delete-or-archive paths use only
+  the authenticated Cloud API. Preserve active-only default paging, stable
+  retry idempotency keys, client entity versions, and tenant-scoped React Query
+  invalidation; do not restore Edge callable or Firebase client writes.
+- The offline v1 outbox supports only `job.create_finished` and
+  `job.complete_assigned`. It uses one SQLCipher database per uid with its key
+  in SecureStore, AES-256-GCM chunk-encrypted app-owned attachments, and
+  synchronization only on app start, foreground, and connectivity restoration.
+  Preserve pending work across logout for the same uid; delete staged files
+  only after server reconciliation or explicit user discard. Online form success
+  requires a `reconciled` operation outcome; queued/retry/conflict/terminal work
+  stays visible in Pending Work with manual retry and explicit discard.
 - Debug logging: use `utils/logger.ts`; noisy cache/read-model logs must be dev-only, while warnings/errors remain visible
 - Alerts: `useAlert()` from `contexts/AlertContext` — **never `Alert.alert()`**
 - JSON parsing: `safeJsonParse()` — **never raw `JSON.parse()`** in mobile modules
@@ -476,8 +683,32 @@ Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(.
 - Prefer updating existing markdown files over creating new ones.
 
 ### cloudrun-pdf
-- Puppeteer 24; Docker base `ghcr.io/puppeteer/puppeteer:24.2.1`
+- Puppeteer 24; Docker base `ghcr.io/puppeteer/puppeteer:24.40.0`
 - Must set `PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable` in container env
+- Generated PDFs, previews, and logo reads use the private
+  `smart-job-company-files` bucket. Configure server-only `SUPABASE_URL` and
+  `SUPABASE_SECRET_KEY`; the service rejects legacy service-role keys and any
+  alternate bucket name.
+
+### cloudrun-archiver
+- Before monthly archive work, the job runs one bounded abandoned-upload cleanup
+  batch through service-role-only RPCs from migration
+  `0009_bounded_upload_session_cleanup.sql`. Cleanup failure is reported but
+  must not prevent the monthly archive phase.
+- Configure server-only `SUPABASE_URL` and `SUPABASE_SECRET_KEY`
+  (`sb_secret_...`) to enable cleanup. Native requests send the opaque key only
+  in `apikey`, never in `Authorization`.
+- Delete only the exact canonical `smart-job-company-files` paths returned by a
+  claimed session manifest. Never delete consumed/finalized sessions, accept a
+  cross-prefix path, or recursively delete a prefix.
+
+### Remaining approval gates
+- The database/security foundation and initial API, SSR website, mobile outbox,
+  and private Storage/PDF slices are implemented locally. New API/tax
+  Dockerfiles, deployment/IAM configuration, stable API domain, remaining
+  domain routes and frontend cutover, remaining legacy file paths, and deletion
+  of Edge/Firebase infrastructure are not complete and still require their
+  implementation-time approvals.
 
 ---
 

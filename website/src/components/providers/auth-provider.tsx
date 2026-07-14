@@ -21,6 +21,10 @@ import {
   subscribeConfiguredAuthState,
   type ClientAuthUser,
 } from "@/lib/firebase/client-auth";
+import {
+  clearSessionIfStillUnauthenticated,
+  resolveUnauthenticatedSession,
+} from "@/lib/auth/client-session-reconciliation";
 import type { UserProfile, UserSubscription } from "@/lib/types";
 
 interface AuthContextValue {
@@ -166,6 +170,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return subscribeConfiguredAuthState(async (nextUser) => {
       try {
+        // An earlier unauthenticated callback can finish after sign-in has
+        // established the in-memory transport. Do not let it publish a stale
+        // signed-out state over the new session.
+        if (!nextUser && hasClientAuthSession()) {
+          return;
+        }
         setLoading(true);
         setUser(nextUser);
         if (nextUser) {
@@ -180,28 +190,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSubscription(null);
           }
         } else {
-          if (!hasClientAuthSession() && !isLogoutInProgress()) {
-            const sessionUser = await loadSessionUser().catch(() => null);
-            if (sessionUser) {
-              setUser(sessionUser);
-              try {
-                const result = await loadUserProfile();
-                setProfile(result.profile);
-                setSubscription(result.subscription);
-              } catch {
-                setProfile(null);
-                setSubscription(null);
-              }
-              return;
-            }
+          const resolution = await resolveUnauthenticatedSession({
+            loadSessionUser: () => loadSessionUser().catch(() => null),
+            hasClientAuthSession,
+            isLogoutInProgress,
+          });
+          if (resolution.kind === "superseded") {
+            return;
           }
-          await syncAuthSession(null);
+          if (resolution.kind === "restored") {
+            setUser(resolution.sessionUser);
+            try {
+              const result = await loadUserProfile();
+              setProfile(result.profile);
+              setSubscription(result.subscription);
+            } catch {
+              setProfile(null);
+              setSubscription(null);
+            }
+            return;
+          }
+          const cleared = await clearSessionIfStillUnauthenticated({
+            clearSession: () => syncAuthSession(null),
+            hasClientAuthSession,
+            isLogoutInProgress,
+          });
+          if (!cleared) {
+            return;
+          }
           setProfile(null);
           setSubscription(null);
         }
       } catch {
         if (!nextUser) {
-          await syncAuthSession(null);
+          await clearSessionIfStillUnauthenticated({
+            clearSession: () => syncAuthSession(null),
+            hasClientAuthSession,
+            isLogoutInProgress,
+          });
         }
         setProfile(null);
         setSubscription(null);

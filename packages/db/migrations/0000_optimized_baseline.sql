@@ -794,11 +794,14 @@ AS $$
 DECLARE
   v_existing RECORD;
 BEGIN
-  SELECT status, result_payload, expire_at
+  SELECT
+    idempotency.status,
+    idempotency.result_payload,
+    idempotency.expire_at
   INTO v_existing
-  FROM tax_invoice_idempotency
-  WHERE company_id = p_company_id
-    AND idempotency_hash = p_idempotency_hash
+  FROM tax_invoice_idempotency AS idempotency
+  WHERE idempotency.company_id = p_company_id
+    AND idempotency.idempotency_hash = p_idempotency_hash
   LIMIT 1
   FOR UPDATE;
 
@@ -844,7 +847,7 @@ BEGIN
     RETURN;
   END IF;
 
-  UPDATE tax_invoice_idempotency
+  UPDATE tax_invoice_idempotency AS idempotency
   SET user_id = p_user_id,
       status = 'in_progress',
       request_hash = p_request_hash,
@@ -852,8 +855,8 @@ BEGIN
       locked_at = NOW(),
       expire_at = p_expire_at,
       updated_at = NOW()
-  WHERE company_id = p_company_id
-    AND idempotency_hash = p_idempotency_hash;
+  WHERE idempotency.company_id = p_company_id
+    AND idempotency.idempotency_hash = p_idempotency_hash;
 
   claim_status := 'acquired';
   result_payload := NULL;
@@ -1084,12 +1087,12 @@ BEGIN
       RAISE EXCEPTION 'inventory_invalid_consumption';
     END IF;
 
-    SELECT id, part_no
+    SELECT inventory_part.id, inventory_part.part_no
     INTO v_part
-    FROM inventory_parts
-    WHERE id = v_pick.part_id
-      AND company_id = p_company_id
-      AND archived_at IS NULL
+    FROM inventory_parts AS inventory_part
+    WHERE inventory_part.id = v_pick.part_id
+      AND inventory_part.company_id = p_company_id
+      AND inventory_part.archived_at IS NULL
     LIMIT 1;
 
     IF v_part.id IS NULL THEN
@@ -1615,7 +1618,13 @@ BEGIN
     v_now,
     v_now,
     v_now
-  ) RETURNING id, company_id, member_no, role, display_name, joined_at
+  ) RETURNING
+    company_memberships.id,
+    company_memberships.company_id,
+    company_memberships.member_no,
+    company_memberships.role,
+    company_memberships.display_name,
+    company_memberships.joined_at
   INTO v_membership;
 
   INSERT INTO inventory_locations (company_id, location_type, membership_id, name, created_at)

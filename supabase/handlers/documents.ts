@@ -537,7 +537,7 @@ export async function publishGenerateTask(payload: any, ctx: EdgeFunctionContext
     if (!documentId) {
       throw { code: "not-found", message: "Document not found", httpStatus: 404 };
     }
-    if (documentRow.document_type !== undefined && Number(documentRow.document_type) !== documentType) {
+    if (documentRow?.document_type !== undefined && Number(documentRow.document_type) !== documentType) {
       throw {
         code: "failed-precondition",
         message: `Document type mismatch: requested ${documentType} but existing document is ${documentRow.document_type}`,
@@ -691,12 +691,12 @@ export async function createDocumentDownloadUrlV1(payload: any, ctx: EdgeFunctio
   if (!normalizedStoragePath) {
     throw { code: "failed-precondition", message: "Document storage path is invalid", httpStatus: 400 };
   }
-  const expectedPrefix = `companies/${resolvedCompany.publicCompanyId}/documents/`;
+  const expectedPrefix = `${resolvedCompany.internalCompanyId}/documents/`;
   if (!normalizedStoragePath.startsWith(expectedPrefix)) {
     throw { code: "failed-precondition", message: "Document storage path is invalid", httpStatus: 400 };
   }
 
-  const bucket = Deno.env.get("DOCUMENTS_BUCKET") || "companies";
+  const bucket = Deno.env.get("DOCUMENTS_BUCKET") || "smart-job-company-files";
   const expirySeconds = Math.min(60 * 60, Math.max(60, Number(payload?.expirySeconds || 900) || 900));
   const { data: signed, error: signError } = await supabase.storage
     .from(bucket)

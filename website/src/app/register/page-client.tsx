@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -12,8 +11,6 @@ import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useAppToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/use-auth";
-import { signInWithConfiguredProvider } from "@/lib/firebase/client-auth";
 
 const schema = z
   .object({
@@ -34,35 +31,24 @@ const setupFlow = [
     description: "Email + password with Supabase Authentication.",
   },
   {
-    title: "Add profile and business info",
-    description: "Guided onboarding collects name, role, and company details.",
+    title: "Verify your email",
+    description: "Open the confirmation link before signing in.",
   },
   {
-    title: "Cloud Function provisioning",
-    description:
-      "registerBusinessV1 initializes profile, cache, company, and business_info docs.",
+    title: "Add profile and business info",
+    description: "Guided onboarding starts only after verified sign-in.",
   },
 ] as const;
 
 export default function RegisterClient() {
   const router = useRouter();
   const { toast } = useAppToast();
-  const { user, profile } = useAuth();
 
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
-
-  useEffect(() => {
-    if (!user) return;
-    if (profile?.role) {
-      router.replace("/app");
-      return;
-    }
-    router.replace("/onboarding");
-  }, [profile?.role, router, user]);
 
   const onSubmit = async (values: FormValues) => {
     try {
@@ -79,14 +65,12 @@ export default function RegisterClient() {
         throw new Error(payload.error || "Registration failed");
       }
 
-      await signInWithConfiguredProvider(values.email, values.password);
-
       toast({
-        title: "Account created",
-        description: "Continue through onboarding to save role and business setup.",
+        title: "Check your email",
+        description: "Confirm your email address, then sign in to continue onboarding.",
         variant: "success",
       });
-      router.push("/onboarding");
+      router.replace("/login?verification=pending");
     } catch (error) {
       toast({
         title: "Registration failed",
@@ -104,7 +88,7 @@ export default function RegisterClient() {
             <div>
               <p className="section-kicker">
                 <Sparkles className="h-3.5 w-3.5" />
-                Step 1 of 2
+                Step 1 of 3
               </p>
               <h1 className="mt-4 text-4xl font-semibold tracking-normal text-slate-950 dark:text-white">
                 Create your Smart-Job ERP account
@@ -181,7 +165,7 @@ export default function RegisterClient() {
                 />
 
                 <Button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-2">
-                  {isSubmitting ? "Creating account..." : "Continue to onboarding"}
+                  {isSubmitting ? "Creating account..." : "Create account"}
                   {!isSubmitting ? <ArrowRight className="h-4 w-4" /> : null}
                 </Button>
               </form>
@@ -192,7 +176,7 @@ export default function RegisterClient() {
                   Backend setup is atomic and server-side.
                 </p>
                 <p className="mt-1">
-                  Business registration data is written by Cloud Functions, not client direct writes.
+                  Business registration data is written atomically by the server API, not through client-side database writes.
                 </p>
               </div>
 

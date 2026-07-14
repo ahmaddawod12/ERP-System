@@ -1,6 +1,8 @@
+import type { CompanyFileStorage } from './company-file-storage';
+import { buildCompanyLogoObjectPath } from './storage-paths';
+
 export function createCompanyLogoFetcher(options: {
-  storage: any;
-  bucketName: string;
+  storage: CompanyFileStorage;
   maxLogoSize: number;
   cacheTtlMs?: number;
   maxCacheSize?: number;
@@ -26,29 +28,17 @@ export function createCompanyLogoFetcher(options: {
     }
 
     try {
-      const bucket = options.storage.bucket(options.bucketName);
-      const logoPath = `companies/${companyId}/logo.png`;
-      const logoFile = bucket.file(logoPath);
-      const [exists] = await logoFile.exists();
-
-      if (!exists) {
+      const logoPath = buildCompanyLogoObjectPath(companyId);
+      const logo = await options.storage.downloadOptionalImage(logoPath, options.maxLogoSize);
+      if (!logo) {
         console.log(`[${taskType}:${taskId}] No logo found at ${logoPath}`);
         logoCache.set(companyId, { dataUrl: null, fetchedAt: Date.now() });
         return null;
       }
 
-      const [metadata] = await logoFile.getMetadata();
-      const fileSize = parseInt(String(metadata.size), 10) || 0;
-      if (fileSize > options.maxLogoSize) {
-        console.warn(`[${taskType}:${taskId}] Logo too large (${fileSize} bytes, max ${options.maxLogoSize}). Skipping.`);
-        logoCache.set(companyId, { dataUrl: null, fetchedAt: Date.now() });
-        return null;
-      }
-
-      const [logoBuffer] = await logoFile.download();
-      const base64Logo = logoBuffer.toString('base64');
-      const dataUrl = `data:image/png;base64,${base64Logo}`;
-      console.log(`[${taskType}:${taskId}] Logo converted to base64 (${logoBuffer.length} bytes) from ${logoPath}`);
+      const base64Logo = logo.bytes.toString('base64');
+      const dataUrl = `data:${logo.contentType};base64,${base64Logo}`;
+      console.log(`[${taskType}:${taskId}] Logo converted to base64 (${logo.bytes.length} bytes) from ${logoPath}`);
 
       logoCache.set(companyId, { dataUrl, fetchedAt: Date.now() });
       evictLogoCacheIfNeeded();
@@ -59,4 +49,3 @@ export function createCompanyLogoFetcher(options: {
     }
   };
 }
-

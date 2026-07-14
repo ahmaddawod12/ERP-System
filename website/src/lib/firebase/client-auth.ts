@@ -82,6 +82,19 @@ function notifySupabaseListeners() {
   }
 }
 
+async function syncWebsiteSession(accessToken: string) {
+  const response = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ token: accessToken }),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to establish the website session");
+  }
+  inMemorySessionSyncedToken = accessToken;
+}
+
 async function refreshSupabaseAccessTokenIfNeeded() {
   if (typeof window === "undefined") return null;
 
@@ -196,6 +209,12 @@ export async function signInWithConfiguredProvider(email: string, password: stri
       email: user.email,
     },
   });
+  try {
+    await syncWebsiteSession(accessToken);
+  } catch (error) {
+    clearSupabaseSession();
+    throw error;
+  }
   notifySupabaseListeners();
   return user;
 }

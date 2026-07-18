@@ -10,6 +10,7 @@ import {
   listArchivedCompanyDocumentsPage,
   listArchivedCompanyJobsPage,
   listCompanyPublicIds,
+  recordArchiveRun,
 } from '@smart-job/db';
 import { getTargetMonth } from './archive-month';
 import { runUploadCleanupStartup } from './upload-cleanup';
@@ -395,7 +396,10 @@ async function verifyArchive(companyId, archiveKey, expectedCount) {
   }
 
   console.log(`✅ Archive verified: ${storagePath} (${storedDocCount} docs)`);
-  return true;
+  return {
+    storagePath,
+    checksum: storedChecksum || null,
+  };
 }
 
 async function deleteArchiveRecords(companyId, kind, recordIds) {
@@ -416,6 +420,7 @@ function buildDeletedManifestEntry(existingEntry, deletedCount, expectedCount, v
   }
 
   return {
+    ...existingEntry,
     archivedAt: existingEntry.archivedAt,
     docCount: expectedCount,
     deletedCount: verified ? expectedCount : deletedCount,
@@ -447,9 +452,17 @@ async function processCompany(companyId, target) {
     console.log(`⏭️ ${finishedKey} already archived (${manifest[finishedKey].docCount} docs on ${manifest[finishedKey].archivedAt})`);
   } else {
     if (manifest[finishedKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[finishedKey].docIds)) {
-      const archiveVerified = await verifyArchive(companyId, finishedKey, manifest[finishedKey].docCount);
+      const verifiedArchive = await verifyArchive(companyId, finishedKey, manifest[finishedKey].docCount);
       const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', manifest[finishedKey].docIds);
-      manifest[finishedKey] = buildDeletedManifestEntry(manifest[finishedKey], deleted, manifest[finishedKey].docIds.length, archiveVerified);
+      manifest[finishedKey] = buildDeletedManifestEntry(manifest[finishedKey], deleted, manifest[finishedKey].docIds.length, true);
+      await recordArchiveRun(companyId, finishedKey, 'jobs', {
+        status: manifest[finishedKey].status,
+        docCount: manifest[finishedKey].docCount,
+        deletedCount: manifest[finishedKey].deletedCount || 0,
+        storagePath: verifiedArchive.storagePath,
+        checksum: verifiedArchive.checksum,
+        completedAt: manifest[finishedKey].status === 'deleted' ? new Date().toISOString() : null,
+      });
       manifestUpdated = true;
     } else {
       const archive = await uploadArchive(companyId, finishedKey, target, 'finishedJobs');
@@ -462,15 +475,24 @@ async function processCompany(companyId, target) {
         console.log(`📊 Found ${archive.docCount} finished jobs for ${year}-${month}`);
 
         await verifyArchive(companyId, finishedKey, archive.docCount);
+        const storagePath = `companies/${companyId}/archives/${finishedKey}.json`;
         manifest[finishedKey] = {
           archivedAt: archive.archivedAt,
           docCount: archive.docCount,
           status: 'uploaded_not_deleted',
           docIds: archive.docIds,
+          storagePath,
+          checksum: archive.checksum || null,
         };
         await saveManifest(companyId, manifest);
+        await recordArchiveRun(companyId, finishedKey, 'jobs', {
+          status: 'uploaded_not_deleted',
+          docCount: archive.docCount,
+          storagePath,
+          checksum: archive.checksum || null,
+        });
 
-        const deleted = await deleteArchiveRecords(companyId, 'finishedJobs', archive.docIds);
+        const deleted = await deleteArchivedJobsByIds(companyId, archive.docIds);
         console.log(`✅ Archived and deleted ${deleted} finished jobs for ${year}-${month}`);
 
         manifest[finishedKey] = buildDeletedManifestEntry({
@@ -478,7 +500,17 @@ async function processCompany(companyId, target) {
           docCount: archive.docCount,
           status: 'uploaded_not_deleted',
           docIds: archive.docIds,
+          storagePath,
+          checksum: archive.checksum || null,
         }, deleted, archive.docCount);
+        await recordArchiveRun(companyId, finishedKey, 'jobs', {
+          status: manifest[finishedKey].status,
+          docCount: archive.docCount,
+          deletedCount: deleted,
+          storagePath,
+          checksum: archive.checksum || null,
+          completedAt: manifest[finishedKey].status === 'deleted' ? new Date().toISOString() : null,
+        });
         manifestUpdated = true;
       }
     }
@@ -490,9 +522,17 @@ async function processCompany(companyId, target) {
     console.log(`⏭️ ${documentsKey} already archived (${manifest[documentsKey].docCount} docs on ${manifest[documentsKey].archivedAt})`);
   } else {
     if (manifest[documentsKey]?.status === 'uploaded_not_deleted' && Array.isArray(manifest[documentsKey].docIds)) {
-      const archiveVerified = await verifyArchive(companyId, documentsKey, manifest[documentsKey].docCount);
+      const verifiedArchive = await verifyArchive(companyId, documentsKey, manifest[documentsKey].docCount);
       const deleted = await deleteArchiveRecords(companyId, 'documents', manifest[documentsKey].docIds);
-      manifest[documentsKey] = buildDeletedManifestEntry(manifest[documentsKey], deleted, manifest[documentsKey].docIds.length, archiveVerified);
+      manifest[documentsKey] = buildDeletedManifestEntry(manifest[documentsKey], deleted, manifest[documentsKey].docIds.length, true);
+      await recordArchiveRun(companyId, documentsKey, 'documents', {
+        status: manifest[documentsKey].status,
+        docCount: manifest[documentsKey].docCount,
+        deletedCount: manifest[documentsKey].deletedCount || 0,
+        storagePath: verifiedArchive.storagePath,
+        checksum: verifiedArchive.checksum,
+        completedAt: manifest[documentsKey].status === 'deleted' ? new Date().toISOString() : null,
+      });
       manifestUpdated = true;
     } else {
       const archive = await uploadArchive(companyId, documentsKey, target, 'documents');
@@ -505,13 +545,22 @@ async function processCompany(companyId, target) {
         console.log(`📊 Found ${archive.docCount} documents for ${year}-${month}`);
 
         await verifyArchive(companyId, documentsKey, archive.docCount);
+        const storagePath = `companies/${companyId}/archives/${documentsKey}.json`;
         manifest[documentsKey] = {
           archivedAt: archive.archivedAt,
           docCount: archive.docCount,
           status: 'uploaded_not_deleted',
           docIds: archive.docIds,
+          storagePath,
+          checksum: archive.checksum || null,
         };
         await saveManifest(companyId, manifest);
+        await recordArchiveRun(companyId, documentsKey, 'documents', {
+          status: 'uploaded_not_deleted',
+          docCount: archive.docCount,
+          storagePath,
+          checksum: archive.checksum || null,
+        });
 
         const deleted = await deleteArchiveRecords(companyId, 'documents', archive.docIds);
         console.log(`✅ Archived and deleted ${deleted} documents for ${year}-${month}`);
@@ -521,7 +570,17 @@ async function processCompany(companyId, target) {
           docCount: archive.docCount,
           status: 'uploaded_not_deleted',
           docIds: archive.docIds,
+          storagePath,
+          checksum: archive.checksum || null,
         }, deleted, archive.docCount);
+        await recordArchiveRun(companyId, documentsKey, 'documents', {
+          status: manifest[documentsKey].status,
+          docCount: archive.docCount,
+          deletedCount: deleted,
+          storagePath,
+          checksum: archive.checksum || null,
+          completedAt: manifest[documentsKey].status === 'deleted' ? new Date().toISOString() : null,
+        });
         manifestUpdated = true;
       }
     }

@@ -463,6 +463,7 @@ const taxInvoiceReservations = pgTable('tax_invoice_reservations', {
   reservedByUserId: text('reserved_by_user_id').references(() => appUsers.id, { onDelete: 'set null' }),
   clientNameSnapshot: varchar('client_name_snapshot', { length: 240 }),
   externalConfirmationNumber: varchar('external_confirmation_number', { length: 128 }),
+  oauthSessionId: varchar('oauth_session_id', { length: 128 }),
   statusPayload: jsonb('status_payload').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -470,6 +471,7 @@ const taxInvoiceReservations = pgTable('tax_invoice_reservations', {
   documentUnique: uniqueIndex('tax_invoice_reservations_document_unique').on(table.documentId),
   companyNumberUnique: uniqueIndex('tax_invoice_reservations_company_number_unique').on(table.companyId, table.documentNumber),
   companyStatusCreatedIdx: index('tax_invoice_reservations_company_status_created_idx').on(table.companyId, table.status, table.createdAt),
+  oauthSessionUnique: uniqueIndex('tax_invoice_reservations_oauth_session_id_unique').on(table.oauthSessionId),
 }));
 
 const taxInvoiceIdempotency = pgTable('tax_invoice_idempotency', {

@@ -18,6 +18,7 @@
     "@smart-job/api-contracts": "file:../packages/api-contracts",
     "@smart-job/contracts": "file:../packages/contracts",
     "fastify": "5.10.0",
+    "jose": "6.2.3",
     "zod": "4.4.3"
   },
   "devDependencies": {

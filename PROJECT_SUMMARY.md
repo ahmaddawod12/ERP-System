@@ -11,15 +11,18 @@ Smart-Job ERP is a **multi-tenant field-service platform**.
 - **Mobile React compatibility:** keep React/React DOM at Expo 57's supported
   19.2.3 pair until Expo/React Native publish an aligned renderer update; this
   client does not enable React Server Components.
-- **Backend transition:** Supabase Edge Functions remain the active gateway for
-  legacy and not-yet-ported operations. The staged `cloudrun-api` implements
-  viewer/workspace/bootstrap, bounded job/client/inventory reads, atomic job
-  create/complete, private attachment upload sessions, first-workspace business
-  registration, push-token mutations, invitation create/redeem, and opaque web
-  sessions directly against Postgres/Auth/Storage. It does not receive
-  production traffic yet.
-- **Regional service:** `cloudrun-tax` is still a tested stateless service shell;
-  tax OAuth/callback traffic and deployment/IAM are not implemented.
+- **Backend transition:** The `cloudrun-api` implements viewer/workspace/bootstrap
+  (including the bounded subscription entitlement summary),
+  bounded job/client/inventory reads, atomic job create/complete, private
+  attachment upload sessions, first-workspace business registration, push-token
+  mutations, invitation create/redeem, opaque web sessions, client/inventory/job
+  mutations, document tasks with durable PDF dispatch outbox, tax callback
+  processing, and archive listing directly against Postgres/Auth/Storage.
+- **Regional service:** `cloudrun-tax` is a stateless Cloud Run gateway in
+  `me-west1` that terminates HMAC-authenticated tax-authority callbacks,
+  forwards them to a protected internal main-API endpoint via Cloud Run IAM,
+  and accepts tax approval requests from the main API using service identity
+  verification.
 - **Shared packages:** `@smart-job/contracts` (constants/enums), `@smart-job/api-contracts` (runtime HTTP schemas), and `@smart-job/db` (schema + access helpers).
 
 ## Package layout
@@ -289,6 +292,23 @@ WEB_SESSION_ENCRYPTION_KEY_BASE64=
 WEB_SESSION_ENCRYPTION_KEY_VERSION=
 ```
 
+### `cloudrun-tax/`
+```
+TAX_TOKEN_URL=
+TAX_APPROVAL_URL=
+TAX_CLIENT_ID=
+TAX_CLIENT_SECRET=
+TAX_CALLBACK_HMAC_SECRET=
+MAIN_API_URL=                      # exact internal callback endpoint
+MAIN_API_AUDIENCE=                 # main API Cloud Run audience
+TAX_GATEWAY_AUDIENCE=              # tax gateway Cloud Run audience
+TAX_APPROVAL_CALLER_SERVICE_ACCOUNT=
+```
+
+The archiver uses a separate privileged `DATABASE_URL` secret; it must not use
+the `smart_job_api` runtime credential because the batch job performs exact
+source-row deletes and archive-run writes directly.
+
 ### `supabase/.env`
 ```
 CORS_ALLOWED_ORIGINS=http://localhost:3000,...
@@ -430,10 +450,13 @@ The following production and security issues were also fixed before Phase 1:
     stock adjustments now use the same API/versioned invalidation path; user
     company inventory stays read-only.
 
-These slices do not mean the migration is complete. Remaining domain modules,
-legacy website pages and mobile feature cutover, legacy file paths,
-tax integration, Cloud Run container/deployment/IAM, stable API DNS, and final
-Edge/Firebase removal remain outstanding approval-gated work.
+The tax callback/approval integration, archive retrieval API, Cloud Run
+deployment/IAM workflow, CI integration-test job, and E2E test infrastructure
+(Playwright + Maestro) are now implemented. Website Firebase/legacy-auth
+infrastructure has been removed. Mobile Firestore/App Check have been removed;
+Firebase Messaging and Storage remain for push notifications and file uploads.
+Remaining mobile Edge caller cutover, stable API DNS, and final Edge/Firebase
+directory deletion remain outstanding approval-gated work.
 
 ## Still on the technical-debt radar
 
@@ -442,14 +465,13 @@ Edge/Firebase removal remain outstanding approval-gated work.
 - Mobile screens are very large (1000+ lines) and should be split into hooks/components.
 - Some mobile lists use `.map()` inside `ScrollView` instead of `FlatList`.
 - `npm audit` findings remain in `phone_app` and other packages; update dependencies after baseline testing.
-- Website workers/settings/admin/documents and remaining mutation-heavy pages
-  still need explicit-tenant server/BFF conversion; the implemented jobs,
-  clients, and inventory reads are already bounded and server-rendered.
+- Mobile `httpsCallable` Edge callers in jobs, documents, cache, and archive
+  hooks still need Cloud API cutover; the migrated Cloud API reads for jobs,
+  clients, inventory, and documents are already in place.
 - Edge import-map deployment config should be verified (`deno.json` exists but Supabase deploy may need `supabase/functions/import_map.json`).
 - Some CI jobs build shared packages inline; consider a reusable composite action once the matrix stabilizes.
-- New API/tax Dockerfiles and Cloud Run deployment/IAM, remaining domain-route
-  and frontend cutovers, legacy storage removal, and final Edge/Firebase
-  deletion remain explicit future approval gates.
+- Stable API DNS, remaining mobile Edge caller cutover, and final
+  Edge/Firebase directory deletion remain explicit future approval gates.
 
 ## When in doubt
 

@@ -64,7 +64,7 @@ export class HmacTaxCallbackAuthenticator implements TaxCallbackAuthenticator {
     }
 
     const match = SIGNATURE_PATTERN.exec(input.signature);
-    if (match === null) throw authenticationFailure();
+    if (match === null || match[1] === undefined) throw authenticationFailure();
     const supplied = Buffer.from(match[1], "hex");
     const expected = Buffer.from(
       createCallbackSignature(this.secret, {

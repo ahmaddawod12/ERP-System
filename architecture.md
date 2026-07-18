@@ -49,7 +49,9 @@ flow, cleanup, registration, push, invitation, client/inventory/worker mutation,
 and versioned job-mutation slices. The remaining domain
 routes,
 legacy-file and frontend cutovers, tax work, new API/tax Dockerfiles,
-deployment/IAM, stable API DNS, and legacy deletion remain behind their stated
+deployment/IAM, custom API DNS mapping, and legacy deletion are now implemented.
+The Cloud Run deploy workflow maps a custom API domain in production via
+`API_CUSTOM_DOMAIN`. Staging uses generated `run.app` URLs.
 approval gates.
 
 ## Ownership Map
@@ -353,5 +355,7 @@ login/onboarding plus overview/jobs/clients/inventory SSR slices, tenant-scoped
 mobile job/client/inventory reads, and the two-operation encrypted mobile field
 outbox are implemented locally. Domain parity and global frontend cutover
 are not complete. Tax behavior, remaining file and feature routes, new API/tax
-Docker/deployment/IAM, stable API DNS, and legacy Edge/Firebase deletion remain
+Docker/deployment/IAM, custom API DNS, and legacy Edge/Firebase cleanup are
+implemented. Firebase config files and the Edge deploy workflow have been
+removed. Remaining mobile Edge caller cutover is the final step.
 outstanding approval gates.

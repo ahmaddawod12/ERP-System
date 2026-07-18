@@ -36,6 +36,13 @@ const inventoryAccessRowSchema = z.object({
   inventory_enabled: z.boolean(),
 }).strict();
 
+const managedMemberInventoryAccessRowSchema = z.object({
+  role: z.enum(["manager", "worker", "user", "basic", "dev"]).nullable(),
+  is_dev: z.boolean(),
+  inventory_enabled: z.boolean(),
+  target_membership_id: z.uuid().nullable(),
+}).strict();
+
 const inventoryPartRowSchema = z.object({
   part_id: z.uuid(),
   part_no: z.number().int().positive(),
@@ -297,6 +304,62 @@ export const READ_MEMBER_INVENTORY_PAGE_SQL = `
     )
 ${INVENTORY_SEARCH_SQL}${INVENTORY_STATUS_SQL}${INVENTORY_CURSOR_SQL}`;
 
+export const READ_MANAGED_MEMBER_INVENTORY_ACCESS_SQL = `
+  SELECT
+    requester.role::text AS role,
+    private.app_is_dev() AS is_dev,
+    COALESCE(entitlement.inventory_enabled, false) AS inventory_enabled,
+    target.id AS target_membership_id
+  FROM (SELECT 1) AS seed
+  LEFT JOIN public.company_memberships requester
+    ON requester.company_id = $1::uuid
+   AND requester.user_id = private.app_auth_uid()
+   AND requester.status = 'active'
+  LEFT JOIN public.company_memberships target
+    ON target.company_id = $1::uuid
+   AND target.member_no = $2::integer
+   AND target.status = 'active'
+  CROSS JOIN private.get_company_module_entitlements($1::uuid) AS entitlement
+`;
+
+export const READ_MANAGED_MEMBER_INVENTORY_PAGE_SQL = `
+  SELECT
+    part.id AS part_id,
+    part.part_no,
+    CASE
+      WHEN part.archived_at IS NOT NULL THEN 'archived'
+      WHEN part.active THEN 'active'
+      ELSE 'inactive'
+    END AS status,
+    part.name,
+    part.active,
+    balance.quantity_on_hand,
+    part.low_threshold,
+    part.unit,
+    part.entity_version,
+    balance.entity_version AS stock_entity_version,
+    part.created_at,
+    pg_catalog.to_char(
+      part.created_at AT TIME ZONE 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+    ) AS cursor_created_at,
+    GREATEST(part.updated_at, balance.updated_at) AS updated_at,
+    part.archived_at
+  FROM public.company_memberships target
+  INNER JOIN public.inventory_locations location
+    ON location.company_id = target.company_id
+   AND location.location_type = 'member'
+   AND location.membership_id = target.id
+  INNER JOIN public.inventory_balances balance
+    ON balance.location_id = location.id
+  INNER JOIN public.inventory_parts part
+    ON part.id = balance.part_id
+   AND part.company_id = location.company_id
+  WHERE target.company_id = $1::uuid
+    AND target.member_no = $8::integer
+    AND target.status = 'active'
+${INVENTORY_SEARCH_SQL}${INVENTORY_STATUS_SQL}${INVENTORY_CURSOR_SQL}`;
+
 async function assertInventoryReadAccess(
   transaction: DatabaseQueryable,
   internalCompanyId: string,
@@ -377,4 +440,63 @@ export function readViewerInventoryPage(
   query: InventoryListQuery,
 ) {
   return readInventoryPage(transaction, internalCompanyId, "member", query);
+}
+
+export async function readManagedMemberInventoryPage(
+  transaction: DatabaseQueryable,
+  internalCompanyId: string,
+  targetMemberNo: number,
+  query: InventoryListQuery,
+) {
+  const accessResult = await transaction.query(READ_MANAGED_MEMBER_INVENTORY_ACCESS_SQL, [
+    internalCompanyId,
+    targetMemberNo,
+  ]);
+  const access = managedMemberInventoryAccessRowSchema.parse(accessResult.rows[0]);
+  if (!access.inventory_enabled) {
+    throw new AppError({
+      statusCode: 403,
+      code: "INVENTORY_MODULE_DISABLED",
+      message: "Inventory is not enabled for this workspace.",
+    });
+  }
+  if (!access.is_dev && !new Set(["manager", "dev"]).has(access.role ?? "")) {
+    throw new AppError({
+      statusCode: 403,
+      code: "MEMBER_INVENTORY_FORBIDDEN",
+      message: "Only managers can read another member's inventory.",
+    });
+  }
+  if (access.target_membership_id === null) {
+    throw new AppError({
+      statusCode: 404,
+      code: "MEMBER_NOT_FOUND",
+      message: "The requested member was not found.",
+    });
+  }
+
+  const pageSize = query.pageSize ?? DEFAULT_INVENTORY_PAGE_SIZE;
+  const cursor = query.afterCursor === undefined
+    ? null
+    : decodeInventoryListCursor(query.afterCursor);
+  const result = await transaction.query<InventoryPartRow>(
+    READ_MANAGED_MEMBER_INVENTORY_PAGE_SQL,
+    [
+      internalCompanyId,
+      query.search ?? null,
+      escapeLikePattern(query.search),
+      normalizedStatuses(query.status),
+      cursor?.createdAt ?? null,
+      cursor?.id ?? null,
+      pageSize + 1,
+      targetMemberNo,
+    ],
+  );
+  const rows = result.rows.slice(0, pageSize);
+  const items = rows.map(mapInventoryPartRow);
+  const lastRow = rows.at(-1);
+  const nextCursor = result.rows.length > pageSize && lastRow !== undefined
+    ? encodeInventoryListCursor(lastRow.cursor_created_at, lastRow.part_id)
+    : null;
+  return InventoryListPageSchema.parse({ items, nextCursor });
 }

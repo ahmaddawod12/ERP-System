@@ -13,10 +13,13 @@ import type {
 import {
   READ_COMPANY_INVENTORY_PAGE_SQL,
   READ_INVENTORY_ACCESS_SQL,
+  READ_MANAGED_MEMBER_INVENTORY_ACCESS_SQL,
+  READ_MANAGED_MEMBER_INVENTORY_PAGE_SQL,
   READ_MEMBER_INVENTORY_PAGE_SQL,
   decodeInventoryListCursor,
   encodeInventoryListCursor,
   readCompanyInventoryPage,
+  readManagedMemberInventoryPage,
 } from "../inventory/read-repository.js";
 import { registerInventoryReadRoutes } from "../routes/inventory-read.js";
 import { RESOLVE_TENANT_SQL } from "../tenancy/context.js";
@@ -229,6 +232,38 @@ test("worker inventory is restricted to the authenticated member route", async (
   });
   assert.equal(memberResponse.statusCode, 200, memberResponse.body);
   assert.equal(memberResponse.json().data.items.length, 1);
+});
+
+test("manager can read a selected member inventory by member number", async () => {
+  let queryIndex = 0;
+  const transaction: DatabaseQueryable = {
+    async query<Row extends QueryResultRow>(text: string, values?: readonly unknown[]) {
+      queryIndex += 1;
+      if (queryIndex === 1) {
+        assert.equal(text, READ_MANAGED_MEMBER_INVENTORY_ACCESS_SQL);
+        assert.deepEqual(values, [internalCompanyId, 7]);
+        return {
+          rowCount: 1,
+          rows: [{
+            role: "manager",
+            is_dev: false,
+            inventory_enabled: true,
+            target_membership_id: membershipId,
+          }] as unknown as Row[],
+        };
+      }
+      assert.equal(text, READ_MANAGED_MEMBER_INVENTORY_PAGE_SQL);
+      assert.deepEqual(values, [internalCompanyId, null, null, null, null, null, 51, 7]);
+      return {
+        rowCount: 1,
+        rows: [inventoryRow(firstPartId, 3, "2026-07-13T12:00:00.000Z")] as unknown as Row[],
+      };
+    },
+  };
+
+  const page = await readManagedMemberInventoryPage(transaction, internalCompanyId, 7, {});
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0]?.partId, firstPartId);
 });
 
 test("basic users and disabled subscriptions fail before inventory row queries", async (context) => {

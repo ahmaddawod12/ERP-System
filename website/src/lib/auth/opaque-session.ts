@@ -5,12 +5,14 @@ import {
   type WebSessionCsrfToken,
   type WebSessionToken,
 } from "@smart-job/api-contracts";
-import { SESSION_ACCESS_TOKEN_COOKIE, SESSION_COOKIE } from "./session-token.ts";
 
 export const PRODUCTION_WEB_SESSION_COOKIE = "__Host-sj_web_session";
 export const DEVELOPMENT_WEB_SESSION_COOKIE = "sj_web_session";
 export const WEB_CSRF_COOKIE = "sj_csrf";
 export const WEB_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
+
+const LEGACY_SESSION_COOKIE = "__session";
+const LEGACY_SESSION_ACCESS_COOKIE = "__session_access";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
@@ -129,7 +131,7 @@ function clearLegacySessionCookies(
   nodeEnv: string | undefined,
 ): void {
   const secure = nodeEnv === "production";
-  for (const name of [SESSION_COOKIE, SESSION_ACCESS_TOKEN_COOKIE]) {
+  for (const name of [LEGACY_SESSION_COOKIE, LEGACY_SESSION_ACCESS_COOKIE]) {
     response.cookies.set(name, "", {
       httpOnly: true,
       secure,
@@ -169,4 +171,14 @@ export function clearOpaqueSessionCookies(
     expires: new Date(0),
   });
   clearLegacySessionCookies(response, nodeEnv);
+}
+
+export function buildLoginRedirectUrl(
+  originalUrl: string,
+  pathname: string,
+  search: string,
+): string {
+  const loginUrl = new URL("/login", originalUrl);
+  loginUrl.searchParams.set("redirect", `${pathname}${search}`);
+  return loginUrl.toString();
 }

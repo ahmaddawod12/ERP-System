@@ -392,7 +392,10 @@ All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group 
 - `perf_budget` → `continue-on-error: true` (never blocks)
 - `cloudrun_images` → Docker build (no push)
 
-Edge deploy (`supabase-edge-deploy.yml`) is **manual `workflow_dispatch` only**. Nested function paths (e.g. `contact/request`) are flattened to `contact-request` before deploy; website/mobile callers must use the same dashed names.
+Edge deploy workflow has been removed. The remaining Edge functions under
+`supabase/functions/` and `supabase/handlers/` are still called by mobile
+screens that have not yet been cut over to the Cloud API. The `supabase_edge`
+CI job continues to type-check them with `deno check`.
 
 ---
 
@@ -599,7 +602,8 @@ the company/profile/subscription/sync/membership state atomically.
   Accept is manager/dev-only from `pending` or `waiting`. Delete rejects
   certificates and any document, inventory-movement, upload-session, or
   attachment reference before removing the job and bumping `jobs_version`.
-- The implemented API slices through `0021` join viewer/workspaces/bootstrap;
+- The implemented API slices through `0021` join viewer/workspaces/bootstrap
+  (including a bounded subscription entitlement summary);
   bounded jobs, clients, company inventory, and member inventory reads; atomic
   job create/complete plus versioned update/accept/delete; attachment upload
   sessions; opaque web sessions;
@@ -607,6 +611,29 @@ the company/profile/subscription/sync/membership state atomically.
   create/redeem plus client create/update/delete-or-archive and inventory
   create/update/archive/adjust/transfer/pick. Do not describe an in-progress route as available until its
   contract, SQL migration, and integration tests land together.
+- Migration `0023_api_tax_callback_processing.sql` adds
+  `private.tax_callback_events` for idempotent callback tracking, an indexed
+  `oauth_session_id` link on `tax_invoice_reservations`, and
+  `private.bind_api_tax_approval_session(...)` so the document reservation is
+  bound to the outbound correlation ID before authority submission. It also adds
+  `private.process_api_tax_callback(...)` which atomically records the event,
+  updates the document's `tax_authority_status` and reservation status, and
+  bumps `documents_version`. Replays with the same payload hash return
+  idempotently; different payload hashes raise `TAX_CALLBACK_PAYLOAD_CONFLICT`.
+  Also exposes `private.cleanup_tax_callback_events(...)` for bounded retention.
+- Migration `0024_api_archive_retrieval.sql` adds RLS policies and
+  `smart_job_api` grants to the previously-dormant `archive_runs` table,
+  plus `private.list_api_company_archives(...)` for bounded cursor pagination
+  of archive run metadata. The archiver now records runs in `archive_runs`
+  via `recordArchiveRun(...)`.
+- The implemented API now also includes: internal tax callback processing at
+  `POST /internal/v1/tax/callback` (Google service identity protected),
+  correlation binding at `POST /internal/v1/tax/approval-session`, manager/dev
+  member inventory reads at
+  `GET /api/v1/companies/{companyId}/inventory/members/{memberNo}`,
+  `cloudrun-tax` callback (`POST /api/v1/tax/callback`) and approval
+  (`POST /api/v1/tax/approval`) routes, and archive listing at
+  `GET /api/v1/companies/{companyId}/archives`.
 
 ---
 
@@ -614,12 +641,15 @@ the company/profile/subscription/sync/membership state atomically.
 
 ### website/
 - `page.tsx` = server component wrapper only — **never add `"use client"` to `page.tsx`**
-- `page-client.tsx` = client shell pattern
-- New explicit-tenant routes under `/app/c/{companyId}` use the opaque
-  Postgres-backed session cookie (`__Host-sj_web_session` in production), a
-  server-only DAL/BFF, and Server Components. The overview, jobs, clients, and
-  inventory read slices are implemented; the remaining `/app/*` routes still
-  use the legacy `__session`/`__session_access` transition path.
+- All `/app/*` routes now use the opaque Postgres-backed session cookie
+  (`__Host-sj_web_session` in production), a server-only DAL/BFF, and Server
+  Components. The overview, jobs, clients, inventory, documents, workers,
+  settings, and upgrade slices are implemented as explicit-tenant routes under
+  `/app/c/{companyId}`. Legacy `/app/*` routes redirect to their
+  explicit-tenant equivalents. The `firebase` and `firebase-admin` dependencies,
+  the `__session`/`__session_access` cookie chain, the Edge proxy API routes
+  (`/api/callable`, `/api/read-model`), and the legacy auth provider have been
+  removed.
 - The explicit-tenant clients slice creates, updates, and delete-or-archives
   only through same-origin opaque-session BFF routes. Keep the initial page
   server-rendered; browser mutations require exact Origin, double-submit CSRF,
@@ -703,12 +733,16 @@ the company/profile/subscription/sync/membership state atomically.
   cross-prefix path, or recursively delete a prefix.
 
 ### Remaining approval gates
-- The database/security foundation and initial API, SSR website, mobile outbox,
-  and private Storage/PDF slices are implemented locally. New API/tax
-  Dockerfiles, deployment/IAM configuration, stable API domain, remaining
-  domain routes and frontend cutover, remaining legacy file paths, and deletion
-  of Edge/Firebase infrastructure are not complete and still require their
-  implementation-time approvals.
+- The database/security foundation, API domain routes, SSR website, mobile
+  outbox, private Storage/PDF slices, tax callback/approval integration,
+  archive retrieval API, Cloud Run deployment/IAM workflow, CI
+  integration-test job, and E2E test infrastructure (Playwright + Maestro) are
+  implemented. Website Firebase/legacy-auth infrastructure has been removed.
+  Mobile Firestore/App Check have been removed; Firebase Messaging and Storage
+  remain for push notifications and file uploads. Remaining mobile Edge caller
+  cutover, and final Edge/Firebase directory deletion still
+  require their implementation-time approvals. The Cloud Run deploy workflow
+  includes custom API DNS mapping for production via `API_CUSTOM_DOMAIN`.
 
 ---
 

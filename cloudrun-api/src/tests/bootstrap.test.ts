@@ -64,6 +64,10 @@ function database(): ApiDatabaseRuntime {
           workers_version: 6,
           company_inventory_version: 7,
           sync_updated_at: new Date("2026-07-13T12:00:00.000Z"),
+          subscription_tier: "Team",
+          subscription_status: "active",
+          subscription_expires_at: null,
+          subscription_updated_at: new Date("2026-07-13T11:00:00.000Z"),
           jobs_count: 2,
           clients_count: 8,
           inventory_parts_count: 9,
@@ -122,6 +126,13 @@ test("bootstrap normalizes public tenant id before scoped count queries", async 
         memberNo: 7,
         enabledModules: ["clients", "companyinventory", "inventory", "solojob", "team", "teaminventory"],
       },
+      subscription: {
+        tier: "Team",
+        status: "active",
+        enabledModules: ["clients", "companyinventory", "inventory", "solojob", "team", "teaminventory"],
+        expiresAt: null,
+        updatedAt: "2026-07-13T11:00:00.000Z",
+      },
       syncState: {
         jobsVersion: 3,
         documentsVersion: 4,
@@ -153,6 +164,7 @@ test("bootstrap normalizes public tenant id before scoped count queries", async 
 test("bootstrap SQL keeps entitlement-aware counts in Postgres", () => {
   assert.match(READ_BOOTSTRAP_SQL, /count\(\*\)::integer/);
   assert.match(READ_BOOTSTRAP_SQL, /private\.get_company_module_entitlements/);
+  assert.match(READ_BOOTSTRAP_SQL, /public\.company_subscriptions/);
   assert.match(READ_BOOTSTRAP_SQL, /entitlements\.jobs_enabled/);
   assert.match(
     READ_BOOTSTRAP_SQL,

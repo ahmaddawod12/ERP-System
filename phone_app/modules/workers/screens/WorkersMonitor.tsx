@@ -402,9 +402,8 @@ export default function WorkersMonitor() {
     if (selectedWorker && user) {
       const setupListener = async () => {
         const workerObj = workers.find(w => w.wid === selectedWorker);
-        const workerUid = workerObj?.uid;
-        if (workerUid) {
-          unsubscribe = await loadWorkerData(workerUid);
+        if (workerObj?.wid) {
+          unsubscribe = await loadWorkerData(workerObj.wid);
         }
       };
       setupListener();
@@ -508,7 +507,7 @@ export default function WorkersMonitor() {
     }
   };
 
-  const loadWorkerData = async (workerUid: string) => {
+  const loadWorkerData = async (workerMemberNo: string | number) => {
     try {
       const user = auth.currentUser;
       if (!user) {
@@ -521,7 +520,7 @@ export default function WorkersMonitor() {
         return () => {};
       }
 
-      const inventoryList = await fetchUserInventoryParts(companyId, workerUid);
+      const inventoryList = await fetchUserInventoryParts(companyId, workerMemberNo);
       setWorkerInventory(inventoryList);
       return () => {};
     } catch (error) {

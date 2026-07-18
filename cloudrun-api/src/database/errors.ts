@@ -38,6 +38,21 @@ export function mapDatabaseError(
       cause: error,
     });
   }
+  if (
+    code === "40001"
+    && (message.includes("TAX_CALLBACK_PAYLOAD_CONFLICT")
+      || message.includes("TAX_APPROVAL_SESSION_CONFLICT"))
+  ) {
+    const callbackConflict = message.includes("TAX_CALLBACK_PAYLOAD_CONFLICT");
+    return new AppError({
+      statusCode: 409,
+      code: callbackConflict ? "TAX_CALLBACK_PAYLOAD_CONFLICT" : "TAX_APPROVAL_SESSION_CONFLICT",
+      message: callbackConflict
+        ? "The callback event ID was already used for different content."
+        : "The tax approval session is already bound to another invoice.",
+      cause: error,
+    });
+  }
   if (code === "40001") {
     return new AppError({
       statusCode: 503,
@@ -319,6 +334,33 @@ export function mapDatabaseError(
       code: "DATABASE_BUSY",
       message: "The database is temporarily busy. Try again shortly.",
       retryable: true,
+      cause: error,
+    });
+  }
+
+  if (
+    code === "P0002"
+    && (message.includes("TAX_CALLBACK_RESERVATION_NOT_FOUND")
+      || message.includes("TAX_CALLBACK_DOCUMENT_NOT_FOUND")
+      || message.includes("TAX_APPROVAL_RESERVATION_NOT_FOUND"))
+  ) {
+    return new AppError({
+      statusCode: 404,
+      code: "TAX_CALLBACK_TARGET_NOT_FOUND",
+      message: "The callback references a reservation or document that does not exist.",
+      cause: error,
+    });
+  }
+  if (
+    code === "22023"
+    && (message.includes("TAX_CALLBACK_INVALID")
+      || message.includes("TAX_CALLBACK_NOT_TAX_INVOICE")
+      || message.includes("TAX_APPROVAL_"))
+  ) {
+    return new AppError({
+      statusCode: 400,
+      code: "INVALID_TAX_CALLBACK",
+      message: "The tax callback payload is invalid.",
       cause: error,
     });
   }

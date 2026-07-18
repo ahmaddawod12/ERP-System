@@ -26,7 +26,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { auth, storage as firebaseStorage } from '../firebase';
+import { auth } from '../firebase';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
 import { safeJsonParse } from '../utils/helpers';
@@ -456,12 +456,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   );
 
   const fetchCompanySyncState = useCallback(
-    (companyId: string) => _fetchCompanySyncState(companyId),
+    (uid: string, companyId: string) => _fetchCompanySyncState(uid, companyId),
     [],
   );
 
   const fetchUserSyncState = useCallback(
-    () => _fetchUserSyncState(),
+    (uid: string, companyId: string) => _fetchUserSyncState(uid, companyId),
     [],
   );
 
@@ -564,7 +564,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       if (userPollInFlightRef.current) return;
       userPollInFlightRef.current = true;
       try {
-        const remoteVersions = await fetchUserSyncState();
+        if (!companyId) return;
+        const remoteVersions = await fetchUserSyncState(uid, companyId);
         const localVersions: Record<string, number> = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
         let standardFields = role === 'basic' ? ['profile'] : ['profile', 'inventory'];
         standardFields.push('subscription');
@@ -637,7 +638,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         if (companyPollInFlightRef.current) return;
         companyPollInFlightRef.current = true;
         try {
-          const remoteData = await fetchCompanySyncState(companyId);
+          const remoteData = await fetchCompanySyncState(uid, companyId);
           const localVersions: Record<string, any> = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS) || {};
 
           logger.debug('Company sync state received:', JSON.stringify({
@@ -1072,7 +1073,9 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       const versions: Record<string, any> = {};
       const companyVersions: Record<string, any> = {};
       
-      const remoteUserState = await fetchUserSyncState();
+      const remoteUserState = companyId
+        ? await fetchUserSyncState(uid, companyId)
+        : { profile: 0, inventory: 0, subscription: 0, updatedAt: '' };
       for (const key of ['profile', 'inventory', 'subscription']) {
         if (remoteUserState[key as keyof typeof remoteUserState] !== undefined) {
           versions[key] = remoteUserState[key as keyof typeof remoteUserState];
@@ -1081,7 +1084,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch company sync state from the backend read model
       if (companyId) {
-        const remoteCompanyState = await fetchCompanySyncState(companyId);
+        const remoteCompanyState = await fetchCompanySyncState(uid, companyId);
         for (const key of ['jobsVersion', 'documentsVersion', 'clientsVersion', 'workersVersion', 'companyInventoryVersion']) {
           if (remoteCompanyState[key as keyof typeof remoteCompanyState] !== undefined) {
             companyVersions[key] = remoteCompanyState[key as keyof typeof remoteCompanyState];

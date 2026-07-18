@@ -252,3 +252,79 @@ jobs:
         run: docker build -f cloudrun-pdf/Dockerfile -t smart-job-cloudrun-pdf:ci .
       - name: Build archiver image
         run: docker build -f cloudrun-archiver/Dockerfile -t smart-job-cloudrun-archiver:ci .
+
+  integration_tests:
+    runs-on: ubuntu-latest
+    needs:
+      - packages_contracts
+      - packages_api_contracts
+      - packages_db
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55322/postgres
+      DATABASE_SSL_MODE: disable
+      SMART_JOB_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55322/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.104.0
+      - name: Start isolated Supabase services
+        run: supabase start
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+            packages/db/package-lock.json
+            cloudrun-api/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix packages/db ci
+      - run: npm --prefix packages/db run build
+      - name: Apply database migrations
+        run: npm --prefix packages/db run db:migrate
+      - name: Run database integration tests
+        run: npm --prefix packages/db run test:integration
+      - run: npm --prefix cloudrun-api ci
+      - name: Build cloudrun-api
+        run: npm --prefix cloudrun-api run build
+      - name: Run cloudrun-api integration tests
+        run: node --test dist/tests/*.integration.test.js
+        working-directory: cloudrun-api
+      - name: Stop isolated Supabase services
+        if: always()
+        run: supabase stop --no-backup
+
+  website_e2e:
+    if: ${{ vars.RUN_WEBSITE_E2E == 'true' }}
+    runs-on: ubuntu-latest
+    needs:
+      - website
+    env:
+      PLAYWRIGHT_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+      E2E_TEST_EMAIL: ${{ secrets.E2E_TEST_EMAIL }}
+      E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            website/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix website ci
+      - run: npm --prefix website run build
+      - name: Install Playwright browsers
+        run: npx --prefix website playwright install --with-deps chromium
+      - name: Run Playwright E2E tests
+        run: npm --prefix website run test:e2e

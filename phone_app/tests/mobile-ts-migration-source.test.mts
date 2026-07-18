@@ -42,18 +42,26 @@ test('auth tokens are stored in SecureStore instead of MMKV-derived keys', () =>
   assert.doesNotMatch(supabaseClient, /EXPO_PUBLIC_SUPABASE_ANON_KEY/);
 });
 
-test('read-model list helpers unwrap paginated items while preserving page helpers', () => {
+test('read-model list helpers use Cloud API with paginated draining', () => {
   const readModel = readProjectFile('utils', 'read-model.ts');
 
-  assert.match(readModel, /type ReadModelPage/);
   assert.match(readModel, /export async function fetchCompanyJobsPage/);
   assert.match(readModel, /export async function fetchCompanyDocumentsPage/);
-  assert.match(readModel, /Array\.isArray\(result\?\.items\) \? result\.items : \[\]/);
-  assert.doesNotMatch(readModel, /return callHttpFunction<any\[\]>\('readModelV1', \{\s*kind: 'jobs'/);
-  assert.doesNotMatch(readModel, /return callHttpFunction<any\[\]>\('readModelV1', \{\s*kind: 'documents'/);
+  assert.match(readModel, /drainPages/);
+  assert.match(readModel, /items\.map\(mapJobSummary\)/);
+  assert.match(readModel, /items\.map\(mapDocumentSummary\)/);
+  assert.doesNotMatch(readModel, /callHttpFunction/);
+  assert.doesNotMatch(readModel, /fetchRecordById/);
 });
 
-test('mobile cache debug output uses dev-only logger and avoids AsyncStorage runtime imports', () => {
+test('metadata-only job editing leaves part usage and inventory unchanged', () => {
+  const editJob = readProjectFile('modules', 'jobs', 'screens', 'EditJob.tsx');
+
+  assert.doesNotMatch(editJob, /updateInventoryV1|replaceParts|fetchRecordById/);
+  assert.doesNotMatch(editJob, /partsUsed:\s*editingJob\.partsUsed/);
+});
+
+test('mobile cache uses Cloud API and avoids Edge callers', () => {
   const cacheContext = readProjectFile('contexts', 'CacheContext.tsx');
   const cacheFetchers = readProjectFile('contexts', 'cache-fetchers.ts');
   const archiveQuery = readProjectFile('hooks', 'useArchiveQuery.ts');
@@ -62,8 +70,6 @@ test('mobile cache debug output uses dev-only logger and avoids AsyncStorage run
 
   assert.match(logger, /if \(isDevRuntime\)/);
   assert.match(cacheContext, /logger\.debug/);
-  assert.match(cacheFetchers, /logger\.debug/);
-  assert.match(archiveQuery, /logger\.debug/);
   assert.doesNotMatch(cacheContext, /console\.log/);
   assert.doesNotMatch(cacheFetchers, /console\.log/);
   assert.doesNotMatch(archiveQuery, /console\.log/);

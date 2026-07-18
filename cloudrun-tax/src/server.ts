@@ -1,8 +1,10 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { createRuntimeDependencies } from "./runtime.js";
 
 const config = loadConfig();
-const app = buildApp({ config });
+const dependencies = createRuntimeDependencies(config);
+const app = buildApp({ config, dependencies });
 let stopping = false;
 
 async function stop(signal: NodeJS.Signals): Promise<void> {

@@ -124,6 +124,7 @@ function database(): ApiDatabaseRuntime {
         null,
         null,
         3,
+        "createdAt",
       ]);
       return {
         rowCount: 3,
@@ -268,6 +269,7 @@ test("job reads default to 50 rows and fetch only one lookahead row", async () =
         null,
         null,
         51,
+        "createdAt",
       ]);
       return { rowCount: 0, rows: [] };
     },
@@ -288,6 +290,7 @@ test("job read SQL enforces entitlement, role scope, filters, and composite keys
   assert.match(READ_JOBS_PAGE_SQL, /requester\.role = 'user'[\s\S]*requester\.account_type = 'solo'/);
   assert.match(READ_JOBS_PAGE_SQL, /creator\.user_id = \$5::uuid::text/);
   assert.match(READ_JOBS_PAGE_SQL, /job\.status = ANY\(\$2::public\.job_status\[\]\)/);
+  assert.match(READ_JOBS_PAGE_SQL, /WHEN 'finishedAt' THEN job\.finished_at/);
   assert.match(READ_JOBS_PAGE_SQL, /\(job\.created_at, job\.id\) < \(\$7::timestamptz, \$8::uuid\)/);
   assert.match(READ_JOBS_PAGE_SQL, /to_char\([\s\S]*job\.created_at AT TIME ZONE 'UTC'[\s\S]*\) AS cursor_created_at/);
   assert.match(READ_JOBS_PAGE_SQL, /ORDER BY job\.created_at DESC, job\.id DESC/);

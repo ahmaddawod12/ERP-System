@@ -1,6 +1,5 @@
 "use client";
 
-import { AuthProvider } from "@/components/providers/auth-provider";
 import { I18nProvider } from "@/components/providers/i18n-provider";
 import { ThemeProvider, type Theme } from "@/components/providers/theme-provider";
 import { ToastProvider } from "@/components/providers/toast-provider";
@@ -19,7 +18,7 @@ export function AppProviders({
     <ThemeProvider initialTheme={initialTheme}>
       <I18nProvider initialLocale={initialLocale}>
         <ToastProvider>
-          <AuthProvider>{children}</AuthProvider>
+          {children}
         </ToastProvider>
       </I18nProvider>
     </ThemeProvider>

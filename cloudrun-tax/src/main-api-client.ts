@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import type { MainApiConfig } from "./config.js";
 import {
+  BindTaxApprovalSessionResultSchema,
   ForwardTaxCallbackResultSchema,
+  type BindTaxApprovalSessionRequest,
+  type BindTaxApprovalSessionResult,
   type ForwardTaxCallbackRequest,
   type ForwardTaxCallbackResult,
 } from "./contracts.js";
@@ -28,6 +31,7 @@ export interface IdentityTokenProvider {
 }
 
 export interface MainApiCallbackClient {
+  bindApprovalSession(request: BindTaxApprovalSessionRequest): Promise<BindTaxApprovalSessionResult>;
   forwardCallback(request: ForwardTaxCallbackRequest): Promise<ForwardTaxCallbackResult>;
 }
 
@@ -139,6 +143,48 @@ export class HttpMainApiCallbackClient implements MainApiCallbackClient {
     private readonly timeoutMs: number,
     private readonly fetchImplementation: FetchImplementation = globalThis.fetch,
   ) {}
+
+  async bindApprovalSession(
+    request: BindTaxApprovalSessionRequest,
+  ): Promise<BindTaxApprovalSessionResult> {
+    const identityToken = await this.identityTokenProvider.getIdentityToken(this.config.audience);
+    const response = await fetchWithTimeout(
+      this.fetchImplementation,
+      this.config.approvalSessionUrl,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${identityToken}`,
+          "content-type": "application/json",
+          "x-request-id": request.requestId,
+        },
+        body: JSON.stringify({
+          documentId: request.documentId,
+          oauthSessionId: request.oauthSessionId,
+        }),
+      },
+      this.timeoutMs,
+      "MAIN_API_APPROVAL_SESSION_TIMEOUT",
+    );
+    if (!response.ok) throw mainApiFailure(response);
+
+    const raw = await readBoundedJson(response, 65_536);
+    const parsed = z.object({
+      ok: z.literal(true),
+      data: BindTaxApprovalSessionResultSchema,
+      meta: z.object({ requestId: z.string().trim().min(1).max(128) }).loose(),
+    }).strict().safeParse(raw);
+    if (!parsed.success) {
+      throw new TaxGatewayError(
+        502,
+        "INVALID_MAIN_API_RESPONSE",
+        "The protected main API returned an invalid response.",
+        true,
+      );
+    }
+    return parsed.data.data;
+  }
 
   async forwardCallback(request: ForwardTaxCallbackRequest): Promise<ForwardTaxCallbackResult> {
     const identityToken = await this.identityTokenProvider.getIdentityToken(this.config.audience);

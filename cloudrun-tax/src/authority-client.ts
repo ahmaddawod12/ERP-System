@@ -163,7 +163,7 @@ export class HttpTaxAuthorityClient implements TaxAuthorityClient {
       form.set("code", request.code);
       form.set("redirect_uri", request.redirectUri);
       if (request.codeVerifier !== undefined) form.set("code_verifier", request.codeVerifier);
-    } else {
+    } else if (request.grantType === "refresh_token") {
       form.set("refresh_token", request.refreshToken);
     }
 
@@ -227,7 +227,10 @@ export class HttpTaxAuthorityClient implements TaxAuthorityClient {
           authorization: `Bearer ${request.accessToken}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify(request.invoice),
+        body: JSON.stringify({
+          ...request.invoice,
+          oauthSessionId: request.oauthSessionId,
+        }),
       },
       this.timeoutMs,
       "TAX_APPROVAL_TIMEOUT",

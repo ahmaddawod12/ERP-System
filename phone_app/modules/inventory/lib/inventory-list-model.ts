@@ -97,6 +97,7 @@ export function buildInventoryListPath(
   scope: InventoryReadScope,
   filters: NormalizedInventoryListFilters,
   afterCursor: string | null = null,
+  targetMemberNo?: number,
 ): string {
   if (!Number.isSafeInteger(companyId) || companyId <= 0) {
     throw new Error('A valid company is required to list inventory');
@@ -121,7 +122,12 @@ export function buildInventoryListPath(
     searchParams.set('afterCursor', afterCursor);
   }
 
-  const suffix = scope === 'member' ? '/me' : '';
+  if (targetMemberNo !== undefined && (!Number.isSafeInteger(targetMemberNo) || targetMemberNo <= 0)) {
+    throw new Error('A valid member number is required to list member inventory');
+  }
+  const suffix = targetMemberNo !== undefined
+    ? `/members/${targetMemberNo}`
+    : scope === 'member' ? '/me' : '';
   return `/api/v1/companies/${companyId}/inventory${suffix}?${searchParams.toString()}`;
 }
 

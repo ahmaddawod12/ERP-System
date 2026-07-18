@@ -65,6 +65,8 @@ test('archiver marks manifests deleted after ids are removed and archive is veri
   assert.match(source, /status: 'deleted'/);
   assert.match(source, /await verifyArchive\(companyId, documentsKey/);
   assert.doesNotMatch(source, /deletedCount !== expectedCount/);
+  assert.match(source, /status: manifest\[finishedKey\]\.status/);
+  assert.match(source, /status: manifest\[documentsKey\]\.status/);
 });
 
 test('archiver uses SQL-backed archives without Firestore fallback branches', () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { View,
   TouchableOpacity,
   StyleSheet,
@@ -9,7 +9,7 @@ import { View,
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { functions, httpsCallable } from '../../../firebase';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
 import { AppText, AppInput, GlobalHeader, ScrollableContainer } from '../../../components';
@@ -18,8 +18,7 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { safeJsonParse } from '../../../utils/helpers';
-import { fetchRecordById, fetchUserInventoryParts } from '../../../utils/read-model';
-import type { Job, InventoryPart } from '../../../types';
+import type { Job } from '../../../types';
 
 export default function EditJob() {
   const router = useRouter();
@@ -27,7 +26,7 @@ export default function EditJob() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId, updateJob, workers: cachedWorkersList } = useCache();
+  const { getCompanyId, updateJob } = useCache();
   const colors = getColors(isDarkMode);
 
   const job = safeJsonParse(params.job) as Job | null;
@@ -113,73 +112,8 @@ export default function EditJob() {
         return;
       }
 
-      // Get worker uid from wid for inventory access
-      const workerWid = editingJob.wid;
-      const workerEntry = workerWid && cachedWorkersList ? cachedWorkersList[workerWid as keyof typeof cachedWorkersList] : null;
-      const workerUid = workerEntry?.uid || null;
-      
-      // Fetch the current job/inventory state through the read model before mutating.
-      if (workerUid && editingJob.partsUsed) {
-        const currentJobData = await fetchRecordById(companyId, editingJob.id) as Job | null;
-        if (currentJobData) {
-          const originalPartsInStoredJob = currentJobData.partsUsed || [];
-
-          // Calculate inventory changes
-          const inventoryParts = await fetchUserInventoryParts(companyId, workerUid);
-          if (Array.isArray(inventoryParts)) {
-            const parts: InventoryPart[] = [...inventoryParts];
-
-            const getQty = (value?: number | string): number => {
-              if (typeof value === 'number') return value;
-              const parsed = parseInt(value || '', 10);
-              return Number.isNaN(parsed) ? 0 : parsed;
-            };
-
-            const findPartIndex = (target: { id?: string | number; name?: string }) =>
-              parts.findIndex(p => p.id === target.id || (p.name && p.name === target.name));
-
-            // First, add back quantities for parts that were removed
-            originalPartsInStoredJob.forEach(originalPart => {
-              const stillInJob = editingJob.partsUsed?.find(p => p.id === originalPart.id || p.name === originalPart.name);
-              if (!stillInJob) {
-                // Part was removed from job, add it back to inventory
-                const originalQty = getQty(originalPart.quantity);
-                const partIndex = findPartIndex(originalPart);
-                if (partIndex !== -1) {
-                  parts[partIndex].quantity = (parts[partIndex].quantity || 0) + originalQty;
-                }
-              }
-            });
-
-            // Then, handle quantity changes for parts still in the job
-            editingJob.partsUsed.forEach(currentPart => {
-              const originalPart = originalPartsInStoredJob.find(p => p.id === currentPart.id || p.name === currentPart.name);
-              const originalQty = originalPart ? getQty(originalPart.quantity) : 0;
-              const currentQty = getQty(currentPart.quantity);
-              const difference = currentQty - originalQty;
-
-              if (difference !== 0) {
-                const partIndex = findPartIndex(currentPart);
-                if (partIndex !== -1) {
-                  parts[partIndex].quantity = Math.max(0, (parts[partIndex].quantity || 0) - difference);
-                }
-              }
-            });
-
-            // Clean up: remove parts with NaN or invalid quantities before saving
-            const cleanedParts = parts.filter(part => {
-              const qty = getQty(part.quantity);
-              return qty >= 0;
-            });
-
-            // P2-2: Route inventory mutation through Cloud Function
-            const updateInvFn = httpsCallable(functions, 'updateInventoryV1');
-            await updateInvFn({ companyId, action: 'replaceParts', scope: 'user', targetUid: workerUid, parts: cleanedParts });
-          }
-        }
-      }
-
-      // Update the job document AFTER inventory is updated
+      // This screen edits job metadata only. Part usage and inventory stay
+      // unchanged because they require a dedicated atomic mutation.
       const jobUpdates = {
         title: editingJob.title,
         description: editingJob.description,
@@ -190,7 +124,6 @@ export default function EditJob() {
         cname: editingJob.cname || '',
         cphone: editingJob.cphone || '',
         signingPerson: editingJob.signingPerson || '',
-        partsUsed: editingJob.partsUsed || [],
       };
       // P2-2: Update the job document via Cloud Function
       const updateJobFn = httpsCallable(functions, 'updateJobV1');

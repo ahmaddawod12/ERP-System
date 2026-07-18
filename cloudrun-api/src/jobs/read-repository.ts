@@ -285,8 +285,24 @@ export const READ_JOBS_PAGE_SQL = `
       )
     )
     AND ($2::public.job_status[] IS NULL OR job.status = ANY($2::public.job_status[]))
-    AND ($3::timestamptz IS NULL OR job.created_at >= $3::timestamptz)
-    AND ($4::timestamptz IS NULL OR job.created_at <= $4::timestamptz)
+    AND (
+      $3::timestamptz IS NULL
+      OR CASE $10::text
+        WHEN 'updatedAt' THEN job.updated_at
+        WHEN 'finishedAt' THEN job.finished_at
+        WHEN 'dueAt' THEN job.due_at
+        ELSE job.created_at
+      END >= $3::timestamptz
+    )
+    AND (
+      $4::timestamptz IS NULL
+      OR CASE $10::text
+        WHEN 'updatedAt' THEN job.updated_at
+        WHEN 'finishedAt' THEN job.finished_at
+        WHEN 'dueAt' THEN job.due_at
+        ELSE job.created_at
+      END <= $4::timestamptz
+    )
     AND ($5::uuid IS NULL OR creator.user_id = $5::uuid::text)
     AND (
       $6::text IS NULL
@@ -342,6 +358,7 @@ export async function readJobsPage(
     cursor?.createdAt ?? null,
     cursor?.id ?? null,
     pageSize + 1,
+    query.dateField ?? "createdAt",
   ]);
   const rows = result.rows.slice(0, pageSize);
   const items = rows.map(mapJobRow);

@@ -12,6 +12,7 @@ import { registerHttpHandlers } from "./http/handlers.js";
 import { registerHttpHooks } from "./http/hooks.js";
 import { requestPath } from "./http/logging.js";
 import { createRequestId } from "./request-id.js";
+import { registerArchiveReadRoutes } from "./routes/archives-read.js";
 import { registerBootstrapRoutes } from "./routes/bootstrap.js";
 import { registerBusinessRegistrationRoutes } from "./routes/business-registration.js";
 import { registerClientsReadRoutes } from "./routes/clients-read.js";
@@ -26,6 +27,7 @@ import { registerJobsReadRoutes } from "./routes/jobs-read.js";
 import { registerInventoryReadRoutes } from "./routes/inventory-read.js";
 import { registerInventoryMutationRoutes } from "./routes/inventory-mutations.js";
 import { registerInternalDocumentDispatchRoute } from "./routes/internal-document-dispatch.js";
+import { registerInternalTaxCallbackRoute } from "./routes/internal-tax-callback.js";
 import { registerInvitationRoutes } from "./routes/invitations.js";
 import { registerProfileRoutes } from "./routes/profiles.js";
 import { registerPushTokenRoutes } from "./routes/push-token.js";
@@ -119,6 +121,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       supabaseUsers: options.services.supabaseUsers,
       webSessions: options.services.webSessions,
     });
+    registerArchiveReadRoutes(app, options.services);
     registerBootstrapRoutes(app, options.services);
     registerClientsReadRoutes(app, options.services);
     registerClientMutationRoutes(app, options.services);
@@ -132,6 +135,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     registerInventoryReadRoutes(app, options.services);
     registerInventoryMutationRoutes(app, options.services);
     registerInternalDocumentDispatchRoute(app, options.services);
+    registerInternalTaxCallbackRoute(app, options.services);
     registerInvitationRoutes(app, options.services);
     registerProfileRoutes(app, options.services);
     registerPushTokenRoutes(app, options.services);

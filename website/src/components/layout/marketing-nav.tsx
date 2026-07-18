@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 import { useLocale } from "@/hooks/use-i18n";
-import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { LanguageSwitcher } from "@/components/marketing/language-switcher";
@@ -25,7 +24,6 @@ const links = [
 export function MarketingNav() {
   const pathname = usePathname();
   const { t } = useLocale();
-  const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
 
   const isActive = (href: string) =>
@@ -64,34 +62,11 @@ export function MarketingNav() {
         <div className="hidden items-center gap-2 lg:flex">
           <LanguageSwitcher />
           <ThemeToggle />
-          {user ? (
-            <>
-              <Link href="/app">
-                <Button size="sm" className="px-4">
-                  {t("common.dashboard")}
-                </Button>
-              </Link>
-              <Button size="sm" variant="secondary" className="px-4" onClick={() => logout()}>
-                {t("common.logout")}
-              </Button>
-            </>
-          ) : (
-            <>
-              <Link href="/login">
-                <Button size="sm" variant="secondary" className="px-4">
-                  {t("common.login")}
-                </Button>
-              </Link>
-              <Link href="/register">
-                <Button
-                  size="sm"
-                  className="px-4"
-                >
-                  {t("common.register")}
-                </Button>
-              </Link>
-            </>
-          )}
+          <Link href="/app">
+            <Button size="sm" className="px-4">
+              {t("common.dashboard")}
+            </Button>
+          </Link>
         </div>
 
         <button
@@ -127,31 +102,11 @@ export function MarketingNav() {
             <ThemeToggle />
           </div>
           <div className="mt-4 grid gap-2">
-            {user ? (
-              <>
-                <Link href="/app" onClick={() => setOpen(false)}>
-                  <Button fullWidth>
-                    {t("common.dashboard")}
-                  </Button>
-                </Link>
-                <Button fullWidth variant="secondary" onClick={() => logout()}>
-                  {t("common.logout")}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Link href="/login" onClick={() => setOpen(false)}>
-                  <Button fullWidth variant="secondary">
-                    {t("common.login")}
-                  </Button>
-                </Link>
-                <Link href="/register" onClick={() => setOpen(false)}>
-                  <Button fullWidth>
-                    {t("common.register")}
-                  </Button>
-                </Link>
-              </>
-            )}
+            <Link href="/app" onClick={() => setOpen(false)}>
+              <Button fullWidth>
+                {t("common.dashboard")}
+              </Button>
+            </Link>
           </div>
         </div>
       ) : null}

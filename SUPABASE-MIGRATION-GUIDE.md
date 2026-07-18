@@ -35,7 +35,8 @@ This guide tracks the active migration shape for the Smart-Job ERP Supabase runt
 2. Apply every journaled forward hardening migration in numeric order from
    `0001` through the current journal tail; never skip an intermediate migration.
 3. Configure Supabase Edge secrets from `SETUP.md`; ensure `JWT_SECRET` is set and `SUPABASE_SERVICE_ROLE_KEY` is present.
-4. Deploy Edge functions manually through `.github/workflows/supabase-edge-deploy.yml`.
+4. The Edge deploy workflow has been removed. Remaining Edge functions are
+   retained for mobile screens not yet cut over to the Cloud API.
 5. Verify website and mobile auth flows.
 6. Verify read-model role scoping for manager, worker, user, basic, and dev accounts.
 7. Verify module entitlement blocks disabled modules for both mutations and read-model kinds.

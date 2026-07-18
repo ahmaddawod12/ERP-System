@@ -65,6 +65,10 @@ test('inventory filters are canonical, bounded, and preserve opaque cursors', ()
     buildInventoryListPath(17, 'member', filters, 'opaque+cursor/='),
     `/api/v1/companies/17/inventory/me?status=active&status=inactive&status=archived&search=${'c'.repeat(80)}&pageSize=200&afterCursor=opaque%2Bcursor%2F%3D`,
   );
+  assert.match(
+    buildInventoryListPath(17, 'member', filters, null, 42),
+    /^\/api\/v1\/companies\/17\/inventory\/members\/42\?/,
+  );
 });
 
 test('API inventory maps UUID identity separately from the public part number', () => {

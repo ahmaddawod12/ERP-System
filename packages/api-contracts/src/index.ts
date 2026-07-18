@@ -4,6 +4,7 @@ import {
   JobStatus,
   RegistrationMode,
   Role,
+  SubStatus,
   TIER_VALUES,
   UPGRADEABLE_TIERS,
   type AccountTypeValue,
@@ -30,6 +31,7 @@ export const RegistrationModeSchema: z.ZodType<RegistrationModeValue> = stringEn
   Object.values(RegistrationMode),
 );
 export const TierSchema: z.ZodType<TierValue> = stringEnumSchema(TIER_VALUES);
+export const SubscriptionStatusSchema = stringEnumSchema(Object.values(SubStatus));
 export const JobStatusSchema: z.ZodType<JobStatusValue> = stringEnumSchema(Object.values(JobStatus));
 export const JobCreateStatusSchema = stringEnumSchema([
   JobStatus.Pending,
@@ -364,13 +366,23 @@ export const BootstrapCountsSchema = z.object({
   pendingDocumentTasks: z.number().int().nonnegative(),
 }).strict();
 
+export const CompanySubscriptionSummarySchema = z.object({
+  tier: TierSchema,
+  status: SubscriptionStatusSchema,
+  enabledModules: z.array(z.string().trim().min(1).max(100)).max(100),
+  expiresAt: z.iso.datetime({ offset: true }).nullable(),
+  updatedAt: z.iso.datetime({ offset: true }),
+}).strict();
+
 export const CompanyBootstrapSchema = z.object({
   workspace: WorkspaceSummarySchema,
+  subscription: CompanySubscriptionSummarySchema.nullable(),
   syncState: CompanySyncStateSchema,
   counts: BootstrapCountsSchema,
 }).strict();
 
 export type BootstrapCounts = z.infer<typeof BootstrapCountsSchema>;
+export type CompanySubscriptionSummary = z.infer<typeof CompanySubscriptionSummarySchema>;
 export type CompanyBootstrap = z.infer<typeof CompanyBootstrapSchema>;
 
 export const CursorPageSchema = <TSchema extends z.ZodType>(itemSchema: TSchema) => z.object({
@@ -395,6 +407,7 @@ const JobStatusFilterSchema = z.union([
 
 export const JobListQuerySchema = z.object({
   status: JobStatusFilterSchema.optional(),
+  dateField: z.enum(["createdAt", "updatedAt", "finishedAt", "dueAt"]).optional(),
   dateFrom: z.iso.datetime({ offset: true }).optional(),
   dateTo: z.iso.datetime({ offset: true }).optional(),
   creatorUid: z.uuid().optional(),

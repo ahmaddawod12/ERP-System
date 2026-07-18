@@ -22,19 +22,18 @@ test('read model supports opt-in clients and inventory pagination', () => {
   assert.match(schema, /search: optionalText\(80\)/);
 });
 
-test('large mobile archive reads drain read-model pages', () => {
+test('large mobile reads drain Cloud API pages', () => {
   const source = readRepoFile('phone_app', 'utils', 'read-model.ts');
 
-  assert.match(source, /fetchAllReadModelPages\('jobs', companyId, options\)/);
-  assert.match(source, /fetchAllReadModelPages\('documents', companyId, options\)/);
-  assert.match(source, /while \(items\.length < targetLimit\)/);
+  assert.match(source, /drainPages/);
+  assert.match(source, /MAX_DRAIN_PAGES/);
 });
 
 test('mobile initial cache does not bootstrap broad job/document collections', () => {
   const fetchers = readRepoFile('phone_app', 'contexts', 'cache-fetchers.ts');
 
   assert.doesNotMatch(fetchers, /readBootstrap\([^)]*,\s*true\s*\)/);
-  assert.match(fetchers, /Initial jobs\/documents are loaded through cursor pages/);
+  assert.doesNotMatch(fetchers, /callHttpFunction/);
 });
 
 test('inventory and profile cache bumps use atomic sync RPC', () => {
@@ -77,6 +76,8 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
     '0020_api_worker_mutations.sql',
     '0021_api_job_mutations.sql',
     '0022_api_document_tasks.sql',
+    '0023_api_tax_callback_processing.sql',
+    '0024_api_archive_retrieval.sql',
   ]);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);

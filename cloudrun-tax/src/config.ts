@@ -37,6 +37,8 @@ const environmentSchema = z
     TAX_CALLBACK_MAX_SKEW_SECONDS: z.coerce.number().int().min(30).max(900).default(300),
     MAIN_API_URL: optionalUrl,
     MAIN_API_AUDIENCE: optionalText,
+    TAX_GATEWAY_AUDIENCE: optionalText,
+    TAX_APPROVAL_CALLER_SERVICE_ACCOUNT: optionalText,
   })
   .superRefine((config, context) => {
     const requiredOperationalFields = [
@@ -47,6 +49,8 @@ const environmentSchema = z
       "TAX_CALLBACK_HMAC_SECRET",
       "MAIN_API_URL",
       "MAIN_API_AUDIENCE",
+      "TAX_GATEWAY_AUDIENCE",
+      "TAX_APPROVAL_CALLER_SERVICE_ACCOUNT",
     ] as const;
     const configuredCount = requiredOperationalFields.filter(
       (field) => config[field] !== undefined,
@@ -81,6 +85,9 @@ const environmentSchema = z
     if (config.MAIN_API_AUDIENCE !== undefined) {
       validateServiceUrl("MAIN_API_AUDIENCE", config.MAIN_API_AUDIENCE, config.NODE_ENV, context);
     }
+    if (config.TAX_GATEWAY_AUDIENCE !== undefined) {
+      validateServiceUrl("TAX_GATEWAY_AUDIENCE", config.TAX_GATEWAY_AUDIENCE, config.NODE_ENV, context);
+    }
 
     if (config.TAX_SCOPE !== undefined && configuredCount === 0) {
       context.addIssue({
@@ -97,7 +104,17 @@ function validateServiceUrl(
   nodeEnvironment: z.infer<typeof nodeEnvironmentSchema>,
   context: z.RefinementCtx,
 ): void {
-  const url = new URL(value);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    context.addIssue({
+      code: "custom",
+      message: `${field} must be a valid URL`,
+      path: [field],
+    });
+    return;
+  }
   const isLoopback = url.hostname === "localhost"
     || url.hostname === "127.0.0.1"
     || url.hostname === "[::1]";
@@ -142,6 +159,7 @@ export interface TaxCallbackConfig {
 
 export interface MainApiConfig {
   readonly callbackUrl: URL;
+  readonly approvalSessionUrl: URL;
   readonly audience: string;
 }
 
@@ -154,6 +172,8 @@ export interface ServiceConfig {
   readonly authority?: TaxAuthorityConfig;
   readonly callback?: TaxCallbackConfig;
   readonly mainApi?: MainApiConfig;
+  readonly taxGatewayAudience: string;
+  readonly taxApprovalCallerServiceAccount: string;
 }
 
 function formatConfigurationError(error: z.ZodError): string {
@@ -169,13 +189,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Servic
   }
 
   const data = parsed.data;
-  const operational = data.TAX_TOKEN_URL !== undefined
-    && data.TAX_APPROVAL_URL !== undefined
-    && data.TAX_CLIENT_ID !== undefined
-    && data.TAX_CLIENT_SECRET !== undefined
-    && data.TAX_CALLBACK_HMAC_SECRET !== undefined
-    && data.MAIN_API_URL !== undefined
-    && data.MAIN_API_AUDIENCE !== undefined;
 
   return {
     nodeEnvironment: data.NODE_ENV,
@@ -183,7 +196,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Servic
     port: data.PORT,
     logLevel: data.LOG_LEVEL,
     outboundTimeoutMs: data.TAX_OUTBOUND_TIMEOUT_MS,
-    ...(operational
+    ...(data.TAX_TOKEN_URL !== undefined
+      && data.TAX_APPROVAL_URL !== undefined
+      && data.TAX_CLIENT_ID !== undefined
+      && data.TAX_CLIENT_SECRET !== undefined
+      && data.TAX_CALLBACK_HMAC_SECRET !== undefined
+      && data.MAIN_API_URL !== undefined
+      && data.MAIN_API_AUDIENCE !== undefined
+      && data.TAX_GATEWAY_AUDIENCE !== undefined
+      && data.TAX_APPROVAL_CALLER_SERVICE_ACCOUNT !== undefined
       ? {
           authority: {
             tokenUrl: new URL(data.TAX_TOKEN_URL),
@@ -198,9 +219,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Servic
           },
           mainApi: {
             callbackUrl: new URL(data.MAIN_API_URL),
+            approvalSessionUrl: new URL("/internal/v1/tax/approval-session", data.MAIN_API_URL),
             audience: data.MAIN_API_AUDIENCE,
           },
         }
       : {}),
+    taxGatewayAudience: data.TAX_GATEWAY_AUDIENCE ?? "",
+    taxApprovalCallerServiceAccount: data.TAX_APPROVAL_CALLER_SERVICE_ACCOUNT ?? "",
   };
 }

@@ -6,6 +6,7 @@ import {
   HttpMainApiCallbackClient,
   MetadataIdentityTokenProvider,
 } from "./main-api-client.js";
+import { createServiceIdentityVerifier } from "./service-identity.js";
 import type { FetchImplementation } from "./http-client.js";
 
 export function createRuntimeDependencies(
@@ -16,6 +17,8 @@ export function createRuntimeDependencies(
     config.authority === undefined
     || config.callback === undefined
     || config.mainApi === undefined
+    || config.taxGatewayAudience === ""
+    || config.taxApprovalCallerServiceAccount === ""
   ) {
     return {};
   }
@@ -40,5 +43,9 @@ export function createRuntimeDependencies(
       config.outboundTimeoutMs,
       fetchImplementation,
     ),
+    approvalIdentityVerifier: createServiceIdentityVerifier({
+      audience: config.taxGatewayAudience,
+      allowedServiceAccounts: [config.taxApprovalCallerServiceAccount],
+    }),
   };
 }

@@ -1,0 +1,215 @@
+name: Cloud Run Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment environment
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      image_tag:
+        description: Immutable image tag (git SHA or semantic version)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy_api:
+    name: Deploy main API to Cloud Run
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Build and push main API image
+        run: |
+          docker build \
+            -f cloudrun-api/Dockerfile \
+            -t ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-api:${{ inputs.image_tag }} \
+            .
+          docker push ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-api:${{ inputs.image_tag }}
+
+      - name: Deploy main API to Cloud Run
+        run: |
+          gcloud run deploy cloudrun-api \
+            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-api:${{ inputs.image_tag }} \
+            --region ${{ vars.GCP_REGION }} \
+            --service-account ${{ vars.CLOUDRUN_API_SERVICE_ACCOUNT }} \
+            --min-instances ${{ vars.API_MIN_INSTANCES }} \
+            --max-instances ${{ vars.API_MAX_INSTANCES }} \
+            --concurrency ${{ vars.API_CONCURRENCY }} \
+            --timeout 30 \
+            --allow-unauthenticated \
+            --set-secrets DATABASE_URL=smart-job-api-database-url:latest,SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=smart-job-supabase-publishable-key:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest,SUPABASE_STORAGE_BUCKET=smart-job-storage-bucket:latest,WEB_SESSION_ENCRYPTION_KEY_BASE64=smart-job-web-session-key:latest,WEB_SESSION_ENCRYPTION_KEY_VERSION=smart-job-web-session-key-version:latest,INTERNAL_API_AUDIENCE=smart-job-internal-audience:latest,INTERNAL_CALLER_SERVICE_ACCOUNTS=smart-job-internal-callers:latest \
+            --set-env-vars DATABASE_SSL_MODE=require,SUPABASE_JWT_AUDIENCE=authenticated,NODE_ENV=production,LOG_LEVEL=info
+
+      - name: Output main API URL
+        run: |
+          API_URL="$(gcloud run services describe cloudrun-api \
+            --region ${{ vars.GCP_REGION }} \
+            --format='value(status.url)')"
+          echo "Main API deployed to ${API_URL}"
+
+      - name: Map custom API domain (production only)
+        if: inputs.environment == 'production' && vars.API_CUSTOM_DOMAIN != ''
+        run: |
+          gcloud run domain-mappings create \
+            --service cloudrun-api \
+            --domain ${{ vars.API_CUSTOM_DOMAIN }} \
+            --region ${{ vars.GCP_REGION }} || \
+          gcloud run domain-mappings update \
+            --service cloudrun-api \
+            --domain ${{ vars.API_CUSTOM_DOMAIN }} \
+            --region ${{ vars.GCP_REGION }}
+          echo "Custom API domain mapped: ${{ vars.API_CUSTOM_DOMAIN }}"
+
+  deploy_tax:
+    name: Deploy tax gateway to Cloud Run (me-west1)
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: deploy_api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Build and push tax gateway image
+        run: |
+          docker build \
+            -f cloudrun-tax/Dockerfile \
+            -t ${{ vars.GCP_TAX_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-tax:${{ inputs.image_tag }} \
+            .
+          docker push ${{ vars.GCP_TAX_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-tax:${{ inputs.image_tag }}
+
+      - name: Deploy tax gateway to Cloud Run
+        run: |
+          gcloud run deploy cloudrun-tax \
+            --image ${{ vars.GCP_TAX_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-tax:${{ inputs.image_tag }} \
+            --region ${{ vars.GCP_TAX_REGION }} \
+            --service-account ${{ vars.CLOUDRUN_TAX_SERVICE_ACCOUNT }} \
+            --min-instances ${{ vars.TAX_MIN_INSTANCES }} \
+            --max-instances ${{ vars.TAX_MAX_INSTANCES }} \
+            --concurrency 8 \
+            --timeout 30 \
+            --allow-unauthenticated \
+            --set-secrets TAX_TOKEN_URL=smart-job-tax-token-url:latest,TAX_APPROVAL_URL=smart-job-tax-approval-url:latest,TAX_CLIENT_ID=smart-job-tax-client-id:latest,TAX_CLIENT_SECRET=smart-job-tax-client-secret:latest,TAX_CALLBACK_HMAC_SECRET=smart-job-tax-callback-hmac:latest,MAIN_API_URL=smart-job-tax-main-api-url:latest,MAIN_API_AUDIENCE=smart-job-tax-main-api-audience:latest,TAX_GATEWAY_AUDIENCE=smart-job-tax-gateway-audience:latest,TAX_APPROVAL_CALLER_SERVICE_ACCOUNT=smart-job-tax-approval-caller:latest \
+            --set-env-vars NODE_ENV=production,LOG_LEVEL=info
+
+  deploy_pdf:
+    name: Deploy PDF service to Cloud Run
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: deploy_api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Build and push PDF service image
+        run: |
+          docker build \
+            -f cloudrun-pdf/Dockerfile \
+            -t ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-pdf:${{ inputs.image_tag }} \
+            .
+          docker push ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-pdf:${{ inputs.image_tag }}
+
+      - name: Deploy PDF service to Cloud Run
+        run: |
+          gcloud run deploy cloudrun-pdf \
+            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-pdf:${{ inputs.image_tag }} \
+            --region ${{ vars.GCP_REGION }} \
+            --service-account ${{ vars.CLOUDRUN_PDF_SERVICE_ACCOUNT }} \
+            --min-instances 0 \
+            --max-instances 3 \
+            --concurrency 4 \
+            --timeout 60 \
+            --no-allow-unauthenticated \
+            --set-secrets SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest \
+            --set-env-vars PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable,SUPABASE_STORAGE_BUCKET=smart-job-company-files,NODE_ENV=production
+
+  deploy_archiver:
+    name: Deploy archiver job to Cloud Run
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: deploy_api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Build and push archiver image
+        run: |
+          docker build \
+            -f cloudrun-archiver/Dockerfile \
+            -t ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-archiver:${{ inputs.image_tag }} \
+            .
+          docker push ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-archiver:${{ inputs.image_tag }}
+
+      - name: Deploy archiver as Cloud Run Job
+        run: |
+          gcloud run jobs deploy cloudrun-archiver \
+            --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-archiver:${{ inputs.image_tag }} \
+            --region ${{ vars.GCP_REGION }} \
+            --service-account ${{ vars.CLOUDRUN_ARCHIVER_SERVICE_ACCOUNT }} \
+            --task-timeout 300 \
+            --max-retries 0 \
+            --set-secrets DATABASE_URL=smart-job-archiver-database-url:latest,SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest \
+            --set-env-vars DATABASE_SSL_MODE=require,NODE_ENV=production

@@ -30,10 +30,10 @@ const nextConfig: NextConfig = {
                 ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://www.google.com https://www.gstatic.com https://www.recaptcha.net"
                 : "script-src 'self' 'unsafe-inline' https://apis.google.com https://www.google.com https://www.gstatic.com https://www.recaptcha.net",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: https://*.googleapis.com https://*.googleusercontent.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net",
+              "img-src 'self' data: blob: https://*.googleusercontent.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net",
               "font-src 'self'",
-              "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.supabase.co https://www.google.com https://www.gstatic.com https://www.recaptcha.net wss://*.firebaseio.com",
-              "frame-src 'self' https://*.firebaseapp.com https://www.google.com https://www.recaptcha.net",
+              "connect-src 'self' https://*.supabase.co https://www.google.com https://www.gstatic.com https://www.recaptcha.net",
+              "frame-src 'self' https://www.google.com https://www.recaptcha.net",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",

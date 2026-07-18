@@ -10,10 +10,11 @@ const __dirname = path.dirname(__filename);
 const cacheContextSource = fs.readFileSync(path.resolve(__dirname, '../contexts/CacheContext.tsx'), 'utf8');
 const cacheFetcherSource = fs.readFileSync(path.resolve(__dirname, '../contexts/cache-fetchers.ts'), 'utf8');
 
-test('mobile cache freshness uses backend user sync state instead of direct Firestore listeners', () => {
-  assert.match(cacheFetcherSource, /kind: 'userSyncState'/);
+test('mobile cache freshness uses Cloud API sync state instead of direct Firestore listeners', () => {
+  assert.match(cacheFetcherSource, /fetchUserSyncState/);
   assert.match(cacheContextSource, /const fetchUserSyncState = useCallback/);
-  assert.match(cacheContextSource, /const remoteUserState = await fetchUserSyncState\(\);/);
+  assert.match(cacheContextSource, /await fetchUserSyncState\(uid, companyId\)/);
   assert.doesNotMatch(cacheContextSource, /onSnapshot\(userCacheRef/);
   assert.doesNotMatch(cacheContextSource, /await getDoc\(userCacheRef\)/);
+  assert.doesNotMatch(cacheFetcherSource, /callHttpFunction/);
 });

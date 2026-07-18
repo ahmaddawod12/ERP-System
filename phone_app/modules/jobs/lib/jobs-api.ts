@@ -1,7 +1,23 @@
 import {
+  JobAcceptRequestSchema,
+  JobAcceptResultSchema,
+  JobCreateRequestSchema,
+  JobCreateResultSchema,
+  JobDeleteRequestSchema,
+  JobDeleteResultSchema,
   JobListPageSchema,
+  JobUpdateRequestSchema,
+  JobUpdateResultSchema,
   type CursorPage,
+  type JobAcceptRequest,
+  type JobAcceptResult,
+  type JobCreateRequest,
+  type JobCreateResult,
+  type JobDeleteRequest,
+  type JobDeleteResult,
   type JobSummary,
+  type JobUpdateRequest,
+  type JobUpdateResult,
 } from '@smart-job/api-contracts';
 
 import { requestApi } from '../../../lib/api/client';
@@ -20,6 +36,100 @@ export function fetchJobsPage(input: {
     buildJobListPath(input.companyId, input.filters, input.afterCursor ?? null),
     JobListPageSchema,
     {
+      uid: input.uid,
+      companyId: input.companyId,
+    },
+  );
+}
+
+function companyJobsPath(companyId: number): string {
+  if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+    throw new Error('A valid company is required to manage jobs');
+  }
+  return `/api/v1/companies/${companyId}/jobs`;
+}
+
+function companyJobPath(companyId: number, jobId: string): string {
+  const normalizedJobId = jobId.trim();
+  if (!normalizedJobId) {
+    throw new Error('A valid job is required');
+  }
+  return `${companyJobsPath(companyId)}/${encodeURIComponent(normalizedJobId)}`;
+}
+
+export function createJob(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly request: JobCreateRequest;
+  readonly idempotencyKey: string;
+}): Promise<JobCreateResult> {
+  return requestApi(
+    companyJobsPath(input.companyId),
+    JobCreateResultSchema,
+    {
+      method: 'POST',
+      body: JobCreateRequestSchema.parse(input.request),
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId,
+    },
+  );
+}
+
+export function updateJob(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly jobId: string;
+  readonly request: JobUpdateRequest;
+  readonly idempotencyKey: string;
+}): Promise<JobUpdateResult> {
+  return requestApi(
+    companyJobPath(input.companyId, input.jobId),
+    JobUpdateResultSchema,
+    {
+      method: 'PATCH',
+      body: JobUpdateRequestSchema.parse(input.request),
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId,
+    },
+  );
+}
+
+export function acceptJob(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly jobId: string;
+  readonly request: JobAcceptRequest;
+  readonly idempotencyKey: string;
+}): Promise<JobAcceptResult> {
+  return requestApi(
+    `${companyJobPath(input.companyId, input.jobId)}/accept`,
+    JobAcceptResultSchema,
+    {
+      method: 'POST',
+      body: JobAcceptRequestSchema.parse(input.request),
+      idempotencyKey: input.idempotencyKey,
+      uid: input.uid,
+      companyId: input.companyId,
+    },
+  );
+}
+
+export function deleteJob(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly jobId: string;
+  readonly request: JobDeleteRequest;
+  readonly idempotencyKey: string;
+}): Promise<JobDeleteResult> {
+  return requestApi(
+    companyJobPath(input.companyId, input.jobId),
+    JobDeleteResultSchema,
+    {
+      method: 'DELETE',
+      body: JobDeleteRequestSchema.parse(input.request),
+      idempotencyKey: input.idempotencyKey,
       uid: input.uid,
       companyId: input.companyId,
     },

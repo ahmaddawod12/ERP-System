@@ -16,6 +16,8 @@ test('mobile firebase barrel does not export generic firestore mutation helpers'
   assert.doesNotMatch(source, /export \{[\s\S]*\bdeleteDoc\b/);
   assert.doesNotMatch(source, /export \{[\s\S]*\bwriteBatch\b/);
   assert.doesNotMatch(source, /export \{[\s\S]*\brunTransaction\b/);
+  assert.doesNotMatch(source, /@react-native-firebase\/app-check/);
+  assert.doesNotMatch(source, /@react-native-firebase\/firestore/);
 });
 
 test('mobile modules do not import direct firestore SDK writes', () => {

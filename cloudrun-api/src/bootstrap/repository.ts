@@ -1,5 +1,7 @@
 import {
   CompanyBootstrapSchema,
+  SubscriptionStatusSchema,
+  TierSchema,
   type CompanyBootstrap,
   type WorkspaceSummary,
 } from "@smart-job/api-contracts";
@@ -14,6 +16,10 @@ const bootstrapRowSchema = z.object({
   workers_version: z.number().int().nonnegative(),
   company_inventory_version: z.number().int().nonnegative(),
   sync_updated_at: z.union([z.date(), z.iso.datetime({ offset: true })]),
+  subscription_tier: TierSchema.nullable(),
+  subscription_status: SubscriptionStatusSchema.nullable(),
+  subscription_expires_at: z.union([z.date(), z.iso.datetime({ offset: true })]).nullable(),
+  subscription_updated_at: z.union([z.date(), z.iso.datetime({ offset: true })]).nullable(),
   jobs_count: z.number().int().nonnegative(),
   clients_count: z.number().int().nonnegative(),
   inventory_parts_count: z.number().int().nonnegative(),
@@ -38,6 +44,10 @@ export const READ_BOOTSTRAP_SQL = `
     COALESCE(sync_state.company_inventory_version, 0)::integer
       AS company_inventory_version,
     COALESCE(sync_state.updated_at, clock_timestamp()) AS sync_updated_at,
+    subscription.tier::text AS subscription_tier,
+    subscription.status::text AS subscription_status,
+    subscription.expires_at AS subscription_expires_at,
+    subscription.updated_at AS subscription_updated_at,
     CASE WHEN entitlements.jobs_enabled THEN (
       SELECT count(*)::integer
       FROM public.jobs job
@@ -74,6 +84,8 @@ export const READ_BOOTSTRAP_SQL = `
   FROM entitlements
   LEFT JOIN public.company_sync_state sync_state
     ON sync_state.company_id = $1
+  LEFT JOIN public.company_subscriptions subscription
+    ON subscription.company_id = $1
 `;
 
 export async function readCompanyBootstrap(
@@ -86,8 +98,22 @@ export async function readCompanyBootstrap(
     workspace.role,
   ]);
   const row = bootstrapRowSchema.parse(result.rows[0]);
+  const subscription = row.subscription_tier !== null
+    && row.subscription_status !== null
+    && row.subscription_updated_at !== null
+    ? {
+        tier: row.subscription_tier,
+        status: row.subscription_status,
+        enabledModules: workspace.enabledModules,
+        expiresAt: row.subscription_expires_at === null
+          ? null
+          : isoTimestamp(row.subscription_expires_at),
+        updatedAt: isoTimestamp(row.subscription_updated_at),
+      }
+    : null;
   return CompanyBootstrapSchema.parse({
     workspace,
+    subscription,
     syncState: {
       jobsVersion: row.jobs_version,
       documentsVersion: row.documents_version,

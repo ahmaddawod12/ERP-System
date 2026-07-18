@@ -5,6 +5,7 @@ const {
   companies,
   documents,
   jobs,
+  archiveRuns,
 } = require('./schema');
 const { listCompanyDocumentsDetailed } = require('./documents');
 const { listCompanyJobsDetailed } = require('./jobs');
@@ -158,6 +159,53 @@ async function deleteArchivedDocumentsByIds(companyId, documentIds, options: any
   return deletedRows.length;
 }
 
+function normalizeArchiveCompletedAt(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    const error = new Error('Archive completion time is invalid');
+    (error as any).code = 'invalid-argument';
+    throw error;
+  }
+  return date;
+}
+
+async function recordArchiveRun(companyId, archiveKey, dataType, details, options = {}) {
+  const db = (options as any).db || getDb((options as any).env);
+  const company = await resolveCompanyByPublicId(db, companyId);
+  if (!company) {
+    const error = new Error('Company not found');
+    (error as any).code = 'not-found';
+    throw error;
+  }
+
+  const values = {
+    companyId: company.id,
+    archiveKey: String(archiveKey),
+    dataType: String(dataType),
+    status: details.status || 'pending',
+    docCount: Number(details.docCount || 0),
+    deletedCount: Number(details.deletedCount || 0),
+    storagePath: details.storagePath || null,
+    checksum: details.checksum || null,
+    completedAt: normalizeArchiveCompletedAt(details.completedAt),
+  };
+
+  await db.insert(archiveRuns)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [archiveRuns.companyId, archiveRuns.archiveKey, archiveRuns.dataType],
+      set: {
+        status: values.status,
+        docCount: values.docCount,
+        deletedCount: values.deletedCount,
+        storagePath: values.storagePath,
+        checksum: values.checksum,
+        completedAt: values.completedAt,
+      },
+    });
+}
+
 export {
   ARCHIVE_QUERY_LIMIT,
   deleteArchivedDocumentsByIds,
@@ -167,4 +215,6 @@ export {
   listArchivedCompanyJobs,
   listArchivedCompanyJobsPage,
   listCompanyPublicIds,
+  normalizeArchiveCompletedAt,
+  recordArchiveRun,
 };

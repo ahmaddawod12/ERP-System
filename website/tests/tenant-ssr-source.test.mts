@@ -49,11 +49,11 @@ test("workspace selection sends zero memberships to onboarding and auto-selects 
   assert.match(selectionPage, /decision\.kind === "workspace"[\s\S]*redirect\(`\/app\/c\/\$\{decision\.companyId\}`\)/);
 });
 
-test("proxy recognizes opaque sessions on the entry and explicit-tenant slices", () => {
-  assert.match(middleware, /if \(isOpaqueSessionAppRoute\(request\.nextUrl\.pathname\)\)/);
+test("proxy recognizes opaque sessions on all app routes", () => {
   assert.match(middleware, /request\.cookies\.get\(webSessionCookieName\(\)\)/);
   assert.match(middleware, /if \(isOpaqueSessionToken\(opaqueToken\)\)/);
-  assert.match(middleware, /const hasValidToken = await hasValidRevocationCheckedSession/);
+  assert.doesNotMatch(middleware, /hasValidRevocationCheckedSession/);
+  assert.doesNotMatch(middleware, /isOpaqueSessionAppRoute/);
 });
 
 test("tenant shell logout uses only the readable CSRF cookie", () => {

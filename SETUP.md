@@ -481,8 +481,11 @@ npm --prefix cloudrun-api run test
 
 The test temporarily provisions a random local `smart_job_api` password and
 removes it during cleanup; no runtime password is committed. `cloudrun-tax`
-provides the stateless probe/configuration shell. Do not point production
-website or mobile traffic at either service yet.
+uses separate `MAIN_API_AUDIENCE` and `TAX_GATEWAY_AUDIENCE` values: the first
+is used for its outbound main-API identity token and the second verifies tokens
+received by `/api/v1/tax/approval`. Configure both the main API and tax gateway
+with public Cloud Run ingress so Supabase bearer/session authentication and
+callback HMAC verification can run in the application handlers.
 
 The new API/tax Dockerfiles, Cloud Run service settings, IAM, Artifact Registry, OIDC/WIF, and
 environment rollout remain deployment-configuration changes and require the
@@ -524,6 +527,9 @@ Preserve these invariants:
 Required deployment concerns:
 
 - access to source data
+- a dedicated `smart-job-archiver-database-url` secret whose database role can
+  perform the archiver's direct archive-run writes and exact source-row deletes;
+  do not reuse the least-privileged `smart_job_api` runtime credential
 - Cloud Storage archive bucket access
 - `SUPABASE_URL` plus a dedicated `SUPABASE_SECRET_KEY` (`sb_secret_...`) for
   bounded abandoned-upload cleanup; the opaque key is sent only as `apikey`
@@ -561,9 +567,17 @@ Use these docs when working there:
 If you still operate legacy Firebase backend paths outside this repository, keep rollback paths available until your production rollout is fully complete.
 
 The approved database foundation does not authorize removing those legacy paths.
-New API/tax Dockerfiles and Cloud Run deployment configuration, domain route implementation,
+Cloud Run deployment/IAM workflow, custom API DNS mapping, and Playwright E2E
+CI are implemented. Remaining mobile Edge caller cutover is the final step.
 website/mobile cutovers, remaining non-PDF Storage unification, and final Edge/Firebase
 directory deletion remain separate future approval gates.
+
+The `website_e2e` CI job runs only when the repository variable
+`RUN_WEBSITE_E2E` is set to `true`. Configure the repository secrets
+`E2E_BASE_URL`, `E2E_TEST_EMAIL`, and `E2E_TEST_PASSWORD` for a seeded,
+non-production test account before enabling it. Local Playwright runs still
+exercise unauthenticated flows when credentials are absent and skip only the
+authenticated scenarios.
 
 ## 14. Deployment Order
 
@@ -581,7 +595,8 @@ Recommended high-level order:
 
 CI/CD evidence:
 
-- Use `.github/workflows/supabase-edge-deploy.yml` for manual Supabase Edge deployments.
+- The Edge deploy workflow has been removed. Remaining Edge functions are
+  retained for mobile screens not yet cut over to the Cloud API.
 - Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
 
 ## 15. Post-Setup Checks

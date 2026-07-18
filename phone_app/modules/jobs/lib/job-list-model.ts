@@ -14,6 +14,7 @@ const JOB_STATUS_ORDER: Readonly<Record<JobStatusValue, number>> = {
 
 export interface JobListFilters {
   readonly status?: JobStatusValue | readonly JobStatusValue[];
+  readonly dateField?: 'createdAt' | 'updatedAt' | 'finishedAt' | 'dueAt';
   readonly dateFrom?: Date | string;
   readonly dateTo?: Date | string;
   readonly creatorUid?: string;
@@ -23,6 +24,7 @@ export interface JobListFilters {
 
 export interface NormalizedJobListFilters {
   readonly statuses: readonly JobStatusValue[];
+  readonly dateField: 'createdAt' | 'updatedAt' | 'finishedAt' | 'dueAt';
   readonly dateFrom?: string;
   readonly dateTo?: string;
   readonly creatorUid?: string;
@@ -63,6 +65,7 @@ export function normalizeJobListFilters(
   filters: JobListFilters = {},
 ): NormalizedJobListFilters {
   const statuses = canonicalStatuses(filters.status);
+  const dateField = filters.dateField ?? 'createdAt';
   const dateFrom = toIso(filters.dateFrom);
   const dateTo = toIso(filters.dateTo);
   const creatorUid = filters.creatorUid?.trim() || undefined;
@@ -71,6 +74,7 @@ export function normalizeJobListFilters(
 
   JobListQuerySchema.parse({
     status: statuses.length > 0 ? statuses : undefined,
+    dateField,
     dateFrom,
     dateTo,
     creatorUid,
@@ -80,6 +84,7 @@ export function normalizeJobListFilters(
 
   return {
     statuses,
+    dateField,
     dateFrom,
     dateTo,
     creatorUid,
@@ -99,6 +104,7 @@ export function buildJobListPath(
 
   JobListQuerySchema.parse({
     status: filters.statuses.length > 0 ? filters.statuses : undefined,
+    dateField: filters.dateField,
     dateFrom: filters.dateFrom,
     dateTo: filters.dateTo,
     creatorUid: filters.creatorUid,
@@ -111,6 +117,7 @@ export function buildJobListPath(
   for (const status of filters.statuses) {
     searchParams.append('status', status);
   }
+  searchParams.set('dateField', filters.dateField);
   if (filters.dateFrom) searchParams.set('dateFrom', filters.dateFrom);
   if (filters.dateTo) searchParams.set('dateTo', filters.dateTo);
   if (filters.creatorUid) searchParams.set('creatorUid', filters.creatorUid);

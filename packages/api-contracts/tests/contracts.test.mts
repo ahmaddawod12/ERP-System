@@ -358,11 +358,10 @@ test("legacy surfaces record accepted, auth-failure, validation, and method outc
   }
 });
 
-test("characterization catalog cannot drift from the checked-in Edge dispatchers", () => {
+test("characterization catalog cannot drift from the remaining checked-in Edge dispatchers", () => {
   const mutationGateway = readRepositoryFile("supabase/functions/mutation-gateway/index.ts");
   const taxGateway = readRepositoryFile("supabase/functions/mutation-gateway-me-west1/index.ts");
   const readModel = readRepositoryFile("supabase/functions/read-model/index.ts");
-  const deployWorkflow = readRepositoryFile(".github/workflows/supabase-edge-deploy.yml");
 
   assert.deepEqual(
     sorted(extractObjectKeys(mutationGateway, "OPERATIONS")),
@@ -375,10 +374,6 @@ test("characterization catalog cannot drift from the checked-in Edge dispatchers
   assert.deepEqual(
     sorted(extractQuotedArray(readModel, "const READ_MODEL_KINDS")),
     sorted(LEGACY_READ_KINDS),
-  );
-  assert.deepEqual(
-    sorted(extractShellArray(deployWorkflow, "FUNCTIONS=(")),
-    sorted(LEGACY_DEPLOYED_FUNCTION_SLUGS),
   );
 });
 
@@ -443,6 +438,13 @@ test("viewer and sync schemas reject internal identifiers and invalid counters",
 
   const bootstrap = {
     workspace: viewer.workspaces[0],
+    subscription: {
+      tier: "Team",
+      status: "active",
+      enabledModules: ["jobs"],
+      expiresAt: null,
+      updatedAt: "2026-07-13T12:00:00.000Z",
+    },
     syncState: {
       jobsVersion: 1,
       documentsVersion: 2,
@@ -705,6 +707,7 @@ test("job list contracts bound SQL filters and expose opaque entity versions", (
     dateTo: "2026-07-01T00:00:00.000Z",
   }).success, false);
   assert.equal(JobListQuerySchema.safeParse({ status: "completed" }).success, false);
+  assert.equal(JobListQuerySchema.safeParse({ dateField: "finishedAt" }).success, true);
 
   const job = {
     jobId: "3cc2b9bd-a702-453b-b899-4b3bd346a7ba",

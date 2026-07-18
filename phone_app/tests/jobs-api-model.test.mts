@@ -52,8 +52,18 @@ test('job list filters and cursors serialize deterministically', () => {
   assert.deepEqual(filters.statuses, ['pending', 'waiting', 'denied']);
   assert.equal(
     buildJobListPath(17, filters, 'opaque+cursor/='),
-    '/api/v1/companies/17/jobs?status=pending&status=waiting&status=denied&dateFrom=2026-07-01T00%3A00%3A00.000Z&dateTo=2026-07-13T23%3A59%3A59.000Z&search=compressor&pageSize=50&afterCursor=opaque%2Bcursor%2F%3D',
+    '/api/v1/companies/17/jobs?status=pending&status=waiting&status=denied&dateField=createdAt&dateFrom=2026-07-01T00%3A00%3A00.000Z&dateTo=2026-07-13T23%3A59%3A59.000Z&search=compressor&pageSize=50&afterCursor=opaque%2Bcursor%2F%3D',
   );
+});
+
+test('historical job filters can target finishedAt while cursors remain opaque', () => {
+  const filters = normalizeJobListFilters({
+    status: 'finished',
+    dateField: 'finishedAt',
+    dateFrom: '2026-01-01T00:00:00.000Z',
+    pageSize: 25,
+  });
+  assert.match(buildJobListPath(17, filters), /dateField=finishedAt/);
 });
 
 test('API jobs retain UUID identity, public number, and opaque entity version', () => {

@@ -14,6 +14,9 @@ export const OAuthTokenExchangeRequestSchema = z.discriminatedUnion("grantType",
     grantType: z.literal("refresh_token"),
     refreshToken: sensitiveValueSchema,
   }).strict(),
+  z.object({
+    grantType: z.literal("client_credentials"),
+  }).strict(),
 ]);
 
 export type OAuthTokenExchangeRequest = z.infer<typeof OAuthTokenExchangeRequestSchema>;
@@ -30,6 +33,7 @@ export type OAuthTokenResult = z.infer<typeof OAuthTokenResultSchema>;
 
 export const TaxApprovalRequestSchema = z.object({
   accessToken: sensitiveValueSchema,
+  oauthSessionId: z.string().trim().min(1).max(128),
   invoice: z.record(z.string().trim().min(1).max(128), z.json()).refine(
     (value) => Object.keys(value).length > 0,
     "invoice must contain at least one field",
@@ -53,6 +57,30 @@ export const TaxApprovalResultSchema = z.object({
 });
 
 export type TaxApprovalResult = z.infer<typeof TaxApprovalResultSchema>;
+
+export const TaxApprovalRouteRequestSchema = z.object({
+  oauthSessionId: z.string().trim().min(1).max(128),
+  documentId: z.uuid(),
+  invoice: z.record(z.string().trim().min(1).max(128), z.json()).refine(
+    (value) => Object.keys(value).length > 0,
+    "invoice must contain at least one field",
+  ),
+}).strict();
+
+export type TaxApprovalRouteRequest = z.infer<typeof TaxApprovalRouteRequestSchema>;
+
+export interface BindTaxApprovalSessionRequest {
+  readonly documentId: string;
+  readonly oauthSessionId: string;
+  readonly requestId: string;
+}
+
+export const BindTaxApprovalSessionResultSchema = z.object({
+  bound: z.literal(true),
+  idempotentReplay: z.boolean(),
+}).strict();
+
+export type BindTaxApprovalSessionResult = z.infer<typeof BindTaxApprovalSessionResultSchema>;
 
 export const TaxCallbackEnvelopeSchema = z.object({
   message: z.object({

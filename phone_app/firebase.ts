@@ -3,29 +3,6 @@
 // Note: Native configuration is in GoogleService-Info.plist (iOS) and google-services.json (Android)
 
 import { getApp } from '@react-native-firebase/app';
-import {
-  initializeAppCheck,
-} from '@react-native-firebase/app-check';
-import appCheck from '@react-native-firebase/app-check';
-import {
-  getFirestore,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  writeBatch,
-  runTransaction,
-  serverTimestamp,
-  Timestamp as FirestoreTimestamp,
-  FieldValue as FirestoreFieldValue,
-  GeoPoint as FirestoreGeoPoint,
-  increment,
-} from '@react-native-firebase/firestore';
 import storage from '@react-native-firebase/storage';
 import {
   getMessaging,
@@ -53,25 +30,6 @@ import {
 
 // Get the default app instance (modular API)
 export const app = getApp();
-
-// Initialize App Check — required for Cloud Functions enforcement
-// Uses DeviceCheck (iOS) and Play Integrity (Android) attestation providers
-const appCheckProvider = appCheck().newReactNativeFirebaseAppCheckProvider();
-appCheckProvider.configure({
-  apple: {
-    provider: __DEV__ ? 'debug' : 'deviceCheck',
-  },
-  android: {
-    provider: __DEV__ ? 'debug' : 'playIntegrity',
-  },
-});
-initializeAppCheck(app, {
-  provider: appCheckProvider,
-  isTokenAutoRefreshEnabled: true,
-});
-
-// Firestore instance (modular API)
-export const db = getFirestore(app);
 
 export type SupabaseAuthUser = {
   uid: string;
@@ -252,27 +210,6 @@ async function callProtectedGatewayOperation<T = unknown>(operation: string, pay
 
 // Messaging instance (modular API)
 export const messaging = getMessaging(app);
-
-// Firestore helper exports (modular API)
-export const Timestamp = FirestoreTimestamp;
-export const FieldValue = FirestoreFieldValue;
-export const GeoPoint = FirestoreGeoPoint;
-
-// Keep generic Firestore write primitives out of the shared barrel so protected
-// business writes remain visibly intentional at each direct-write call site.
-export {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  increment,
-  serverTimestamp,
-};
 
 // Re-export Auth modular functions (wrapped to preserve API surface)
 export async function signInWithEmailAndPassword(authInstance: any, email: string, password: string) {

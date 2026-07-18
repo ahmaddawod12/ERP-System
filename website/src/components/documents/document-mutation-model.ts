@@ -1,15 +1,88 @@
 import {
   createApiResponseSchema,
+  DocumentTaskAcceptedSchema,
   DocumentTaskSchema,
   type DocumentTask,
+  type DocumentTaskAccepted,
 } from "@smart-job/api-contracts";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 
 import { readCookie, WEB_CSRF_COOKIE } from "../../lib/auth/opaque-session.ts";
 
 export interface PendingDocumentMutation {
   readonly fingerprint: string;
   readonly key: string;
+  readonly accepted?: DocumentTaskAccepted;
+}
+
+export type DocumentTaskAction = "preview" | "generate";
+
+const persistedDocumentMutationSchema = z.object({
+  version: z.literal(1),
+  companyId: z.number().int().positive(),
+  action: z.enum(["preview", "generate"]),
+  fingerprint: z.string().min(1),
+  idempotencyKey: z.string().trim().min(8).max(128),
+  accepted: DocumentTaskAcceptedSchema.nullable(),
+  updatedAt: z.number().int().nonnegative(),
+}).strict();
+
+export type PersistedDocumentMutation = z.infer<typeof persistedDocumentMutationSchema>;
+
+function documentTaskAttemptStorageKey(companyId: number, action: DocumentTaskAction): string {
+  return `sj_document_task_attempt:v1:${companyId}:${action}`;
+}
+
+export function readPersistedDocumentMutation(
+  storage: Pick<Storage, "getItem" | "removeItem">,
+  companyId: number,
+  action: DocumentTaskAction,
+): PersistedDocumentMutation | null {
+  const key = documentTaskAttemptStorageKey(companyId, action);
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) return null;
+    const parsed = persistedDocumentMutationSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success || parsed.data.companyId !== companyId || parsed.data.action !== action) {
+      storage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+export function persistDocumentMutation(
+  storage: Pick<Storage, "setItem">,
+  companyId: number,
+  action: DocumentTaskAction,
+  pending: PendingDocumentMutation,
+  updatedAt = Date.now(),
+): PersistedDocumentMutation {
+  const record = persistedDocumentMutationSchema.parse({
+    version: 1,
+    companyId,
+    action,
+    fingerprint: pending.fingerprint,
+    idempotencyKey: pending.key,
+    accepted: pending.accepted ?? null,
+    updatedAt,
+  });
+  storage.setItem(documentTaskAttemptStorageKey(companyId, action), JSON.stringify(record));
+  return record;
+}
+
+export function clearPersistedDocumentMutation(
+  storage: Pick<Storage, "removeItem">,
+  companyId: number,
+  action: DocumentTaskAction,
+): void {
+  try {
+    storage.removeItem(documentTaskAttemptStorageKey(companyId, action));
+  } catch {
+    // Terminal reconciliation must not fail because browser storage is unavailable.
+  }
 }
 
 export interface DocumentComposerItem {

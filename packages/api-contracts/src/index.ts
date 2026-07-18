@@ -5,6 +5,8 @@ import {
   RegistrationMode,
   Role,
   SubStatus,
+  TaxAuthorityStatus as CanonicalTaxAuthorityStatus,
+  TaxSubmissionMode as CanonicalTaxSubmissionMode,
   TIER_VALUES,
   UPGRADEABLE_TIERS,
   type AccountTypeValue,
@@ -374,15 +376,26 @@ export const CompanySubscriptionSummarySchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }),
 }).strict();
 
+export const TaxSubmissionModeSchema = stringEnumSchema(
+  Object.values(CanonicalTaxSubmissionMode),
+);
+
+export const BootstrapCapabilitiesSchema = z.object({
+  taxSubmissionMode: TaxSubmissionModeSchema,
+}).strict();
+
 export const CompanyBootstrapSchema = z.object({
   workspace: WorkspaceSummarySchema,
   subscription: CompanySubscriptionSummarySchema.nullable(),
   syncState: CompanySyncStateSchema,
   counts: BootstrapCountsSchema,
+  capabilities: BootstrapCapabilitiesSchema,
 }).strict();
 
 export type BootstrapCounts = z.infer<typeof BootstrapCountsSchema>;
 export type CompanySubscriptionSummary = z.infer<typeof CompanySubscriptionSummarySchema>;
+export type TaxSubmissionMode = z.infer<typeof TaxSubmissionModeSchema>;
+export type BootstrapCapabilities = z.infer<typeof BootstrapCapabilitiesSchema>;
 export type CompanyBootstrap = z.infer<typeof CompanyBootstrapSchema>;
 
 export const CursorPageSchema = <TSchema extends z.ZodType>(itemSchema: TSchema) => z.object({
@@ -1093,14 +1106,35 @@ export const DocumentGenerationStatusSchema = z.enum([
   "failed",
 ]);
 
-export const TaxAuthorityStatusSchema = z.enum([
-  "none",
-  "reserved",
+export const TaxAuthorityStatusSchema = stringEnumSchema(
+  Object.values(CanonicalTaxAuthorityStatus),
+);
+
+export const EmailDeliveryStatusSchema = z.enum([
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "delivery_unknown",
+]);
+
+export const TaxSubmissionStatusSchema = z.enum([
+  "queued",
+  "submitting",
+  "submitted",
   "approved",
   "rejected",
   "failed",
-  "burned",
+  "submission_unknown",
 ]);
+
+export const DocumentDispatchMessageSchema = z.object({
+  taskId: z.string().trim().min(1).max(160),
+}).strict();
+
+export const EmailDispatchMessageSchema = z.object({
+  deliveryId: z.uuid(),
+}).strict();
 
 export const DEFAULT_DOCUMENT_PAGE_SIZE = 50;
 export const MAX_DOCUMENT_PAGE_SIZE = 200;
@@ -1166,12 +1200,17 @@ export const DocumentSummarySchema = z.object({
   documentDate: z.iso.datetime({ offset: true }).nullable(),
   hasFile: z.boolean(),
   emailSent: z.boolean(),
+  emailDeliveryStatus: EmailDeliveryStatusSchema.nullable(),
   entityVersion: EntityVersionSchema,
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
 }).strict();
 
 export const DocumentListPageSchema = CursorPageSchema(DocumentSummarySchema);
+
+export const DocumentDetailSchema = DocumentSummarySchema.extend({
+  taxSubmissionStatus: TaxSubmissionStatusSchema.nullable(),
+}).strict();
 
 export const DocumentDownloadAccessSchema = z.object({
   documentId: z.uuid(),
@@ -1182,10 +1221,15 @@ export const DocumentDownloadAccessSchema = z.object({
 
 export type DocumentGenerationStatus = z.infer<typeof DocumentGenerationStatusSchema>;
 export type TaxAuthorityStatus = z.infer<typeof TaxAuthorityStatusSchema>;
+export type EmailDeliveryStatus = z.infer<typeof EmailDeliveryStatusSchema>;
+export type TaxSubmissionStatus = z.infer<typeof TaxSubmissionStatusSchema>;
+export type DocumentDispatchMessage = z.infer<typeof DocumentDispatchMessageSchema>;
+export type EmailDispatchMessage = z.infer<typeof EmailDispatchMessageSchema>;
 export type DocumentListQuery = z.infer<typeof DocumentListQuerySchema>;
 export type DocumentClientSummary = z.infer<typeof DocumentClientSummarySchema>;
 export type DocumentCreatorSummary = z.infer<typeof DocumentCreatorSummarySchema>;
 export type DocumentSummary = z.infer<typeof DocumentSummarySchema>;
+export type DocumentDetail = z.infer<typeof DocumentDetailSchema>;
 export type DocumentDownloadAccess = z.infer<typeof DocumentDownloadAccessSchema>;
 
 export const DocumentTaskStatusSchema = DocumentGenerationStatusSchema;
@@ -1281,6 +1325,34 @@ export const DocumentDeleteResultSchema = z.object({
   disposition: z.literal("deleted"),
 }).strict();
 
+export const DocumentEmailRetryResultSchema = z.object({
+  documentId: z.uuid(),
+  deliveryId: z.uuid(),
+  emailDeliveryStatus: z.literal("queued"),
+}).strict();
+
+export const TaxInvoiceAcceptedSchema = z.object({
+  documentId: z.uuid(),
+  documentCode: z.string().trim().min(1).max(64),
+  documentNumber: z.number().int().positive(),
+  taxAuthorityStatus: z.literal("reserved"),
+  submissionStatus: z.literal("queued"),
+}).strict();
+
+export const TaxInvoiceCreateRequestSchema = DocumentDataInputSchema.superRefine(
+  (request, context) => {
+    request.items.forEach((item, index) => {
+      if (item.price <= 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["items", index, "price"],
+          message: "Tax-invoice item prices must be positive.",
+        });
+      }
+    });
+  },
+);
+
 export type DocumentLineItemInput = z.infer<typeof DocumentLineItemInputSchema>;
 export type DocumentClientInput = z.infer<typeof DocumentClientInputSchema>;
 export type DocumentDataInput = z.infer<typeof DocumentDataInputSchema>;
@@ -1289,6 +1361,9 @@ export type DocumentGenerateRequest = z.infer<typeof DocumentGenerateRequestSche
 export type DocumentTaskAccepted = z.infer<typeof DocumentTaskAcceptedSchema>;
 export type DocumentDeleteRequest = z.infer<typeof DocumentDeleteRequestSchema>;
 export type DocumentDeleteResult = z.infer<typeof DocumentDeleteResultSchema>;
+export type DocumentEmailRetryResult = z.infer<typeof DocumentEmailRetryResultSchema>;
+export type TaxInvoiceAccepted = z.infer<typeof TaxInvoiceAcceptedSchema>;
+export type TaxInvoiceCreateRequest = z.infer<typeof TaxInvoiceCreateRequestSchema>;
 
 // Authenticated viewer push-token mutations. Tokens are write-only API data and
 // intentionally have no response schema field.

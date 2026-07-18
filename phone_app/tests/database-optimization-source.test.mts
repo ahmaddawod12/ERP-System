@@ -78,6 +78,12 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
     '0022_api_document_tasks.sql',
     '0023_api_tax_callback_processing.sql',
     '0024_api_archive_retrieval.sql',
+    '0025_post_0024_metadata_baseline.sql',
+    '0026_job_acceptance_inventory_consumption.sql',
+    '0027_durable_workflow_foundations.sql',
+    '0028_reliable_document_email_pipeline.sql',
+    '0029_authoritative_tax_workflow.sql',
+    '0030_post_tax_metadata_sync.sql',
   ]);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);

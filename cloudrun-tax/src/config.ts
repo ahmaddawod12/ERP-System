@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const logLevelSchema = z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]);
 const nodeEnvironmentSchema = z.enum(["development", "test", "production"]);
+const taxSubmissionModeSchema = z.enum(["disabled", "sandbox", "production"]);
 
 const optionalText = z.preprocess(
   (value) => (value === "" ? undefined : value),
@@ -24,6 +25,7 @@ const environmentSchema = z
     HOST: z.string().trim().min(1).default("0.0.0.0"),
     PORT: z.coerce.number().int().min(1).max(65_535).default(8080),
     LOG_LEVEL: logLevelSchema.default("info"),
+    TAX_SUBMISSION_MODE: taxSubmissionModeSchema.default("disabled"),
     TAX_OUTBOUND_TIMEOUT_MS: z.coerce.number().int().min(250).max(10_000).default(8_000),
     TAX_TOKEN_URL: optionalUrl,
     TAX_APPROVAL_URL: optionalUrl,
@@ -68,10 +70,14 @@ const environmentSchema = z
       }
     }
 
-    if (config.NODE_ENV === "production" && configuredCount !== requiredOperationalFields.length) {
+    if (
+      config.NODE_ENV === "production"
+      && config.TAX_SUBMISSION_MODE !== "disabled"
+      && configuredCount !== requiredOperationalFields.length
+    ) {
       context.addIssue({
         code: "custom",
-        message: "Production requires the complete tax authority, callback, and main-API configuration",
+        message: "Enabled production tax submission requires the complete tax authority, callback, and main-API configuration",
         path: ["NODE_ENV"],
       });
     }
@@ -165,6 +171,7 @@ export interface MainApiConfig {
 
 export interface ServiceConfig {
   readonly nodeEnvironment: z.infer<typeof nodeEnvironmentSchema>;
+  readonly taxSubmissionMode: z.infer<typeof taxSubmissionModeSchema>;
   readonly host: string;
   readonly port: number;
   readonly logLevel: z.infer<typeof logLevelSchema>;
@@ -192,6 +199,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Servic
 
   return {
     nodeEnvironment: data.NODE_ENV,
+    taxSubmissionMode: data.TAX_SUBMISSION_MODE,
     host: data.HOST,
     port: data.PORT,
     logLevel: data.LOG_LEVEL,

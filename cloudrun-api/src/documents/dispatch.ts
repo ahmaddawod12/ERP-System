@@ -1,4 +1,8 @@
 import { randomInt, randomUUID } from "node:crypto";
+import {
+  DocumentDispatchMessageSchema,
+  type DocumentDispatchMessage,
+} from "@smart-job/api-contracts";
 import type { QueryResultRow } from "pg";
 import { z } from "zod";
 
@@ -9,7 +13,6 @@ const claimedDispatchRowSchema = z.object({
   task_type: z.enum(["preview", "generate"]),
   user_id: z.uuid(),
   dispatch_attempt: z.number().int().positive(),
-  dispatch_payload: z.record(z.string(), z.unknown()),
 }).strict();
 
 interface ClaimedDispatchRow extends QueryResultRow {
@@ -17,7 +20,6 @@ interface ClaimedDispatchRow extends QueryResultRow {
   readonly task_type: "preview" | "generate";
   readonly user_id: string;
   readonly dispatch_attempt: number;
-  readonly dispatch_payload: Record<string, unknown>;
 }
 
 export interface ClaimedDocumentDispatch {
@@ -25,13 +27,12 @@ export interface ClaimedDocumentDispatch {
   readonly taskType: "preview" | "generate";
   readonly userId: string;
   readonly attempt: number;
-  readonly payload: Readonly<Record<string, unknown>>;
 }
 
 export interface DocumentTaskPublisher {
   publish(
     taskType: ClaimedDocumentDispatch["taskType"],
-    payload: Readonly<Record<string, unknown>>,
+    message: DocumentDispatchMessage,
   ): Promise<void>;
 }
 
@@ -42,7 +43,7 @@ export interface DocumentDispatchResult {
 }
 
 export const CLAIM_DOCUMENT_DISPATCH_SQL = `
-  SELECT *
+  SELECT task_key, task_type, user_id, dispatch_attempt
   FROM private.claim_api_document_dispatch_batch(
     $1::uuid,
     $2::integer,
@@ -89,7 +90,6 @@ async function claimDispatches(
       taskType: row.task_type,
       userId: row.user_id,
       attempt: row.dispatch_attempt,
-      payload: row.dispatch_payload,
     };
   });
 }
@@ -166,7 +166,10 @@ export async function dispatchPendingDocumentTasks(
 
   for (const dispatch of dispatches) {
     try {
-      await publisher.publish(dispatch.taskType, dispatch.payload);
+      await publisher.publish(
+        dispatch.taskType,
+        DocumentDispatchMessageSchema.parse({ taskId: dispatch.taskKey }),
+      );
       await completeDispatch(database, dispatch, leaseToken);
       published += 1;
     } catch (error) {

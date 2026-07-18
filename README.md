@@ -2,18 +2,20 @@
 
 Smart-Job ERP is a multi-tenant field-service platform for solo operators and business teams.
 
-## Runtime Snapshot (July 13, 2026)
+## Runtime Snapshot (July 18, 2026)
 
 - Supabase Auth is the active sign-in provider for website and mobile.
 - `supabase/functions/` is the in-repo backend trust boundary.
 - PostgreSQL (via `packages/db`) is the primary source of truth for company-scoped ERP data.
 - Firestore remains for compatibility reads/operational metadata. Active PDFs
   and previews now use private Supabase Storage; GCS remains for monthly archives.
-- Cloud Run services still handle PDF generation and monthly archives.
-- The new `cloudrun-api` has tested dual authentication, opaque sessions, a
-  least-privileged database adapter, and initial domain routes;
-  `cloudrun-tax` remains a Fastify foundation. Edge remains the active gateway
-  until the remaining domain and frontend cutover stages are complete.
+- Cloud Run workers handle PDF generation, durable SES document delivery, and
+  monthly archives. Pub/Sub messages for PDF/email contain opaque IDs only;
+  workers claim canonical state through least-privilege private SQL RPCs.
+- `cloudrun-api` includes dual authentication, opaque sessions, bounded domain
+  APIs, durable document/email drains, and the authoritative tax outbox.
+  Production tax submission remains fail-closed pending certification. Edge
+  remains only for mobile operations not yet cut over.
 
 ## Repository Layout
 
@@ -25,6 +27,7 @@ ERP-System/
 |-- cloudrun-api/        Main Fastify API foundation
 |-- cloudrun-tax/        Stateless Israel tax gateway foundation
 |-- cloudrun-pdf/        PDF preview/generation service
+|-- cloudrun-email/      Durable SES document-email worker
 |-- cloudrun-archiver/   Monthly archive service
 |-- packages/contracts/  Shared contracts and constants
 |-- packages/api-contracts/ Runtime-validated HTTP contracts
@@ -61,6 +64,7 @@ npm --prefix phone_app install
 npm --prefix cloudrun-api install
 npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
+npm --prefix cloudrun-email install
 npm --prefix cloudrun-archiver install
 ```
 
@@ -92,6 +96,8 @@ npm --prefix phone_app run test
 npm --prefix packages/api-contracts test
 npm --prefix cloudrun-api test
 npm --prefix cloudrun-tax test
+npm --prefix cloudrun-pdf test
+npm --prefix cloudrun-email test
 npm --prefix phone_app run doctor
 deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
 deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrations" supabase/handlers/handlers-hardening.test.ts
@@ -123,6 +129,26 @@ deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrat
 - Job updates use opaque `entity_version` values. Atomic completion goes through
   `private.complete_job_with_details(...)` and returns a conflict for stale
   versions instead of performing compensating writes.
+- Manager/dev job acceptance consumes its recorded parts in the same locked SQL
+  transaction before status finalization; insufficient inventory rolls back.
+- Tax invoices use one authoritative SQL transaction and durable submission
+  outbox. `reserved` and `submitted` are not approval; only `approved` may show
+  a confirmation or enqueue the final PDF.
+- SES delivery uses `queued|sending|sent|failed|delivery_unknown`. An ambiguous
+  provider outcome is manual-review state and is never automatically resent.
+
+### Production workflow migrations (`0025`–`0030`)
+
+- `0025` is a verified no-op Drizzle metadata baseline after `0024`.
+- `0026` makes job acceptance consume inventory exactly once.
+- `0027`–`0028` add durable workflow tables, dedicated PDF/email/archiver
+  roles, canonical worker claims, and the email state machine.
+- `0029` adds atomic tax creation, outbox claiming, replay/conflict handling,
+  `submission_unknown`, and approval-only PDF creation; `0030` synchronizes
+  migration metadata.
+- `npm --prefix packages/db run test:migrations` verifies the `0024` upgrade
+  path on a loopback database. The regular clean migration plus integration
+  suite verifies role, tenant, inventory, PDF, email, and tax behavior.
 
 ## Recent Hardening (April 26-June 22, 2026)
 
@@ -214,8 +240,8 @@ deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrat
 - `contact/request` passes `subject` as a dedicated field; `company` defaults to `"General"` when absent.
 - Double-fault catch in all three gateways (`mutation-gateway`, `mutation-gateway-me-west1`, `read-model`) now resolves with a safe CORS-aware error response instead of an unhandled rejection.
 - Preview and generate requests now create SQL-backed `document_tasks`, enrich company/document payloads server-side, and dispatch trusted work to `cloudrun-pdf` directly from the edge runtime.
-- Tax invoice approval now creates the draft SQL document and reuses the same async generate-task pipeline instead of requiring a pre-existing client document draft.
-- Duplicate preview/generate/tax dispatches are now suppressed when an active SQL `document_tasks` row already exists for the same lock key.
+- Tax invoice submission is fail-closed pending Tax Authority certification. The legacy `getInvoiceApproval` compatibility operation returns an unavailable response before allocating a number, writing a document, or dispatching a PDF.
+- Duplicate preview/generate dispatches are suppressed when an active SQL `document_tasks` row already exists for the same lock key.
 - `fetchArchiveMonthV1` now retrieves archived month JSON through the backend trust boundary using server-controlled bucket/path access.
 - Job mutations and read-model responses now preserve worker/mobile job fields such as `timeFrom`, `timeTo`, `travelDistance`, `signingPerson`, `photos`, `signature`, and `partsUsed`.
 - `createJobV1` resolves job part references before inserting the job row, preventing partial job creation when a supplied part ID is invalid.

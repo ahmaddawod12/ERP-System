@@ -37,6 +37,9 @@ const bootstrap = {
     documents: 4,
     pendingDocumentTasks: 0,
   },
+  capabilities: {
+    taxSubmissionMode: 'disabled' as const,
+  },
 };
 
 test('Cloud API profile and workspace data map to the legacy cache identity shape', () => {

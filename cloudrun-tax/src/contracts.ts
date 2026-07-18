@@ -93,7 +93,7 @@ export type TaxCallbackEnvelope = z.infer<typeof TaxCallbackEnvelopeSchema>;
 
 export const NormalizedTaxCallbackSchema = z.object({
   oauthSessionId: z.string().trim().min(1).max(128),
-  status: z.enum(["approved", "rejected", "error"]),
+  status: z.enum(["submitted", "approved", "rejected", "error"]),
   confirmationNumber: z.string().trim().min(1).max(128).optional(),
   errorCode: z.string().trim().min(1).max(128).optional(),
   errorMessage: optionalBoundedText,

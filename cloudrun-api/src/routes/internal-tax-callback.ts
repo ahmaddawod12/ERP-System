@@ -7,13 +7,14 @@ import { z } from "zod";
 
 import type { GoogleServiceIdentityVerifier } from "../auth/index.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
+import { dispatchPendingDocumentTasks, type DocumentTaskPublisher } from "../documents/dispatch.js";
 import { mapDatabaseError } from "../database/errors.js";
 import { apiSuccess } from "../http/envelope.js";
 import { AppError } from "../http/errors.js";
 
 const taxCallbackDataSchema = z.object({
   oauthSessionId: z.string().trim().min(1).max(128),
-  status: z.enum(["approved", "rejected", "error"]),
+  status: z.enum(["submitted", "approved", "rejected", "error"]),
   confirmationNumber: z.string().trim().min(1).max(128).optional(),
   errorCode: z.string().trim().min(1).max(128).optional(),
   errorMessage: z.string().trim().min(1).max(2_000).optional(),
@@ -71,6 +72,7 @@ interface TaxApprovalSessionRow {
 export interface InternalTaxCallbackRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly internalIdentityVerifier?: GoogleServiceIdentityVerifier;
+  readonly documentTaskPublisher?: DocumentTaskPublisher;
 }
 
 export function registerInternalTaxCallbackRoute(
@@ -202,6 +204,18 @@ export function registerInternalTaxCallbackRoute(
       ).catch((error: unknown) => {
         throw mapDatabaseError(error);
       });
+
+      if (body.callback.status === "approved" && services.documentTaskPublisher !== undefined) {
+        try {
+          await dispatchPendingDocumentTasks(
+            services.database,
+            services.documentTaskPublisher,
+            { userId: identity.contextUserId, limit: 1 },
+          );
+        } catch (error) {
+          request.log.warn({ err: error }, "approved tax PDF remains in the document outbox");
+        }
+      }
 
       return apiSuccess(request.id, result);
     },

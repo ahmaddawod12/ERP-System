@@ -26,6 +26,7 @@ import type { TaxAuthorityClient } from "../src/authority-client.js";
 
 const testConfig: ServiceConfig = {
   nodeEnvironment: "test",
+  taxSubmissionMode: "disabled",
   host: "127.0.0.1",
   port: 8080,
   logLevel: "silent",
@@ -454,7 +455,11 @@ describe("POST /api/v1/tax/callback", () => {
 });
 
 function createApprovalApp(deps: BuildAppDependencies): FastifyInstance {
-  const app = buildApp({ config: testConfig, logger: false, dependencies: deps });
+  const app = buildApp({
+    config: { ...testConfig, taxSubmissionMode: "sandbox" },
+    logger: false,
+    dependencies: deps,
+  });
   apps.push(app);
   return app;
 }
@@ -482,8 +487,47 @@ function createMockAuthorityClient(
 }
 
 describe("POST /api/v1/tax/approval", () => {
+  it("fails closed before validation or authority calls when submission is disabled", async () => {
+    let authorityCalled = false;
+    const app = buildApp({
+      config: testConfig,
+      logger: false,
+      dependencies: {
+        authorityClient: createMockAuthorityClient(
+          async () => {
+            authorityCalled = true;
+            return { accessToken: "token", tokenType: "Bearer", expiresInSeconds: 3600 };
+          },
+          async () => {
+            authorityCalled = true;
+            return { status: "approved", confirmationNumber: "must-not-happen" };
+          },
+        ),
+        callbackClient: createMockCallbackClient(async () => ({ processed: true })),
+        approvalIdentityVerifier: createPassIdentityVerifier(),
+      },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tax/approval",
+      payload: { wrong: "shape" },
+    });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().error.code, "TAX_SUBMISSION_DISABLED");
+    assert.equal(response.json().error.retryable, false);
+    assert.equal(authorityCalled, false);
+  });
+
   it("returns 503 when the gateway is not operationally configured", async () => {
-    const response = await createApp().inject({
+    const app = buildApp({
+      config: { ...testConfig, taxSubmissionMode: "sandbox" },
+      logger: false,
+    });
+    apps.push(app);
+    const response = await app.inject({
       method: "POST",
       url: "/api/v1/tax/approval",
       payload: { documentId: "3b5cc006-75cb-45cb-b13d-6db90b568e14", oauthSessionId: "session-1", invoice: { field: "value" } },

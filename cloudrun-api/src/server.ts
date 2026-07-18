@@ -10,9 +10,13 @@ import {
 } from "./auth/index.js";
 import { loadConfig } from "./config.js";
 import { createApiDatabaseRuntime } from "./database/runtime.js";
-import { createPubSubDocumentTaskPublisher } from "./documents/pubsub-publisher.js";
+import {
+  createPubSubDocumentTaskPublisher,
+  createPubSubEmailDeliveryPublisher,
+} from "./documents/pubsub-publisher.js";
 import { loadApiRuntimeConfig } from "./runtime-config.js";
 import { createCompanyFileStorage } from "./storage/company-files.js";
+import { createTaxGatewayClient } from "./tax/gateway-client.js";
 import { createWebSessionCrypto } from "./web-sessions/crypto.js";
 import { createWebSessionService } from "./web-sessions/service.js";
 
@@ -48,9 +52,18 @@ export async function startServer(): Promise<void> {
   const documentTaskPublisher = runtimeConfig.documentDispatch === undefined
     ? undefined
     : createPubSubDocumentTaskPublisher(runtimeConfig.documentDispatch);
+  const emailDeliveryPublisher = runtimeConfig.documentDispatch === undefined
+    ? undefined
+    : createPubSubEmailDeliveryPublisher({
+        projectId: runtimeConfig.documentDispatch.projectId,
+        topic: runtimeConfig.documentDispatch.emailTopic,
+      });
   const internalIdentityVerifier = runtimeConfig.internalIdentity === undefined
     ? undefined
     : createGoogleServiceIdentityVerifier(runtimeConfig.internalIdentity);
+  const taxGatewayClient = runtimeConfig.taxSubmission.gateway === undefined
+    ? undefined
+    : createTaxGatewayClient(runtimeConfig.taxSubmission.gateway);
   const app = await buildApp({
     config,
     services: {
@@ -61,7 +74,10 @@ export async function startServer(): Promise<void> {
       storage,
       storageBucketId: runtimeConfig.supabaseStorage.bucketId,
       ...(documentTaskPublisher === undefined ? {} : { documentTaskPublisher }),
+      ...(emailDeliveryPublisher === undefined ? {} : { emailDeliveryPublisher }),
       ...(internalIdentityVerifier === undefined ? {} : { internalIdentityVerifier }),
+      taxSubmissionMode: runtimeConfig.taxSubmission.mode,
+      ...(taxGatewayClient === undefined ? {} : { taxGatewayClient }),
     },
   }).catch(async (error: unknown) => {
     await database.close().catch(() => undefined);

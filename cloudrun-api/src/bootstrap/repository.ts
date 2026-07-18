@@ -3,6 +3,7 @@ import {
   SubscriptionStatusSchema,
   TierSchema,
   type CompanyBootstrap,
+  type TaxSubmissionMode,
   type WorkspaceSummary,
 } from "@smart-job/api-contracts";
 import { z } from "zod";
@@ -92,6 +93,7 @@ export async function readCompanyBootstrap(
   transaction: DatabaseQueryable,
   internalCompanyId: string,
   workspace: WorkspaceSummary,
+  taxSubmissionMode: TaxSubmissionMode = "disabled",
 ): Promise<CompanyBootstrap> {
   const result = await transaction.query(READ_BOOTSTRAP_SQL, [
     internalCompanyId,
@@ -129,5 +131,6 @@ export async function readCompanyBootstrap(
       documents: row.documents_count,
       pendingDocumentTasks: row.pending_document_tasks_count,
     },
+    capabilities: { taxSubmissionMode },
   });
 }

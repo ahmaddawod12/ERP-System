@@ -1,7 +1,9 @@
 import {
   DocumentDeleteResultSchema,
+  DocumentEmailRetryResultSchema,
   DocumentTaskAcceptedSchema,
   type DocumentDeleteResult,
+  type DocumentEmailRetryResult,
   type DocumentGenerateRequest,
   type DocumentPreviewRequest,
   type DocumentTaskAccepted,
@@ -44,6 +46,18 @@ interface DeleteRow extends QueryResultRow {
   readonly document_code: string;
 }
 
+const emailRetryRowSchema = z.object({
+  delivery_id: z.uuid(),
+  document_id: z.uuid(),
+  delivery_status: z.literal("queued"),
+}).strict();
+
+interface EmailRetryRow extends QueryResultRow {
+  readonly delivery_id: string;
+  readonly document_id: string;
+  readonly delivery_status: "queued";
+}
+
 export const CREATE_DOCUMENT_PREVIEW_TASK_SQL = `
   SELECT *
   FROM private.create_api_document_preview_task(
@@ -67,6 +81,10 @@ export const CREATE_DOCUMENT_GENERATION_TASK_SQL = `
 export const DELETE_DOCUMENT_SQL = `
   SELECT *
   FROM private.delete_api_document($1::uuid, $2::uuid, $3::bigint)
+`;
+
+export const RETRY_DOCUMENT_EMAIL_SQL = `
+  SELECT * FROM private.retry_api_document_email($1::uuid, $2::uuid)
 `;
 
 function mapTaskMutationRow(unknownRow: unknown): DocumentTaskAccepted {
@@ -138,5 +156,24 @@ export async function deleteDocument(
     documentId: row.document_id,
     documentCode: row.document_code,
     disposition: "deleted",
+  });
+}
+
+export async function retryDocumentEmail(
+  transaction: DatabaseQueryable,
+  input: {
+    readonly internalCompanyId: string;
+    readonly documentId: string;
+  },
+): Promise<DocumentEmailRetryResult> {
+  const result = await transaction.query<EmailRetryRow>(RETRY_DOCUMENT_EMAIL_SQL, [
+    input.internalCompanyId,
+    input.documentId,
+  ]);
+  const row = emailRetryRowSchema.parse(result.rows[0]);
+  return DocumentEmailRetryResultSchema.parse({
+    documentId: row.document_id,
+    deliveryId: row.delivery_id,
+    emailDeliveryStatus: row.delivery_status,
   });
 }

@@ -829,7 +829,6 @@ export default function GenerateTaxInvoice() {
     setModalVisible,
     validateInvoiceForm,
     alert,
-    router,
   });
 
   const formatDate = (timestamp?: unknown) => {

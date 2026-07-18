@@ -2,6 +2,7 @@ import {
   ApiFailureResponseSchema,
   CompanyBootstrapSchema,
   createApiSuccessResponseSchema,
+  type TaxSubmissionMode,
 } from "@smart-job/api-contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -20,6 +21,7 @@ const bootstrapResponseSchema = createApiSuccessResponseSchema(CompanyBootstrapS
 export interface BootstrapRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly authenticator: ApiRequestAuthenticator;
+  readonly taxSubmissionMode?: TaxSubmissionMode;
 }
 
 export function registerBootstrapRoutes(
@@ -58,6 +60,7 @@ export function registerBootstrapRoutes(
             transaction,
             tenant.internalCompanyId,
             tenant.workspace,
+            services.taxSubmissionMode ?? "disabled",
           );
         },
       );

@@ -7,10 +7,13 @@ WORKDIR /workspace
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 COPY packages/contracts ./packages/contracts
+COPY packages/api-contracts ./packages/api-contracts
 COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
 RUN npm --prefix packages/contracts ci
 RUN npm --prefix packages/contracts run build
+RUN npm --prefix packages/api-contracts ci
+RUN npm --prefix packages/api-contracts run build
 RUN npm --prefix cloudrun-pdf ci
 
 COPY cloudrun-pdf ./cloudrun-pdf
@@ -24,8 +27,9 @@ WORKDIR /workspace
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Copy the built contracts package so the file: symlink stays valid.
+# Copy the built contract packages so the file: symlinks stay valid.
 COPY --from=build /workspace/packages/contracts ./packages/contracts
+COPY --from=build /workspace/packages/api-contracts ./packages/api-contracts
 COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
 RUN npm --prefix cloudrun-pdf ci --omit=dev

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { DocumentSummarySchema } from '@smart-job/api-contracts';
+import { DocumentSummarySchema, DocumentTaskAcceptedSchema } from '@smart-job/api-contracts';
 
 import { StableDocumentActionKeys } from '../modules/documents/lib/document-action-keys.ts';
 import {
@@ -17,6 +17,10 @@ import {
   isTaxDocumentType,
   normalizeDocumentCompanyId,
 } from '../modules/documents/lib/document-mutation-model.ts';
+import {
+  buildDocumentTaskAttempt,
+  PersistedDocumentTaskAttemptSchema,
+} from '../modules/documents/lib/document-task-attempt.ts';
 
 const firstDocument = DocumentSummarySchema.parse({
   documentId: '11111111-1111-4111-8111-111111111111',
@@ -46,6 +50,7 @@ const firstDocument = DocumentSummarySchema.parse({
   documentDate: '2026-07-12T08:00:00.000Z',
   hasFile: true,
   emailSent: false,
+  emailDeliveryStatus: null,
   entityVersion: 'opaque-version-4',
   createdAt: '2026-07-12T08:00:00.000Z',
   updatedAt: '2026-07-12T08:05:00.000Z',
@@ -109,6 +114,18 @@ test('mobile document reads use contract-validated Cloud API paths only', () => 
     path.resolve(process.cwd(), 'modules', 'documents', 'lib', 'document-download.ts'),
     'utf8',
   );
+  const taskHook = fs.readFileSync(
+    path.resolve(process.cwd(), 'hooks', 'useDocumentTask.ts'),
+    'utf8',
+  );
+  const taskPersistence = fs.readFileSync(
+    path.resolve(process.cwd(), 'modules', 'documents', 'lib', 'document-task-persistence.ts'),
+    'utf8',
+  );
+  const taxHook = fs.readFileSync(
+    path.resolve(process.cwd(), 'modules', 'documents', 'hooks', 'useTaxInvoiceSubmission.ts'),
+    'utf8',
+  );
 
   assert.match(api, /DocumentListPageSchema/);
   assert.match(api, /DocumentTaskSchema/);
@@ -131,6 +148,14 @@ test('mobile document reads use contract-validated Cloud API paths only', () => 
   assert.match(history, /useDocumentMutations/);
   assert.match(createDocument, /buildDocumentData\(resolvedClient\)/);
   assert.doesNotMatch(download, /httpsCallable|firebase|createDocumentDownloadUrlV1/i);
+  assert.match(taskHook, /readDocumentTaskAttempt/);
+  assert.match(taskHook, /persistDocumentTaskAttempt/);
+  assert.match(taskHook, /Retry the same action to resume this task/);
+  assert.match(taskPersistence, /createMMKV\(\{ id: 'smart-job-document-tasks' \}\)/);
+  assert.doesNotMatch(createDocument, /getInvoiceApproval|middleEastFunctions/);
+  assert.doesNotMatch(taxHook, /getInvoiceApproval|middleEastFunctions|Tax Authority Approved/);
+  assert.match(createDocument, /TAX_SUBMISSION_UNAVAILABLE_MESSAGE/);
+  assert.match(taxHook, /TAX_SUBMISSION_UNAVAILABLE_MESSAGE/);
 });
 
 test('non-tax document mutations normalize legacy form data into strict API contracts', () => {
@@ -198,4 +223,37 @@ test('document mutation idempotency keys survive retries and rotate after confir
   const deleteKey = keys.keyFor('delete:document-1', '{"entityVersion":"v1"}');
   keys.complete('delete:document-1', deleteKey);
   assert.notEqual(keys.keyFor('delete:document-1', '{"entityVersion":"v1"}'), deleteKey);
+
+  keys.restore('generate:17', '{"documentType":10}', 'restored-document-key');
+  assert.equal(keys.keyFor('generate:17', '{"documentType":10}'), 'restored-document-key');
+});
+
+test('accepted mobile document task metadata survives a process restart', () => {
+  const accepted = DocumentTaskAcceptedSchema.parse({
+    taskId: 'preview-task-restored',
+    status: 'pending',
+    documentId: null,
+    documentCode: null,
+    entityVersion: null,
+  });
+  const attempt = buildDocumentTaskAttempt({
+    uid: '33333333-3333-4333-8333-333333333333',
+    companyId: 17,
+    action: 'preview',
+    fingerprint: '{"documentType":10}',
+    idempotencyKey: 'document-preview-idempotency-key',
+    accepted,
+    updatedAt: 1234,
+  });
+
+  assert.deepEqual(PersistedDocumentTaskAttemptSchema.parse(attempt), {
+    version: 1,
+    uid: '33333333-3333-4333-8333-333333333333',
+    companyId: 17,
+    action: 'preview',
+    fingerprint: '{"documentType":10}',
+    idempotencyKey: 'document-preview-idempotency-key',
+    accepted,
+    updatedAt: 1234,
+  });
 });

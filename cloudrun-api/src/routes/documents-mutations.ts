@@ -2,6 +2,7 @@ import {
   ApiFailureResponseSchema,
   DocumentDeleteRequestSchema,
   DocumentDeleteResultSchema,
+  DocumentEmailRetryResultSchema,
   DocumentGenerateRequestSchema,
   DocumentPreviewRequestSchema,
   DocumentTaskAcceptedSchema,
@@ -19,9 +20,14 @@ import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
 import { dispatchPendingDocumentTasks, type DocumentTaskPublisher } from "../documents/dispatch.js";
 import {
+  dispatchPendingEmailDeliveries,
+  type EmailDeliveryPublisher,
+} from "../documents/email-dispatch.js";
+import {
   createDocumentGenerationTask,
   createDocumentPreviewTask,
   deleteDocument,
+  retryDocumentEmail,
 } from "../documents/mutation-repository.js";
 import { decodeEntityVersion } from "../entities/version.js";
 import { apiSuccess } from "../http/envelope.js";
@@ -38,12 +44,14 @@ const mutationHeadersSchema = z.object({
 }).passthrough();
 const acceptedResponseSchema = createApiSuccessResponseSchema(DocumentTaskAcceptedSchema);
 const deleteResponseSchema = createApiSuccessResponseSchema(DocumentDeleteResultSchema);
+const emailRetryResponseSchema = createApiSuccessResponseSchema(DocumentEmailRetryResultSchema);
 
 export interface DocumentMutationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
   readonly supabaseUsers: SupabaseUserClient;
   readonly documentTaskPublisher?: DocumentTaskPublisher;
+  readonly emailDeliveryPublisher?: EmailDeliveryPublisher;
 }
 
 function mapDocumentMutationDatabaseError(error: unknown): unknown {
@@ -64,12 +72,21 @@ function mapDocumentMutationDatabaseError(error: unknown): unknown {
     });
   }
   if (code === "P0002") {
+    const emailMissing = message.includes("EMAIL_DELIVERY_NOT_FOUND");
     const clientMissing = message.includes("DOCUMENT_CLIENT_NOT_FOUND");
     const partMissing = message.includes("DOCUMENT_PART_NOT_FOUND");
     return new AppError({
       statusCode: 404,
-      code: clientMissing ? "DOCUMENT_CLIENT_NOT_FOUND" : partMissing ? "DOCUMENT_PART_NOT_FOUND" : "DOCUMENT_NOT_FOUND",
-      message: clientMissing
+      code: emailMissing
+        ? "EMAIL_DELIVERY_NOT_FOUND"
+        : clientMissing
+          ? "DOCUMENT_CLIENT_NOT_FOUND"
+          : partMissing
+            ? "DOCUMENT_PART_NOT_FOUND"
+            : "DOCUMENT_NOT_FOUND",
+      message: emailMissing
+        ? "No document email delivery is available to retry."
+        : clientMissing
         ? "The selected client is not available in this workspace."
         : partMissing
           ? "A selected inventory part is not available in this workspace."
@@ -94,12 +111,28 @@ function mapDocumentMutationDatabaseError(error: unknown): unknown {
     });
   }
   if (code === "22023") {
+    if (message.includes("EMAIL_DELIVERY_NOT_RETRYABLE")) {
+      return new AppError({
+        statusCode: 409,
+        code: "EMAIL_DELIVERY_NOT_RETRYABLE",
+        message: "Only failed or unknown email deliveries can be retried manually.",
+        cause: error,
+      });
+    }
     return new AppError({
       statusCode: 400,
       code: message.includes("TAX_WORKFLOW_REQUIRED") ? "TAX_WORKFLOW_REQUIRED" : "INVALID_DOCUMENT",
       message: message.includes("TAX_WORKFLOW_REQUIRED")
         ? "Tax invoices must use the tax approval workflow."
         : "The document contains invalid fields.",
+      cause: error,
+    });
+  }
+  if (code === "54000" && message.includes("EMAIL_MANUAL_RETRY_LIMIT")) {
+    return new AppError({
+      statusCode: 409,
+      code: "EMAIL_MANUAL_RETRY_LIMIT",
+      message: "This email delivery has reached the manual retry limit.",
       cause: error,
     });
   }
@@ -147,6 +180,24 @@ async function bestEffortDispatch(
     });
   } catch (error) {
     request.log.warn({ err: error, taskId }, "document task remains pending after dispatch attempt");
+  }
+}
+
+async function bestEffortEmailDispatch(
+  request: FastifyRequest,
+  services: DocumentMutationRouteServices,
+  userId: string,
+  deliveryId: string,
+): Promise<void> {
+  if (services.emailDeliveryPublisher === undefined) return;
+  try {
+    await dispatchPendingEmailDeliveries(services.database, services.emailDeliveryPublisher, {
+      userId,
+      deliveryId,
+      limit: 1,
+    });
+  } catch (error) {
+    request.log.warn({ err: error, deliveryId }, "email delivery remains pending after dispatch attempt");
   }
 }
 
@@ -264,6 +315,72 @@ export function registerDocumentMutationRoutes(
         await bestEffortDispatch(request, services, authenticated.userId, accepted.taskId);
         reply.code(202);
         return apiSuccess(request.id, accepted);
+      } catch (error) {
+        throw mapDocumentMutationDatabaseError(error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/companies/:companyId/documents/:documentId/email-retry",
+    {
+      schema: {
+        tags: ["documents"],
+        summary: "Manually retry a failed or delivery-unknown document email",
+        params: documentParamsSchema,
+        headers: mutationHeadersSchema,
+        response: {
+          202: emailRetryResponseSchema,
+          400: ApiFailureResponseSchema,
+          401: ApiFailureResponseSchema,
+          403: ApiFailureResponseSchema,
+          404: ApiFailureResponseSchema,
+          409: ApiFailureResponseSchema,
+          425: ApiFailureResponseSchema,
+          503: ApiFailureResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const authenticated = await services.authenticator.authenticate(request);
+      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      const params = documentParamsSchema.parse(request.params);
+      const headers = mutationHeadersSchema.parse(request.headers);
+      try {
+        const result = await services.database.withTransaction(
+          { userId: authenticated.userId },
+          async (transaction) => {
+            const tenant = await resolveTenantContext(
+              transaction,
+              authenticated.userId,
+              params.companyId,
+            );
+            const claim = await claimIdempotencyKey(transaction, {
+              userId: authenticated.userId,
+              internalCompanyId: tenant.internalCompanyId,
+              operation: "document.email.retry",
+              key: headers["idempotency-key"],
+              request: { params },
+            });
+            if (claim.replayed) {
+              return DocumentEmailRetryResultSchema.parse(claim.responseBody);
+            }
+            const retried = await retryDocumentEmail(transaction, {
+              internalCompanyId: tenant.internalCompanyId,
+              documentId: params.documentId,
+            });
+            await completeIdempotencyClaim(transaction, claim.id, 202, retried);
+            return retried;
+          },
+        );
+        await bestEffortEmailDispatch(
+          request,
+          services,
+          authenticated.userId,
+          result.deliveryId,
+        );
+        reply.code(202);
+        return apiSuccess(request.id, result);
       } catch (error) {
         throw mapDocumentMutationDatabaseError(error);
       }

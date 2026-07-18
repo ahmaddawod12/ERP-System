@@ -50,18 +50,40 @@ const counterKeyEnum = pgEnum('counter_key', [
 const clientStatusEnum = pgEnum('client_status', ['active', 'archived']);
 const jobStatusEnum = pgEnum('job_status', ['pending', 'waiting', 'finished', 'denied']);
 const documentGenerationStatusEnum = pgEnum('document_generation_status', ['pending', 'queued', 'processing', 'completed', 'failed']);
-const taxAuthorityStatusEnum = pgEnum('tax_authority_status', ['none', 'reserved', 'approved', 'rejected', 'failed', 'burned']);
+const taxAuthorityStatusEnum = pgEnum('tax_authority_status', ['none', 'reserved', 'submitted', 'approved', 'rejected', 'failed', 'burned']);
 const attachmentKindEnum = pgEnum('job_attachment_kind', ['photo', 'signature']);
 const inventoryLocationTypeEnum = pgEnum('inventory_location_type', ['company', 'member', 'consumed', 'adjustment']);
 const inventoryMovementTypeEnum = pgEnum('inventory_movement_type', ['add', 'adjust', 'pick', 'return', 'job_consumption', 'manual_replace']);
 const inviteStatusEnum = pgEnum('invite_status', ['active', 'used', 'expired', 'revoked']);
-const reservationStatusEnum = pgEnum('tax_invoice_reservation_status', ['reserved', 'approved', 'generated', 'failed', 'burned', 'rejected', 'validation_failed', 'submission_failed', 'approval_received_needs_reconcile']);
+const reservationStatusEnum = pgEnum('tax_invoice_reservation_status', ['reserved', 'submitted', 'approved', 'generated', 'failed', 'burned', 'rejected', 'validation_failed', 'submission_failed', 'approval_received_needs_reconcile']);
 const idempotencyStatusEnum = pgEnum('idempotency_status', ['in_progress', 'approved', 'failed']);
 const taskTypeEnum = pgEnum('document_task_type', ['preview', 'generate']);
 const conversationStatusEnum = pgEnum('support_conversation_status', ['open', 'closed']);
 const senderTypeEnum = pgEnum('support_sender_type', ['user', 'dev']);
 const deliveryStatusEnum = pgEnum('notification_delivery_status', ['claimed', 'sent', 'failed']);
 const archiveStatusEnum = pgEnum('archive_run_status', ['pending', 'uploaded_not_deleted', 'deleted', 'failed']);
+const emailDeliveryStatusEnum = pgEnum('email_delivery_status', [
+  'queued',
+  'sending',
+  'sent',
+  'failed',
+  'delivery_unknown',
+]);
+const taxSubmissionStatusEnum = pgEnum('tax_submission_status', [
+  'queued',
+  'submitting',
+  'submitted',
+  'approved',
+  'rejected',
+  'failed',
+  'submission_unknown',
+]);
+const archiveRunLeaseStatusEnum = pgEnum('archive_run_lease_status', [
+  'pending',
+  'leased',
+  'completed',
+  'failed',
+]);
 
 const systemCounters = pgTable('system_counters', {
   counterKey: varchar('counter_key', { length: 64 }).primaryKey(),
@@ -300,7 +322,7 @@ const inventoryParts = pgTable('inventory_parts', {
   active: boolean('active').notNull().default(true),
   lowThreshold: numeric('low_threshold', { precision: 14, scale: 3 }).notNull().default('0'),
   unit: varchar('unit', { length: 40 }),
-  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(sql`1`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
@@ -317,7 +339,7 @@ const inventoryBalances = pgTable('inventory_balances', {
   locationId: uuid('location_id').notNull().references(() => inventoryLocations.id, { onDelete: 'cascade' }),
   partId: uuid('part_id').notNull().references(() => inventoryParts.id, { onDelete: 'cascade' }),
   quantityOnHand: numeric('quantity_on_hand', { precision: 14, scale: 3 }).notNull().default('0'),
-  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(sql`1`),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   pk: primaryKey({ columns: [table.locationId, table.partId], name: 'inventory_balances_pk' }),
@@ -376,7 +398,7 @@ const documents = pgTable('documents', {
   clientCitySnapshot: varchar('client_city_snapshot', { length: 120 }),
   clientVatSnapshot: varchar('client_vat_snapshot', { length: 32 }),
   payload: jsonb('payload').notNull().default({}),
-  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(sql`1`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
@@ -517,6 +539,9 @@ const documentTasks = pgTable('document_tasks', {
   nextDispatchAt: timestamp('next_dispatch_at', { withTimezone: true }).notNull().defaultNow(),
   dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
   dispatchError: text('dispatch_error'),
+  processingAttempts: integer('processing_attempts').notNull().default(0),
+  processingLeaseToken: uuid('processing_lease_token'),
+  processingLeaseUntil: timestamp('processing_lease_until', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   taskKeyUnique: uniqueIndex('document_tasks_task_key_unique').on(table.taskKey),
@@ -536,6 +561,17 @@ const documentTasks = pgTable('document_tasks', {
     sql`(
       (${table.dispatchLeaseToken} IS NULL AND ${table.dispatchLeaseUntil} IS NULL)
       OR (${table.dispatchLeaseToken} IS NOT NULL AND ${table.dispatchLeaseUntil} IS NOT NULL)
+    )`,
+  ),
+  processingAttemptsNonNegative: check(
+    'document_tasks_processing_attempts_non_negative_check',
+    sql`${table.processingAttempts} >= 0`,
+  ),
+  processingLeaseConsistency: check(
+    'document_tasks_processing_lease_consistency_check',
+    sql`(
+      (${table.processingLeaseToken} IS NULL AND ${table.processingLeaseUntil} IS NULL)
+      OR (${table.processingLeaseToken} IS NOT NULL AND ${table.processingLeaseUntil} IS NOT NULL)
     )`,
   ),
 }));
@@ -655,7 +691,7 @@ const upgradeRequests = pgTable('upgrade_requests', {
   moderationNote: text('moderation_note'),
   appliedAt: timestamp('applied_at', { withTimezone: true }),
   appliedByUid: text('applied_by_uid'),
-  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(1n),
+  entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(sql`1`),
 }, (table) => ({
   createdAtIdx: index('upgrade_requests_created_at_idx').on(table.createdAt),
   statusIdx: index('upgrade_requests_status_idx').on(table.status, table.createdAt),
@@ -789,6 +825,158 @@ const apiIdempotency = privateSchema.table('api_idempotency', {
   ),
 }));
 
+const documentEmailDeliveries = privateSchema.table('document_email_deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  documentId: uuid('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  status: emailDeliveryStatusEnum('status').notNull().default('queued'),
+  recipientEmail: varchar('recipient_email', { length: 320 }).notNull(),
+  dispatchAttempts: integer('dispatch_attempts').notNull().default(0),
+  dispatchLeaseToken: uuid('dispatch_lease_token'),
+  dispatchLeaseUntil: timestamp('dispatch_lease_until', { withTimezone: true }),
+  nextDispatchAt: timestamp('next_dispatch_at', { withTimezone: true }).notNull().defaultNow(),
+  dispatchedAt: timestamp('dispatched_at', { withTimezone: true }),
+  sendAttempts: integer('send_attempts').notNull().default(0),
+  sendLeaseToken: uuid('send_lease_token'),
+  sendLeaseUntil: timestamp('send_lease_until', { withTimezone: true }),
+  providerMessageId: varchar('provider_message_id', { length: 256 }),
+  lastError: text('last_error'),
+  manualRetryCount: integer('manual_retry_count').notNull().default(0),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  documentUnique: uniqueIndex('document_email_deliveries_document_unique').on(table.documentId),
+  companyStatusCreatedIdx: index('document_email_deliveries_company_status_created_idx')
+    .on(table.companyId, table.status, table.createdAt),
+  dispatchQueueIdx: index('document_email_deliveries_dispatch_queue_idx')
+    .on(table.nextDispatchAt, table.createdAt, table.id)
+    .where(sql`${table.status} = 'queued' AND ${table.dispatchedAt} IS NULL`),
+  dispatchAttemptsValid: check(
+    'document_email_deliveries_dispatch_attempts_check',
+    sql`${table.dispatchAttempts} BETWEEN 0 AND 100`,
+  ),
+  sendAttemptsValid: check(
+    'document_email_deliveries_send_attempts_check',
+    sql`${table.sendAttempts} BETWEEN 0 AND 100`,
+  ),
+  manualRetryCountValid: check(
+    'document_email_deliveries_manual_retry_count_check',
+    sql`${table.manualRetryCount} BETWEEN 0 AND 20`,
+  ),
+  dispatchLeaseConsistency: check(
+    'document_email_deliveries_dispatch_lease_check',
+    sql`(
+      (${table.dispatchLeaseToken} IS NULL AND ${table.dispatchLeaseUntil} IS NULL)
+      OR (${table.dispatchLeaseToken} IS NOT NULL AND ${table.dispatchLeaseUntil} IS NOT NULL)
+    )`,
+  ),
+  sendLeaseConsistency: check(
+    'document_email_deliveries_send_lease_check',
+    sql`(
+      (${table.status} = 'sending' AND ${table.sendLeaseToken} IS NOT NULL AND ${table.sendLeaseUntil} IS NOT NULL)
+      OR (${table.status} <> 'sending' AND ${table.sendLeaseToken} IS NULL AND ${table.sendLeaseUntil} IS NULL)
+    )`,
+  ),
+  sentStateConsistency: check(
+    'document_email_deliveries_sent_state_check',
+    sql`(
+      (${table.status} = 'sent' AND ${table.sentAt} IS NOT NULL AND ${table.providerMessageId} IS NOT NULL)
+      OR (${table.status} <> 'sent' AND ${table.sentAt} IS NULL)
+    )`,
+  ),
+  recipientPresent: check(
+    'document_email_deliveries_recipient_check',
+    sql`char_length(btrim(${table.recipientEmail})) BETWEEN 3 AND 320
+      AND ${table.recipientEmail} ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$'`,
+  ),
+}));
+
+const taxSubmissions = privateSchema.table('tax_submissions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  documentId: uuid('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  reservationId: uuid('reservation_id').notNull().references(() => taxInvoiceReservations.id, { onDelete: 'cascade' }),
+  correlationId: varchar('correlation_id', { length: 128 }).notNull(),
+  requestedByUserId: text('requested_by_user_id').notNull().references(() => appUsers.id, { onDelete: 'restrict' }),
+  status: taxSubmissionStatusEnum('status').notNull().default('queued'),
+  requestPayload: jsonb('request_payload').notNull(),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  leaseToken: uuid('lease_token'),
+  leaseUntil: timestamp('lease_until', { withTimezone: true }),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  authorityRequestId: varchar('authority_request_id', { length: 256 }),
+  responsePayload: jsonb('response_payload'),
+  lastError: text('last_error'),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  documentUnique: uniqueIndex('tax_submissions_document_unique').on(table.documentId),
+  reservationUnique: uniqueIndex('tax_submissions_reservation_unique').on(table.reservationId),
+  correlationUnique: uniqueIndex('tax_submissions_correlation_unique').on(table.correlationId),
+  queueIdx: index('tax_submissions_queue_idx')
+    .on(table.nextAttemptAt, table.createdAt, table.id)
+    .where(sql`${table.status} = 'queued'`),
+  companyStatusCreatedIdx: index('tax_submissions_company_status_created_idx')
+    .on(table.companyId, table.status, table.createdAt),
+  attemptsValid: check(
+    'tax_submissions_attempt_count_check',
+    sql`${table.attemptCount} BETWEEN 0 AND 100`,
+  ),
+  leaseConsistency: check(
+    'tax_submissions_lease_check',
+    sql`(
+      (${table.status} = 'submitting' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)
+      OR (${table.status} <> 'submitting' AND ${table.leaseToken} IS NULL AND ${table.leaseUntil} IS NULL)
+    )`,
+  ),
+  correlationPresent: check(
+    'tax_submissions_correlation_check',
+    sql`char_length(btrim(${table.correlationId})) BETWEEN 8 AND 128`,
+  ),
+  requestObject: check(
+    'tax_submissions_request_payload_check',
+    sql`jsonb_typeof(${table.requestPayload}) = 'object'`,
+  ),
+}));
+
+const archiveRunLeases = privateSchema.table('archive_run_leases', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
+  archiveKey: varchar('archive_key', { length: 64 }).notNull(),
+  dataType: varchar('data_type', { length: 32 }).notNull(),
+  status: archiveRunLeaseStatusEnum('status').notNull().default('pending'),
+  snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull(),
+  leaseToken: uuid('lease_token'),
+  leaseUntil: timestamp('lease_until', { withTimezone: true }),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  companyArchiveTypeUnique: uniqueIndex('archive_run_leases_company_archive_type_unique')
+    .on(table.companyId, table.archiveKey, table.dataType),
+  queueIdx: index('archive_run_leases_queue_idx')
+    .on(table.status, table.leaseUntil, table.createdAt),
+  attemptsValid: check(
+    'archive_run_leases_attempt_count_check',
+    sql`${table.attemptCount} BETWEEN 0 AND 100`,
+  ),
+  dataTypeAllowed: check(
+    'archive_run_leases_data_type_check',
+    sql`${table.dataType} IN ('jobs', 'documents')`,
+  ),
+  leaseConsistency: check(
+    'archive_run_leases_lease_check',
+    sql`(
+      (${table.status} = 'leased' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseUntil} IS NOT NULL)
+      OR (${table.status} <> 'leased' AND ${table.leaseToken} IS NULL AND ${table.leaseUntil} IS NULL)
+    )`,
+  ),
+}));
+
 const fileUploadSessions = privateSchema.table('file_upload_sessions', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull(),
@@ -891,4 +1079,4 @@ const pushDevices = privateSchema.table('push_devices', {
   ),
 }));
 
-export { accountTypeEnum, apiIdempotency, appUsers, archiveRuns, auditLogs, clients, companies, companyCounters, companyInvites, companyMemberships, companyProfiles, companySyncState, companySubscriptions, contactRequests, documentItems, documentJobLinks, documentTasks, documents, fileUploadSessions, inventoryBalances, inventoryLocations, inventoryMovements, inventoryParts, jobAttachments, jobPartUsages, jobs, notificationDeliveries, orphanedUserCleanupMarkers, proposalUsage, pushDevices, rateLimitBuckets, supportConversations, supportMessages, systemCounters, taxAuthorityTokens, taxInvoiceIdempotency, taxInvoiceReservations, taxOauthCallbacks, taxOauthSessions, upgradeRequests, webSessions };
+export { accountTypeEnum, apiIdempotency, appUsers, archiveRunLeases, archiveRuns, auditLogs, clients, companies, companyCounters, companyInvites, companyMemberships, companyProfiles, companySyncState, companySubscriptions, contactRequests, documentEmailDeliveries, documentItems, documentJobLinks, documentTasks, documents, fileUploadSessions, inventoryBalances, inventoryLocations, inventoryMovements, inventoryParts, jobAttachments, jobPartUsages, jobs, notificationDeliveries, orphanedUserCleanupMarkers, proposalUsage, pushDevices, rateLimitBuckets, supportConversations, supportMessages, systemCounters, taxAuthorityTokens, taxInvoiceIdempotency, taxInvoiceReservations, taxOauthCallbacks, taxOauthSessions, taxSubmissions, upgradeRequests, webSessions };

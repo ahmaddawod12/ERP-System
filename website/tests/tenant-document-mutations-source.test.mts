@@ -29,11 +29,11 @@ test("document mutations are focused client islands over opaque same-origin BFFs
   assert.doesNotMatch(rowActions, /SmartJobSession|BACKEND_API_BASE_URL|\/api\/v1\//);
 });
 
-test("generic composer and BFF keep tax type 305 on the dedicated workflow", () => {
+test("generic composer and BFF fail closed for tax type 305 pending certification", () => {
   assert.match(composer, /documentType\.code !== DOC_TYPE\.TAX_INVOICE/);
-  assert.match(composer, /tax-authority workflow/);
+  assert.match(composer, /unavailable pending Tax Authority certification/);
   assert.match(routeCore, /isTaxDocumentRequest/);
-  assert.match(routeCore, /TAX_WORKFLOW_REQUIRED/);
+  assert.match(routeCore, /TAX_SUBMISSION_DISABLED/);
   assert.match(rowActions, /document\.documentType === DOC_TYPE\.TAX_INVOICE/);
 });
 
@@ -50,4 +50,7 @@ test("task polling stays same-origin and validates every response", () => {
   assert.match(browserModel, /createApiResponseSchema\(DocumentTaskSchema\)/);
   assert.match(browserModel, /\/api\/companies\/\$\{companyId\}\/document-tasks/);
   assert.doesNotMatch(browserModel, /\/api\/read-model|buildAuthedJsonHeaders|firebase/);
+  assert.match(composer, /readPersistedDocumentMutation\(window\.sessionStorage/);
+  assert.match(composer, /persistDocumentMutation\(window\.sessionStorage/);
+  assert.match(composer, /Resuming the previously accepted document task/);
 });

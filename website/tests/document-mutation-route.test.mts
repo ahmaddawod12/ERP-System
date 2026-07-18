@@ -11,8 +11,11 @@ import {
   handleDocumentPreview,
 } from "../src/lib/documents/document-mutation-route-core.ts";
 import {
+  clearPersistedDocumentMutation,
   documentMutationKey,
   documentRequestFromComposer,
+  persistDocumentMutation,
+  readPersistedDocumentMutation,
   type PendingDocumentMutation,
 } from "../src/components/documents/document-mutation-model.ts";
 
@@ -99,6 +102,39 @@ test("document composer normalizes optional fields and retries keep one key", ()
   const first = documentMutationKey(pending, "same-request");
   assert.equal(documentMutationKey(pending, "same-request"), first);
   assert.notEqual(documentMutationKey(pending, "changed-request"), first);
+});
+
+test("accepted browser document tasks survive reload until terminal reconciliation", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem(key: string) { return values.get(key) ?? null; },
+    setItem(key: string, value: string) { values.set(key, value); },
+    removeItem(key: string) { values.delete(key); },
+  };
+  const accepted = DocumentTaskAcceptedSchema.parse({
+    taskId: "preview-task-restored",
+    status: "pending",
+    documentId: null,
+    documentCode: null,
+    entityVersion: null,
+  });
+
+  persistDocumentMutation(storage, 42, "preview", {
+    fingerprint: "same-preview",
+    key: "document-preview-idempotency-key",
+    accepted,
+  }, 1234);
+  assert.deepEqual(readPersistedDocumentMutation(storage, 42, "preview"), {
+    version: 1,
+    companyId: 42,
+    action: "preview",
+    fingerprint: "same-preview",
+    idempotencyKey: "document-preview-idempotency-key",
+    accepted,
+    updatedAt: 1234,
+  });
+  clearPersistedDocumentMutation(storage, 42, "preview");
+  assert.equal(readPersistedDocumentMutation(storage, 42, "preview"), null);
 });
 
 test("preview and generate BFFs enforce opaque boundaries and forward stable idempotency", async () => {
@@ -190,10 +226,10 @@ test("generic document task BFFs reject tax type 305 before backend access", asy
       },
     },
   );
-  assert.equal(preview.status, 400);
-  assert.equal(generate.status, 400);
-  assert.equal((await preview.json()).error.code, "TAX_WORKFLOW_REQUIRED");
-  assert.equal((await generate.json()).error.code, "TAX_WORKFLOW_REQUIRED");
+  assert.equal(preview.status, 503);
+  assert.equal(generate.status, 503);
+  assert.equal((await preview.json()).error.code, "TAX_SUBMISSION_DISABLED");
+  assert.equal((await generate.json()).error.code, "TAX_SUBMISSION_DISABLED");
   assert.equal(calls, 0);
 });
 

@@ -23,3 +23,12 @@ export function dependencyUnavailable(): TaxGatewayError {
     true,
   );
 }
+
+export function taxSubmissionDisabled(): TaxGatewayError {
+  return new TaxGatewayError(
+    503,
+    "TAX_SUBMISSION_DISABLED",
+    "Tax invoice submission is unavailable pending Tax Authority certification.",
+    false,
+  );
+}

@@ -15,6 +15,16 @@ function requireEnv(name: string): string {
   return value.trim();
 }
 
+export type TaxSubmissionMode = "disabled" | "sandbox" | "production";
+
+export function parseTaxSubmissionMode(value: string | undefined): TaxSubmissionMode {
+  const normalized = String(value || "disabled").trim().toLowerCase();
+  if (normalized === "disabled" || normalized === "sandbox" || normalized === "production") {
+    return normalized;
+  }
+  throw new Error("TAX_SUBMISSION_MODE must be disabled, sandbox, or production");
+}
+
 export const getEnv = () => {
   const supabaseUrl = requireEnv("SUPABASE_URL");
   const supabaseServiceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -43,6 +53,7 @@ export const getEnv = () => {
     cloudRunArchiverService: Deno.env.get("CLOUD_RUN_ARCHIVER_SERVICE_URL") || "",
 
     // Tax Authority
+    taxSubmissionMode: parseTaxSubmissionMode(Deno.env.get("TAX_SUBMISSION_MODE")),
     taxOAuthClientId: Deno.env.get("TAX_CLIENT_ID") || Deno.env.get("TAX_OAUTH_CLIENT_ID") || "",
     taxOAuthClientSecret: Deno.env.get("TAX_CLIENT_SECRET") || Deno.env.get("TAX_OAUTH_CLIENT_SECRET") || "",
     taxAuthorityApiUrl: Deno.env.get("TAX_AUTH_URL") || Deno.env.get("TAX_AUTHORITY_API_URL") || "",

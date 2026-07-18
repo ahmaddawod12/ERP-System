@@ -3049,4 +3049,592 @@ if (!databaseUrl) {
       }
     });
   });
+
+  describe('production workflow foundations', { concurrency: false, timeout: 60_000 }, () => {
+    async function insertWorkflowCompany(client, { userId, companyId, membershipId, publicCompanyId }) {
+      await client.query(
+        `INSERT INTO public.app_users (id, email, display_name)
+         VALUES ($1, $2, 'Workflow Manager')`,
+        [userId, `workflow-${userId}@example.invalid`],
+      );
+      await client.query(
+        `INSERT INTO public.companies (
+           id, public_company_id, account_type, status, created_by_user_id
+         ) VALUES ($1, $2, 'business', 'active', $3)`,
+        [companyId, publicCompanyId, userId],
+      );
+      await client.query(
+        `INSERT INTO public.company_sync_state (company_id) VALUES ($1)`,
+        [companyId],
+      );
+      await client.query(
+        `INSERT INTO public.company_subscriptions (
+           company_id, tier, status, enabled_modules
+         ) VALUES (
+           $1, 'Team', 'active',
+           '{"jobs":true,"inventory":true,"documents":true}'::jsonb
+         )`,
+        [companyId],
+      );
+      await client.query(
+        `INSERT INTO public.company_memberships (
+           id, company_id, user_id, member_no, role, status, display_name
+         ) VALUES ($1, $2, $3, 1, 'manager', 'active', 'Workflow Manager')`,
+        [membershipId, companyId, userId],
+      );
+      await client.query(
+        `INSERT INTO public.company_profiles (
+           company_id, he_name, business_email, vat_number
+         ) VALUES ($1, 'Workflow Company', $2, '515000001')`,
+        [companyId, `company-${companyId}@example.invalid`],
+      );
+    }
+
+    function taxDocumentData(suffix = '') {
+      return {
+        client: {
+          name: `Tax Client ${suffix}`.trim(),
+          email: `tax-client-${suffix || 'base'}@example.invalid`,
+        },
+        items: [{ description: 'Field service', quantity: 1, price: 100 }],
+        language: 'he',
+        date: '2026-07-18T12:00:00.000Z',
+      };
+    }
+
+    it('enforces the worker-role permission matrix without direct ERP table writes', async () => {
+      await withClient(async (client) => {
+        const roles = ['anon', 'authenticated', 'service_role', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
+        const result = await client.query(
+          `SELECT role_name,
+             has_table_privilege(role_name, 'public.documents', 'INSERT,UPDATE,DELETE') AS public_document_write,
+             has_table_privilege(role_name, 'private.document_email_deliveries', 'SELECT,INSERT,UPDATE,DELETE') AS email_table_access,
+             has_table_privilege(role_name, 'private.tax_submissions', 'SELECT,INSERT,UPDATE,DELETE') AS tax_table_access,
+             has_function_privilege(role_name, 'private.claim_pdf_document_task(text,uuid,integer)', 'EXECUTE') AS pdf_claim,
+             has_function_privilege(role_name, 'private.claim_email_delivery(uuid,uuid,integer)', 'EXECUTE') AS email_claim,
+             has_function_privilege(role_name, 'private.claim_archive_run_lease(uuid,text,text,timestamptz,uuid,integer)', 'EXECUTE') AS archive_claim,
+             has_function_privilege(role_name, 'private.create_api_tax_invoice(uuid,jsonb,timestamptz)', 'EXECUTE') AS tax_create
+           FROM unnest($1::text[]) AS role_name
+           ORDER BY role_name`,
+          [roles],
+        );
+        for (const row of result.rows) {
+          assert.equal(row.public_document_write, false, `${row.role_name} has direct document writes`);
+          assert.equal(row.email_table_access, false, `${row.role_name} has direct email-table access`);
+          assert.equal(row.tax_table_access, false, `${row.role_name} has direct tax-table access`);
+          assert.equal(row.pdf_claim, row.role_name === 'smart_job_pdf');
+          assert.equal(row.email_claim, row.role_name === 'smart_job_email');
+          assert.equal(row.archive_claim, row.role_name === 'smart_job_archiver');
+          assert.equal(row.tax_create, row.role_name === 'smart_job_api');
+        }
+      });
+    });
+
+    it('consumes accepted-job inventory exactly once and rolls back insufficient stock', async () => {
+      await withTransaction(async (client) => {
+        const userId = randomUUID();
+        const companyId = randomUUID();
+        const membershipId = randomUUID();
+        const locationId = randomUUID();
+        const partId = randomUUID();
+        const acceptedJobId = randomUUID();
+        const insufficientJobId = randomUUID();
+        await insertWorkflowCompany(client, {
+          userId,
+          companyId,
+          membershipId,
+          publicCompanyId: publicCompanyBase + 900,
+        });
+        await client.query(
+          `INSERT INTO public.inventory_locations (
+             id, company_id, location_type, membership_id, name
+           ) VALUES ($1, $2, 'member', $3, 'Manager stock')`,
+          [locationId, companyId, membershipId],
+        );
+        await client.query(
+          `INSERT INTO public.inventory_parts (id, company_id, part_no, name)
+           VALUES ($1, $2, 1, 'Replacement part')`,
+          [partId, companyId],
+        );
+        await client.query(
+          `INSERT INTO public.inventory_balances (location_id, part_id, quantity_on_hand)
+           VALUES ($1, $2, 5)`,
+          [locationId, partId],
+        );
+        await client.query(
+          `INSERT INTO public.jobs (
+             id, company_id, job_no, status, title,
+             assigned_membership_id, created_by_membership_id
+           ) VALUES
+             ($1, $3, 1, 'pending', 'Accept inventory', $4, $4),
+             ($2, $3, 2, 'pending', 'Insufficient inventory', $4, $4)`,
+          [acceptedJobId, insufficientJobId, companyId, membershipId],
+        );
+        await client.query(
+          `INSERT INTO public.job_part_usages (
+             job_id, inventory_part_id, part_name_snapshot, quantity
+           ) VALUES ($1, $3, 'Replacement part', 2), ($2, $3, 'Replacement part', 10)`,
+          [acceptedJobId, insufficientJobId, partId],
+        );
+
+        await setRuntimeContext(client, userId);
+        const accepted = await client.query(
+          `SELECT status, entity_version
+           FROM private.accept_api_job($1::uuid, $2::uuid, 1, clock_timestamp())`,
+          [companyId, acceptedJobId],
+        );
+        assert.equal(accepted.rows[0].status, 'finished');
+        assert.equal(Number(accepted.rows[0].entity_version), 2);
+        await client.query('RESET ROLE');
+        const balances = await client.query(
+          `SELECT location.location_type::text AS location_type, balance.quantity_on_hand::text AS quantity
+           FROM public.inventory_balances AS balance
+           INNER JOIN public.inventory_locations AS location ON location.id = balance.location_id
+           WHERE balance.part_id = $1
+           ORDER BY location.location_type`,
+          [partId],
+        );
+        assert.deepEqual(balances.rows, [
+          { location_type: 'member', quantity: '3.000' },
+          { location_type: 'consumed', quantity: '2.000' },
+        ]);
+        const movements = await client.query(
+          `SELECT count(*)::integer AS count
+           FROM public.inventory_movements
+           WHERE job_id = $1 AND movement_type = 'job_consumption'`,
+          [acceptedJobId],
+        );
+        assert.equal(movements.rows[0].count, 1);
+
+        await client.query('SAVEPOINT insufficient_accept');
+        await setRuntimeContext(client, userId);
+        await expectDatabaseError(
+          client.query(
+            `SELECT * FROM private.accept_api_job($1::uuid, $2::uuid, 1, clock_timestamp())`,
+            [companyId, insufficientJobId],
+          ),
+          'P0001',
+          /inventory_insufficient_stock/,
+        );
+        await client.query('ROLLBACK TO SAVEPOINT insufficient_accept');
+        await client.query('RESET ROLE');
+        const unchanged = await client.query(
+          `SELECT job.status::text AS status, balance.quantity_on_hand::text AS quantity
+           FROM public.jobs AS job
+           CROSS JOIN public.inventory_balances AS balance
+           WHERE job.id = $1 AND balance.location_id = $2 AND balance.part_id = $3`,
+          [insufficientJobId, locationId, partId],
+        );
+        assert.deepEqual(unchanged.rows[0], { status: 'pending', quantity: '3.000' });
+      });
+    });
+
+    it('serializes concurrent acceptance and consumes the job parts once', async () => {
+      const userId = randomUUID();
+      const companyId = randomUUID();
+      const membershipId = randomUUID();
+      const locationId = randomUUID();
+      const partId = randomUUID();
+      const jobId = randomUUID();
+      const first = databaseClient();
+      const second = databaseClient();
+      try {
+        await withClient(async (client) => {
+          await insertWorkflowCompany(client, {
+            userId,
+            companyId,
+            membershipId,
+            publicCompanyId: publicCompanyBase + 903,
+          });
+          await client.query(
+            `INSERT INTO public.inventory_locations (
+               id, company_id, location_type, membership_id, name
+             ) VALUES ($1, $2, 'member', $3, 'Concurrent manager stock')`,
+            [locationId, companyId, membershipId],
+          );
+          await client.query(
+            `INSERT INTO public.inventory_parts (id, company_id, part_no, name)
+             VALUES ($1, $2, 1, 'Concurrent part')`,
+            [partId, companyId],
+          );
+          await client.query(
+            `INSERT INTO public.inventory_balances (location_id, part_id, quantity_on_hand)
+             VALUES ($1, $2, 5)`,
+            [locationId, partId],
+          );
+          await client.query(
+            `INSERT INTO public.jobs (
+               id, company_id, job_no, status, title,
+               assigned_membership_id, created_by_membership_id
+             ) VALUES ($1, $2, 1, 'pending', 'Concurrent acceptance', $3, $3)`,
+            [jobId, companyId, membershipId],
+          );
+          await client.query(
+            `INSERT INTO public.job_part_usages (
+               job_id, inventory_part_id, part_name_snapshot, quantity
+             ) VALUES ($1, $2, 'Concurrent part', 2)`,
+            [jobId, partId],
+          );
+        });
+
+        await Promise.all([first.connect(), second.connect()]);
+        const accept = async (client) => {
+          await client.query('BEGIN');
+          try {
+            await setRuntimeContext(client, userId);
+            const accepted = await client.query(
+              `SELECT status, entity_version
+               FROM private.accept_api_job($1::uuid, $2::uuid, 1, clock_timestamp())`,
+              [companyId, jobId],
+            );
+            await client.query('COMMIT');
+            return accepted.rows[0];
+          } catch (error) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw error;
+          }
+        };
+        const attempts = await Promise.allSettled([accept(first), accept(second)]);
+        const winners = attempts.filter((attempt) => attempt.status === 'fulfilled');
+        const conflicts = attempts.filter((attempt) => attempt.status === 'rejected');
+        assert.equal(winners.length, 1);
+        assert.deepEqual(winners[0].value, { status: 'finished', entity_version: '2' });
+        assert.equal(conflicts.length, 1);
+        assert.equal(conflicts[0].reason?.code, '40001');
+        assert.match(String(conflicts[0].reason?.message || ''), /ENTITY_VERSION_CONFLICT/);
+
+        const stored = await withClient((client) => client.query(
+          `SELECT job.status::text AS status,
+                  balance.quantity_on_hand::text AS remaining,
+                  (SELECT count(*)::integer FROM public.inventory_movements
+                   WHERE job_id = $1 AND movement_type = 'job_consumption') AS movements
+           FROM public.jobs AS job
+           INNER JOIN public.inventory_balances AS balance
+             ON balance.location_id = $2 AND balance.part_id = $3
+           WHERE job.id = $1`,
+          [jobId, locationId, partId],
+        ));
+        assert.deepEqual(stored.rows[0], {
+          status: 'finished',
+          remaining: '3.000',
+          movements: 1,
+        });
+      } finally {
+        await Promise.all([
+          first.query('ROLLBACK').catch(() => undefined),
+          second.query('ROLLBACK').catch(() => undefined),
+        ]);
+        await Promise.all([first.end().catch(() => undefined), second.end().catch(() => undefined)]);
+        await withClient(async (client) => {
+          await client.query('DELETE FROM public.companies WHERE id = $1', [companyId])
+            .catch(() => undefined);
+          await client.query('DELETE FROM public.app_users WHERE id = $1', [userId])
+            .catch(() => undefined);
+        });
+      }
+    });
+
+    it('never queues a tax PDF before approval and processes replay-safe results', async () => {
+      await withTransaction(async (client) => {
+        const userId = randomUUID();
+        const companyId = randomUUID();
+        const membershipId = randomUUID();
+        await insertWorkflowCompany(client, {
+          userId,
+          companyId,
+          membershipId,
+          publicCompanyId: publicCompanyBase + 901,
+        });
+        await setRuntimeContext(client, userId);
+        const created = await client.query(
+          `SELECT * FROM private.create_api_tax_invoice($1::uuid, $2::jsonb, clock_timestamp())`,
+          [companyId, JSON.stringify(taxDocumentData('approved'))],
+        );
+        const documentId = created.rows[0].document_id;
+        const correlationId = created.rows[0].correlation_id;
+        assert.equal(created.rows[0].tax_authority_status, 'reserved');
+        assert.equal(created.rows[0].tax_submission_status, 'queued');
+        await client.query('RESET ROLE');
+        let taskCount = await client.query(
+          `SELECT count(*)::integer AS count FROM public.document_tasks WHERE document_id = $1`,
+          [documentId],
+        );
+        assert.equal(taskCount.rows[0].count, 0);
+
+        await setRuntimeContext(client, userId);
+        const leaseToken = randomUUID();
+        const claimed = await client.query(
+          `SELECT * FROM private.claim_api_tax_submission_batch($1::uuid, 1, 60, NULL)`,
+          [leaseToken],
+        );
+        assert.equal(claimed.rowCount, 1);
+        const submittedHash = createHash('sha256').update('submitted-result').digest('hex');
+        await client.query(
+          `SELECT * FROM private.process_api_tax_submission_result(
+             $1::varchar, $2::varchar, $3::varchar, 'submitted',
+             NULL, 'authority-request-1', NULL, NULL, clock_timestamp()
+           )`,
+          [correlationId, `immediate:${claimed.rows[0].submission_id}`, submittedHash],
+        );
+        await client.query('RESET ROLE');
+        taskCount = await client.query(
+          `SELECT count(*)::integer AS count FROM public.document_tasks WHERE document_id = $1`,
+          [documentId],
+        );
+        assert.equal(taskCount.rows[0].count, 0);
+
+        const eventId = `callback:${randomUUID()}`;
+        const approvalHash = createHash('sha256').update('approved-result').digest('hex');
+        await setRuntimeContext(client, userId);
+        const approved = await client.query(
+          `SELECT * FROM private.process_api_tax_callback(
+             $1::varchar, $2::varchar, $3::varchar, 'approved',
+             'CONFIRM-901', NULL, NULL, clock_timestamp()
+           )`,
+          [eventId, approvalHash, correlationId],
+        );
+        assert.equal(approved.rows[0].processed, true);
+        assert.equal(approved.rows[0].idempotent_replay, false);
+        const replay = await client.query(
+          `SELECT * FROM private.process_api_tax_callback(
+             $1::varchar, $2::varchar, $3::varchar, 'approved',
+             'CONFIRM-901', NULL, NULL, clock_timestamp()
+           )`,
+          [eventId, approvalHash, correlationId],
+        );
+        assert.equal(replay.rows[0].idempotent_replay, true);
+        await client.query('SAVEPOINT conflicting_callback');
+        await expectDatabaseError(
+          client.query(
+            `SELECT * FROM private.process_api_tax_callback(
+               $1::varchar, $2::varchar, $3::varchar, 'rejected',
+               NULL, 'conflict', 'conflict', clock_timestamp()
+             )`,
+            [eventId, createHash('sha256').update('conflict').digest('hex'), correlationId],
+          ),
+          '40001',
+          /TAX_CALLBACK_PAYLOAD_CONFLICT/,
+        );
+        await client.query('ROLLBACK TO SAVEPOINT conflicting_callback');
+        await client.query('RESET ROLE');
+        const state = await client.query(
+          `SELECT document.tax_authority_status::text AS tax_status,
+                  document.confirmation_number,
+                  submission.status::text AS submission_status,
+                  count(task.id)::integer AS task_count
+           FROM public.documents AS document
+           INNER JOIN private.tax_submissions AS submission ON submission.document_id = document.id
+           LEFT JOIN public.document_tasks AS task ON task.document_id = document.id
+           WHERE document.id = $1
+           GROUP BY document.tax_authority_status, document.confirmation_number, submission.status`,
+          [documentId],
+        );
+        assert.deepEqual(state.rows[0], {
+          tax_status: 'approved',
+          confirmation_number: 'CONFIRM-901',
+          submission_status: 'approved',
+          task_count: 1,
+        });
+
+        await setRuntimeContext(client, userId);
+        const rejected = await client.query(
+          `SELECT * FROM private.create_api_tax_invoice($1::uuid, $2::jsonb, clock_timestamp())`,
+          [companyId, JSON.stringify(taxDocumentData('rejected'))],
+        );
+        await client.query(
+          `SELECT * FROM private.process_api_tax_callback(
+             $1::varchar, $2::varchar, $3::varchar, 'rejected',
+             NULL, 'AUTHORITY_REJECTED', 'Invalid invoice', clock_timestamp()
+           )`,
+          [
+            `callback:${randomUUID()}`,
+            createHash('sha256').update('rejected-result').digest('hex'),
+            rejected.rows[0].correlation_id,
+          ],
+        );
+        await client.query('RESET ROLE');
+        const rejectedState = await client.query(
+          `SELECT document.tax_authority_status::text AS tax_status,
+                  submission.status::text AS submission_status,
+                  count(task.id)::integer AS task_count
+           FROM public.documents AS document
+           INNER JOIN private.tax_submissions AS submission ON submission.document_id = document.id
+           LEFT JOIN public.document_tasks AS task ON task.document_id = document.id
+           WHERE document.id = $1
+           GROUP BY document.tax_authority_status, submission.status`,
+          [rejected.rows[0].document_id],
+        );
+        assert.deepEqual(rejectedState.rows[0], {
+          tax_status: 'rejected',
+          submission_status: 'rejected',
+          task_count: 0,
+        });
+      });
+    });
+
+    it('claims canonical PDF/email work and makes expired sends delivery-unknown', async () => {
+      await withTransaction(async (client) => {
+        const userId = randomUUID();
+        const companyId = randomUUID();
+        const membershipId = randomUUID();
+        await insertWorkflowCompany(client, {
+          userId,
+          companyId,
+          membershipId,
+          publicCompanyId: publicCompanyBase + 902,
+        });
+        await setRuntimeContext(client, userId);
+        const created = await client.query(
+          `SELECT * FROM private.create_api_tax_invoice($1::uuid, $2::jsonb, clock_timestamp())`,
+          [companyId, JSON.stringify(taxDocumentData('email'))],
+        );
+        const documentId = created.rows[0].document_id;
+        const resultKey = `callback:${randomUUID()}`;
+        await client.query(
+          `SELECT * FROM private.process_api_tax_callback(
+             $1::varchar, $2::varchar, $3::varchar, 'approved',
+             'CONFIRM-902', NULL, NULL, clock_timestamp()
+           )`,
+          [
+            resultKey,
+            createHash('sha256').update('pdf-approved').digest('hex'),
+            created.rows[0].correlation_id,
+          ],
+        );
+        await client.query('RESET ROLE');
+        const task = await client.query(
+          `SELECT task_key FROM public.document_tasks WHERE document_id = $1`,
+          [documentId],
+        );
+        const taskKey = task.rows[0].task_key;
+
+        await setRuntimeContext(client, userId);
+        const dispatchLease = randomUUID();
+        await client.query(
+          `SELECT * FROM private.claim_api_document_dispatch_batch($1::uuid, 1, 30, $2::text)`,
+          [dispatchLease, taskKey],
+        );
+        await client.query(
+          `SELECT private.complete_api_document_dispatch($1::text, $2::uuid, clock_timestamp())`,
+          [taskKey, dispatchLease],
+        );
+        await client.query('RESET ROLE');
+
+        const pdfLease = randomUUID();
+        await client.query('SET LOCAL ROLE smart_job_pdf');
+        const canonical = await client.query(
+          `SELECT * FROM private.claim_pdf_document_task($1::text, $2::uuid, 300)`,
+          [taskKey, pdfLease],
+        );
+        assert.equal(canonical.rows[0].internal_company_id, companyId);
+        assert.equal(canonical.rows[0].internal_document_id, documentId);
+        assert.equal(canonical.rows[0].confirmation_number, 'CONFIRM-902');
+        const storagePath = `${companyId}/documents/${documentId}.pdf`;
+        const completed = await client.query(
+          `SELECT * FROM private.complete_pdf_document_task(
+             $1::text, $2::uuid, $3::uuid, $4::uuid, $5::text, 1024, clock_timestamp()
+           )`,
+          [taskKey, pdfLease, companyId, documentId, storagePath],
+        );
+        const deliveryId = completed.rows[0].delivery_id;
+        assert.ok(deliveryId);
+        await client.query('RESET ROLE');
+
+        await setRuntimeContext(client, userId);
+        const emailDispatchLease = randomUUID();
+        await client.query(
+          `SELECT * FROM private.claim_api_email_dispatch_batch($1::uuid, 1, 30, $2::uuid)`,
+          [emailDispatchLease, deliveryId],
+        );
+        await client.query('RESET ROLE');
+
+        // A push may reach the email worker before the publisher records its
+        // successful Pub/Sub call. If that send then fails before SES, the
+        // later publisher completion must not erase the queued retry.
+        const emailLease = randomUUID();
+        await client.query('SET LOCAL ROLE smart_job_email');
+        const email = await client.query(
+          `SELECT * FROM private.claim_email_delivery($1::uuid, $2::uuid, 10)`,
+          [deliveryId, emailLease],
+        );
+        assert.equal(email.rows[0].internal_company_id, companyId);
+        assert.equal(email.rows[0].storage_path, storagePath);
+        const deferred = await client.query(
+          `SELECT private.resolve_email_delivery_failure(
+             $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+             'queued', 'Storage signing unavailable', 30
+           ) AS resolved`,
+          [deliveryId, emailLease, companyId, documentId],
+        );
+        assert.equal(deferred.rows[0].resolved, true);
+        await client.query('RESET ROLE');
+
+        await setRuntimeContext(client, userId);
+        const completedRace = await client.query(
+          `SELECT private.complete_api_email_dispatch(
+             $1::uuid, $2::uuid, clock_timestamp()
+           ) AS completed`,
+          [deliveryId, emailDispatchLease],
+        );
+        assert.equal(completedRace.rows[0].completed, true);
+        await client.query('RESET ROLE');
+        const retryState = await client.query(
+          `SELECT status::text AS status, dispatched_at, dispatch_lease_token
+           FROM private.document_email_deliveries WHERE id = $1`,
+          [deliveryId],
+        );
+        assert.deepEqual(retryState.rows[0], {
+          status: 'queued',
+          dispatched_at: null,
+          dispatch_lease_token: null,
+        });
+
+        await client.query(
+          `UPDATE private.document_email_deliveries
+           SET next_dispatch_at = clock_timestamp()
+           WHERE id = $1`,
+          [deliveryId],
+        );
+        await setRuntimeContext(client, userId);
+        const secondDispatchLease = randomUUID();
+        const reclaimedDispatch = await client.query(
+          `SELECT * FROM private.claim_api_email_dispatch_batch($1::uuid, 1, 30, $2::uuid)`,
+          [secondDispatchLease, deliveryId],
+        );
+        assert.equal(reclaimedDispatch.rowCount, 1);
+        await client.query(
+          `SELECT private.complete_api_email_dispatch($1::uuid, $2::uuid, clock_timestamp())`,
+          [deliveryId, secondDispatchLease],
+        );
+        await client.query('RESET ROLE');
+
+        const ambiguousLease = randomUUID();
+        await client.query('SET LOCAL ROLE smart_job_email');
+        const ambiguousSend = await client.query(
+          `SELECT * FROM private.claim_email_delivery($1::uuid, $2::uuid, 10)`,
+          [deliveryId, ambiguousLease],
+        );
+        assert.equal(ambiguousSend.rowCount, 1);
+        await client.query('RESET ROLE');
+        await client.query(
+          `UPDATE private.document_email_deliveries
+           SET send_lease_until = clock_timestamp() - interval '1 second'
+           WHERE id = $1`,
+          [deliveryId],
+        );
+        await client.query('SET LOCAL ROLE smart_job_email');
+        const expired = await client.query(
+          `SELECT * FROM private.claim_email_delivery($1::uuid, $2::uuid, 10)`,
+          [deliveryId, randomUUID()],
+        );
+        assert.equal(expired.rowCount, 0);
+        await client.query('RESET ROLE');
+        const finalState = await client.query(
+          `SELECT status::text AS status FROM private.document_email_deliveries WHERE id = $1`,
+          [deliveryId],
+        );
+        assert.equal(finalState.rows[0].status, 'delivery_unknown');
+      });
+    });
+  });
 }

@@ -28,6 +28,28 @@ export const DocType = Object.freeze({
 
 export type DocTypeCode = (typeof DocType)[keyof typeof DocType];
 
+export const TaxAuthorityStatus = Object.freeze({
+  None: 'none',
+  Reserved: 'reserved',
+  Submitted: 'submitted',
+  Approved: 'approved',
+  Rejected: 'rejected',
+  Failed: 'failed',
+  Burned: 'burned',
+} as const);
+
+export type TaxAuthorityStatusValue =
+  (typeof TaxAuthorityStatus)[keyof typeof TaxAuthorityStatus];
+
+export const TaxSubmissionMode = Object.freeze({
+  Disabled: 'disabled',
+  Sandbox: 'sandbox',
+  Production: 'production',
+} as const);
+
+export type TaxSubmissionModeValue =
+  (typeof TaxSubmissionMode)[keyof typeof TaxSubmissionMode];
+
 export const DocTypeLabel = Object.freeze(
   Object.fromEntries(Object.entries(DocType).map(([key, value]) => [value, key])) as Record<DocTypeCode, string>,
 );

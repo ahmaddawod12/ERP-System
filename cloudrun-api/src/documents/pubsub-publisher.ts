@@ -1,6 +1,11 @@
+import {
+  DocumentDispatchMessageSchema,
+  EmailDispatchMessageSchema,
+} from "@smart-job/api-contracts";
 import { z } from "zod";
 
 import type { DocumentTaskPublisher } from "./dispatch.js";
+import type { EmailDeliveryPublisher } from "./email-dispatch.js";
 
 const metadataTokenSchema = z.object({
   access_token: z.string().trim().min(20),
@@ -16,6 +21,11 @@ export interface PubSubDocumentPublisherConfig {
   readonly projectId: string;
   readonly previewTopic: string;
   readonly generateTopic: string;
+}
+
+export interface PubSubEmailPublisherConfig {
+  readonly projectId: string;
+  readonly topic: string;
 }
 
 export interface PubSubDocumentPublisherOptions {
@@ -86,7 +96,8 @@ export function createPubSubDocumentTaskPublisher(
   } as const;
 
   return {
-    async publish(taskType, payload): Promise<void> {
+    async publish(taskType, message): Promise<void> {
+      const payload = DocumentDispatchMessageSchema.parse(message);
       const accessToken = await tokenProvider.get();
       const topic = topicByTaskType[taskType];
       const url = `https://pubsub.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/topics/${encodeURIComponent(topic)}:publish`;
@@ -100,6 +111,39 @@ export function createPubSubDocumentTaskPublisher(
           messages: [{
             data: Buffer.from(JSON.stringify(payload), "utf8").toString("base64"),
             attributes: { taskType },
+          }],
+        }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) {
+        throw new Error(`Pub/Sub publish failed with status ${response.status}`);
+      }
+      publishResponseSchema.parse(await response.json());
+    },
+  };
+}
+
+export function createPubSubEmailDeliveryPublisher(
+  config: PubSubEmailPublisherConfig,
+  options: PubSubDocumentPublisherOptions = {},
+): EmailDeliveryPublisher {
+  const fetchImplementation = options.fetchImplementation ?? fetch;
+  const tokenProvider = new MetadataAccessTokenProvider(options);
+
+  return {
+    async publish(message): Promise<void> {
+      const payload = EmailDispatchMessageSchema.parse(message);
+      const accessToken = await tokenProvider.get();
+      const url = `https://pubsub.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/topics/${encodeURIComponent(config.topic)}:publish`;
+      const response = await fetchImplementation(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [{
+            data: Buffer.from(JSON.stringify(payload), "utf8").toString("base64"),
           }],
         }),
         signal: AbortSignal.timeout(5_000),

@@ -7,6 +7,7 @@ describe("loadConfig", () => {
   it("uses Cloud Run-compatible defaults", () => {
     assert.deepEqual(loadConfig({ NODE_ENV: "test" }), {
       nodeEnvironment: "test",
+      taxSubmissionMode: "disabled",
       host: "0.0.0.0",
       port: 8080,
       logLevel: "info",
@@ -19,6 +20,7 @@ describe("loadConfig", () => {
   it("parses a complete operational configuration", () => {
     const config = loadConfig({
       NODE_ENV: "test",
+      TAX_SUBMISSION_MODE: "sandbox",
       HOST: "127.0.0.1",
       PORT: "9090",
       LOG_LEVEL: "debug",
@@ -33,6 +35,7 @@ describe("loadConfig", () => {
       TAX_APPROVAL_CALLER_SERVICE_ACCOUNT: "smart-job-api@example.iam.gserviceaccount.com",
     });
     assert.equal(config.nodeEnvironment, "test");
+    assert.equal(config.taxSubmissionMode, "sandbox");
     assert.equal(config.host, "127.0.0.1");
     assert.equal(config.port, 9090);
     assert.equal(config.logLevel, "debug");
@@ -53,6 +56,7 @@ describe("loadConfig", () => {
   it("treats empty optional placeholders as absent", () => {
     assert.deepEqual(loadConfig({ NODE_ENV: "test", MAIN_API_URL: "", MAIN_API_AUDIENCE: "" }), {
       nodeEnvironment: "test",
+      taxSubmissionMode: "disabled",
       host: "0.0.0.0",
       port: 8080,
       logLevel: "info",
@@ -80,10 +84,21 @@ describe("loadConfig", () => {
     );
   });
 
-  it("requires the complete operational configuration in production", () => {
+  it("defaults production to disabled without requiring authority credentials", () => {
+    assert.equal(loadConfig({ NODE_ENV: "production" }).taxSubmissionMode, "disabled");
+  });
+
+  it("requires the complete operational configuration when production submission is enabled", () => {
     assert.throws(
-      () => loadConfig({ NODE_ENV: "production" }),
-      /Production requires the complete tax authority, callback, and main-API configuration/,
+      () => loadConfig({ NODE_ENV: "production", TAX_SUBMISSION_MODE: "production" }),
+      /Enabled production tax submission requires the complete tax authority, callback, and main-API configuration/,
+    );
+  });
+
+  it("rejects unknown submission modes", () => {
+    assert.throws(
+      () => loadConfig({ NODE_ENV: "test", TAX_SUBMISSION_MODE: "enabled" }),
+      /Invalid cloudrun-tax configuration/,
     );
   });
 

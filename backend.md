@@ -1,7 +1,7 @@
 # Backend
 
 This document summarizes the active backend boundaries and the pre-launch
-migration foundation as of July 13, 2026.
+migration foundation as of July 18, 2026.
 
 ## Current Backend Reality
 
@@ -13,17 +13,16 @@ migration foundation as of July 13, 2026.
 - SQL is the primary persistence layer for company-scoped ERP data.
 - Firestore is still used for selected operational paths, compatibility mirrors, rules-backed reads, and residual legacy surfaces.
 - Supabase Edge Functions in `supabase/functions/` are the maintained gateway surface in this workspace.
-- `cloudrun-api` now includes tested Postgres, Supabase JWT, opaque-session, and
-  initial domain-route implementations. `cloudrun-tax` remains a tested
-  Fastify foundation. Neither is an active production gateway yet.
+- `cloudrun-api` now includes tested Postgres, Supabase JWT, opaque-session,
+  bounded domain routes, durable document/email dispatch, and authoritative tax
+  submission. `cloudrun-tax`, `cloudrun-pdf`, and `cloudrun-email` implement the
+  worker boundaries. None receives production traffic yet; tax stays disabled.
 
-The approved migration chain now runs through
-`0021_api_job_mutations.sql`. Migrations `0006`–`0021` add the least-privileged
-API role and request context, private session/idempotency/upload state, atomic
-job creation/completion, the canonical private file bucket and PDF extension,
-bounded abandoned-upload cleanup, hardened first-workspace registration,
-self-scoped push-token writes, hardened invitation creation/redemption, and
-versioned atomic inventory, worker, and job mutations. The
+The approved migration chain now runs through `0030`. Migrations `0006`–`0030`
+add least-privileged API and worker roles, request context, private
+session/idempotency/upload/workflow state, atomic domain mutations,
+transactional accepted-job inventory consumption, canonical PDF/email claims,
+and the authoritative tax transaction/outbox. The
 API consumes these foundations locally, but
 this does not activate a deployed production path.
 
@@ -31,7 +30,7 @@ this does not activate a deployed production path.
 
 ### cloudrun-api/
 
-This is the future Node 22 modular API boundary. Its current implementation owns:
+This is the staged Node 22 modular API boundary. Its current implementation owns:
 
 - strict environment validation and a 12-second request timeout ceiling
 - shared `@smart-job/api-contracts` envelopes and runtime schemas
@@ -78,6 +77,12 @@ This is the future Node 22 modular API boundary. Its current implementation owns
 - verified, idempotent invitation create/redeem through migration `0012`, with
   SQL-derived authority, exact row locks, atomic membership creation, and
   separate hashed 10-per-minute limits
+- opaque document dispatch, lease-token PDF completion, durable email delivery,
+  authoritative document detail, and manager/dev manual retry for failed or
+  delivery-unknown email
+- strict idempotent tax invoice creation where type `305`, numbering, identity,
+  reservation, and submission outbox are SQL-owned; internal Google-identity
+  drains distinguish definite pre-send failure from ambiguous submission
 
 The main API requires `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`) for Auth
 calls and `SUPABASE_SECRET_KEY` (`sb_secret_...`) only for trusted Storage
@@ -85,31 +90,31 @@ administration. It rejects legacy key formats in these new runtime slots. The
 legacy `SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` names remain confined to
 the still-active Edge compatibility runtime.
 
-Documents and task dispatch, tax integration, remaining legacy file
-paths, container/deployment configuration, and full client cutover are not
-complete. In-progress source without its approved migration is not an active
-route contract.
+Remaining legacy file paths, production resource provisioning, certification,
+and full client cutover are not complete. In-progress source without its
+approved migration and behavioral tests is not an active route contract.
 
 ### cloudrun-tax/
 
-This is the future stateless Israel-region boundary. It currently owns only
-validated configuration, safe request logging, common envelopes, and service
-probes. It has no database connection and must never become an application data
-writer. Tax OAuth, callbacks, IAM invocation, and deployment configuration are
-still gated.
+This is the stateless Israel-region boundary. It validates Google caller
+identity for approval requests, terminates HMAC-authenticated callbacks, and
+forwards callback results to the protected main API. It has no database
+connection and must never become an application data writer. Production
+authority calls remain gated by certification and `TAX_SUBMISSION_MODE`.
 
 ### packages/api-contracts/
 
 This package derives canonical business values from `@smart-job/contracts` and
 adds Zod schemas for API envelopes, viewers/workspaces, cursors, entity
 versions, uploads, jobs, clients, inventory, business registration, push tokens,
-and document tasks. Its migration-only characterization subpath freezes
+document tasks, email delivery, and tax submission. Its migration-only characterization subpath freezes
 operation/deploy names and representative request shapes so catalog drift is
 visible while domain behavior is ported and integration-tested.
 
 ### supabase/functions/
 
-The `supabase/functions/` package is the active trust boundary in this workspace. It is responsible for:
+The `supabase/functions/` package is the compatibility trust boundary for
+mobile operations not yet cut over. It remains responsible for:
 
 - auth and company-scope verification
 - protected mutations and read-model endpoints
@@ -138,13 +143,27 @@ Important active entry surfaces include:
 
 This service owns PDF preview and generation. It:
 
-- validates requester identity and company scope
+- verifies trusted Pub/Sub/OIDC identity and accepts only opaque `taskId`
+- claims canonical tenant/user/document/request data through `smart_job_pdf`
+  private lease-token RPCs
 - renders previews and final PDFs
 - stores active artifacts in the private `smart-job-company-files` Supabase bucket
 - derives object paths from internal company/document UUIDs and stores only canonical `storagePath` values
 - finalizes document state and its sync-version bump atomically
 - preserves create-only semantics; retries reuse only byte-identical PDFs and never overwrite
 - uses GCS for no application-facing files; GCS remains owned by the monthly archiver
+
+### cloudrun-email/
+
+This private Pub/Sub worker owns generated-document email delivery. It:
+
+- accepts only opaque `deliveryId` and claims canonical state through
+  `smart_job_email` private lease-token RPCs
+- creates a bounded signed URL for the canonical private PDF and submits via SES
+- retries only definite pre-send/provider-rejected transient failures
+- records ambiguous post-submission outcomes as `delivery_unknown`; automatic
+  resend is forbidden and an authorized manual retry is required
+- has no direct write privilege on public ERP tables
 
 ### cloudrun-archiver/
 
@@ -377,8 +396,9 @@ The migration goal remains runtime replacement without contract drift. During th
 - active Edge behavior fixes still belong in `supabase/functions/` and
   `supabase/handlers/`; new migration domain routes belong in `cloudrun-api`
   and use Edge fixtures only as behavioral references
-- The implemented API, explicit-tenant SSR, encrypted mobile field outbox, and
-  private job/PDF Storage slices do not constitute full cutover.
+- The implemented API, durable PDF/email/tax workflows, explicit-tenant SSR,
+  encrypted mobile field outbox, and private job/PDF Storage slices do not
+  constitute full cutover.
 - New API/tax Dockerfiles and Cloud Run deployment/IAM, stable API domain,
   remaining domain routes and website/mobile paths, legacy file-path removal,
   and final Edge/Firebase deletion remain separate approval gates.

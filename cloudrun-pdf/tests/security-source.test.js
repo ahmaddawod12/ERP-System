@@ -5,26 +5,42 @@ const path = require('node:path');
 
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
 const pubsubAuthSource = fs.readFileSync(path.resolve(__dirname, '../pubsub-auth.js'), 'utf8');
+const workerStoreSource = fs.readFileSync(path.resolve(__dirname, '../worker-store.js'), 'utf8');
+
+function resolveRepoRoot() {
+  for (const candidate of [path.resolve(__dirname, '..', '..'), path.resolve(__dirname, '..', '..', '..')]) {
+    if (fs.existsSync(path.join(candidate, 'packages', 'db', 'migrations'))) return candidate;
+  }
+  throw new Error('Unable to resolve repository root');
+}
 
 test('Pub/Sub verification fails closed when allowlist or OIDC checks fail', () => {
   assert.match(indexSource, /PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0/);
-  assert.match(pubsubAuthSource, /return res.status\(403\)\.send\('Service account allowlist not configured'\)/);
+  assert.match(pubsubAuthSource, /Service account allowlist not configured/);
   assert.match(pubsubAuthSource, /verifySelfSignedServiceAccountJwt/);
-  assert.match(pubsubAuthSource, /return res.status\(401\)\.send\('Trusted bearer token required'\)/);
+  assert.match(pubsubAuthSource, /Trusted bearer token required/);
   assert.match(pubsubAuthSource, /x-pubsub-token/);
 });
 
-test('requester identity and company match are enforced before document work', () => {
-  assert.match(indexSource, /Missing required task identity fields \(uid and companyId\)/);
-  assert.match(indexSource, /Requester profile not found/);
-  assert.match(indexSource, /Requester company mismatch/);
-  assert.match(indexSource, /Role not authorized for document generation/);
-  assert.match(indexSource, /Role not authorized for document preview/);
+test('opaque dispatch messages cannot supply tenant, user, or document authority', async () => {
+  const { DocumentDispatchMessageSchema } = await import('@smart-job/api-contracts');
+  assert.deepEqual(DocumentDispatchMessageSchema.parse({ taskId: 'task-1' }), { taskId: 'task-1' });
+  assert.equal(DocumentDispatchMessageSchema.safeParse({
+    taskId: 'task-1',
+    companyId: 77,
+    uid: 'attacker',
+    documentData: {},
+  }).success, false);
+  assert.match(workerStoreSource, /private\.claim_pdf_document_task/);
+  assert.doesNotMatch(indexSource, /message\.companyId|message\.uid|message\.documentData/);
 });
 
-test('worker role is rejected for both document preview and generation', () => {
-  // The allowed role list for preview and generate must not include "worker".
-  assert.doesNotMatch(indexSource, /\['manager', 'user', 'basic', 'dev', 'worker'\]/);
-  assert.doesNotMatch(indexSource, /\['worker', 'manager', 'user', 'basic', 'dev'\]/);
-  assert.match(indexSource, /!\['manager', 'user', 'basic', 'dev'\]\.includes\(userRole\)/);
+test('only the dedicated PDF role receives canonical worker RPC access', () => {
+  const migration = fs.readFileSync(
+    path.join(resolveRepoRoot(), 'packages', 'db', 'migrations', '0028_reliable_document_email_pipeline.sql'),
+    'utf8',
+  );
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION private\.claim_pdf_document_task[\s\S]*TO smart_job_pdf/);
+  assert.match(migration, /REVOKE ALL ON FUNCTION private\.claim_pdf_document_task[\s\S]*smart_job_api[\s\S]*smart_job_email/);
+  assert.doesNotMatch(workerStoreSource, /FROM public\.|UPDATE public\.|INSERT INTO public\./);
 });

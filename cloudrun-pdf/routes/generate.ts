@@ -1,9 +1,11 @@
 /**
  * POST /generate - Pub/Sub push endpoint for generate tasks
  */
+type DocumentDispatchMessage = { readonly taskId: string };
+
 export function registerGenerateRoute(app, deps: {
   verifyPubSubRequest: unknown;
-  processGenerateTask: (messageData: unknown) => Promise<unknown>;
+  processGenerateTask: (messageData: DocumentDispatchMessage) => Promise<unknown>;
   isTransientProcessingError: (error: unknown) => boolean;
 }) {
   app.post('/generate', deps.verifyPubSubRequest, async (req, res) => {
@@ -14,9 +16,10 @@ export function registerGenerateRoute(app, deps: {
 
     let messageData;
     try {
-      messageData = JSON.parse(
-        Buffer.from(req.body.message.data, 'base64').toString()
-      );
+      const { DocumentDispatchMessageSchema } = await import('@smart-job/api-contracts');
+      messageData = DocumentDispatchMessageSchema.parse(JSON.parse(
+        Buffer.from(req.body.message.data, 'base64').toString(),
+      ));
     } catch (parseError) {
       return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
     }

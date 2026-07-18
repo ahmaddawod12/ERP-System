@@ -1,0 +1,33 @@
+{
+  "name": "@smart-job/cloudrun-email",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Durable SES email-delivery worker for generated Smart-Job documents",
+  "type": "module",
+  "main": "dist/src/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/src/server.js",
+    "test": "npm run build && node --test dist/tests/*.test.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ses": "3.1030.0",
+    "@smart-job/api-contracts": "file:../packages/api-contracts",
+    "fastify": "5.10.0",
+    "google-auth-library": "10.9.0",
+    "pg": "8.16.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/pg": "8.16.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "fast-xml-parser": "5.5.12"
+  }
+}

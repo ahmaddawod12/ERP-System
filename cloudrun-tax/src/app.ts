@@ -13,7 +13,7 @@ import type { MainApiCallbackClient } from "./main-api-client.js";
 import type { ServiceIdentityVerifier } from "./service-identity.js";
 import type { ServiceConfig } from "./config.js";
 import { TaxApprovalRouteRequestSchema, TaxCallbackEnvelopeSchema } from "./contracts.js";
-import { TaxGatewayError, dependencyUnavailable } from "./errors.js";
+import { TaxGatewayError, dependencyUnavailable, taxSubmissionDisabled } from "./errors.js";
 import { failure, success } from "./envelopes.js";
 
 const REQUEST_ID_HEADER = "x-request-id";
@@ -208,6 +208,13 @@ export function buildApp({ config, logger, dependencies }: BuildAppOptions): Fas
   });
 
   app.post("/api/v1/tax/approval", async (request, reply) => {
+    if (config.taxSubmissionMode === "disabled") {
+      const unavailable = taxSubmissionDisabled();
+      return reply
+        .code(unavailable.statusCode)
+        .send(failure(request.id, unavailable.code, unavailable.safeMessage, unavailable.retryable));
+    }
+
     const authorityClient = dependencies?.authorityClient;
     const mainApiClient = dependencies?.callbackClient;
     const identityVerifier = dependencies?.approvalIdentityVerifier;

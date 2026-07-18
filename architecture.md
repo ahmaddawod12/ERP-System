@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current July 13, 2026 Smart-Job ERP architecture
+This document describes the current July 18, 2026 Smart-Job ERP architecture
 and its in-progress pre-launch migration. It distinguishes active code paths
 from foundations that are not yet serving application traffic.
 
@@ -16,15 +16,12 @@ The system is hybrid today:
   attachment and PDF/preview/branding paths; GCS remains for monthly archives,
   and unported legacy file paths still coexist during cutover.
 - Supabase Edge Functions are the active in-repo backend runtime under hardening, even if rollout may still be staged by environment.
-- `packages/api-contracts`, `cloudrun-api`, and `cloudrun-tax` provide the
-  shared HTTP contract and Fastify foundations for the planned Cloud Run
-  backend. `cloudrun-api` now includes dual authentication, opaque website
-  sessions, viewer/workspace/bootstrap, bounded jobs/clients/inventory reads,
-  idempotent client create/update/delete-or-archive, atomic job
-  create/complete, versioned job update/accept/delete, attachment upload
-  sessions, first-workspace
-  registration, push-token mutations, and invitation create/redeem. It is not
-  receiving production traffic; `cloudrun-tax` remains a stateless shell.
+- `packages/api-contracts`, `cloudrun-api`, `cloudrun-tax`, `cloudrun-pdf`, and
+  `cloudrun-email` implement the staged Cloud Run data plane. In addition to
+  the existing domains, the API owns opaque document/email outboxes,
+  authoritative document workflow state, and atomic tax creation/submission.
+  These services are locally verified but are not receiving production traffic;
+  tax submission remains disabled pending certification.
 
 ## Runtime Topology
 
@@ -38,21 +35,18 @@ website/mobile
 The approved target topology is:
 
 ```text
-Next.js on Vercel --server-only session/BFF--> cloudrun-api --> Supabase Postgres/Auth/Storage
-Expo iOS/Android --------Supabase bearer------^       |----> cloudrun-pdf
-                                                       `----IAM----> cloudrun-tax (me-west1)
+Next.js website --server-only session/BFF--> cloudrun-api --> Supabase Postgres/Auth/Storage
+Expo iOS/Android ------Supabase bearer--------^       |----Pub/Sub----> cloudrun-pdf
+Scheduler/queues -------Google IAM------------^       |----Pub/Sub----> cloudrun-email --> AWS SES
+                                                       `----Google IAM--> cloudrun-tax (me-west1)
 ```
 
 The second topology is partially implemented but is not the global production
-routing path. Migrations `0006`–`0021` support the staged API, private file/PDF
-flow, cleanup, registration, push, invitation, client/inventory/worker mutation,
-and versioned job-mutation slices. The remaining domain
-routes,
-legacy-file and frontend cutovers, tax work, new API/tax Dockerfiles,
-deployment/IAM, custom API DNS mapping, and legacy deletion are now implemented.
-The Cloud Run deploy workflow maps a custom API domain in production via
-`API_CUSTOM_DOMAIN`. Staging uses generated `run.app` URLs.
-approval gates.
+routing path. Migrations through `0030` support the staged API, private
+file/PDF flow, versioned domain mutations, transactional accepted-job
+inventory consumption, dedicated worker roles, durable email/tax/archive
+workflow state, and approval-only tax PDF generation. Remaining frontend and
+mobile cutover, infrastructure promotion, and certification are launch gates.
 
 ## Ownership Map
 
@@ -72,7 +66,7 @@ approval gates.
   never exposes stored Supabase access/refresh credentials outside the session
   service.
 - New Auth/mobile code uses publishable (`sb_publishable_...`) keys. Only the
-  trusted API/PDF/archiver Storage paths receive secret (`sb_secret_...`) keys;
+  trusted API/PDF/email/archiver Storage paths receive secret (`sb_secret_...`) keys;
   no secret or legacy service-role key may enter browser/mobile configuration.
   Legacy anon/service-role variables remain only for the pre-cutover Edge flow.
 - Backend handlers must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes. Public numeric IDs and internal UUIDs are resolved with separate SQL filters.
@@ -92,10 +86,14 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
 - Jobs and job attachments/usages: `jobs`, `job_attachments`, `job_part_usages`
 - API operational state: `private.web_sessions`, `private.api_idempotency`, and
   `private.file_upload_sessions`
+- Durable workflow state: `private.document_email_deliveries`,
+  `private.tax_submissions`, and `private.archive_run_leases`
 - Inventory: `inventory_locations`, `inventory_parts`, `inventory_balances`, `inventory_movements`
 - Documents and links: `documents`, `document_items`, `document_job_links`, `proposal_usage`
 - Document tasks: `document_tasks` (preview tasks write `preview_url`; generate tasks write `generate_url`)
-- Tax flows: `tax_invoice_reservations`, `tax_invoice_idempotency`, `tax_authority_tokens`, `tax_oauth_sessions`, `tax_oauth_callbacks`
+- Tax flows: `tax_invoice_reservations`, `tax_invoice_idempotency`,
+  `tax_authority_tokens`, `tax_oauth_sessions`, `tax_oauth_callbacks`, and
+  replay-safe `private.tax_callback_events`
 - Invites: `company_invites`
 - Support: `support_conversations`, `support_messages`
 - Operational SQL tables: `notification_deliveries`, `rate_limit_buckets`, `archive_runs`, `auditLogs`, `orphanedUserCleanupMarkers`, `system_counters`
@@ -238,17 +236,41 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - The staged Cloud Run API is already the trust boundary for its implemented
   local/test slices: viewer/workspace/bootstrap, bounded jobs/clients/inventory
   reads, job attachment sessions and atomic create/complete, first-workspace
-  registration, push tokens, and opaque sessions. It authorizes from SQL
-  memberships and never proxies those operations through Edge.
+  registration, push tokens, opaque sessions, document/email outboxes, and the
+  tax state machine. It authorizes from SQL memberships and never proxies those
+  operations through Edge.
 
 ### Document generation
 
-- Gateway handlers publish preview/generate work.
-- Edge handlers enrich preview/generate payloads with company data, create SQL draft document rows for generate flows, and dispatch trusted work to `cloudrun-pdf`.
-- `cloudrun-pdf` validates requester identity, accepts trusted dispatch bearer auth from either Google OIDC or the configured edge service account, renders PDF output, writes through a server-only Supabase secret key, and finalizes task/document state.
+- API/compatibility gateways publish opaque `{ taskId }` messages only.
+- `cloudrun-pdf` verifies Google/Pub/Sub identity, claims canonical tenant,
+  user, document, and request data through `smart_job_pdf` private RPCs, renders
+  PDF output, writes through a server-only Supabase secret key, and finalizes
+  task/document state with its lease token.
 - New generated artifacts keep create-only semantics. A retry may reuse an existing object only after its size, MIME type, and SHA-256 bytes match. Objects are retained across ambiguous SQL/signing failures so a committed finalization can never point at a compensating-deleted file; operational cleanup handles confirmed orphans.
 - Generate flows must not overwrite an existing finalized PDF or existing SQL `storage_path`, regardless of document type.
 - Document finalization and its `documents_version` bump commit in one SQL transaction.
+
+### Document email delivery
+
+- Final PDF completion creates one durable email row only when the canonical
+  recipient is valid. A separate API outbox publishes opaque `{ deliveryId }`.
+- `cloudrun-email` uses only `smart_job_email` private RPCs, creates a bounded
+  signed download URL, submits to SES, and records `sent`, definite failure, or
+  `delivery_unknown`.
+- A timeout/network ambiguity after SES submission is never automatically
+  retried. Authorized manager/dev manual retry is required.
+
+### Tax workflow
+
+- Tax invoice type `305` is implicit. One SQL transaction allocates `doc_305`
+  and writes the document, items, reservation, and durable submission outbox.
+- Google-identity-protected drains call the regional gateway with a stable
+  correlation ID. Pre-send failures may defer; ambiguous submissions become
+  `submission_unknown` pending reconciliation.
+- `reserved` and `submitted` never display approval or generate a final PDF.
+  Only replay-safe confirmed `approved` with a confirmation number enqueues the
+  final PDF. Production starts with `TAX_SUBMISSION_MODE=disabled`.
 
 ### Archiving
 
@@ -348,14 +370,11 @@ The current migration target is:
    cutover, then remove compatibility infrastructure only after explicit final
    approval.
 
-The shared contracts and database/security migrations through `0021`,
-including the versioned inventory foundation in `0019`, initial
-main-API domain routes, private job/PDF Storage flow, explicit-tenant website
+The shared contracts and database/security migrations through `0030`,
+including the versioned domain foundations, durable PDF/email/tax workflows,
+authoritative tax API, private job/PDF Storage flow, explicit-tenant website
 login/onboarding plus overview/jobs/clients/inventory SSR slices, tenant-scoped
 mobile job/client/inventory reads, and the two-operation encrypted mobile field
 outbox are implemented locally. Domain parity and global frontend cutover
-are not complete. Tax behavior, remaining file and feature routes, new API/tax
-Docker/deployment/IAM, custom API DNS, and legacy Edge/Firebase cleanup are
-implemented. Firebase config files and the Edge deploy workflow have been
-removed. Remaining mobile Edge caller cutover is the final step.
-outstanding approval gates.
+are not complete. Production infrastructure, certification, remaining mobile
+Edge caller cutover, and final compatibility deletion remain launch gates.

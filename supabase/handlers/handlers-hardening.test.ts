@@ -31,7 +31,6 @@ test('business registration binds normalized city and address values to the RPC'
 
 test('document task publishing dispatches Cloud Run only for newly created tasks', () => {
   const documentsHandler = readFile('supabase', 'handlers', 'documents.ts');
-  const taxHandler = readFile('supabase', 'handlers', 'tax.ts');
 
   assert.match(documentsHandler, /return \{ \.\.\.insertedTask, isNew: true \}/);
   assert.match(documentsHandler, /buildDocumentTaskLockKey\(taskType, documentType, documentId, requestPayload\)/);
@@ -39,7 +38,17 @@ test('document task publishing dispatches Cloud Run only for newly created tasks
   assert.match(documentsHandler, /if \(task\.isNew\) \{[\s\S]*dispatchCloudRunPdfTask\("\/preview"/);
   assert.match(documentsHandler, /if \(task\.isNew\) \{[\s\S]*dispatchCloudRunPdfTask\("\/generate"/);
   assert.match(documentsHandler, /markDocumentTaskDispatchFailed/);
-  assert.match(taxHandler, /if \(task\.isNew\) \{[\s\S]*dispatchCloudRunPdfTask\("\/generate"/);
+});
+
+test('legacy tax approval fails before reservation or PDF side effects', () => {
+  const helpers = readFile('supabase', 'shared-edge-helpers.ts');
+  const taxHandler = readFile('supabase', 'handlers', 'tax.ts');
+
+  assert.match(helpers, /parseTaxSubmissionMode\(Deno\.env\.get\("TAX_SUBMISSION_MODE"\)\)/);
+  assert.match(helpers, /String\(value \|\| "disabled"\)/);
+  assert.match(taxHandler, /TAX_SUBMISSION_UNAVAILABLE_MESSAGE/);
+  assert.match(taxHandler, /httpStatus: 503/);
+  assert.doesNotMatch(taxHandler, /allocateNextCompanyCounter|createOrReuseDocumentTask|dispatchCloudRunPdfTask/);
 });
 
 test('read-model task access is restricted to task owner or manager/dev', () => {

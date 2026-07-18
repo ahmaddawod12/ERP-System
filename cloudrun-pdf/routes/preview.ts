@@ -1,9 +1,11 @@
 /**
  * POST /preview - Pub/Sub push endpoint for preview tasks
  */
+type DocumentDispatchMessage = { readonly taskId: string };
+
 export function registerPreviewRoute(app, deps: {
   verifyPubSubRequest: unknown;
-  processPreviewTask: (messageData: unknown) => Promise<unknown>;
+  processPreviewTask: (messageData: DocumentDispatchMessage) => Promise<unknown>;
   isTransientProcessingError: (error: unknown) => boolean;
 }) {
   app.post('/preview', deps.verifyPubSubRequest, async (req, res) => {
@@ -14,9 +16,10 @@ export function registerPreviewRoute(app, deps: {
 
     let messageData;
     try {
-      messageData = JSON.parse(
-        Buffer.from(req.body.message.data, 'base64').toString()
-      );
+      const { DocumentDispatchMessageSchema } = await import('@smart-job/api-contracts');
+      messageData = DocumentDispatchMessageSchema.parse(JSON.parse(
+        Buffer.from(req.body.message.data, 'base64').toString(),
+      ));
     } catch (parseError) {
       return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
     }

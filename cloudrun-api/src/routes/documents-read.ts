@@ -1,6 +1,7 @@
 import {
   ApiFailureResponseSchema,
   DocumentDownloadAccessSchema,
+  DocumentDetailSchema,
   DocumentListPageSchema,
   DocumentListQuerySchema,
   DocumentTaskSchema,
@@ -13,6 +14,7 @@ import type { ApiRequestAuthenticator } from "../auth/index.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
 import {
   readDocumentFile,
+  readDocumentDetail,
   readDocumentsPage,
   readDocumentTask,
 } from "../documents/read-repository.js";
@@ -36,6 +38,7 @@ const documentTaskParamsSchema = companyParamsSchema.extend({
 const documentsResponseSchema = createApiSuccessResponseSchema(DocumentListPageSchema);
 const documentTaskResponseSchema = createApiSuccessResponseSchema(DocumentTaskSchema);
 const downloadResponseSchema = createApiSuccessResponseSchema(DocumentDownloadAccessSchema);
+const detailResponseSchema = createApiSuccessResponseSchema(DocumentDetailSchema);
 const SIGNED_DOCUMENT_TTL_SECONDS = 15 * 60;
 const SIGNED_TASK_TTL_SECONDS = 5 * 60;
 
@@ -159,6 +162,41 @@ export function registerDocumentsReadRoutes(
         });
       }
       return apiSuccess(request.id, task);
+    },
+  );
+
+  app.get(
+    "/api/v1/companies/:companyId/documents/:documentId",
+    {
+      schema: {
+        tags: ["documents"],
+        summary: "Read authoritative document, tax, and email state",
+        params: documentParamsSchema,
+        response: {
+          200: detailResponseSchema,
+          400: ApiFailureResponseSchema,
+          401: ApiFailureResponseSchema,
+          403: ApiFailureResponseSchema,
+          404: ApiFailureResponseSchema,
+          503: ApiFailureResponseSchema,
+        },
+      },
+    },
+    async (request) => {
+      const authenticated = await services.authenticator.authenticate(request);
+      const params = documentParamsSchema.parse(request.params);
+      const detail = await services.database.withTransaction(
+        { userId: authenticated.userId },
+        async (transaction) => {
+          const tenant = await resolveTenantContext(
+            transaction,
+            authenticated.userId,
+            params.companyId,
+          );
+          return readDocumentDetail(transaction, tenant.internalCompanyId, params.documentId);
+        },
+      );
+      return apiSuccess(request.id, detail);
     },
   );
 

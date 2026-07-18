@@ -23,6 +23,7 @@ import {
   type OutboxOperation,
 } from './database';
 import { classifyOutboxFailure, retryDelayMs } from './policy';
+import { attachmentUploadSessionIdempotencyKey } from './idempotency';
 import {
   outcomeForOutboxStatus,
   type OutboxOperationResult,
@@ -120,6 +121,7 @@ async function ensureUploadSession(
         },
         uid: operation.userId,
         companyId: operation.companyId,
+        idempotencyKey: attachmentUploadSessionIdempotencyKey(operation.idempotencyKey),
       },
     );
     await database.updatePayload(operation.id, {

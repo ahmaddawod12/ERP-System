@@ -37,6 +37,7 @@ npm --prefix cloudrun-tax start
 | `HOST` | `0.0.0.0` | Listen address. |
 | `PORT` | `8080` | Cloud Run HTTP port. |
 | `LOG_LEVEL` | `info` | Pino log level. |
+| `TAX_SUBMISSION_MODE` | `disabled` | Outbound gate: `disabled`, `sandbox`, or `production`. |
 | `TAX_TOKEN_URL` | unset | Tax authority OAuth token endpoint. |
 | `TAX_APPROVAL_URL` | unset | Tax authority invoice approval endpoint. |
 | `TAX_CLIENT_ID` | unset | OAuth client ID. |
@@ -50,8 +51,9 @@ npm --prefix cloudrun-tax start
 | `TAX_APPROVAL_CALLER_SERVICE_ACCOUNT` | unset | Main API service account allowed to call `/api/v1/tax/approval`. |
 
 The operational variables (`TAX_*` and `MAIN_API_*`) must all be supplied
-together when the gateway is operationally configured. In production they are
-required. The HMAC callback secret must be at least 32 characters.
+together when the gateway is operationally configured. Production starts with
+submission disabled; enabling it requires the complete operational
+configuration. The HMAC callback secret must be at least 32 characters.
 
 ## HTTP surface
 
@@ -68,8 +70,9 @@ required. The HMAC callback secret must be at least 32 characters.
   `documentId` and `oauthSessionId` in the main API before any authority call,
   exchanges a
   `client_credentials` OAuth token with the tax authority, submits the
-  invoice for approval, and returns the normalized result. Returns 503 when
-  the gateway is not operationally configured.
+  invoice for approval, and returns the normalized result. Returns 503 without
+  contacting the authority when `TAX_SUBMISSION_MODE=disabled`, or when an
+  enabled gateway is not operationally configured.
 - Every response uses the shared Smart-Job API envelope and includes the
   propagated or generated `x-request-id`.
 

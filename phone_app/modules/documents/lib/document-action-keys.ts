@@ -20,6 +20,10 @@ export class StableDocumentActionKeys {
     return key;
   }
 
+  restore(action: string, fingerprint: string, key: string): void {
+    this.#pending.set(action, { fingerprint, key });
+  }
+
   complete(action: string, key: string): void {
     if (this.#pending.get(action)?.key === key) {
       this.#pending.delete(action);

@@ -37,14 +37,12 @@ test("document dispatch claims leases, publishes once, and defers transient fail
             task_type: "preview",
             user_id: userId,
             dispatch_attempt: 1,
-            dispatch_payload: { taskId: "preview-task", companyId: 77 },
           },
           {
             task_key: "generate-task",
             task_type: "generate",
             user_id: otherUserId,
             dispatch_attempt: 3,
-            dispatch_payload: { taskId: "generate-task", companyId: 77 },
           },
         ]);
       }
@@ -115,8 +113,8 @@ test("Pub/Sub publisher uses Cloud Run metadata identity and caches its token", 
     generateTopic: "document-generate",
   }, { fetchImplementation: fakeFetch, now: () => 1_000 });
 
-  await publisher.publish("preview", { taskId: "preview-task", companyId: 77 });
-  await publisher.publish("generate", { taskId: "generate-task", companyId: 77 });
+  await publisher.publish("preview", { taskId: "preview-task" });
+  await publisher.publish("generate", { taskId: "generate-task" });
 
   assert.equal(requests.filter((request) => request.url.includes("metadata.google.internal")).length, 1);
   const publishRequests = requests.filter((request) => request.url.includes("pubsub.googleapis.com"));
@@ -127,7 +125,6 @@ test("Pub/Sub publisher uses Cloud Run metadata identity and caches its token", 
   const body = JSON.parse(String(publishRequests[0]?.init?.body));
   assert.deepEqual(JSON.parse(Buffer.from(body.messages[0].data, "base64").toString("utf8")), {
     taskId: "preview-task",
-    companyId: 77,
   });
   assert.deepEqual(body.messages[0].attributes, { taskType: "preview" });
 });

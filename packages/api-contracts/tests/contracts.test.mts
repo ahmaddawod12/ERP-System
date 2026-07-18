@@ -460,6 +460,7 @@ test("viewer and sync schemas reject internal identifiers and invalid counters",
       documents: 9,
       pendingDocumentTasks: 1,
     },
+    capabilities: { taxSubmissionMode: "disabled" },
   };
   assert.equal(CompanyBootstrapSchema.safeParse(bootstrap).success, true);
   assert.equal(BootstrapCountsSchema.safeParse({ ...bootstrap.counts, jobs: -1 }).success, false);
@@ -1343,6 +1344,7 @@ test("document contracts keep filters bounded and storage paths private", () => 
     documentDate: "2026-07-13T12:00:00.000Z",
     hasFile: true,
     emailSent: false,
+    emailDeliveryStatus: null,
     entityVersion: "ev1.MQ",
     createdAt: "2026-07-13T12:00:00.000Z",
     updatedAt: "2026-07-13T12:01:00.000Z",

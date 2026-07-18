@@ -8,6 +8,7 @@ const protectedPaths = [
   "packages/api-contracts",
   "cloudrun-api/src",
   "cloudrun-tax/src",
+  "cloudrun-email/src",
   "website/src",
   "website/tests",
   "phone_app/components",

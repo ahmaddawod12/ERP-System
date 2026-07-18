@@ -41,11 +41,13 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { WebView } from 'react-native-webview';
 import { useAuth, useDocumentTask } from '../../../hooks';
-import { generateUuid } from '../../../utils/helpers';
-import { middleEastFunctions, httpsCallable } from '../../../firebase';
 import { DOC_TYPE } from '@smart-job/contracts';
 import { DOCUMENT_CONFIGS, getPaymentMethods } from '../lib/document-config';
 import { getDocumentTranslations } from '../lib/document-copy';
+import {
+  TAX_SUBMISSION_UNAVAILABLE_MESSAGE,
+  TAX_SUBMISSION_UNAVAILABLE_TITLE,
+} from '../lib/tax-submission-status';
 import { fetchCompanyInventoryParts } from '../../../utils/read-model';
 import type { AlertButton, AppDocument, Client, DateLike, DocumentItem, InventoryPart } from '../../../types';
 import { styles } from './CreateDocument.styles';
@@ -554,7 +556,6 @@ export default function CreateDocument() {
   const {
     publishPreview,
     publishGenerate,
-    listenToTask,
     taskStatus,
     previewURL: taskPreviewURL,
     downloadURL: taskDownloadURL,
@@ -801,124 +802,12 @@ export default function CreateDocument() {
     }
   };
 
-  // Special submit handler for Tax Invoice (with Tax Authority approval)
+  // Tax submission remains disabled until the authoritative Cloud API flow is
+  // certified. Do not call the legacy reservation handler from this screen.
   const handleSubmitTaxInvoice = async () => {
-    setIsSubmitting(true);
-    alert.loading();
-
-    try {
-      const incomeItems = items
-        .filter(item => item.description.trim() && toText(item.price) && Number(item.price) > 0)
-        .map(item => ({
-          description: item.description,
-          quantity: Number(item.quantity) || 1,
-          price: Number(item.price),
-        }));
-
-      if (incomeItems.length === 0) {
-        setIsSubmitting(false);
-        alert.hideLoading();
-        showErrorMessage('Error', t.atLeastOneItemWithPrice);
-        return;
-      }
-
-      if (!companyId) {
-        setIsSubmitting(false);
-        alert.hideLoading();
-        showErrorMessage('Error', 'Company name not found. Please try logging in again.');
-        return;
-      }
-
-      // Business info is fetched by the backend from SQL for security.
-
-      // Build client data - VAT required for all tax invoice customers
-      const clientData = {
-        name: formData.customerName,
-        email: formData.customerEmail || '',
-        phone: formData.customerPhone || '',
-        address: `${formData.customerAddress || ''} ${formData.customerCity || ''}`.trim(),
-        id: formData.customerId || '',
-        clientVatNumber: formData.clientVatNumber,
-      };
-
-      // Build document data - backend fetches business_info from SQL.
-      const documentData = {
-        type: DOC_TYPE.TAX_INVOICE,
-        client: clientData,
-        items: incomeItems,
-        companyId: companyId,
-        language: language === 'he' ? 'he' : language === 'ar' ? 'ar' : 'en',
-        date: formData.documentDate,
-        notes: formData.notes || '',
-      idempotencyKey: `tax_${Date.now()}_${generateUuid().replace(/-/g, '').slice(0, 10)}`,
-      };
-
-      // Call getInvoiceApproval to submit to Tax Authority
-      console.log('ðŸ“‹ Submitting to Tax Authority...');
-      const getApprovalFunction = httpsCallable(middleEastFunctions, 'getInvoiceApproval');
-      
-      const approvalResult = await getApprovalFunction(documentData) as {
-        data: {
-          success?: boolean;
-          status?: string;
-          error?: string;
-          documentId?: string;
-          documentNumber?: string | number;
-          pdfTaskId?: string;
-          confirmationNumber?: string;
-        };
-      };
-      console.log('âœ… Tax Authority response:', approvalResult.data);
-
-      if (!approvalResult.data.success) {
-        throw new Error(approvalResult.data.error || 'Tax Authority did not approve the invoice');
-      }
-
-      const { documentId, documentNumber, pdfTaskId, confirmationNumber } = approvalResult.data;
-
-      // Listen to PDF generation task
-      if (pdfTaskId) {
-        console.log('ðŸ“„ Listening to PDF generation task:', pdfTaskId);
-        listenToTask(pdfTaskId, 'generate');
-        // Keep loading state active - will be cleared by onGenerateComplete or onError
-      } else {
-        // No PDF task - approval completed but no PDF generation
-        console.warn('âš ï¸ No PDF generation task returned from Tax Authority approval');
-        setIsSubmitting(false);
-        alert.hideLoading();
-        
-        // Show success without PDF
-        setTimeout(() => {
-          showSuccessMessage(
-            t.successTitle,
-            `Tax invoice approved!\nDocument ID: ${documentId}\nInvoice #: ${documentNumber || 'N/A'}\nConfirmation: ${confirmationNumber || 'Pending callback'}`,
-            [
-              {
-                text: t.done,
-                style: 'default',
-                onPress: () => {
-                  router.back();
-                }
-              }
-            ]
-          );
-        }, Platform.OS === 'ios' ? 500 : 300);
-      }
-
-    } catch (error) {
-      console.error('Error creating tax invoice:', error);
-      setIsSubmitting(false);
-      alert.hideLoading();
-      
-      let errorMessage = 'Failed to create tax invoice';
-      if (getErrorCode(error) === 'failed-precondition') {
-        errorMessage = getErrorMessage(error, 'Tax Authority did not approve the invoice. Please check your details.');
-      } else {
-        errorMessage = getErrorMessage(error, errorMessage);
-      }
-      
-      showErrorMessage('Error', errorMessage);
-    }
+    setIsSubmitting(false);
+    alert.hideLoading();
+    alert.info(TAX_SUBMISSION_UNAVAILABLE_TITLE, TAX_SUBMISSION_UNAVAILABLE_MESSAGE);
   };
 
   // Download and share PDF

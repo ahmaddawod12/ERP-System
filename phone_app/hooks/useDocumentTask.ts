@@ -19,7 +19,7 @@
  *   documentData: { client, items, language, date }
  * });
  * 
- * // Or listen to an existing task (e.g., from getInvoiceApproval)
+ * // Or resume an already accepted task after a retry or restart.
  * listenToTask('existing-task-id');
  * 
  * // taskStatus will update automatically
@@ -38,6 +38,12 @@ import { useSession } from '../contexts/SessionContext';
 import { useTenant } from '../contexts/TenantContext';
 import { ApiClientError } from '../lib/api/client';
 import { StableDocumentActionKeys } from '../modules/documents/lib/document-action-keys';
+import { buildDocumentTaskAttempt } from '../modules/documents/lib/document-task-attempt';
+import {
+  clearDocumentTaskAttempt,
+  persistDocumentTaskAttempt,
+  readDocumentTaskAttempt,
+} from '../modules/documents/lib/document-task-persistence';
 import {
   buildDocumentGenerateRequest,
   buildDocumentPreviewRequest,
@@ -107,10 +113,6 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     callbacksRef.current = { onPreviewComplete, onGenerateComplete, onError };
   }, [onPreviewComplete, onGenerateComplete, onError]);
 
-  useEffect(() => {
-    actionKeys.reset();
-  }, [actionKeys, user?.id, workspace?.companyId]);
-
   // Clean up on unmount
   useEffect(() => {
     return () => {
@@ -125,7 +127,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
   /**
    * Start listening to a task document
-   * Can be called directly if you already have a task ID (e.g., from getInvoiceApproval)
+   * Can be called directly when an accepted task ID is already available.
    * 
    * @param {string} newTaskId - Task ID to listen to
    * @param {string} [type] - Task type ('preview' or 'generate') for callbacks
@@ -148,9 +150,8 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
     // Set up timeout
     timeoutRef.current = setTimeout(() => {
-      const errorMsg = 'Task timed out. Please try again.';
+      const errorMsg = 'Task processing is still pending. Retry the same action to resume this task.';
       setError(errorMsg);
-      setTaskStatus('failed');
       setIsLoading(false);
       if (callbacksRef.current.onError) {
         callbacksRef.current.onError(errorMsg);
@@ -174,8 +175,15 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       return;
     }
 
-    // Poll the versioned Cloud API for both Cloud API publishers and the
-    // separate tax workflow's returned PDF task.
+    const action = `${type}:${resolvedCompanyId}`;
+    const reconcileTerminalAttempt = () => {
+      const persisted = readDocumentTaskAttempt(uid, resolvedCompanyId, type);
+      if (persisted?.accepted?.taskId !== newTaskId) return;
+      clearDocumentTaskAttempt(uid, resolvedCompanyId, type);
+      actionKeys.complete(action, persisted.idempotencyKey);
+    };
+
+    // Poll the versioned Cloud API for an accepted preview or generation task.
     let stopped = false;
     unsubscribeRef.current = () => { stopped = true; };
     let consecutiveInFlightPolls = 0;
@@ -200,6 +208,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
             setIsLoading(false);
             stopped = true;
             unsubscribeRef.current = null;
+            reconcileTerminalAttempt();
 
             if (data.taskType === 'preview' || type === 'preview') {
               if (callbacksRef.current.onPreviewComplete && data.previewURL) {
@@ -218,6 +227,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
             setIsLoading(false);
             stopped = true;
             unsubscribeRef.current = null;
+            reconcileTerminalAttempt();
 
             if (callbacksRef.current.onError) {
               callbacksRef.current.onError(errorMsg);
@@ -251,7 +261,31 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     };
 
     poll();
-  }, [user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.id, workspace?.companyId]);
+
+  useEffect(() => {
+    actionKeys.reset();
+    const uid = user?.id ?? '';
+    const companyId = Number(workspace?.companyId ?? 0);
+    if (!uid || !Number.isSafeInteger(companyId) || companyId <= 0) return;
+
+    const attempts = (['preview', 'generate'] as const)
+      .map((action) => readDocumentTaskAttempt(uid, companyId, action))
+      .filter((attempt) => attempt !== null);
+    for (const attempt of attempts) {
+      actionKeys.restore(
+        `${attempt.action}:${companyId}`,
+        attempt.fingerprint,
+        attempt.idempotencyKey,
+      );
+    }
+    const latestAccepted = attempts
+      .filter((attempt) => attempt.accepted !== null)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    if (latestAccepted?.accepted) {
+      listenToTask(latestAccepted.accepted.taskId, latestAccepted.action, companyId);
+    }
+  }, [actionKeys, listenToTask, user?.id, workspace?.companyId]);
 
   const publishPreview = useCallback(async (params: DocumentTaskParams): Promise<string> => {
     try {
@@ -278,14 +312,42 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       const request = buildDocumentPreviewRequest(params);
       const fingerprint = JSON.stringify(request);
       const action = `preview:${companyId}`;
+      const persisted = readDocumentTaskAttempt(uid, companyId, 'preview');
+      if (persisted && persisted.fingerprint !== fingerprint) {
+        throw new Error(
+          'Another preview is awaiting reconciliation. Resume or discard it before changing the request.',
+        );
+      }
+      if (persisted) {
+        actionKeys.restore(action, persisted.fingerprint, persisted.idempotencyKey);
+      }
       const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'preview',
+        fingerprint,
+        idempotencyKey,
+        accepted: persisted?.accepted,
+      }));
+      if (persisted?.accepted) {
+        listenToTask(persisted.accepted.taskId, 'preview', companyId);
+        return persisted.accepted.taskId;
+      }
       const accepted = await createDocumentPreviewTask({
         uid,
         companyId,
         request,
         idempotencyKey,
       });
-      actionKeys.complete(action, idempotencyKey);
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'preview',
+        fingerprint,
+        idempotencyKey,
+        accepted,
+      }));
       listenToTask(accepted.taskId, 'preview', companyId);
       return accepted.taskId;
     } catch (err) {
@@ -313,14 +375,42 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       const request = buildDocumentGenerateRequest(params);
       const fingerprint = JSON.stringify(request);
       const action = `generate:${companyId}`;
+      const persisted = readDocumentTaskAttempt(uid, companyId, 'generate');
+      if (persisted && persisted.fingerprint !== fingerprint) {
+        throw new Error(
+          'Another document is awaiting reconciliation. Resume or discard it before changing the request.',
+        );
+      }
+      if (persisted) {
+        actionKeys.restore(action, persisted.fingerprint, persisted.idempotencyKey);
+      }
       const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'generate',
+        fingerprint,
+        idempotencyKey,
+        accepted: persisted?.accepted,
+      }));
+      if (persisted?.accepted) {
+        listenToTask(persisted.accepted.taskId, 'generate', companyId);
+        return persisted.accepted.taskId;
+      }
       const accepted = await createDocumentGenerationTask({
         uid,
         companyId,
         request,
         idempotencyKey,
       });
-      actionKeys.complete(action, idempotencyKey);
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'generate',
+        fingerprint,
+        idempotencyKey,
+        accepted,
+      }));
       listenToTask(accepted.taskId, 'generate', companyId);
       return accepted.taskId;
     } catch (err) {
@@ -349,13 +439,20 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    const uid = user?.id ?? '';
+    const companyId = Number(workspace?.companyId ?? 0);
+    if (uid && Number.isSafeInteger(companyId) && companyId > 0) {
+      clearDocumentTaskAttempt(uid, companyId, 'preview');
+      clearDocumentTaskAttempt(uid, companyId, 'generate');
+    }
+    actionKeys.reset();
     setTaskId(null);
     setTaskType(null);
     setTaskStatus(null);
     setTaskData(null);
     setError(null);
     setIsLoading(false);
-  }, []);
+  }, [actionKeys, user?.id, workspace?.companyId]);
 
   return {
     // Methods

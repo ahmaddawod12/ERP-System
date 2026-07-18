@@ -228,10 +228,10 @@ function isTaxDocumentRequest(value: unknown): boolean {
 
 function taxWorkflowRequired() {
   return failure(
-    400,
-    "TAX_WORKFLOW_REQUIRED",
-    "Tax invoices must use the existing tax-authority workflow.",
-    { fieldErrors: { documentType: ["Use the dedicated tax invoice workflow."] } },
+    503,
+    "TAX_SUBMISSION_DISABLED",
+    "Tax invoice submission is unavailable pending Tax Authority certification.",
+    { fieldErrors: { documentType: ["Tax submission is not currently available."] } },
   );
 }
 

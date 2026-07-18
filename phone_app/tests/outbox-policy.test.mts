@@ -6,6 +6,7 @@ import {
   retryDelayMs,
 } from '../lib/outbox/policy.ts';
 import { outcomeForOutboxStatus } from '../lib/outbox/outcomes.ts';
+import { attachmentUploadSessionIdempotencyKey } from '../lib/outbox/idempotency.ts';
 
 test('outbox retry policy follows the field-job transport contract', () => {
   assert.equal(classifyOutboxFailure({ status: 0 }), 'retry');
@@ -34,4 +35,18 @@ test('pending operation states map to truthful user-visible outcomes', () => {
   assert.equal(outcomeForOutboxStatus('retry_wait'), 'retry');
   assert.equal(outcomeForOutboxStatus('terminal_error'), 'terminal');
   assert.equal(outcomeForOutboxStatus('conflict'), 'conflict');
+});
+
+test('attachment upload sessions reuse a retry-stable operation-derived key', () => {
+  const operationKey = '11111111-1111-4111-8111-111111111111';
+  assert.equal(
+    attachmentUploadSessionIdempotencyKey(operationKey),
+    '11111111-1111-4111-8111-111111111111:attachments',
+  );
+  assert.equal(
+    attachmentUploadSessionIdempotencyKey(operationKey),
+    attachmentUploadSessionIdempotencyKey(operationKey),
+  );
+  assert.throws(() => attachmentUploadSessionIdempotencyKey('short'));
+  assert.throws(() => attachmentUploadSessionIdempotencyKey('x'.repeat(128)));
 });

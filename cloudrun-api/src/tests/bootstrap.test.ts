@@ -148,6 +148,7 @@ test("bootstrap normalizes public tenant id before scoped count queries", async 
         documents: 0,
         pendingDocumentTasks: 0,
       },
+      capabilities: { taxSubmissionMode: "disabled" },
     },
     meta: { requestId: response.headers["x-request-id"] },
   });

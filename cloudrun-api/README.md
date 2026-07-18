@@ -3,9 +3,10 @@
 Node 22/Fastify service for the versioned Smart-Job ERP API. In addition to
 the common HTTP foundation, it now includes the least-privileged Postgres
 runtime adapter, Supabase JWKS verification, opaque website sessions, and the
-first workspace/viewer/bootstrap/client/inventory/worker read and job
-create/read/completion routes. It remains a staged migration service and does
-not receive production traffic yet.
+workspace/viewer/bootstrap/client/inventory/worker/job/document routes,
+durable PDF/email dispatch, and authoritative tax creation/submission. It
+remains a staged migration service and does not receive production traffic yet;
+tax submission is disabled for the initial platform launch.
 
 ## Build prerequisites
 
@@ -40,10 +41,22 @@ npm --prefix cloudrun-api start
 | `DATABASE_MAX_CONNECTIONS` | `5` | Positive integer capped at five |
 | `SUPABASE_URL` | required | HTTPS, except for local loopback development |
 | `SUPABASE_PUBLISHABLE_KEY` | required | Current `sb_publishable_...` server-side Auth key |
+| `SUPABASE_SECRET_KEY` | required | Current `sb_secret_...`; trusted Storage administration only |
+| `SUPABASE_STORAGE_BUCKET` | `smart-job-company-files` | Exact canonical private bucket |
 | `SUPABASE_JWT_ISSUER` | `${SUPABASE_URL}/auth/v1` | Exact Supabase Auth issuer |
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` | One to five comma-separated exact audiences |
 | `WEB_SESSION_ENCRYPTION_KEY_BASE64` | required | Canonical base64 for exactly 32 random bytes |
 | `WEB_SESSION_ENCRYPTION_KEY_VERSION` | required | Non-secret key-version label |
+| `DOCUMENT_PUBSUB_PROJECT_ID` | production required | Pub/Sub project used by document/email topics |
+| `DOCUMENT_PREVIEW_TOPIC` | production required | Opaque preview task topic |
+| `DOCUMENT_GENERATE_TOPIC` | production required | Opaque generate task topic |
+| `EMAIL_DELIVERY_TOPIC` | production required | Opaque email delivery topic |
+| `INTERNAL_API_AUDIENCE` | paired | Exact API service origin for Google identity verification |
+| `INTERNAL_CALLER_SERVICE_ACCOUNTS` | paired | One to ten allowed Google service accounts |
+| `TAX_SUBMISSION_MODE` | `disabled` | `disabled`, `sandbox`, or `production`; launch stays disabled |
+| `TAX_GATEWAY_URL` | enabled tax required | Exact tax service origin; API adds the approval path |
+| `TAX_GATEWAY_AUDIENCE` | enabled tax required | Exact tax Cloud Run audience |
+| `TAX_GATEWAY_TIMEOUT_MS` | `8000` | 1–10 second outbound deadline |
 
 Configuration is validated before the server starts. Invalid values fail closed.
 
@@ -146,7 +159,9 @@ Configuration is validated before the server starts. Invalid values fail closed.
   Acceptance is manager/dev-only from `pending` or `waiting`. Deletion refuses
   certificates and jobs referenced by documents, inventory movements, upload
   sessions, or private attachments so it cannot orphan protected history or
-  Storage objects.
+  Storage objects. Acceptance consumes recorded part usages through
+  `apply_job_inventory_consumption_batch(...)` before status finalization and
+  rolls back completely on insufficient stock.
 - `POST /api/v1/uploads/job-attachments/sessions` requires `Idempotency-Key`.
   Migration `0016_upload_session_idempotency_limits` binds the claim UUID to
   one canonical pending session, limits each user to 12 new sessions per fixed
@@ -155,6 +170,23 @@ Configuration is validated before the server starts. Invalid values fail closed.
   URLs are never stored in idempotency state: a successful retry revalidates
   the pending session and requests a fresh URL from Storage, while sessions
   inside the final one-minute expiry window are not returned.
+- Document preview/generation publishes only `{ taskId }`. The PDF worker
+  claims tenant/user/document/request state through dedicated private RPCs and
+  final completion atomically stores canonical document state plus an email
+  delivery row when the validated document recipient exists.
+- `GET /api/v1/companies/{companyId}/documents/{documentId}` returns the
+  authoritative tax submission and email delivery states. Authorized
+  `POST .../documents/{documentId}/email-retry` requeues only `failed` or
+  `delivery_unknown` delivery and is idempotent.
+- `POST /api/v1/companies/{companyId}/tax-invoices` accepts strict
+  `DocumentDataInput` plus `Idempotency-Key`; type `305` is server-owned. One
+  SQL transaction allocates the counter and writes document, items,
+  reservation, and tax outbox. The route fails closed while tax mode is
+  disabled.
+- Google-identity-protected document/email/tax drain routes claim bounded
+  outbox work. Tax gateway pre-send failures may defer; any ambiguous outbound
+  result becomes `submission_unknown`. Only confirmed `approved` results with
+  a confirmation number enqueue a final tax PDF.
 - `/api/v1/auth/web-sessions` creates a verified-email-only 12-hour session;
   its `DELETE /current` mutation still requires `X-SJ-CSRF`.
 - Valid incoming `x-request-id` values are preserved; missing or unsafe values are replaced with UUIDs. Every response echoes the selected ID.

@@ -1,66 +1,58 @@
 import express from 'express';
-import { getEmailServiceInstance, getDocumentTitle } from './emailService';
-import generateDocumentHTML from './htmlTemplate';
+
 import { createBrowserPool, isTransientProcessingError } from './browser-pool';
-import { createCompanyLogoFetcher } from './logo-cache';
-import { installStructuredLogging } from './logging';
-import { createPubSubVerifier } from './pubsub-auth';
-import { registerPreviewRoute } from './routes/preview';
-import { registerGenerateRoute } from './routes/generate';
 import { createCompanyFileStorageFromEnv } from './company-file-storage';
+import generateDocumentHTML from './htmlTemplate';
+import { installStructuredLogging } from './logging';
+import { createCompanyLogoFetcher } from './logo-cache';
 import { persistPdfBeforeFinalize } from './pdf-storage-workflow';
+import { createPubSubVerifier } from './pubsub-auth';
+import { registerGenerateRoute } from './routes/generate';
+import { registerPreviewRoute } from './routes/preview';
+import { closeSharedSqlPool, isSharedSqlStoreEnabled } from './sql-store';
 import {
   buildGeneratedDocumentObjectPath,
   buildPreviewObjectPath,
 } from './storage-paths';
-import { closeSharedSqlPool } from './sql-store';
+import {
+  claimPdfDocumentTask,
+  completePdfDocumentTask,
+  failPdfDocumentTask,
+  type CanonicalPdfTask,
+} from './worker-store';
 
-/**
- * Cloud Run Service: PDF Document Generator & Preview (Merged)
- * 
- * Single service handling both PDF generation and preview using shared Puppeteer browser.
- * - /generate - Generates final PDFs in private Supabase Storage
- * - /preview - Generates temporary previews in private Supabase Storage
- * 
- * Configuration:
- * - Min instances: 0 (scale to zero when idle)
- * - Max instances: 5 (testing level)
- * - Concurrency: 2 (2 browser tabs per instance - shared between preview & generate)
- * - Memory: 2Gi
- * - CPU: 2
- * - Timeout: 300s
- * 
- * Email Delivery:
- * - Sends document emails to clients if email is provided
- * - Supports SendGrid and Amazon SES providers
- * - Configure via EMAIL_PROVIDER environment variable
- */
+const { buildHtmlPayload } = require('./document-payload');
 
-
-// Email service for document delivery
+type DocumentDispatchMessage = { readonly taskId: string };
 
 installStructuredLogging('cloudrun-pdf');
-
-// The PDF worker is a trusted server component. Its secret key is used only
-// for private Storage operations and is never returned or logged.
-const companyFileStorage = createCompanyFileStorageFromEnv();
 
 const app = express();
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '1mb';
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-const PREVIEW_URL_EXPIRATION = 60 * 60; // 1 hour in seconds
-const GENERATED_TASK_URL_EXPIRATION = 15 * 60; // 15 minutes in seconds
-const GENERATED_EMAIL_URL_EXPIRATION = 24 * 60 * 60; // 24 hours in seconds
 const MAX_ITEMS_PER_DOCUMENT = 100;
-const MAX_HTML_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_CONCURRENT_TABS = Math.max(1, Number(process.env.MAX_CONCURRENT_TABS || 2) || 2); // Shared between preview and generate
-const TAB_WAIT_TIMEOUT = Math.max(1_000, Number(process.env.TAB_WAIT_TIMEOUT_MS || 10000) || 10000);
-const MAX_TAB_WAITERS = Math.max(1, Number(process.env.MAX_TAB_WAITERS || 64) || 64);
-const PROCESSING_STALE_AFTER_MS = Number(process.env.DOCUMENT_TASK_PROCESSING_STALE_AFTER_MS || 15 * 60 * 1000);
+const MAX_HTML_SIZE = 5 * 1024 * 1024;
+const MAX_PDF_SIZE = 50 * 1024 * 1024;
+const MAX_CONCURRENT_TABS = Math.max(
+  1,
+  Number(process.env.MAX_CONCURRENT_TABS || 2) || 2,
+);
+const TAB_WAIT_TIMEOUT = Math.max(
+  1_000,
+  Number(process.env.TAB_WAIT_TIMEOUT_MS || 10_000) || 10_000,
+);
+const MAX_TAB_WAITERS = Math.max(
+  1,
+  Number(process.env.MAX_TAB_WAITERS || 64) || 64,
+);
+const PROCESSING_LEASE_SECONDS = Math.min(
+  900,
+  Math.max(30, Number(process.env.DOCUMENT_TASK_PROCESSING_LEASE_SECONDS || 300) || 300),
+);
+const MAX_LOGO_SIZE = 1024 * 1024;
+const CLOUD_RUN_SERVICE_URL = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
 const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCOUNTS || '')
   .split(',')
@@ -72,26 +64,18 @@ const EDGE_SERVICE_ACCOUNT_EMAIL = String(
 const EDGE_SERVICE_ACCOUNT_PRIVATE_KEY = String(
   process.env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY || '',
 ).replace(/\\n/g, '\n').trim();
-const CLOUD_RUN_SERVICE_URL = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 if (IS_PRODUCTION && !CLOUD_RUN_SERVICE_URL) {
   throw new Error('CLOUD_RUN_SERVICE_URL must be set in production for Pub/Sub OIDC verification');
 }
-
 if (IS_PRODUCTION && PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
-  throw new Error('PUBSUB_ALLOWED_SERVICE_ACCOUNTS must include at least one allowed service account in production');
+  throw new Error('PUBSUB_ALLOWED_SERVICE_ACCOUNTS must include an allowed publisher in production');
+}
+if (!isSharedSqlStoreEnabled()) {
+  throw new Error('cloudrun-pdf requires the smart_job_pdf DATABASE_URL');
 }
 
-const MAX_LOGO_SIZE = 1 * 1024 * 1024; // 1MB max logo size
-
-/** Document IDs are now plain Base62 — no prefix stripping needed. */
-function toBaseDocumentId(documentId) {
-  return String(documentId || '').trim();
-}
-
-/** Alias kept for call-site clarity (Firestore doc ID vs display ID). */
-const toDocumentDocId = toBaseDocumentId;
+const companyFileStorage = createCompanyFileStorageFromEnv();
 const browserPool = createBrowserPool({
   maxConcurrentTabs: MAX_CONCURRENT_TABS,
   maxTabWaiters: MAX_TAB_WAITERS,
@@ -105,7 +89,6 @@ const {
   getStats: getBrowserPoolStats,
   getGeneration: getBrowserGeneration,
 } = browserPool;
-
 const verifyPubSubRequest = createPubSubVerifier({
   cloudRunServiceUrl: CLOUD_RUN_SERVICE_URL,
   pubsubVerificationToken: PUBSUB_VERIFICATION_TOKEN,
@@ -113,523 +96,140 @@ const verifyPubSubRequest = createPubSubVerifier({
   edgeServiceAccountEmail: EDGE_SERVICE_ACCOUNT_EMAIL,
   edgeServiceAccountPrivateKey: EDGE_SERVICE_ACCOUNT_PRIVATE_KEY,
 });
-
 const fetchCompanyLogo = createCompanyLogoFetcher({
   storage: companyFileStorage,
   maxLogoSize: MAX_LOGO_SIZE,
 });
 
-// ============================================================================
-// HTML TEMPLATE GENERATOR
-// ============================================================================
-const {
-  buildHtmlPayload,
-} = require('./document-payload');
-const {
-  completeDocumentGeneration: completeSqlDocumentGeneration,
-  failDocumentGeneration: failSqlDocumentGeneration,
-  isSqlDocumentStoreEnabled,
-  resolveCompanyStorageContext: resolveSqlCompanyStorageContext,
-  resolveDocumentStorageContext: resolveSqlDocumentStorageContext,
-} = require('./document-store');
-const {
-  getUserProfileForCompany,
-  isSqlAccessStoreEnabled,
-} = require('./access-store');
-const {
-  claimTaskProcessing: claimSqlTaskProcessing,
-  isSqlTaskStoreEnabled,
-  markTaskCompleted: markSqlTaskCompleted,
-  markTaskFailed: markSqlTaskFailed,
-  markTaskProcessing: markSqlTaskProcessing,
-  markTaskRetryable: markSqlTaskRetryable,
-} = require('./task-store');
-
-if (IS_PRODUCTION && !isSqlTaskStoreEnabled()) {
-  throw new Error('cloudrun-pdf requires SQL task store in production');
-}
-
-if (IS_PRODUCTION && !isSqlDocumentStoreEnabled()) {
-  throw new Error('cloudrun-pdf requires SQL document store in production');
-}
-
-if (IS_PRODUCTION && !isSqlAccessStoreEnabled()) {
-  throw new Error('cloudrun-pdf requires SQL access store in production');
-}
-
-if (!isSqlTaskStoreEnabled()) {
-  throw new Error('cloudrun-pdf requires SQL task store');
-}
-
-if (!isSqlDocumentStoreEnabled()) {
-  throw new Error('cloudrun-pdf requires SQL document store');
-}
-
-if (!isSqlAccessStoreEnabled()) {
-  throw new Error('cloudrun-pdf requires SQL access store');
-}
-
-// ============================================================================
-// PREVIEW TASK PROCESSOR
-// ============================================================================
-async function processPreviewTask(taskData) {
-  const { taskId, documentType, documentData, uid, companyId } = taskData;
-  const startTime = Date.now();
-  let page = null;
-  let tabAcquired = false;
-  
-  console.log(`[preview:${taskId}] Processing`, { documentType, uid, companyId });
-  
-  try {
-    // Verify requester identity — same checks as generateTask
-    if (!uid || !companyId) {
-      throw new Error('Missing required task identity fields (uid and companyId)');
-    }
-
-    const taskClaim = await claimSqlTaskProcessing(taskId, { staleAfterMs: PROCESSING_STALE_AFTER_MS });
-    if (!taskClaim.shouldProcess) {
-      console.log(`[preview:${taskId}] Skipping - ${taskClaim.reason}`);
-      return { success: true, taskId, skipped: true, reason: taskClaim.reason };
-    }
-
-    const requesterProfile = await getUserProfileForCompany(uid, companyId);
-    if (!requesterProfile) {
-      throw new Error(`Requester profile not found for uid: ${uid}`);
-    }
-    const userRole = (requesterProfile.role || '').toLowerCase();
-
-    if (!['manager', 'user', 'basic', 'dev'].includes(userRole)) {
-      throw new Error(`Role not authorized for document preview: ${requesterProfile.role || 'unknown'}`);
-    }
-    if (!requesterProfile.companyId || requesterProfile.companyId !== companyId) {
-      throw new Error('Requester company mismatch');
-    }
-    const storageContext = await resolveSqlCompanyStorageContext(companyId);
-
-    const acquiredGen = await acquireTab(taskId, 'preview');
-    tabAcquired = true;
-    
-    const { items } = documentData;
-    
-    // Validate items
-    if (items && items.length > MAX_ITEMS_PER_DOCUMENT) {
-      throw new Error(`Maximum ${MAX_ITEMS_PER_DOCUMENT} items allowed`);
-    }
-    
-    // Fetch logo from the private company-file bucket (cached, size-validated).
-    const logoUrl = await fetchCompanyLogo(storageContext.internalCompanyId, taskId, 'preview');
-    
-    // Generate HTML - for preview, confirmationNumber is empty (not yet approved by Tax Authority)
-    const html = generateDocumentHTML(buildHtmlPayload({
-      documentType,
-      documentData,
-      documentNumber: documentData.documentNumber,
-      logoUrl,
-      confirmationNumber: '',
-    }));
-    
-    const htmlSize = Buffer.byteLength(html, 'utf8');
-    if (htmlSize > MAX_HTML_SIZE) {
-      throw new Error(`Document HTML too large (${htmlSize} bytes)`);
-    }
-    
-    // Generate PDF using shared browser (validate generation to detect browser restarts)
-    const browser = await getBrowser();
-    if (getBrowserGeneration() !== acquiredGen) {
-      throw new Error('Browser was recycled during tab wait — retry');
-    }
-    page = await browser.newPage();
-    
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-    
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '20mm', right: '15mm', bottom: '20mm', left: '15mm' },
-      timeout: 30000
-    });
-    
-    await page.close();
-    page = null;
-    releaseTab(taskId, 'preview');
-    tabAcquired = false;
-    
-    if (!pdfBuffer || pdfBuffer.length === 0) {
-      throw new Error('Generated PDF is empty');
-    }
-    
-    const pdfBytes = Buffer.from(pdfBuffer);
-    const pdfSize = pdfBytes.length;
-    const filePath = buildPreviewObjectPath(storageContext.internalCompanyId, uid, taskId);
-    const persisted = await persistPdfBeforeFinalize({
-      storage: companyFileStorage,
-      objectPath: filePath,
-      bytes: pdfBytes,
-      metadata: {
-        documentType: String(documentType),
-        createdBy: String(uid),
-        createdAt: new Date().toISOString(),
-        isPreview: 'true',
-        taskId: String(taskId),
-        expiresAt: new Date(Date.now() + PREVIEW_URL_EXPIRATION * 1000).toISOString(),
-      },
-      signedUrlExpiries: { preview: PREVIEW_URL_EXPIRATION },
-      finalize: async (signedUrls) => {
-        await markSqlTaskCompleted(taskId, {
-          taskType: 'preview',
-          resultUrl: signedUrls.preview,
-          storagePath: filePath,
-          pdfSize,
-        });
-      },
-    });
-    const downloadUrl = persisted.signedUrls.preview;
-    
-    const totalTime = Date.now() - startTime;
-    
-    console.log(`[preview:${taskId}] Completed`, { pdfSize, totalTime });
-    return { success: true, taskId, previewURL: downloadUrl, pdfSize };
-    
-  } catch (error) {
-    console.error(`[preview:${taskId}] Failed:`, error.message);
-    
-    if (page) {
-      try { await page.close(); } catch (e) { /* ignore */ }
-    }
-    if (tabAcquired) {
-      releaseTab(taskId, 'preview');
-    }
-    
-    const retryable = isTransientProcessingError(error);
-    try {
-      if (retryable) {
-        await markSqlTaskRetryable(taskId, error.message);
-      } else {
-        await markSqlTaskFailed(taskId, error.message);
-      }
-    } catch (sqlTaskError) {
-      console.warn(`[preview:${taskId}] Failed to persist task error state`, { error: sqlTaskError.message });
-    }
-    
-    throw error;
+function requireDocumentData(task: CanonicalPdfTask): any {
+  const data: any = task.documentData;
+  if (!Array.isArray(data.items) || data.items.length < 1) {
+    throw new TypeError('At least one canonical document item is required');
   }
+  if (data.items.length > MAX_ITEMS_PER_DOCUMENT) {
+    throw new TypeError(`Maximum ${MAX_ITEMS_PER_DOCUMENT} document items allowed`);
+  }
+  if (!data.client || typeof data.client !== 'object' || !String(data.client.name || '').trim()) {
+    throw new TypeError('Canonical document client is invalid');
+  }
+  if (!data.company || typeof data.company !== 'object' || !String(data.company.name || '').trim()) {
+    throw new TypeError('Canonical document company is invalid');
+  }
+  return data;
 }
 
-// ============================================================================
-// GENERATE TASK PROCESSOR
-// ============================================================================
-async function processGenerateTask(taskData) {
-  const { 
-    taskId, 
-    documentType, 
-    documentData,
-    uid, 
-    companyId, 
-    documentId,
-    documentNumber,
-    confirmationNumber, // Tax Authority confirmation number
-    userRole: claimedUserRole, // Untrusted role from message (for diagnostics only)
-  } = taskData;
-
-  const startTime = Date.now();
-  let page = null;
+async function renderPdf(task: CanonicalPdfTask): Promise<Buffer> {
+  let page: any = null;
   let tabAcquired = false;
-  let userRole = null;
-  let documentFinalized = false;
-  let documentStorageContext = null;
-  
   try {
-    if (!uid || !companyId) {
-      throw new Error('Missing required task identity fields (uid and companyId)');
-    }
-
-    // P0-5: Idempotency check before processing.
-    // If task is already processing/completed, skip duplicate side effects.
-    const casResult = await claimSqlTaskProcessing(taskId, { staleAfterMs: PROCESSING_STALE_AFTER_MS });
-
-    if (!casResult.shouldProcess) {
-      console.log(`[generate:${taskId}] Skipping - ${casResult.reason}`);
-      return { success: true, taskId, skipped: true, reason: casResult.reason };
-    }
-
-    try {
-      await markSqlTaskProcessing(taskId);
-    } catch (sqlTaskError) {
-      console.warn(`[generate:${taskId}] Failed to mirror processing status to SQL`, { error: sqlTaskError.message });
-    }
-
-    const requesterProfile = await getUserProfileForCompany(uid, companyId);
-    if (!requesterProfile) {
-      throw new Error(`Requester profile not found for uid: ${uid}`);
-    }
-    // Normalize role to lowercase for comparison (canonical role format)
-    userRole = (requesterProfile.role || '').toLowerCase();
-
-    if (!['manager', 'user', 'basic', 'dev'].includes(userRole)) {
-      throw new Error(`Role not authorized for document generation: ${requesterProfile.role || 'unknown'}`);
-    }
-    if (!requesterProfile.companyId || requesterProfile.companyId !== companyId) {
-      throw new Error('Requester company mismatch');
-    }
-
-    console.log(`[generate:${taskId}] Processing`, {
-      documentType,
-      uid,
-      companyId,
-      documentId,
-      confirmationNumber,
-      userRole,
-      claimedUserRole: claimedUserRole || null,
-    });
-
-    const acquiredGen = await acquireTab(taskId, 'generate');
+    const acquiredGeneration = await acquireTab(task.taskId, task.taskType);
     tabAcquired = true;
-    
-    if (!documentId) {
-      throw new Error('Document ID is required');
-    }
-    const normalizedDocumentId = toBaseDocumentId(documentId);
-    const documentDocId = toDocumentDocId(documentId);
-    if (!normalizedDocumentId || !documentDocId) {
-      throw new Error('Invalid document ID');
-    }
-    documentStorageContext = await resolveSqlDocumentStorageContext(
-      companyId,
-      documentDocId,
-      documentType,
+    const data = requireDocumentData(task);
+    const logoUrl = await fetchCompanyLogo(
+      task.internalCompanyId,
+      task.taskId,
+      task.taskType,
     );
-    
-    if (!documentData) {
-      throw new Error('Document data is required');
-    }
-    
     const htmlPayload = buildHtmlPayload({
-      documentType,
-      documentData,
-      documentNumber: documentNumber || normalizedDocumentId,
-      logoUrl: null,
-      confirmationNumber,
-    });
-    const { client, items, company, language, date, totals } = htmlPayload;
-    
-    if (!client || !client.name) {
-      throw new Error('Client name is required');
-    }
-    
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      throw new Error('At least one item is required');
-    }
-    
-    if (!company || !company.name) {
-      throw new Error('Company data is required');
-    }
-    
-    // Calculate totals
-    let totalBeforeVat = totals?.totalBeforeVat || 0;
-    let vatAmount = totals?.vatAmount || 0;
-    let totalWithVat = totals?.totalWithVat || 0;
-    
-    if (!totals) {
-      items.forEach(item => {
-        totalBeforeVat += (item.quantity || 1) * (item.price || 0);
-      });
-      vatAmount = totalBeforeVat * 0.18;
-      totalWithVat = totalBeforeVat + vatAmount;
-    }
-    
-    // Fetch logo from the private company-file bucket (cached, size-validated).
-    const logoUrl = await fetchCompanyLogo(documentStorageContext.internalCompanyId, taskId, 'generate');
-    
-    // Generate HTML with all document data including confirmation number
-    const html = generateDocumentHTML({
-      ...htmlPayload,
+      documentType: task.documentType,
+      documentData: data,
+      documentNumber: task.documentNumber ?? data.documentNumber ?? task.documentCode ?? '',
       logoUrl,
+      confirmationNumber: task.taskType === 'generate'
+        ? task.confirmationNumber || ''
+        : '',
     });
-    
+    const html = generateDocumentHTML(htmlPayload);
     const htmlSize = Buffer.byteLength(html, 'utf8');
     if (htmlSize > MAX_HTML_SIZE) {
-      throw new Error('Document HTML too large');
+      throw new TypeError(`Document HTML exceeds ${MAX_HTML_SIZE} bytes`);
     }
-    
-    // Generate PDF using shared browser (validate generation to detect browser restarts)
+
     const browser = await getBrowser();
-    if (getBrowserGeneration() !== acquiredGen) {
-      throw new Error('Browser was recycled during tab wait — retry');
+    if (getBrowserGeneration() !== acquiredGeneration) {
+      throw new Error('Browser was recycled during tab wait');
     }
     page = await browser.newPage();
-    
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
-    
-    const pdfBuffer = await page.pdf({
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30_000 });
+    const bytes = Buffer.from(await page.pdf({
       format: 'A4',
       printBackground: true,
       margin: { top: '20mm', right: '15mm', bottom: '20mm', left: '15mm' },
-      timeout: 30000
-    });
-    
-    await page.close();
-    page = null;
-    releaseTab(taskId, 'generate');
-    tabAcquired = false;
-    
-    if (!pdfBuffer || pdfBuffer.length === 0) {
-      throw new Error('Generated PDF is empty');
+      timeout: 30_000,
+    }));
+    if (bytes.length < 1 || bytes.length > MAX_PDF_SIZE) {
+      throw new TypeError('Generated PDF size is invalid');
     }
-    
-    const pdfBytes = Buffer.from(pdfBuffer);
-    const pdfSize = pdfBytes.length;
-    const filePath = buildGeneratedDocumentObjectPath(
-      documentStorageContext.internalCompanyId,
-      documentStorageContext.internalDocumentId,
-    );
-    const persisted = await persistPdfBeforeFinalize({
-      storage: companyFileStorage,
-      objectPath: filePath,
-      bytes: pdfBytes,
-      metadata: {
-        documentType: String(documentType),
-        documentId: normalizedDocumentId,
-        createdBy: String(uid),
-        generatedAt: new Date().toISOString(),
-        pdfSize: pdfSize.toString(),
-      },
-      signedUrlExpiries: {
-        task: GENERATED_TASK_URL_EXPIRATION,
-        email: GENERATED_EMAIL_URL_EXPIRATION,
-      },
-      finalize: async () => completeSqlDocumentGeneration({
-        internalCompanyId: documentStorageContext.internalCompanyId,
-        internalDocumentId: documentStorageContext.internalDocumentId,
-        storagePath: filePath,
-        documentType,
-      }),
-    });
-    const taskDownloadURL = persisted.signedUrls.task;
-    const emailDownloadURL = persisted.signedUrls.email;
-    console.log(`[generate:${taskId}] Document finalized in SQL`, { documentType, documentNumber, userRole });
-    documentFinalized = true;
-
-    // ========================================================================
-    // EMAIL DELIVERY TO CLIENT
-    // ========================================================================
-    let emailSent = false;
-    let emailMessageId = null;
-    let emailError = null;
-    
-    // Send email if client has email address
-    if (client.email && client.email.trim()) {
-      try {
-        const emailService = getEmailServiceInstance();
-        const documentTitle = getDocumentTitle(documentType, documentNumber || normalizedDocumentId, language || 'he');
-        
-        console.log(`[generate:${taskId}] Sending email to client`, {
-          hasRecipientEmail: true,
-          documentTitle,
-          documentType,
-        });
-        
-        const emailResult = await emailService.sendDocumentEmail({
-          recipientEmail: client.email,
-          recipientName: client.name,
-          documentTitle,
-          documentUrl: emailDownloadURL,
-          language: language || 'he',
-          businessInfo: company,
-        });
-        
-        emailSent = emailResult.success;
-        emailMessageId = emailResult.messageId;
-        
-        if (emailSent) {
-          console.log(`[generate:${taskId}] Email sent successfully`, { messageId: emailMessageId });
-        } else {
-          console.warn(`[generate:${taskId}] Email failed`, { error: emailError });
-        }
-      } catch (emailErr) {
-        console.error(`[generate:${taskId}] Email error:`, emailErr.message);
-        emailError = emailErr.message;
-      }
-    } else {
-      console.log(`[generate:${taskId}] No client email - skipping email delivery`);
-    }
-    
-    const totalTime = Date.now() - startTime;
-    
-    await markSqlTaskCompleted(taskId, {
-      taskType: 'generate',
-      resultUrl: taskDownloadURL,
-      storagePath: filePath,
-      pdfSize,
-      publicDocumentId: normalizedDocumentId,
-      emailSent,
-      emailMessageId,
-      emailError,
-      emailRecipient: client.email || null,
-    });
-    
-    console.log(`[generate:${taskId}] Completed`, { documentId: normalizedDocumentId, pdfSize, totalTime, emailSent });
-    return { success: true, taskId, documentId: normalizedDocumentId, downloadURL: taskDownloadURL, pdfSize, emailSent };
-    
-  } catch (error) {
-    console.error(`[generate:${taskId}] Failed:`, error.message);
-    
-    if (page) {
-      try { await page.close(); } catch (e) { /* ignore */ }
-    }
-    if (tabAcquired) {
-      releaseTab(taskId, 'generate');
-    }
-
-    const retryable = isTransientProcessingError(error);
-    if (!retryable && !documentFinalized && documentStorageContext) {
-      try {
-        await failSqlDocumentGeneration({
-          internalCompanyId: documentStorageContext.internalCompanyId,
-          internalDocumentId: documentStorageContext.internalDocumentId,
-          errorMessage: error.message,
-        });
-      } catch (sqlDocumentError) {
-        console.warn(`[generate:${taskId}] Failed to mark document generation failure in SQL`, { error: sqlDocumentError.message });
-      }
-    }
-
-    try {
-      if (retryable) {
-        await markSqlTaskRetryable(taskId, error.message);
-      } else {
-        await markSqlTaskFailed(taskId, error.message);
-      }
-    } catch (sqlTaskError) {
-      console.warn(`[generate:${taskId}] Failed to persist task error state`, { error: sqlTaskError.message });
-    }
-    
-    throw error;
+    return bytes;
+  } finally {
+    if (page) await page.close().catch(() => undefined);
+    if (tabAcquired) releaseTab(task.taskId, task.taskType);
   }
 }
 
-// ============================================================================
-// PUB/SUB PUSH ENDPOINTS
-// ============================================================================
-
+async function processDispatchedTask(message: DocumentDispatchMessage) {
+  const task = await claimPdfDocumentTask(message.taskId, PROCESSING_LEASE_SECONDS);
+  if (task === null) {
+    return { success: true, taskId: message.taskId, skipped: true };
+  }
+  const startedAt = Date.now();
+  try {
+    const pdfBytes = await renderPdf(task);
+    const objectPath = task.taskType === 'preview'
+      ? buildPreviewObjectPath(task.internalCompanyId, task.userId, task.taskId)
+      : buildGeneratedDocumentObjectPath(task.internalCompanyId, task.internalDocumentId);
+    const persisted = await persistPdfBeforeFinalize({
+      storage: companyFileStorage,
+      objectPath,
+      bytes: pdfBytes,
+      metadata: {
+        taskId: task.taskId,
+        documentType: String(task.documentType),
+        generatedAt: new Date().toISOString(),
+        isPreview: String(task.taskType === 'preview'),
+      },
+      signedUrlExpiries: {},
+      finalize: async () => completePdfDocumentTask(task, objectPath, pdfBytes.length),
+    });
+    console.log(`[${task.taskType}:${task.taskId}] completed`, {
+      pdfSize: pdfBytes.length,
+      elapsedMs: Date.now() - startedAt,
+      reusedObject: !persisted.stored.created,
+      emailDeliveryQueued: Boolean(persisted.finalizeResult.deliveryId),
+    });
+    return {
+      success: true,
+      taskId: task.taskId,
+      pdfSize: pdfBytes.length,
+    };
+  } catch (error) {
+    const retryable = isTransientProcessingError(error);
+    await failPdfDocumentTask(task, error, retryable).catch((persistenceError) => {
+      console.warn(`[${task.taskType}:${task.taskId}] failed to persist failure`, {
+        error: persistenceError instanceof Error ? persistenceError.message : 'unknown',
+      });
+    });
+    throw error;
+  }
+}
 
 registerPreviewRoute(app, {
   verifyPubSubRequest,
-  processPreviewTask,
+  processPreviewTask: processDispatchedTask,
   isTransientProcessingError,
 });
 registerGenerateRoute(app, {
   verifyPubSubRequest,
-  processGenerateTask,
+  processGenerateTask: processDispatchedTask,
   isTransientProcessingError,
 });
 
-/**
- * GET /health - Health check endpoint
- */
-app.get('/health', async (req, res) => {
+app.get('/health', async (_request, response) => {
   const browserStats = getBrowserPoolStats();
-  const status = browserStats.hasBrowser && !browserStats.browserConnected ? 'degraded' : 'healthy';
-  res.status(200).json({
+  const status = browserStats.hasBrowser && !browserStats.browserConnected
+    ? 'degraded'
+    : 'healthy';
+  response.status(200).json({
     status,
     service: 'pdf-service',
     hasBrowser: browserStats.hasBrowser,
@@ -641,38 +241,27 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// ============================================================================
-// START SERVER
-// ============================================================================
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, () => {
   console.log(`PDF Service listening on port ${PORT}`);
-  console.log(`Endpoints: POST /preview, POST /generate, GET /health`);
-  console.log(`Max concurrent tabs: ${MAX_CONCURRENT_TABS} (shared between preview & generate)`);
-  console.log(`Tab wait timeout: ${TAB_WAIT_TIMEOUT}ms, max queued waiters: ${MAX_TAB_WAITERS}`);
 });
 
-// Graceful shutdown: drain in-flight work and close the browser before exiting.
 function shutdown(signal: string) {
   return () => {
     console.log(`Received ${signal}, shutting down gracefully...`);
     server.close(async () => {
       try {
         await browserPool.close();
-        console.log('Browser pool closed');
         await closeSharedSqlPool();
-        console.log('SQL pool closed');
       } catch (error) {
-        console.error('Error during browser pool shutdown:', error);
+        console.error('Error during PDF worker shutdown:', error);
       }
       process.exit(0);
     });
-
-    // Force exit if graceful shutdown takes too long.
     setTimeout(() => {
       console.error('Graceful shutdown timed out, forcing exit');
       process.exit(1);
-    }, Number(process.env.SHUTDOWN_TIMEOUT_MS || 30000));
+    }, Number(process.env.SHUTDOWN_TIMEOUT_MS || 30_000));
   };
 }
 

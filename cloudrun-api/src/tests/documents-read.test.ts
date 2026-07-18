@@ -8,6 +8,7 @@ import { loadConfig } from "../config.js";
 import type { ApiDatabaseRuntime, DatabaseQueryable } from "../database/runtime.js";
 import {
   READ_DOCUMENT_ACCESS_SQL,
+  READ_DOCUMENT_DETAIL_SQL,
   READ_DOCUMENT_FILE_SQL,
   READ_DOCUMENT_PAGE_SQL,
   READ_DOCUMENT_TASK_SQL,
@@ -77,6 +78,7 @@ function documentRow(id: string, number: number, createdAt: string) {
     document_date: new Date(createdAt),
     storage_path: `${internalCompanyId}/documents/${id}.pdf`,
     email_sent: false,
+    email_delivery_status: null,
     entity_version: "1",
     created_at: new Date(createdAt),
     cursor_created_at: createdAt,
@@ -261,6 +263,47 @@ test("document file and completed task routes create fresh scoped signed URLs", 
     { path: `${internalCompanyId}/documents/${documentId}.pdf`, ttl: 900 },
     { path: `${internalCompanyId}/documents/${documentId}.pdf`, ttl: 300 },
   ]);
+});
+
+test("document detail returns authoritative tax and email workflow state", async (context) => {
+  const runtime = database(async (text, values) => {
+    if (text === RESOLVE_TENANT_SQL) {
+      assert.deepEqual(values, [userId, 42]);
+      return { rowCount: 1, rows: [tenantRow()] };
+    }
+    if (text === READ_DOCUMENT_ACCESS_SQL) {
+      return { rowCount: 1, rows: [{ role: "manager", is_dev: false, documents_enabled: true }] };
+    }
+    assert.equal(text, READ_DOCUMENT_DETAIL_SQL);
+    assert.deepEqual(values, [internalCompanyId, documentId]);
+    return {
+      rowCount: 1,
+      rows: [{
+        ...documentRow(documentId, 1, "2026-07-18T12:00:00.000Z"),
+        document_code: "TI-77-1",
+        document_type: 305,
+        tax_authority_status: "submitted",
+        generation_status: "pending",
+        storage_path: null,
+        email_delivery_status: "queued",
+        tax_submission_status: "submitted",
+      }],
+    };
+  });
+  const app = await buildApp({ config: loadConfig({}), logger: false });
+  context.after(() => app.close());
+  registerDocumentsReadRoutes(app, { database: runtime, authenticator: authenticator() });
+
+  const response = await app.inject({
+    method: "GET",
+    url: `/api/v1/companies/42/documents/${documentId}`,
+    headers: { authorization: "Bearer header.payload.signature" },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.json().data.taxAuthorityStatus, "submitted");
+  assert.equal(response.json().data.taxSubmissionStatus, "submitted");
+  assert.equal(response.json().data.emailDeliveryStatus, "queued");
+  assert.equal(response.json().data.hasFile, false);
 });
 
 test("document cursors are canonical and malformed values fail closed", () => {

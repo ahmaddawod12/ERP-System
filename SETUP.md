@@ -2,18 +2,19 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the active July 13, 2026 architecture and the pre-launch backend
+It reflects the active July 18, 2026 architecture and the pre-launch backend
 migration foundation:
 
 - Supabase Auth for website and mobile sign-in
 - Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
 - PostgreSQL as the primary company-scoped ERP persistence layer
 - Firestore and Cloud Storage for compatibility, rules, operations, and files
-- Cloud Run services for PDF generation and archiving
+- Cloud Run services for API, tax gateway, PDF generation, durable SES email,
+  and archiving
 - Supabase Edge Functions remain the active application gateway during migration
-- `cloudrun-api` and `cloudrun-tax` are local/test foundations only until the
-  domain-routing and deployment checkpoints are approved; the database/security
-  foundation itself is now implemented
+- `cloudrun-api`, `cloudrun-tax`, `cloudrun-pdf`, and `cloudrun-email` are
+  implemented and locally tested; production resource provisioning and launch
+  gates remain separate work. Tax stays disabled pending certification.
 
 ## 1. Repository Components
 
@@ -25,6 +26,7 @@ ERP-System/
 |-- cloudrun-api/        Main Fastify API foundation
 |-- cloudrun-tax/        Stateless Israel tax gateway foundation
 |-- cloudrun-pdf/        PDF preview/generation service
+|-- cloudrun-email/      Durable SES document-email worker
 |-- cloudrun-archiver/   Archive batch job
 |-- packages/contracts/  Shared enums/constants/path helpers
 |-- packages/api-contracts/ Shared Zod HTTP contracts
@@ -130,6 +132,7 @@ npm --prefix phone_app install
 npm --prefix cloudrun-api install
 npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
+npm --prefix cloudrun-email install
 npm --prefix cloudrun-archiver install
 ```
 
@@ -138,6 +141,11 @@ Apply SQL migrations for the target database:
 ```bash
 npm --prefix packages/db run db:migrate
 ```
+
+On a disposable loopback database, `npm --prefix packages/db run
+test:migrations` reconstructs the schema through `0024`, proves that the `0025`
+metadata baseline is a no-op, and applies every later migration. Reset the
+local Supabase database afterward before the normal Drizzle migration run.
 
 ## 5. Website Environment
 
@@ -248,6 +256,7 @@ CLOUD_RUN_PDF_SERVICE_URL=
 DOCUMENTS_BUCKET=smart-job-company-files
 ARCHIVE_BUCKET=
 
+TAX_SUBMISSION_MODE=disabled
 TAX_AUTH_URL=
 TAX_TOKEN_URL=
 TAX_APPROVAL_URL=
@@ -357,6 +366,15 @@ main API database boundary:
   completion, pending/waiting-only acceptance, and deletion conflicts for
   certificates, document links, inventory movements, upload sessions, and
   attachments. The runtime role retains no direct job-table writes.
+- Migration `0025_post_0024_metadata_baseline.sql` intentionally changes no
+  schema. It brings Drizzle metadata up to the schema produced through `0024`;
+  the loopback-only `test:migrations` command verifies the fingerprint before
+  applying later migrations.
+- Migrations `0026`–`0030` add accepted-job inventory consumption, dedicated
+  least-privilege PDF/email/archiver roles, private durable email/tax/archive
+  state, opaque ID-only worker dispatch, lease-token completion, and the
+  authoritative tax transaction/outbox. New private objects remain outside the
+  Data API and runtime roles receive only named private RPC grants.
 
 Database profiling:
 
@@ -455,7 +473,7 @@ ID because Android does not reliably replace privacy settings on an existing
 channel. Push registration generates one UUID-like device ID in SecureStore and
 sends it in both register and clear requests.
 
-## 10. Cloud Run API Foundations
+## 10. Cloud Run API And Tax Workflow
 
 Build and test the non-deployed foundations locally after their file
 dependencies:
@@ -466,13 +484,15 @@ npm --prefix packages/api-contracts run build
 npm --prefix packages/db run build
 npm --prefix cloudrun-api run test
 npm --prefix cloudrun-tax run test
+npm --prefix cloudrun-email run test
 ```
 
 `cloudrun-api` now includes the least-privileged Postgres runtime, Supabase
-JWKS/Bearer validation, opaque web sessions, and initial
-viewer/workspace/bootstrap/job-completion routes in addition to its probes and
-HTTP plumbing. Domain routes accept exactly one `Bearer` or `SmartJobSession`
-credential. The isolated runtime integration test is enabled with:
+JWKS/Bearer validation, opaque web sessions, bounded domain APIs, opaque
+document/email dispatch, authoritative document workflow detail, and the tax
+creation/submission outbox. Domain routes accept exactly one `Bearer` or
+`SmartJobSession` credential. The isolated runtime integration test is enabled
+with:
 
 ```powershell
 $env:SMART_JOB_TEST_ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
@@ -487,6 +507,13 @@ received by `/api/v1/tax/approval`. Configure both the main API and tax gateway
 with public Cloud Run ingress so Supabase bearer/session authentication and
 callback HMAC verification can run in the application handlers.
 
+Main API production configuration additionally requires all four Pub/Sub
+settings (`DOCUMENT_PUBSUB_PROJECT_ID`, `DOCUMENT_PREVIEW_TOPIC`,
+`DOCUMENT_GENERATE_TOPIC`, and `EMAIL_DELIVERY_TOPIC`) plus Google internal
+identity settings. Keep `TAX_SUBMISSION_MODE=disabled` at platform launch.
+Sandbox/production modes additionally require exact `TAX_GATEWAY_URL` and
+`TAX_GATEWAY_AUDIENCE` service origins.
+
 The new API/tax Dockerfiles, Cloud Run service settings, IAM, Artifact Registry, OIDC/WIF, and
 environment rollout remain deployment-configuration changes and require the
 separate implementation checkpoint.
@@ -500,6 +527,7 @@ Required deployment concerns:
 - OIDC verification for Pub/Sub push requests
 - optional shared `x-pubsub-token` hardening if configured
 - SQL access for task and document finalization in SQL mode
+- a `DATABASE_URL` that authenticates as `smart_job_pdf` in production
 - `SUPABASE_URL` plus a dedicated server-only `SUPABASE_SECRET_KEY` (`sb_secret_...`)
 - `SUPABASE_STORAGE_BUCKET=smart-job-company-files` (optional because this exact canonical value is the only accepted/default value)
 - environment for tax and document generation as required by the service
@@ -520,7 +548,34 @@ Preserve these invariants:
 - object paths use internal company/document UUIDs; preview task keys are hashed before path construction
 - document finalization and `documents_version` advancement share one SQL transaction
 
-## 12. Cloud Run Archiver
+## 12. Cloud Run Email Worker
+
+`cloudrun-email/` receives authenticated Pub/Sub pushes containing only a
+`deliveryId`. It claims canonical tenant, recipient, document, and storage
+state through the `smart_job_email` private SQL RPCs, signs a bounded Supabase
+Storage download URL, submits to AWS SES, and records the provider result.
+
+Required environment:
+
+```dotenv
+DATABASE_URL=postgresql://smart_job_email:...@.../postgres
+DATABASE_SSL_MODE=require
+CLOUD_RUN_SERVICE_URL=https://...
+PUBSUB_ALLOWED_SERVICE_ACCOUNTS=...@....gserviceaccount.com
+SUPABASE_URL=https://....supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...
+SUPABASE_STORAGE_BUCKET=smart-job-company-files
+AWS_REGION=eu-central-1
+SES_FROM_EMAIL=documents@example.com
+SES_FROM_NAME=Smart-Job
+```
+
+Do not automatically retry an ambiguous network/timeout result after SES may
+have received the request. The database converts it to `delivery_unknown`; an
+authorized manager/dev must explicitly retry. Definite pre-send failures and
+provider-rejected transient failures may return to `queued`.
+
+## 13. Cloud Run Archiver
 
 `cloudrun-archiver/` is the monthly archive job.
 
@@ -555,7 +610,7 @@ Preserve these invariants:
 - deletion uses only the exact IDs captured in the verified archive
 - manifests must remain resumable: `uploaded_not_deleted` retries verify the archive and can mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches
 
-## 13. Supabase Migration Workspace
+## 14. Supabase Migration Workspace
 
 The `supabase/` directory contains the in-repo backend runtime and migration hardening work.
 
@@ -579,19 +634,22 @@ non-production test account before enabling it. Local Playwright runs still
 exercise unauthenticated flows when credentials are absent and skip only the
 authenticated scenarios.
 
-## 14. Deployment Order
+## 15. Deployment Order
 
 Recommended high-level order:
 
 1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
-2. Apply SQL migrations.
-3. Configure website and Supabase edge secrets and envs.
-4. Deploy `supabase/functions`. Verify nested paths flatten to dashed names (e.g., `contact/request` → `contact-request`) and update website/mobile caller URLs to match.
-5. Deploy `cloudrun-pdf`.
-6. Deploy `cloudrun-archiver`.
-7. Configure website hosting.
-8. Build and release mobile apps.
-9. Validate website auth, mobile auth, backend operations, document generation, and archives.
+2. Apply expand-only SQL migrations through `0030` using the dedicated
+   migration credential; runtime services never receive it.
+3. Configure API, website, worker, tax, and remaining compatibility secrets.
+4. Deploy the main API with tax mode disabled, then the private PDF/email
+   workers and their authenticated Pub/Sub subscriptions/drain schedules.
+5. Deploy `cloudrun-tax` in the Israel region, but do not enable authority
+   submission until certification gates pass.
+6. Deploy `cloudrun-archiver` and retain the compatibility Edge functions still
+   required by the current mobile binary.
+7. Configure website hosting, build/release mobile apps, and validate document,
+   email, tax-disabled, and archive paths before traffic promotion.
 
 CI/CD evidence:
 
@@ -599,7 +657,7 @@ CI/CD evidence:
   retained for mobile screens not yet cut over to the Cloud API.
 - Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
 
-## 15. Post-Setup Checks
+## 16. Post-Setup Checks
 
 Verify:
 
@@ -607,13 +665,15 @@ Verify:
 - mobile sign-in and protected operation routing
 - backend SQL connectivity
 - document preview and generate flows
-- tax invoice approval creates a draft SQL document and schedules the async generate task
+- tax creation returns unavailable while production mode is disabled
+- sandbox approval alone creates a final PDF task; reserved/submitted/rejected/failed states do not
+- email timeout ambiguity becomes `delivery_unknown` rather than an automatic resend
 - approved tax invoices cannot be deleted
 - signed URL flows for documents and job files
 - solo mobile job creation uploads attachments first and succeeds with temp `attachmentUploadId` references before the final job number exists
 - push-token updates and notification paths
 - archive creation and retrieval
 
-## 16. Canonical Documentation Rule
+## 17. Canonical Documentation Rule
 
 If setup or deployment guidance changes, update this file instead of creating another setup-only markdown file.

@@ -85,7 +85,7 @@ export const docs: DocEntry[] = [
       "publishPreviewTask and publishGenerateTask enqueue SQL-backed document_tasks entries.",
       "Task URLs are split by type: preview_url for preview tasks and generate_url for generate tasks.",
       "Generated artifacts persist canonical storagePath references; signed URLs are issued per request.",
-      "Tax invoice approval uses getInvoiceApproval in me-west1 and idempotency protection.",
+      "Tax invoice submission is fail-closed pending certification; the legacy reservation handler cannot create documents or PDFs.",
     ],
     tables: [
       {

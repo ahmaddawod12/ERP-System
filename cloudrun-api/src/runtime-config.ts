@@ -21,6 +21,7 @@ const booleanValue = (name: string) =>
     .transform((value) => ["true", "1", "on"].includes(value));
 
 const runtimeEnvironmentSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z.string().trim().min(1, "DATABASE_URL is required"),
   DATABASE_SSL_MODE: z.enum(["disable", "require"]).default("require"),
   DATABASE_SSL_REJECT_UNAUTHORIZED: booleanValue("DATABASE_SSL_REJECT_UNAUTHORIZED")
@@ -75,6 +76,16 @@ const runtimeEnvironmentSchema = z.object({
     .trim()
     .regex(/^[A-Za-z][A-Za-z0-9._~+%-]{2,254}$/, "DOCUMENT_GENERATE_TOPIC is invalid")
     .optional(),
+  EMAIL_DELIVERY_TOPIC: z.string()
+    .trim()
+    .regex(/^[A-Za-z][A-Za-z0-9._~+%-]{2,254}$/, "EMAIL_DELIVERY_TOPIC is invalid")
+    .optional(),
+  TAX_SUBMISSION_MODE: z.enum(["disabled", "sandbox", "production"])
+    .default("disabled"),
+  TAX_GATEWAY_URL: z.url("TAX_GATEWAY_URL must be a valid URL").optional(),
+  TAX_GATEWAY_AUDIENCE: z.url("TAX_GATEWAY_AUDIENCE must be a valid URL").optional(),
+  TAX_GATEWAY_TIMEOUT_MS: integerValue("TAX_GATEWAY_TIMEOUT_MS", 1_000, 10_000)
+    .default(8_000),
   INTERNAL_API_AUDIENCE: z.url("INTERNAL_API_AUDIENCE must be a valid URL").optional(),
   INTERNAL_CALLER_SERVICE_ACCOUNTS: z.string().trim().min(1).optional(),
 }).superRefine((environment, context) => {
@@ -82,6 +93,7 @@ const runtimeEnvironmentSchema = z.object({
     environment.DOCUMENT_PUBSUB_PROJECT_ID,
     environment.DOCUMENT_PREVIEW_TOPIC,
     environment.DOCUMENT_GENERATE_TOPIC,
+    environment.EMAIL_DELIVERY_TOPIC,
   ];
   const supplied = fields.filter((value) => value !== undefined).length;
   if (supplied !== 0 && supplied !== fields.length) {
@@ -89,6 +101,29 @@ const runtimeEnvironmentSchema = z.object({
       code: "custom",
       path: ["DOCUMENT_PUBSUB_PROJECT_ID"],
       message: "all document Pub/Sub settings must be supplied together",
+    });
+  }
+  if (environment.NODE_ENV === "production" && supplied !== fields.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["DOCUMENT_PUBSUB_PROJECT_ID"],
+      message: "document and email Pub/Sub settings are required in production",
+    });
+  }
+  const taxGatewayFields = [environment.TAX_GATEWAY_URL, environment.TAX_GATEWAY_AUDIENCE];
+  const taxGatewaySupplied = taxGatewayFields.filter((value) => value !== undefined).length;
+  if (taxGatewaySupplied !== 0 && taxGatewaySupplied !== taxGatewayFields.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["TAX_GATEWAY_URL"],
+      message: "tax gateway URL and audience must be supplied together",
+    });
+  }
+  if (environment.TAX_SUBMISSION_MODE !== "disabled" && taxGatewaySupplied !== taxGatewayFields.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["TAX_GATEWAY_URL"],
+      message: "tax gateway settings are required when tax submission is enabled",
     });
   }
   const internalFields = [
@@ -142,11 +177,21 @@ export interface DocumentDispatchRuntimeConfig {
   readonly projectId: string;
   readonly previewTopic: string;
   readonly generateTopic: string;
+  readonly emailTopic: string;
 }
 
 export interface InternalIdentityRuntimeConfig {
   readonly audience: string;
   readonly allowedServiceAccounts: readonly string[];
+}
+
+export interface TaxSubmissionRuntimeConfig {
+  readonly mode: "disabled" | "sandbox" | "production";
+  readonly gateway?: {
+    readonly url: URL;
+    readonly audience: string;
+    readonly timeoutMs: number;
+  };
 }
 
 export interface ApiRuntimeConfig {
@@ -157,6 +202,7 @@ export interface ApiRuntimeConfig {
   readonly webSessionEncryption: WebSessionEncryptionRuntimeConfig;
   readonly documentDispatch?: DocumentDispatchRuntimeConfig;
   readonly internalIdentity?: InternalIdentityRuntimeConfig;
+  readonly taxSubmission: TaxSubmissionRuntimeConfig;
 }
 
 export class RuntimeConfigError extends Error {
@@ -240,6 +286,7 @@ export function loadApiRuntimeConfig(
 ): ApiRuntimeConfig {
   const result = runtimeEnvironmentSchema.safeParse({
     DATABASE_URL: environment.DATABASE_URL ?? environment.SMART_JOB_DATABASE_URL,
+    NODE_ENV: environment.NODE_ENV,
     DATABASE_SSL_MODE:
       environment.DATABASE_SSL_MODE ?? environment.SMART_JOB_DATABASE_SSL_MODE,
     DATABASE_SSL_REJECT_UNAUTHORIZED:
@@ -266,6 +313,11 @@ export function loadApiRuntimeConfig(
     DOCUMENT_PUBSUB_PROJECT_ID: environment.DOCUMENT_PUBSUB_PROJECT_ID,
     DOCUMENT_PREVIEW_TOPIC: environment.DOCUMENT_PREVIEW_TOPIC,
     DOCUMENT_GENERATE_TOPIC: environment.DOCUMENT_GENERATE_TOPIC,
+    EMAIL_DELIVERY_TOPIC: environment.EMAIL_DELIVERY_TOPIC,
+    TAX_SUBMISSION_MODE: environment.TAX_SUBMISSION_MODE,
+    TAX_GATEWAY_URL: environment.TAX_GATEWAY_URL,
+    TAX_GATEWAY_AUDIENCE: environment.TAX_GATEWAY_AUDIENCE,
+    TAX_GATEWAY_TIMEOUT_MS: environment.TAX_GATEWAY_TIMEOUT_MS,
     INTERNAL_API_AUDIENCE: environment.INTERNAL_API_AUDIENCE,
     INTERNAL_CALLER_SERVICE_ACCOUNTS: environment.INTERNAL_CALLER_SERVICE_ACCOUNTS,
   });
@@ -307,6 +359,25 @@ export function loadApiRuntimeConfig(
   }
 
   const sslCa = result.data.DATABASE_SSL_CA.replace(/\\n/g, "\n").trim();
+  let taxGateway: TaxSubmissionRuntimeConfig["gateway"];
+  if (result.data.TAX_GATEWAY_URL !== undefined) {
+    const gatewayUrl = normalizedUrl(result.data.TAX_GATEWAY_URL);
+    const audienceUrl = normalizedUrl(result.data.TAX_GATEWAY_AUDIENCE!);
+    const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"];
+    for (const [field, url] of [["TAX_GATEWAY_URL", gatewayUrl], ["TAX_GATEWAY_AUDIENCE", audienceUrl]] as const) {
+      if (
+        (url.protocol !== "https:" && !(url.protocol === "http:" && loopback.includes(url.hostname.toLowerCase())))
+        || url.username || url.password || url.search || url.hash || url.pathname !== "/"
+      ) {
+        throw new RuntimeConfigError([`${field} must be an exact HTTPS service origin (loopback HTTP is allowed locally)`]);
+      }
+    }
+    taxGateway = {
+      url: new URL("api/v1/tax/approval", gatewayUrl.href),
+      audience: audienceUrl.origin,
+      timeoutMs: result.data.TAX_GATEWAY_TIMEOUT_MS,
+    };
+  }
   let internalIdentity: InternalIdentityRuntimeConfig | undefined;
   if (result.data.INTERNAL_API_AUDIENCE !== undefined) {
     const audienceUrl = new URL(result.data.INTERNAL_API_AUDIENCE);
@@ -381,6 +452,10 @@ export function loadApiRuntimeConfig(
       ),
       keyVersion: result.data.WEB_SESSION_ENCRYPTION_KEY_VERSION,
     },
+    taxSubmission: {
+      mode: result.data.TAX_SUBMISSION_MODE,
+      ...(taxGateway === undefined ? {} : { gateway: taxGateway }),
+    },
     ...(result.data.DOCUMENT_PUBSUB_PROJECT_ID === undefined
       ? {}
       : {
@@ -388,6 +463,7 @@ export function loadApiRuntimeConfig(
             projectId: result.data.DOCUMENT_PUBSUB_PROJECT_ID,
             previewTopic: result.data.DOCUMENT_PREVIEW_TOPIC!,
             generateTopic: result.data.DOCUMENT_GENERATE_TOPIC!,
+            emailTopic: result.data.EMAIL_DELIVERY_TOPIC!,
           },
         }),
     ...(internalIdentity === undefined ? {} : { internalIdentity }),

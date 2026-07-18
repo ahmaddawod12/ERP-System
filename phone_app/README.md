@@ -17,7 +17,8 @@ Server Components.
   and badge state. NotifyKit is configured not to intercept iOS remote events.
 - Publishes non-tax preview/generate work through the authenticated versioned
   document-task API and polls `/document-tasks/{taskId}` for completion. Tax
-  invoice type 305 remains on the dedicated tax-authority workflow.
+  invoice type 305 can be previewed, but final submission is unavailable until
+  the authoritative workflow completes certification.
 - Treats public sequential job IDs and member numbers as the client-facing job contract.
 - Uses SQL-backed read-model pages for clients, jobs, documents, and inventory through backend gateway helpers.
 - Edge function caller URLs use flattened dash names for nested paths (e.g., `contact-request`, `invites-create`) to match Supabase deploy names.

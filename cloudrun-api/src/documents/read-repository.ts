@@ -2,10 +2,12 @@ import {
   CursorSchema,
   DEFAULT_DOCUMENT_PAGE_SIZE,
   DocumentListPageSchema,
+  DocumentDetailSchema,
   DocumentSummarySchema,
   DocumentTaskSchema,
   type Cursor,
   type DocumentListQuery,
+  type DocumentDetail,
   type DocumentSummary,
   type DocumentTask,
 } from "@smart-job/api-contracts";
@@ -39,7 +41,7 @@ const documentRowSchema = z.object({
   document_type: z.number().int(),
   document_number: z.number().int().positive(),
   generation_status: z.enum(["pending", "queued", "processing", "completed", "failed"]),
-  tax_authority_status: z.enum(["none", "reserved", "approved", "rejected", "failed", "burned"]),
+  tax_authority_status: z.enum(["none", "reserved", "submitted", "approved", "rejected", "failed", "burned"]),
   client_id: z.uuid().nullable(),
   client_name: z.string().nullable(),
   client_phone: z.string().nullable(),
@@ -57,6 +59,13 @@ const documentRowSchema = z.object({
   document_date: z.union([z.date(), z.iso.datetime({ offset: true })]).nullable(),
   storage_path: z.string().nullable(),
   email_sent: z.boolean(),
+  email_delivery_status: z.enum([
+    "queued",
+    "sending",
+    "sent",
+    "failed",
+    "delivery_unknown",
+  ]).nullable(),
   entity_version: z.union([z.string(), z.number().int().positive(), z.bigint().positive()]),
   created_at: z.union([z.date(), z.iso.datetime({ offset: true })]),
   cursor_created_at: z.iso.datetime({ offset: true }).optional(),
@@ -86,7 +95,7 @@ interface DocumentRow extends QueryResultRow {
   readonly document_type: number;
   readonly document_number: number;
   readonly generation_status: "pending" | "queued" | "processing" | "completed" | "failed";
-  readonly tax_authority_status: "none" | "reserved" | "approved" | "rejected" | "failed" | "burned";
+  readonly tax_authority_status: "none" | "reserved" | "submitted" | "approved" | "rejected" | "failed" | "burned";
   readonly client_id: string | null;
   readonly client_name: string | null;
   readonly client_phone: string | null;
@@ -104,6 +113,7 @@ interface DocumentRow extends QueryResultRow {
   readonly document_date: Date | string | null;
   readonly storage_path: string | null;
   readonly email_sent: boolean;
+  readonly email_delivery_status: "queued" | "sending" | "sent" | "failed" | "delivery_unknown" | null;
   readonly entity_version: bigint | number | string;
   readonly created_at: Date | string;
   readonly cursor_created_at: string;
@@ -212,6 +222,7 @@ export function mapDocumentRow(unknownRow: unknown): DocumentSummary {
     documentDate: nullableIso(row.document_date),
     hasFile: row.storage_path !== null,
     emailSent: row.email_sent,
+    emailDeliveryStatus: row.email_delivery_status,
     entityVersion: encodeEntityVersion(row.entity_version),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
@@ -273,6 +284,10 @@ export const READ_DOCUMENT_PAGE_SQL = `
     document.document_date,
     document.storage_path,
     document.email_sent,
+    private.get_api_document_email_delivery_status(
+      document.company_id,
+      document.id
+    )::text AS email_delivery_status,
     document.entity_version,
     document.created_at,
     pg_catalog.to_char(
@@ -313,6 +328,49 @@ export const READ_DOCUMENT_FILE_SQL = `
   WHERE document.company_id = $1::uuid
     AND document.id = $2::uuid
     AND (document.document_type <> 305 OR document.tax_authority_status = 'approved')
+  LIMIT 1
+`;
+
+export const READ_DOCUMENT_DETAIL_SQL = `
+  SELECT
+    document.id AS document_id,
+    document.document_code,
+    document.document_type,
+    document.document_number,
+    document.generation_status::text AS generation_status,
+    document.tax_authority_status::text AS tax_authority_status,
+    document.client_id,
+    document.client_name_snapshot AS client_name,
+    document.client_phone_snapshot AS client_phone,
+    document.client_city_snapshot AS client_city,
+    document.client_vat_snapshot AS client_vat_number,
+    creator_user.id AS creator_uid,
+    creator.member_no AS creator_member_no,
+    COALESCE(creator.display_name, creator_user.display_name, creator_user.email) AS creator_display_name,
+    document.language,
+    document.notes,
+    document.total_before_vat,
+    document.vat_amount,
+    document.total_with_vat,
+    document.confirmation_number,
+    document.document_date,
+    document.storage_path,
+    document.email_sent,
+    private.get_api_document_email_delivery_status(document.company_id, document.id)::text
+      AS email_delivery_status,
+    private.get_api_tax_submission_status(document.company_id, document.id)::text
+      AS tax_submission_status,
+    document.entity_version,
+    document.created_at,
+    document.updated_at
+  FROM public.documents AS document
+  LEFT JOIN public.company_memberships AS creator
+    ON creator.id = document.created_by_membership_id
+   AND creator.company_id = document.company_id
+  LEFT JOIN public.app_users AS creator_user
+    ON creator_user.id = creator.user_id
+  WHERE document.company_id = $1::uuid
+    AND document.id = $2::uuid
   LIMIT 1
 `;
 
@@ -432,6 +490,34 @@ export async function readDocumentFile(
     documentCode: row.document_code,
     objectPath: row.storage_path,
   };
+}
+
+export async function readDocumentDetail(
+  transaction: DatabaseQueryable,
+  internalCompanyId: string,
+  documentId: string,
+): Promise<DocumentDetail> {
+  await assertDocumentAccess(transaction, internalCompanyId);
+  const result = await transaction.query(READ_DOCUMENT_DETAIL_SQL, [internalCompanyId, documentId]);
+  const row = documentRowSchema.extend({
+    tax_submission_status: z.enum([
+      "queued",
+      "submitting",
+      "submitted",
+      "approved",
+      "rejected",
+      "failed",
+      "submission_unknown",
+    ]).nullable(),
+  }).strict().optional().parse(result.rows[0]);
+  if (!row) {
+    throw new AppError({ statusCode: 404, code: "DOCUMENT_NOT_FOUND", message: "Document not found." });
+  }
+  const { tax_submission_status: taxSubmissionStatus, ...summaryRow } = row;
+  return DocumentDetailSchema.parse({
+    ...mapDocumentRow(summaryRow),
+    taxSubmissionStatus,
+  });
 }
 
 export async function readDocumentTask(

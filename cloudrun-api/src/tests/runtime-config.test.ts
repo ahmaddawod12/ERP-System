@@ -52,6 +52,7 @@ test("runtime config accepts strict managed settings without exposing credential
     DOCUMENT_PUBSUB_PROJECT_ID: "smart-job-prod",
     DOCUMENT_PREVIEW_TOPIC: "document-preview",
     DOCUMENT_GENERATE_TOPIC: "document-generate",
+    EMAIL_DELIVERY_TOPIC: "document-email",
     INTERNAL_API_AUDIENCE: "https://smart-job-api-abc.run.app",
     INTERNAL_CALLER_SERVICE_ACCOUNTS:
       "scheduler@smart-job-prod.iam.gserviceaccount.com,pdf@smart-job-prod.iam.gserviceaccount.com",
@@ -73,7 +74,9 @@ test("runtime config accepts strict managed settings without exposing credential
     projectId: "smart-job-prod",
     previewTopic: "document-preview",
     generateTopic: "document-generate",
+    emailTopic: "document-email",
   });
+  assert.deepEqual(config.taxSubmission, { mode: "disabled" });
   assert.deepEqual(config.internalIdentity, {
     audience: "https://smart-job-api-abc.run.app",
     allowedServiceAccounts: [

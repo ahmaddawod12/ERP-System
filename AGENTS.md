@@ -241,6 +241,7 @@ Smart-Job ERP — multi-tenant field-service platform.
 | `cloudrun-api/` | Modular API with dual auth and initial domain routes | Node 22 |
 | `cloudrun-tax/` | Stateless Israel tax gateway foundation | Node 22 |
 | `cloudrun-pdf/` | PDF generation service | Node 22 |
+| `cloudrun-email/` | Durable SES document-email worker | Node 22 |
 | `cloudrun-archiver/` | Monthly archive batch job | Node 22 |
 | `packages/contracts/` | Shared enums/constants (`@smart-job/contracts`) | Node |
 | `packages/api-contracts/` | Shared Zod HTTP contracts (`@smart-job/api-contracts`) | Node 22 |
@@ -270,6 +271,7 @@ npm --prefix phone_app install
 npm --prefix cloudrun-api install
 npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
+npm --prefix cloudrun-email install
 npm --prefix cloudrun-archiver install
 ```
 
@@ -309,6 +311,7 @@ npm --prefix packages/db run typecheck
 npm --prefix packages/db run build
 npm --prefix packages/db run test
 npm --prefix packages/db run test:integration   # requires the isolated local Supabase DB
+npm --prefix packages/db run test:migrations    # destructive; loopback DB only, verifies 0024 upgrade
 npm --prefix packages/db run db:generate   # drizzle-kit generate (new migration from schema change)
 npm --prefix packages/db run db:migrate    # drizzle-kit migrate (apply to DB)
 ```
@@ -329,6 +332,7 @@ npm --prefix packages/db run build
 npm --prefix cloudrun-api run test
 npm --prefix cloudrun-tax run test
 npm --prefix cloudrun-pdf run test
+npm --prefix cloudrun-email run test
 npm --prefix cloudrun-archiver run test
 ```
 
@@ -381,10 +385,11 @@ All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group 
 - `repo_guards` → `check-no-ts-nocheck.mjs` + `check-js-syntax.mjs scripts`
 - `packages_contracts` → `npm ci` → typecheck → build
 - `packages_api_contracts` → builds `packages/contracts` → `npm ci` → typecheck → test
-- `packages_db` → builds `packages/contracts` → `npm ci` → typecheck → build
+- `packages_db` → builds `packages/contracts` → `npm ci` → typecheck → build → test
 - `website` → builds `packages/contracts` → `npm ci` → **test → typecheck → lint → build** (order matters)
 - `phone_app` → builds `packages/contracts` → `npm ci` → test → typecheck → Expo Doctor
-- `cloudrun_pdf` → builds `packages/contracts` → `npm ci` → typecheck → test
+- `cloudrun_pdf` → builds both contracts packages → `npm ci` → typecheck → test
+- `cloudrun_email` → builds both contracts packages → `npm ci` → typecheck → test
 - `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
 - `cloudrun_api` → builds all three local packages → `npm ci` → typecheck → test
 - `cloudrun_tax` → builds contracts packages → `npm ci` → typecheck → test
@@ -406,7 +411,7 @@ CI job continues to type-check them with `deno check`.
 - `phone_app/components`, `phone_app/contexts`, `phone_app/tests`, `phone_app/firebase.ts`
 - `phone_app/modules/` (allowlist of legacy files exempted; all new files blocked)
 - `packages/contracts`
-- `packages/api-contracts`, `cloudrun-api/src`, `cloudrun-tax/src`
+- `packages/api-contracts`, `cloudrun-api/src`, `cloudrun-tax/src`, `cloudrun-email/src`
 
 Do not add `@ts-nocheck` to any file in those paths.
 
@@ -456,6 +461,30 @@ SUPABASE_JWT_ISSUER=               # optional; defaults to ${SUPABASE_URL}/auth/
 SUPABASE_JWT_AUDIENCE=authenticated
 WEB_SESSION_ENCRYPTION_KEY_BASE64= # exactly 32 random bytes, canonical base64
 WEB_SESSION_ENCRYPTION_KEY_VERSION=
+DOCUMENT_PUBSUB_PROJECT_ID=
+DOCUMENT_PREVIEW_TOPIC=
+DOCUMENT_GENERATE_TOPIC=
+EMAIL_DELIVERY_TOPIC=
+TAX_SUBMISSION_MODE=disabled       # production launch remains disabled
+TAX_GATEWAY_URL=
+TAX_GATEWAY_AUDIENCE=
+TAX_GATEWAY_TIMEOUT_MS=8000
+INTERNAL_API_AUDIENCE=
+INTERNAL_CALLER_SERVICE_ACCOUNTS=
+```
+
+### `cloudrun-email/` env
+```
+DATABASE_URL=                      # must authenticate as smart_job_email in production
+DATABASE_SSL_MODE=require
+CLOUD_RUN_SERVICE_URL=
+PUBSUB_ALLOWED_SERVICE_ACCOUNTS=
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=               # sb_secret_...; signed download creation only
+SUPABASE_STORAGE_BUCKET=smart-job-company-files
+AWS_REGION=eu-central-1
+SES_FROM_EMAIL=
+SES_FROM_NAME=Smart-Job
 ```
 
 ### `supabase/.env`
@@ -469,6 +498,7 @@ SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ALLOW_FIREBASE_AUTH_FALLBACK=false
 JWT_SECRET=                                       # required for edge JWT verification
+TAX_SUBMISSION_MODE=disabled                      # disabled|sandbox|production; production launch stays disabled
 TAX_AUTH_URL=, TAX_TOKEN_URL=, TAX_CLIENT_ID=, TAX_CLIENT_SECRET=, ...
 APP_SCHEME=erpsystem
 DOCUMENTS_BUCKET=smart-job-company-files
@@ -626,6 +656,24 @@ the company/profile/subscription/sync/membership state atomically.
   plus `private.list_api_company_archives(...)` for bounded cursor pagination
   of archive run metadata. The archiver now records runs in `archive_runs`
   via `recordArchiveRun(...)`.
+- Migration `0025_post_0024_metadata_baseline.sql` is an intentional no-op
+  Drizzle metadata baseline. `test:migrations` verifies that its schema
+  fingerprint exactly matches a database built through `0024`, then applies
+  every later migration as an upgrade.
+- Migration `0026_job_acceptance_inventory_consumption.sql` makes manager/dev
+  job acceptance consume recorded part usages through
+  `apply_job_inventory_consumption_batch(...)` before finalizing status. The
+  locked transaction is exactly-once and rolls back the job on insufficient
+  stock.
+- Migrations `0027` and `0028` add private durable email/tax/archive state,
+  dedicated passwordless-at-migration worker login roles, opaque ID-only
+  Pub/Sub messages, lease-token PDF/email RPCs, and manual retry for
+  `failed|delivery_unknown`. Runtime workers have no direct ERP-table writes.
+- Migrations `0029` and `0030` add the authoritative tax-invoice transaction
+  and synchronize Drizzle metadata. The API allocates `doc_305`, document,
+  items, reservation, and submission outbox atomically. Only an `approved`
+  result with a confirmation number creates the final PDF task; ambiguous
+  submissions become `submission_unknown` and are never blindly retried.
 - The implemented API now also includes: internal tax callback processing at
   `POST /internal/v1/tax/callback` (Google service identity protected),
   correlation binding at `POST /internal/v1/tax/approval-session`, manager/dev
@@ -634,6 +682,12 @@ the company/profile/subscription/sync/membership state atomically.
   `cloudrun-tax` callback (`POST /api/v1/tax/callback`) and approval
   (`POST /api/v1/tax/approval`) routes, and archive listing at
   `GET /api/v1/companies/{companyId}/archives`.
+- The API also exposes authoritative tax creation at
+  `POST /api/v1/companies/{companyId}/tax-invoices`, document workflow detail
+  at `GET /api/v1/companies/{companyId}/documents/{documentId}`, and authorized
+  manual email retry. Google-identity-protected drains publish opaque document
+  task and email delivery IDs and process the tax outbox. Production tax
+  creation remains fail-closed while `TAX_SUBMISSION_MODE=disabled`.
 
 ---
 
@@ -719,6 +773,18 @@ the company/profile/subscription/sync/membership state atomically.
   `smart-job-company-files` bucket. Configure server-only `SUPABASE_URL` and
   `SUPABASE_SECRET_KEY`; the service rejects legacy service-role keys and any
   alternate bucket name.
+- Production SQL connections must authenticate as `smart_job_pdf`. The worker
+  receives canonical task state only from private lease-token RPCs; Pub/Sub
+  payloads contain only `taskId`.
+
+### cloudrun-email
+- Pub/Sub payloads contain only `deliveryId`; canonical recipient, tenant,
+  document, and object data come from private lease-token RPCs.
+- Retry only definite pre-send or provider-rejected transient failures. A
+  network/timeout ambiguity after SES submission must become
+  `delivery_unknown` and requires an explicit authorized manual retry.
+- Production SQL connections must authenticate as `smart_job_email`. Never log
+  recipient addresses or place SES/Supabase credentials in source or images.
 
 ### cloudrun-archiver
 - Before monthly archive work, the job runs one bounded abandoned-upload cleanup

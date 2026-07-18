@@ -8,9 +8,8 @@ import {
   type DocumentTaskAccepted,
 } from "@smart-job/api-contracts";
 import { Eye, FilePlus2, Plus, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 
 import { Button } from "@/components/ui/Button";
@@ -21,9 +20,13 @@ import { DOC_TYPE, DOCUMENT_TYPES } from "@/lib/document-types";
 import { getNextDocumentTaskPollIntervalMs } from "@/lib/document-task-poll";
 import { buildDocumentDownloadHref } from "@/lib/dal/documents-query";
 import {
+  clearPersistedDocumentMutation,
   DocumentMutationError,
   documentMutationKey,
   documentRequestFromComposer,
+  persistDocumentMutation,
+  readPersistedDocumentMutation,
+  type DocumentTaskAction,
   readWebsiteDocumentTask,
   sendDocumentMutation,
   type PendingDocumentMutation,
@@ -98,6 +101,47 @@ export function DocumentCreateControl({
   const activeDocumentId = active?.accepted.documentId ?? null;
   const busy = submitting !== null || tracking;
 
+  const pendingRef = useCallback((action: DocumentTaskAction) => {
+    return action === "preview" ? previewPending : generatePending;
+  }, []);
+
+  const clearAttempt = useCallback((action: DocumentTaskAction, expectedTaskId?: string): void => {
+    const pending = pendingRef(action);
+    if (expectedTaskId && pending.current?.accepted?.taskId !== expectedTaskId) return;
+    pending.current = null;
+    clearPersistedDocumentMutation(window.sessionStorage, companyId, action);
+  }, [companyId, pendingRef]);
+
+  useEffect(() => {
+    previewPending.current = null;
+    generatePending.current = null;
+    setActive(null);
+    setTask(null);
+    setTracking(false);
+
+    const restored = (["preview", "generate"] as const)
+      .map((action) => readPersistedDocumentMutation(window.sessionStorage, companyId, action))
+      .filter((record) => record !== null);
+    for (const record of restored) {
+      pendingRef(record.action).current = {
+        fingerprint: record.fingerprint,
+        key: record.idempotencyKey,
+        ...(record.accepted ? { accepted: record.accepted } : {}),
+      };
+    }
+    const latestAccepted = restored
+      .filter((record) => record.accepted !== null)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    if (latestAccepted?.accepted) {
+      setActive({ type: latestAccepted.action, accepted: latestAccepted.accepted });
+      setTracking(true);
+      setMessage({
+        kind: "success",
+        text: "Resuming the previously accepted document task.",
+      });
+    }
+  }, [companyId, pendingRef]);
+
   useEffect(() => {
     if (!tracking || !activeTaskId || !activeTaskType) return;
     const controller = new AbortController();
@@ -112,6 +156,7 @@ export function DocumentCreateControl({
         setTask(nextTask);
         if (nextTask.status === "completed") {
           setTracking(false);
+          clearAttempt(activeTaskType, activeTaskId);
           if (activeTaskType === "preview" && !nextTask.previewURL) {
             setMessage({ kind: "error", text: "The preview completed without an available file." });
             return;
@@ -127,12 +172,16 @@ export function DocumentCreateControl({
         }
         if (nextTask.status === "failed") {
           setTracking(false);
+          clearAttempt(activeTaskType, activeTaskId);
           setMessage({ kind: "error", text: nextTask.error ?? "Document processing failed." });
           return;
         }
         if (Date.now() - startedAt >= TASK_TIMEOUT_MS) {
           setTracking(false);
-          setMessage({ kind: "error", text: "Document processing timed out. You can safely retry." });
+          setMessage({
+            kind: "error",
+            text: "Document processing is still pending. Select the same action to resume this task; no new task will be created.",
+          });
           return;
         }
         pollCount += 1;
@@ -154,7 +203,7 @@ export function DocumentCreateControl({
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [activeTaskId, activeTaskType, companyId, router, tracking]);
+  }, [activeTaskId, activeTaskType, clearAttempt, companyId, router, tracking]);
 
   function close(): void {
     if (submitting) return;
@@ -168,15 +217,18 @@ export function DocumentCreateControl({
     setTask(null);
     setTracking(false);
     setMessage(null);
-    previewPending.current = null;
-    generatePending.current = null;
+    clearAttempt("preview");
+    clearAttempt("generate");
   }
 
   async function startTask(type: "preview" | "generate"): Promise<void> {
     setMessage(null);
     const candidate = documentRequestFromComposer(getValues());
     if (candidate.documentType === DOC_TYPE.TAX_INVOICE) {
-      setMessage({ kind: "error", text: "Tax invoices must use the separate tax-authority workflow." });
+      setMessage({
+        kind: "error",
+        text: "Tax invoice submission is unavailable pending Tax Authority certification.",
+      });
       return;
     }
     const schema = type === "preview"
@@ -191,11 +243,26 @@ export function DocumentCreateControl({
       return;
     }
 
-    const pending = type === "preview" ? previewPending : generatePending;
+    const pending = pendingRef(type);
     const fingerprint = JSON.stringify({ type, body: parsed.data });
+    if (pending.current && pending.current.fingerprint !== fingerprint) {
+      setMessage({
+        kind: "error",
+        text: "Another document action is awaiting reconciliation. Resume it or use Reset to discard it before changing the request.",
+      });
+      return;
+    }
     const idempotencyKey = documentMutationKey(pending, fingerprint);
     setSubmitting(type);
     try {
+      persistDocumentMutation(window.sessionStorage, companyId, type, pending.current!);
+      if (pending.current?.accepted) {
+        setTask(null);
+        setActive({ type, accepted: pending.current.accepted });
+        setTracking(true);
+        setMessage({ kind: "success", text: "Resuming the previously accepted document task." });
+        return;
+      }
       const accepted = await sendDocumentMutation(
         `/api/companies/${companyId}/document-tasks/${type}`,
         "POST",
@@ -203,7 +270,8 @@ export function DocumentCreateControl({
         idempotencyKey,
         DocumentTaskAcceptedSchema,
       );
-      pending.current = null;
+      pending.current = { fingerprint, key: idempotencyKey, accepted };
+      persistDocumentMutation(window.sessionStorage, companyId, type, pending.current);
       setTask(null);
       setActive({ type, accepted });
       setTracking(true);
@@ -237,10 +305,7 @@ export function DocumentCreateControl({
             Preview or generate proposals, delivery notes, returns, refunds, and receipts through the versioned API.
           </p>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Tax invoices remain in the dedicated{" "}
-            <Link href="/app/documents" className="font-medium text-blue-700 underline-offset-4 hover:underline dark:text-blue-300">
-              tax-authority workflow
-            </Link>.
+            Tax invoice submission is unavailable pending Tax Authority certification.
           </p>
         </div>
         <Button type="button" onClick={() => setOpen(true)} className="gap-2">

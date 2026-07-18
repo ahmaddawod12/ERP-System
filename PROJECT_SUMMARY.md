@@ -17,7 +17,9 @@ Smart-Job ERP is a **multi-tenant field-service platform**.
   attachment upload sessions, first-workspace business registration, push-token
   mutations, invitation create/redeem, opaque web sessions, client/inventory/job
   mutations, document tasks with durable PDF dispatch outbox, tax callback
-  processing, and archive listing directly against Postgres/Auth/Storage.
+  processing, authoritative tax creation/submission, durable document-email
+  delivery, document workflow detail, and archive listing directly against
+  Postgres/Auth/Storage.
 - **Regional service:** `cloudrun-tax` is a stateless Cloud Run gateway in
   `me-west1` that terminates HMAC-authenticated tax-authority callbacks,
   forwards them to a protected internal main-API endpoint via Cloud Run IAM,
@@ -39,6 +41,7 @@ Smart-Job ERP is a **multi-tenant field-service platform**.
 | `cloudrun-api/` | Node 22 / Fastify | Main API foundation with dual auth and initial domain routes |
 | `cloudrun-tax/` | Node 22 / Fastify | Stateless Israel tax gateway foundation |
 | `cloudrun-pdf/` | Node 22 / Puppeteer | PDF preview/generation service |
+| `cloudrun-email/` | Node 22 / Fastify | Durable SES document-email worker |
 | `cloudrun-archiver/` | Node 22 | Monthly archive batch job |
 
 ## Build order
@@ -60,6 +63,7 @@ npm --prefix phone_app install
 npm --prefix cloudrun-api install
 npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
+npm --prefix cloudrun-email install
 npm --prefix cloudrun-archiver install
 ```
 
@@ -78,6 +82,7 @@ npm --prefix packages/db run typecheck
 npm --prefix packages/db run build
 npm --prefix packages/db run db:generate
 npm --prefix packages/db run db:migrate
+npm --prefix packages/db run test:migrations # destructive; loopback database only
 ```
 
 ### Website
@@ -103,6 +108,7 @@ npm --prefix cloudrun-pdf run test      # build + test
 npm --prefix cloudrun-archiver run test # build + test
 npm --prefix cloudrun-api run test
 npm --prefix cloudrun-tax run test
+npm --prefix cloudrun-email run test
 ```
 
 ### Edge functions
@@ -290,10 +296,33 @@ SUPABASE_JWT_ISSUER=
 SUPABASE_JWT_AUDIENCE=authenticated
 WEB_SESSION_ENCRYPTION_KEY_BASE64=
 WEB_SESSION_ENCRYPTION_KEY_VERSION=
+DOCUMENT_PUBSUB_PROJECT_ID=
+DOCUMENT_PREVIEW_TOPIC=
+DOCUMENT_GENERATE_TOPIC=
+EMAIL_DELIVERY_TOPIC=
+TAX_SUBMISSION_MODE=disabled
+TAX_GATEWAY_URL=
+TAX_GATEWAY_AUDIENCE=
+INTERNAL_API_AUDIENCE=
+INTERNAL_CALLER_SERVICE_ACCOUNTS=
+```
+
+### `cloudrun-email/`
+```
+DATABASE_URL=                      # smart_job_email role
+DATABASE_SSL_MODE=require
+CLOUD_RUN_SERVICE_URL=
+PUBSUB_ALLOWED_SERVICE_ACCOUNTS=
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=
+SUPABASE_STORAGE_BUCKET=smart-job-company-files
+AWS_REGION=eu-central-1
+SES_FROM_EMAIL=
 ```
 
 ### `cloudrun-tax/`
 ```
+TAX_SUBMISSION_MODE=disabled
 TAX_TOKEN_URL=
 TAX_APPROVAL_URL=
 TAX_CLIENT_ID=
@@ -450,6 +479,10 @@ The following production and security issues were also fixed before Phase 1:
     stock adjustments now use the same API/versioned invalidation path; user
     company inventory stays read-only.
 
+The database migration chain now runs through `0030`. It includes a verified
+no-op post-`0024` metadata baseline, transactional accepted-job inventory
+consumption, dedicated worker roles, durable PDF/email/tax/archive workflow
+state, opaque dispatch, and authoritative approval-only tax PDF generation.
 The tax callback/approval integration, archive retrieval API, Cloud Run
 deployment/IAM workflow, CI integration-test job, and E2E test infrastructure
 (Playwright + Maestro) are now implemented. Website Firebase/legacy-auth

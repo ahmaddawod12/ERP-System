@@ -134,8 +134,7 @@ test('inventory screens use authenticated tenant API queries and mutations only'
   assert.match(userScreen, /CompanyInventory/);
   assert.match(hook, /tenantQueryKey\(uid, companyId, 'inventory'/);
   assert.match(hook, /useInfiniteQuery/);
-  assert.match(mutationHook, /invalidateQueries/);
-  assert.match(mutationHook, /tenantQueryKey\(uid, companyId, 'inventory'/);
+  assert.match(mutationHook, /invalidateTenantQueries\(uid, companyId, 'inventory'/);
   assert.match(mutationHook, /adjustInventoryStock/);
   assert.match(mutationHook, /transferInventoryStock/);
   assert.match(mutationHook, /pickInventoryStock/);

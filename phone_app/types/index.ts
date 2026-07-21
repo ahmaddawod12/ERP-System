@@ -39,6 +39,11 @@ export type DateLike = FirestoreTimestamp | string | Date;
 export type Maybe<T> = T | null | undefined;
 
 export interface JobFileRef {
+  attachmentId?: string;
+  kind?: 'photo' | 'signature';
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
   storagePath?: string;
   uri?: string;
 }
@@ -358,10 +363,6 @@ export interface CacheContextValue {
   initializeCache: (uid: string, companyId: string, role: string) => Promise<any>;
   clearCache: () => void;
 
-  // Profile & Inventory
-  updateProfile: (data: any) => Promise<void>;
-  updateInventory: (data: any) => Promise<void>;
-
   // Jobs
   addJob: (data: any) => void;
   updateJob: (jobId: string, data: any) => void;
@@ -392,7 +393,6 @@ export interface CacheContextValue {
 
   // Utilities
   refreshCache: (field: string) => Promise<void>;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
   storage: any;
 }
 

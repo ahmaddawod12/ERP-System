@@ -21,6 +21,7 @@ import {
 interface SupportRequestIdentity {
   readonly uid: string;
   readonly companyId?: number | null;
+  readonly signal?: AbortSignal;
 }
 
 export function fetchSupportConversationsPage(input: SupportRequestIdentity & {
@@ -34,6 +35,7 @@ export function fetchSupportConversationsPage(input: SupportRequestIdentity & {
     {
       uid: input.uid,
       companyId: input.companyId ?? undefined,
+      signal: input.signal,
     },
   );
 }
@@ -48,6 +50,7 @@ export function fetchSupportThreadPage(input: SupportRequestIdentity & {
     {
       uid: input.uid,
       companyId: input.companyId ?? undefined,
+      signal: input.signal,
     },
   );
 }

@@ -9,11 +9,11 @@ cutover:
 - The Cloud Run API (`cloudrun-api`) as the sole backend trust boundary
 - PostgreSQL as the primary company-scoped ERP persistence layer
 - Supabase Storage for job attachments and generated documents; GCS for monthly
-  archives; Firebase Storage for mobile file uploads
+  archives
 - Cloud Run services for API, tax gateway, PDF generation, durable SES email,
   and archiving
-- Firebase Messaging for mobile push notifications; Firestore and App Check
-  have been removed
+- Firebase Messaging and Crashlytics for mobile push notifications and native
+  crash reporting; Firebase Storage, Firestore, and App Check have been removed
 - Tax stays disabled pending certification
 
 ## 1. Repository Components
@@ -70,11 +70,11 @@ Create or configure the Firebase and Google Cloud project:
 
 1. Create a Firebase project.
 2. Upgrade to Blaze.
-3. Enable Firestore.
-4. Enable Firebase Storage.
-5. Enable Cloud Messaging.
-6. Enable Authentication if you still need Firebase-native mobile or runtime services, but do not treat Firebase Auth as the primary client auth provider.
-7. Enable these Google Cloud APIs:
+3. Enable Cloud Messaging.
+4. Enable Crashlytics and register the Android and iOS applications.
+5. Download the native Firebase configuration files used by Messaging and
+   Crashlytics. Do not enable Firebase Auth, Firestore, or Storage for ERP data.
+6. Enable these Google Cloud APIs:
 
 ```bash
 gcloud services enable \
@@ -83,12 +83,7 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   cloudscheduler.googleapis.com \
   pubsub.googleapis.com \
-  firestore.googleapis.com \
   firebase.googleapis.com \
-  firebasehosting.googleapis.com \
-  firebasestorage.googleapis.com \
-  cloudfunctions.googleapis.com \
-  eventarc.googleapis.com \
   secretmanager.googleapis.com \
   iamcredentials.googleapis.com
 ```
@@ -697,8 +692,9 @@ Use these docs when working there:
 
 Cloud Run deployment/IAM workflow, custom API DNS mapping, and Playwright E2E
 CI are implemented. The Edge-to-Cloud-API cutover is complete; all Supabase
-Edge functions and handlers have been deleted. Firebase Messaging and Storage
-remain for push notifications and file uploads. Production tax submission
+Edge functions and handlers have been deleted. Firebase Messaging and
+Crashlytics remain for push notifications and native crash reporting.
+Production tax submission
 remains disabled pending certification, and stable API DNS is a mobile-release
 gate.
 

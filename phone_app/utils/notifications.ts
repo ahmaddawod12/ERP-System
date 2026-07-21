@@ -28,7 +28,7 @@ import {
   unsubscribeFromTopic as fcmUnsubscribeFromTopic,
   getAPNSToken,
   AuthorizationStatus
-} from '../firebase';
+} from '../lib/notifications/firebase-messaging';
 import { upsertViewerPushToken } from '../lib/api/push-tokens';
 import type { NotificationData } from '../lib/notifications/audience';
 import { logger } from './logger';

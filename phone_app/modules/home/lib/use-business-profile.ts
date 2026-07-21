@@ -14,7 +14,7 @@ export function useBusinessProfile(input: {
 
   return useQuery({
     queryKey: tenantQueryKey(uid, companyId, 'business-profile'),
-    queryFn: () => fetchBusinessProfile(uid, companyId),
+    queryFn: ({ signal }) => fetchBusinessProfile(uid, companyId, signal),
     placeholderData: (previousData, previousQuery) => {
       const previousKey = previousQuery?.queryKey;
       return previousKey?.[0] === 'tenant'

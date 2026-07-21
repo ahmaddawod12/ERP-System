@@ -11,10 +11,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth } from '../../../firebase';
+import { auth } from '../../../lib/auth/transport';
 import { randomUUID } from 'expo-crypto';
 import {
-  createJob as createJobApi,
   deleteJob as deleteJobApi,
 } from '../lib/jobs-api';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
@@ -23,9 +22,14 @@ import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
+import { useOutbox } from '../../../contexts/OutboxContext';
+import { useSession } from '../../../contexts/SessionContext';
+import { useTenant } from '../../../contexts/TenantContext';
 import { scopedKey, storage } from '../../../contexts/mmkv-storage';
-import { generateUuid, safeJsonParse } from '../../../utils/helpers';
-import { uploadJobFilesForStorage } from '../lib/job-file-utils';
+import { safeJsonParse } from '../../../utils/helpers';
+import { enqueueOutboxOperation } from '../../../lib/outbox/operations';
+import { stageFinishedJobAttachments } from '../lib/finished-job-outbox-attachments';
+import { buildFinishedJobOutboxPayload } from '../lib/finished-job-outbox-model';
 import type { DateLike, Job, JobItem } from '../../../types';
 import type { DateFilterRange } from '../../../components/forms/DateFilter';
 import { ROUTES } from '../../../navigation/routes';
@@ -70,6 +74,14 @@ export default function Userjob() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const insets = useSafeAreaInsets();
+  const { user: sessionUser } = useSession();
+  const { workspace } = useTenant();
+  const {
+    database: outboxDatabase,
+    ready: outboxReady,
+    synchronizeOperation,
+    refresh: refreshOutbox,
+  } = useOutbox();
   const {
     profile,
     jobs: cachedJobs,
@@ -78,7 +90,6 @@ export default function Userjob() {
     getUid,
     getCompanyId,
     getUserRole,
-    addJob,
     removeJob,
     getDataForDateRange,
     isWithinCacheRange,
@@ -334,78 +345,61 @@ export default function Userjob() {
       if (pendingArray.length === 0) return;
 
       setIsSyncing(true);
-      const failedJobs: PendingJobRecord[] = [];
+      if (!sessionUser || !workspace || !outboxReady || !outboxDatabase) {
+        throw new Error('The encrypted pending-work queue is not ready');
+      }
+      let remainingJobs = [...pendingArray];
 
       for (const pendingJob of pendingArray) {
         try {
-          const companyIdStr = getCompanyId();
-          const user = auth.currentUser;
-
-          if (!companyIdStr) throw new Error('No companyId');
-          if (!user?.uid) throw new Error('No user session');
-          const companyId = Number(companyIdStr);
-          if (!Number.isSafeInteger(companyId) || companyId <= 0) throw new Error('Invalid companyId');
-
           const jobPayload = {
             ...(pendingJob.jobData || {}),
           };
-
-          const attachmentUploadId = typeof jobPayload.attachmentUploadId === 'string' && jobPayload.attachmentUploadId.trim()
-            ? jobPayload.attachmentUploadId.trim()
-            : `pending-${generateUuid()}`;
-
-          const uploadResult = await uploadJobFilesForStorage(
-            companyIdStr,
-            attachmentUploadId,
-            Array.isArray(jobPayload.photos) ? jobPayload.photos as Array<string | { storagePath?: string; uri?: string }> : [],
-            (jobPayload.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
-          );
-          jobPayload.photos = uploadResult.photoRefs;
-          jobPayload.signature = uploadResult.signatureRef ?? undefined;
-          jobPayload.attachmentUploadId = attachmentUploadId;
-
-          const result = await createJobApi({
-            uid: user.uid,
-            companyId,
-            request: {
-              title: String(jobPayload.title || ''),
-              description: String(jobPayload.description || ''),
-              location: jobPayload.location ? String(jobPayload.location) : undefined,
-              status: 'finished',
-              timeFrom: jobPayload.timeFrom || undefined,
-              timeTo: jobPayload.timeTo || undefined,
-              signingPerson: jobPayload.signingPerson ? String(jobPayload.signingPerson) : undefined,
-            },
-            idempotencyKey: randomUUID(),
+          if (!jobPayload.signature) {
+            throw new Error('The pending job is missing its required signature');
+          }
+          const attachments = await stageFinishedJobAttachments({
+            userId: sessionUser.id,
+            photos: Array.isArray(jobPayload.photos) ? jobPayload.photos : [],
+            signature: jobPayload.signature,
+          });
+          const payload = buildFinishedJobOutboxPayload({
+            title: String(jobPayload.title || ''),
+            description: String(jobPayload.description || ''),
+            location: String(jobPayload.location || ''),
+            clientId: jobPayload.cid ?? null,
+            assigneeMemberNo: jobPayload.wid ?? null,
+            timeFrom: String(jobPayload.timeFrom || ''),
+            timeTo: String(jobPayload.timeTo || ''),
+            signingPerson: String(jobPayload.signingPerson || ''),
+            travelDistance: jobPayload.travelDistance ?? null,
+            parts: Array.isArray(jobPayload.partsUsed) ? jobPayload.partsUsed : [],
+          });
+          const operationId = await enqueueOutboxOperation({
+            database: outboxDatabase,
+            companyId: workspace.companyId,
+            kind: 'job.create_finished',
+            payload,
+            attachments,
           });
 
-          const serverJobId = result.jobId;
-          if (!serverJobId) {
-            throw new Error('Job was created without a server job ID');
+          remainingJobs = remainingJobs.filter((candidate) => candidate !== pendingJob);
+          if (remainingJobs.length > 0) {
+            storage.set(getUserPendingJobsStorageKey(), JSON.stringify(remainingJobs));
+          } else {
+            storage.remove(getUserPendingJobsStorageKey());
           }
-
-          const jobToSave = {
-            id: serverJobId,
-            ...jobPayload,
-            signature: uploadResult.signatureRef ?? undefined,
-            status: 'finished',
-            finishedAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-
-          if (pendingJob.localJobId) {
-            removeJob(String(pendingJob.localJobId));
-          }
-          addJob(jobToSave);
+          if (pendingJob.localJobId) removeJob(String(pendingJob.localJobId));
+          await synchronizeOperation(operationId).catch(() => undefined);
         } catch (error) {
           console.error('Error syncing job:', error);
-          failedJobs.push(pendingJob);
         }
       }
 
-      if (failedJobs.length > 0) {
-        storage.set(getUserPendingJobsStorageKey(), JSON.stringify(failedJobs));
-        setPendingJobCount(failedJobs.length);
+      await refreshOutbox();
+      if (remainingJobs.length > 0) {
+        storage.set(getUserPendingJobsStorageKey(), JSON.stringify(remainingJobs));
+        setPendingJobCount(remainingJobs.length);
         alert.error(t.syncError);
       } else {
         storage.remove(getUserPendingJobsStorageKey());
@@ -559,11 +553,13 @@ export default function Userjob() {
   storage.remove(getUserJobDraftStorageKey());
 
     router.push({
-      pathname: ROUTES.fillJob,
+      pathname: ROUTES.editJob,
       params: {
         mode: 'user',
         job: JSON.stringify({
           id: job.id,
+          entityVersion: job.entityVersion,
+          status: job.status,
           title: job.title || '',
           timeFrom: job.timeFrom || '',
           timeTo: job.timeTo || '',

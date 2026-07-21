@@ -25,11 +25,12 @@ export function useClientsInfinite(input: {
 
   const query = useInfiniteQuery({
     queryKey: tenantQueryKey(uid, companyId, 'clients', filters),
-    queryFn: ({ pageParam }) => fetchClientsPage({
+    queryFn: ({ pageParam, signal }) => fetchClientsPage({
       uid,
       companyId,
       filters,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,

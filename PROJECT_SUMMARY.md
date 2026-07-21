@@ -16,9 +16,10 @@ Smart-Job ERP is a **multi-tenant field-service platform**.
   bounded job/client/inventory reads, atomic job create/complete, private
   attachment upload sessions, first-workspace business registration, push-token
   mutations, invitation create/redeem, opaque web sessions, client/inventory/job
-  mutations, document tasks with durable PDF dispatch outbox, tax callback
-  processing, authoritative tax creation/submission, durable document-email
-  delivery, document workflow detail, and archive listing directly against
+  mutations, job detail and exact attachment access, document tasks with a
+  durable PDF dispatch outbox, tax callback processing, authoritative tax
+  creation/submission, durable document-email delivery, document workflow
+  detail, and exact archive-run retrieval directly against
   Postgres/Auth/Storage.
 - **Regional service:** `cloudrun-tax` is a stateless Cloud Run gateway in
   `me-west1` that terminates HMAC-authenticated tax-authority callbacks,
@@ -464,20 +465,19 @@ The following production and security issues were also fixed before Phase 1:
    inventory create/edit/archive/company-adjust now cross only exact-Origin,
    double-submit-CSRF BFF routes with retry-stable idempotency and the required
    opaque entity/stock versions. Legacy `/app/*` pages still coexist.
-11. **Mobile API/outbox slices** — the provider shell, tenant-scoped React Query
-    job/client/inventory reads, authenticated client and inventory mutations,
-    and encrypted
-    offline operations are implemented for only
+11. **Mobile API/outbox slices** — tenant-scoped React Query reads and typed
+    Cloud API mutations now cover the mobile ERP flows. Job details,
+    attachment signers, authoritative document state, and exact archive runs
+    are server-authorized; cache bootstrap is capped at five cursor pages / 1,000
+    rows, and server sync versions are authoritative. Encrypted offline
+    operations remain intentionally limited to
     `job.create_finished` and `job.complete_assigned`. Each uid has a SQLCipher
     database with a SecureStore key; staged files are AES-256-GCM chunk-encrypted
     and synchronize only at app start, foreground, or connectivity restoration.
     Pinned NotifyKit `10.4.8` handles local notifications while Firebase
-    Messaging remains the remote push transport. Client Book and legacy cache
-    client actions now share bounded active Cloud API pages, entity versions,
-    stable idempotency keys, and tenant-scoped query invalidation instead of
-    Edge/Firebase writes. Manager/dev company inventory writes and worker self-
-    stock adjustments now use the same API/versioned invalidation path; user
-    company inventory stays read-only.
+    Messaging remains the remote push transport and Crashlytics handles native
+    crash reporting. Direct Firebase Storage/callable access has been removed;
+    job files use signed Supabase upload sessions and exact signed downloads.
 
 The database migration chain now runs through `0030`. It includes a verified
 no-op post-`0024` metadata baseline, transactional accepted-job inventory
@@ -486,15 +486,16 @@ state, opaque dispatch, and authoritative approval-only tax PDF generation.
 The tax callback/approval integration, archive retrieval API, Cloud Run
 deployment/IAM workflow, CI integration-test job, and E2E test infrastructure
 (Playwright + Maestro) are now implemented. Website Firebase/legacy-auth
-infrastructure has been removed. Mobile Firestore/App Check have been removed;
-Firebase Messaging and Storage remain for push notifications and file uploads.
-The Edge-to-Cloud-API cutover is complete; all Supabase Edge functions and
-handlers have been deleted. Production tax submission remains disabled pending
-certification, and stable API DNS is a mobile-release gate.
+infrastructure has been removed. Mobile Firebase business-data access has been
+removed; only Messaging and Crashlytics remain. The repository's
+Edge-to-Cloud-API cutover is complete and all Supabase Edge functions and
+handlers have been deleted. Any already-deployed compatibility revision stays
+available until the 99%-adoption / 30-zero-traffic-day gate in
+`phone_app/MOBILE_ROLLOUT.md` passes. Production tax submission remains
+disabled pending certification, and stable API DNS is a mobile-release gate.
 
 ## Still on the technical-debt radar
 
-- Mobile has ~25 `@ts-nocheck` files under `phone_app/modules/` that should be typed incrementally.
 - `strict: false` is set in several `tsconfig.json` files; enabling strict mode will surface latent type errors.
 - Mobile screens are very large (1000+ lines) and should be split into hooks/components.
 - Some mobile lists use `.map()` inside `ScrollView` instead of `FlatList`.

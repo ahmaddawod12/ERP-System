@@ -5,7 +5,10 @@ import {
   DocumentListQuerySchema,
   MAX_DOCUMENT_PAGE_SIZE,
   type DocumentGenerationStatus,
+  type DocumentDetail,
   type DocumentSummary,
+  type EmailDeliveryStatus,
+  type TaxSubmissionStatus,
   type TaxAuthorityStatus,
 } from '@smart-job/api-contracts';
 import type { AppDocument, DateLike, DocTypeCode } from '../../../types';
@@ -36,6 +39,8 @@ export type DocumentHistoryRecord = AppDocument & {
   entityVersion?: string;
   hasFile?: boolean;
   emailSent?: boolean;
+  emailDeliveryStatus?: EmailDeliveryStatus | null;
+  taxSubmissionStatus?: TaxSubmissionStatus | null;
 };
 
 export interface DocumentListFilters {
@@ -206,6 +211,14 @@ export function mapDocumentSummary(summary: DocumentSummary): DocumentHistoryRec
     updatedAt: summary.updatedAt,
     hasFile: summary.hasFile,
     emailSent: summary.emailSent,
+    emailDeliveryStatus: summary.emailDeliveryStatus,
+  };
+}
+
+export function mapDocumentDetail(detail: DocumentDetail): DocumentHistoryRecord {
+  return {
+    ...mapDocumentSummary(detail),
+    taxSubmissionStatus: detail.taxSubmissionStatus,
   };
 }
 

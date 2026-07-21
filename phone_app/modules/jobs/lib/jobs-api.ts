@@ -5,6 +5,8 @@ import {
   JobCreateResultSchema,
   JobDeleteRequestSchema,
   JobDeleteResultSchema,
+  JobAttachmentDownloadAccessSchema,
+  JobDetailSchema,
   JobListPageSchema,
   JobUpdateRequestSchema,
   JobUpdateResultSchema,
@@ -15,6 +17,8 @@ import {
   type JobCreateResult,
   type JobDeleteRequest,
   type JobDeleteResult,
+  type JobAttachmentDownloadAccess,
+  type JobDetail,
   type JobSummary,
   type JobUpdateRequest,
   type JobUpdateResult,
@@ -31,6 +35,7 @@ export function fetchJobsPage(input: {
   readonly companyId: number;
   readonly filters: NormalizedJobListFilters;
   readonly afterCursor?: string | null;
+  readonly signal?: AbortSignal;
 }): Promise<CursorPage<JobSummary>> {
   return requestApi(
     buildJobListPath(input.companyId, input.filters, input.afterCursor ?? null),
@@ -38,6 +43,48 @@ export function fetchJobsPage(input: {
     {
       uid: input.uid,
       companyId: input.companyId,
+      signal: input.signal,
+    },
+  );
+}
+
+export function fetchJobDetail(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly jobId: string;
+  readonly signal?: AbortSignal;
+}): Promise<JobDetail> {
+  return requestApi(
+    companyJobPath(input.companyId, input.jobId),
+    JobDetailSchema,
+    {
+      uid: input.uid,
+      companyId: input.companyId,
+      signal: input.signal,
+    },
+  );
+}
+
+export function createJobAttachmentDownload(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly jobId: string;
+  readonly attachmentId: string;
+  readonly signal?: AbortSignal;
+}): Promise<JobAttachmentDownloadAccess> {
+  const attachmentId = input.attachmentId.trim();
+  if (!attachmentId) {
+    throw new Error('A valid attachment is required');
+  }
+  return requestApi(
+    `${companyJobPath(input.companyId, input.jobId)}/attachments/${
+      encodeURIComponent(attachmentId)
+    }/download`,
+    JobAttachmentDownloadAccessSchema,
+    {
+      uid: input.uid,
+      companyId: input.companyId,
+      signal: input.signal,
     },
   );
 }

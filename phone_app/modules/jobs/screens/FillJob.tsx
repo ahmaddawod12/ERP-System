@@ -32,7 +32,7 @@ import { safeJsonParse } from '../../../utils/helpers';
 import { logger } from '../../../utils/logger';
 import { enqueueOutboxOperation } from '../../../lib/outbox/operations';
 import type { OutboxOperationResult } from '../../../lib/outbox/processor';
-import { queryClient, tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import type { Client, InventoryPart, JobFileRef, JobItem } from '../../../types';
 import {
   getImmediateJobFileUri,
@@ -251,9 +251,14 @@ export default function FillJob() {
 
     try {
       setSignatureLoading(true);
-      const companyId = getCompanyId();
+      const companyId = Number(getCompanyId());
       const currentJobId = editingJob?.id || null;
-      const freshURL = await resolveJobFileUri(signatureRef, companyId, currentJobId);
+      const freshURL = await resolveJobFileUri(
+        signatureRef,
+        sessionUser?.id,
+        companyId,
+        currentJobId,
+      );
       
       logger.debug('Fresh signature URL obtained');
       setRefreshedSignatureURL(freshURL);
@@ -269,10 +274,15 @@ export default function FillJob() {
 
   const refreshPhotoPreviewUrls = async (photos: Array<string | JobFileRef>) => {
     try {
-      const companyId = getCompanyId();
+      const companyId = Number(getCompanyId());
       const currentJobId = editingJob?.id || null;
       const nextUrls = await Promise.all(
-        (Array.isArray(photos) ? photos : []).map((photo) => resolveJobFileUri(photo, companyId, currentJobId)),
+        (Array.isArray(photos) ? photos : []).map((photo) => resolveJobFileUri(
+          photo,
+          sessionUser?.id,
+          companyId,
+          currentJobId,
+        )),
       );
       setResolvedPhotoPreviewUrls(nextUrls.filter((value): value is string => Boolean(value)));
     } catch (error) {
@@ -618,9 +628,7 @@ export default function FillJob() {
             logger.warn('Could not refresh the pending-work list after enqueue', refreshError);
           });
         }
-        void queryClient.invalidateQueries({
-          queryKey: tenantQueryKey(sessionUser.id, workspace.companyId, 'jobs'),
-        }).catch((queryError) => {
+        void invalidateTenantQueries(sessionUser.id, workspace.companyId, 'jobs').catch((queryError) => {
           logger.warn('Could not refresh the jobs list after enqueue', queryError);
         });
 
@@ -680,9 +688,7 @@ export default function FillJob() {
           logger.warn('Could not refresh the pending-work list after enqueue', refreshError);
         });
       }
-      void queryClient.invalidateQueries({
-        queryKey: tenantQueryKey(sessionUser.id, workspace.companyId, 'jobs'),
-      }).catch((queryError) => {
+      void invalidateTenantQueries(sessionUser.id, workspace.companyId, 'jobs').catch((queryError) => {
         logger.warn('Could not refresh the jobs list after completion enqueue', queryError);
       });
 

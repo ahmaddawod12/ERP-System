@@ -109,8 +109,7 @@ test('client list screen uses tenant-scoped Cloud Run pagination, not the legacy
   assert.match(api, /method: 'PATCH'/);
   assert.match(api, /method: 'DELETE'/);
   assert.match(api, /idempotencyKey: input\.idempotencyKey/g);
-  assert.match(mutationHook, /tenantQueryKey\(uid, companyId, 'clients'\)/);
-  assert.match(mutationHook, /invalidateQueries/);
+  assert.match(mutationHook, /invalidateTenantQueries\(uid, companyId, 'clients'\)/);
   assert.match(cacheActions, /createApiClient/);
   assert.match(cacheActions, /updateApiClient/);
   assert.match(cacheActions, /deleteOrArchiveApiClient/);

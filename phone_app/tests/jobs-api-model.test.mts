@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { JobSummarySchema } from '@smart-job/api-contracts';
+import { JobDetailSchema, JobSummarySchema } from '@smart-job/api-contracts';
 
 import {
   buildJobListPath,
+  mapJobDetail,
   mapJobSummary,
   mergeJobSummaryPages,
   normalizeJobListFilters,
@@ -75,6 +76,29 @@ test('API jobs retain UUID identity, public number, and opaque entity version', 
   assert.equal(mapped.wid, 7);
   assert.equal(mapped.mname, 'Manager');
   assert.equal(mapped.cid, firstJob.client?.id);
+});
+
+test('job details keep public part numbers and opaque attachment ids at the mobile boundary', () => {
+  const partUuid = '33333333-3333-4333-8333-333333333333';
+  const attachmentId = '44444444-4444-4444-8444-444444444444';
+  const detail = JobDetailSchema.parse({
+    ...firstJob,
+    parts: [{ partId: partUuid, partNo: 18, name: 'Relay', quantity: 2 }],
+    attachments: [{
+      attachmentId,
+      kind: 'photo',
+      fileName: 'relay.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 1_024,
+      sha256: 'a'.repeat(64),
+      createdAt: firstJob.createdAt,
+    }],
+  });
+
+  const mapped = mapJobDetail(detail);
+  assert.equal(mapped.partsUsed[0]?.id, 18);
+  assert.equal(mapped.photos[0]?.attachmentId, attachmentId);
+  assert.equal('storagePath' in mapped.photos[0]!, false);
 });
 
 test('overlapping cursor pages are merged without duplicate jobs', () => {

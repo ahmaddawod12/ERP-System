@@ -6,7 +6,6 @@ interface WorkerActionsParams {
   getUserRole: () => string | null;
   getCompanyId: () => string | null;
   saveToLocalCache: (key: string, value: unknown) => void;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
 }
 
 export function useCacheWorkerActions({
@@ -14,7 +13,6 @@ export function useCacheWorkerActions({
   getUserRole,
   getCompanyId,
   saveToLocalCache,
-  preIncrementVersion,
 }: WorkerActionsParams) {
   const updateWorkers = useCallback(async (newWorkers: any) => {
     saveToLocalCache(CACHE_KEYS.WORKERS, newWorkers);
@@ -39,8 +37,7 @@ export function useCacheWorkerActions({
         companyId,
       },
     });
-    preIncrementVersion('workersVersion', true);
-  }, [getCompanyId, getUserRole, preIncrementVersion, saveToLocalCache, workers]);
+  }, [getCompanyId, getUserRole, saveToLocalCache, workers]);
 
   const editWorker = useCallback(async (wid: string, updates: any) => {
     const role = getUserRole();
@@ -63,14 +60,12 @@ export function useCacheWorkerActions({
         email: currentWorker.email,
       },
     });
-    preIncrementVersion('workersVersion', true);
-  }, [getCompanyId, getUserRole, preIncrementVersion, saveToLocalCache, workers]);
+  }, [getCompanyId, getUserRole, saveToLocalCache, workers]);
 
   const deleteWorker = useCallback(async (wid: string) => {
     const { [wid]: _deletedWorker, ...remainingWorkers } = workers;
     saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
-    preIncrementVersion('workersVersion', true);
-  }, [preIncrementVersion, saveToLocalCache, workers]);
+  }, [saveToLocalCache, workers]);
 
   return {
     updateWorkers,

@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   AccountTypeSchema,
   ApiErrorSchema,
+  ArchiveListPageSchema,
+  ArchiveListQuerySchema,
+  ArchiveRunDownloadSchema,
   BootstrapCountsSchema,
   BusinessRegistrationRequestSchema,
   BusinessRegistrationResultSchema,
@@ -35,6 +38,8 @@ import {
   EntityVersionSchema,
   JobListPageSchema,
   JobListQuerySchema,
+  JobAttachmentDownloadAccessSchema,
+  JobDetailSchema,
   JobSummarySchema,
   JobStatusSchema,
   JobAcceptRequestSchema,
@@ -461,6 +466,77 @@ test("job list contracts bound SQL filters and expose opaque entity versions", (
   assert.equal(JobSummarySchema.safeParse(job).success, true);
   assert.equal(JobSummarySchema.safeParse({ ...job, internalCompanyId: crypto.randomUUID() }).success, false);
   assert.equal(JobListPageSchema.safeParse({ items: [job], nextCursor: "opaque-cursor" }).success, true);
+
+  const detail = {
+    ...job,
+    parts: [{
+      partId: "70438ed9-fabe-46ca-a209-c89d2b9fe688",
+      partNo: 42,
+      name: "Relay",
+      quantity: 2,
+    }],
+    attachments: [{
+      attachmentId: "f72e5c0f-1901-48a5-9983-cd638bd234c2",
+      kind: "photo",
+      fileName: "before.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 1_024,
+      sha256: "a".repeat(64),
+      createdAt: "2026-07-13T12:00:00.000Z",
+    }],
+  };
+  assert.equal(JobDetailSchema.safeParse(detail).success, true);
+  assert.equal(JobDetailSchema.safeParse({ ...detail, storagePath: "private/path" }).success, false);
+  assert.equal(JobAttachmentDownloadAccessSchema.safeParse({
+    jobId: job.jobId,
+    attachmentId: detail.attachments[0].attachmentId,
+    kind: "photo",
+    downloadURL: "https://storage.example/signed?token=secret",
+    expiresAt: "2026-07-13T12:15:00.000Z",
+  }).success, true);
+});
+
+test("archive contracts expose opaque run IDs without storage paths", () => {
+  assert.deepEqual(ArchiveListQuerySchema.parse({
+    dataType: "jobs",
+    pageSize: "50",
+    afterCursor: "opaque-cursor",
+  }), {
+    dataType: "jobs",
+    pageSize: 50,
+    afterCursor: "opaque-cursor",
+  });
+  assert.equal(ArchiveListQuerySchema.safeParse({
+    afterCursor: "one",
+    cursor: "two",
+  }).success, false);
+
+  const run = {
+    archiveRunId: "72463e5d-1b3d-47a5-9278-b0293193f70a",
+    archiveKey: "2026-1-j",
+    dataType: "jobs",
+    status: "deleted",
+    docCount: 10,
+    deletedCount: 10,
+    checksum: "b".repeat(64),
+    createdAt: "2026-07-13T12:00:00.000Z",
+    completedAt: "2026-07-13T12:01:00.000Z",
+  };
+  assert.equal(ArchiveListPageSchema.safeParse({
+    items: [run],
+    nextCursor: null,
+  }).success, true);
+  assert.equal(ArchiveListPageSchema.safeParse({
+    items: [{ ...run, storagePath: "companies/42/archives/2026-1-j.json" }],
+    nextCursor: null,
+  }).success, false);
+  assert.equal(ArchiveRunDownloadSchema.safeParse({
+    archiveRunId: run.archiveRunId,
+    archiveKey: run.archiveKey,
+    dataType: run.dataType,
+    checksum: run.checksum,
+    items: [{ id: 17, status: "finished" }],
+  }).success, true);
 });
 
 test("client list contracts preserve canonical fields and bounded pagination", () => {

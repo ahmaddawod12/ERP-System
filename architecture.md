@@ -9,8 +9,9 @@ the completed Edge-to-Cloud-API cutover.
 - The Cloud Run API (`cloudrun-api`) is the sole backend trust boundary.
   All Supabase Edge functions and handlers have been deleted.
 - PostgreSQL is the primary source of truth for company-scoped ERP entities.
-- Firebase Messaging and Storage remain for mobile push notifications and file
-  uploads respectively; Firestore and App Check have been removed.
+- Firebase Messaging and Crashlytics remain for mobile push notifications and
+  native crash reporting; Firebase Storage, Firestore, and App Check have been
+  removed.
 - The private Supabase `smart-job-company-files` bucket owns job attachments
   and PDF/preview/branding paths; GCS remains for monthly archives.
 - `packages/api-contracts`, `cloudrun-api`, `cloudrun-tax`, `cloudrun-pdf`, and
@@ -97,10 +98,11 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
   entity version in SQL; only the three transaction functions are executable
   by `smart_job_api`.
 
-### Firestore
+### Firebase client services
 
-Firestore has been removed from the mobile and website clients. Firebase
-Messaging and Storage remain for push notifications and file uploads.
+Firebase business-data services have been removed from the mobile and website
+clients. Messaging and Crashlytics remain for push notifications and native
+crash reporting.
 
 ### File storage ownership
 
@@ -108,7 +110,8 @@ The private Supabase bucket `smart-job-company-files` is the canonical target
 and is implemented for generated PDFs, previews, company-branding reads, and
 the job photo/signature upload-session flow. Object paths start with the
 internal company UUID. Google Cloud Storage is retained for internal monthly
-archive payloads. Firebase Storage remains for mobile file uploads.
+archive payloads. The mobile client accesses job files only through signed
+Supabase upload sessions and exact signed download routes.
 
 Upload-session creation is claim-idempotent: the API claim UUID is also the
 session UUID, so a retry cannot allocate a second prefix. Postgres serializes a
@@ -331,6 +334,6 @@ the image entrypoint validates that marker. Tax remains disabled.
 
 The Edge-to-Cloud-API cutover is complete. All Supabase Edge functions and
 handlers have been deleted. The Cloud Run API is the sole backend trust
-boundary. Firebase Messaging and Storage remain for push notifications and file
-uploads. Production tax submission remains disabled pending certification, and
+boundary. Firebase Messaging and Crashlytics remain for push notifications and
+native crash reporting. Production tax submission remains disabled pending certification, and
 stable API DNS is a production mobile-release gate.

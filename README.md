@@ -8,9 +8,10 @@ Smart-Job ERP is a multi-tenant field-service platform for solo operators and bu
 - The Cloud Run API (`cloudrun-api`) is the sole backend trust boundary. All
   Supabase Edge functions and handlers have been deleted.
 - PostgreSQL (via `packages/db`) is the primary source of truth for company-scoped ERP data.
-- Firebase Messaging and Storage remain for mobile push notifications and file
-  uploads; Firestore and App Check have been removed. Active PDFs and previews
-  use private Supabase Storage; GCS remains for monthly archives.
+- Firebase Messaging and Crashlytics remain for mobile push notifications and
+  native crash reporting. Firebase Storage, Firestore, and App Check have been
+  removed. Active job files, PDFs, and previews use private Supabase Storage;
+  GCS remains for monthly archives.
 - Cloud Run workers handle PDF generation, durable SES document delivery, and
   monthly archives. Pub/Sub messages for PDF/email contain opaque IDs only;
   workers claim canonical state through least-privilege private SQL RPCs.

@@ -25,14 +25,14 @@ test('typed job and document screens do not regress to ts-nocheck', () => {
 
 test('auth tokens are stored in SecureStore instead of MMKV-derived keys', () => {
   const mmkvStorage = readProjectFile('contexts', 'mmkv-storage.ts');
-  const firebase = readProjectFile('firebase.ts');
+  const authTransport = readProjectFile('lib', 'auth', 'transport.ts');
   const supabaseClient = readProjectFile('lib', 'auth', 'supabase-client.ts');
 
   assert.doesNotMatch(mmkvStorage, /encryptionKey:\s*['"]smart-job-auth-v1['"]/);
   assert.doesNotMatch(mmkvStorage, /AUTH_STORAGE_KEY_SEED/);
   assert.doesNotMatch(mmkvStorage, /storage\.getString\([^\n]*AUTH_STORAGE_KEY/);
   assert.doesNotMatch(mmkvStorage, /EXPO_PUBLIC_MMKV_AUTH_KEY/);
-  assert.doesNotMatch(firebase, /authStorage\.(getString|set|remove)/);
+  assert.doesNotMatch(authTransport, /authStorage\.(getString|set|remove)/);
   assert.match(supabaseClient, /expo-secure-store/);
   assert.match(supabaseClient, /SecureStore\.setItemAsync/);
   assert.match(supabaseClient, /SecureStore\.getItemAsync/);
@@ -42,12 +42,13 @@ test('auth tokens are stored in SecureStore instead of MMKV-derived keys', () =>
   assert.doesNotMatch(supabaseClient, /EXPO_PUBLIC_SUPABASE_ANON_KEY/);
 });
 
-test('read-model list helpers use Cloud API with paginated draining', () => {
+test('read-model list helpers use Cloud API with bounded cursor windows', () => {
   const readModel = readProjectFile('utils', 'read-model.ts');
 
   assert.match(readModel, /export async function fetchCompanyJobsPage/);
   assert.match(readModel, /export async function fetchCompanyDocumentsPage/);
-  assert.match(readModel, /drainPages/);
+  assert.match(readModel, /fetchCursorWindow/);
+  assert.match(readModel, /MAX_CURSOR_WINDOW_ITEMS = 1_000/);
   assert.match(readModel, /items\.map\(mapJobSummary\)/);
   assert.match(readModel, /items\.map\(mapDocumentSummary\)/);
   assert.doesNotMatch(readModel, /callHttpFunction/);

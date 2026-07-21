@@ -29,7 +29,7 @@ import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { queryClient, tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import { borderRadius, getColors, gradients, shadows, spacing, typography } from '../../../theme';
 import { logger } from '../../../utils/logger';
 import { StableSupportActionKeys } from '../lib/support-action-keys';
@@ -189,9 +189,7 @@ export default function SupportChat() {
 
   const invalidateConversationLists = async () => {
     if (!uid) return;
-    await queryClient.invalidateQueries({
-      queryKey: tenantQueryKey(uid, scopeCompanyId, 'support', 'conversations'),
-    });
+    await invalidateTenantQueries(uid, scopeCompanyId, 'support', 'conversations');
   };
 
   const markConversationRead = async (conversationId: string) => {

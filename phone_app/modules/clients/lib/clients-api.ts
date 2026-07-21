@@ -39,6 +39,7 @@ export function fetchClientsPage(input: {
   readonly companyId: number;
   readonly filters: NormalizedClientListFilters;
   readonly afterCursor?: string | null;
+  readonly signal?: AbortSignal;
 }): Promise<CursorPage<ClientSummary>> {
   return requestApi(
     buildClientListPath(input.companyId, input.filters, input.afterCursor ?? null),
@@ -46,6 +47,7 @@ export function fetchClientsPage(input: {
     {
       uid: input.uid,
       companyId: input.companyId,
+      signal: input.signal,
     },
   );
 }

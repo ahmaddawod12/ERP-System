@@ -13,9 +13,10 @@ import { fetchJobsPage as fetchJobsPageApi } from '../modules/jobs/lib/jobs-api'
 import { fetchDocumentsPage as fetchDocumentsPageApi } from '../modules/documents/lib/documents-api';
 import { mapJobSummary, normalizeJobListFilters } from '../modules/jobs/lib/job-list-model';
 import { mapDocumentSummary, normalizeDocumentListFilters } from '../modules/documents/lib/document-history-model';
-import { auth } from '../firebase';
+import { auth } from '../lib/auth/transport';
 
-const MAX_DRAIN_PAGES = 50;
+const MAX_CURSOR_WINDOW_PAGES = 5;
+const MAX_CURSOR_WINDOW_ITEMS = 1_000;
 
 function numericCompanyId(companyId: string): number {
   const n = Number(companyId);
@@ -31,9 +32,9 @@ function currentUid(): string {
   return uid;
 }
 
-function positiveLimit(value: unknown, fallback = 10_000): number {
+function positiveLimit(value: unknown, fallback = MAX_CURSOR_WINDOW_ITEMS): number {
   return typeof value === 'number' && Number.isFinite(value)
-    ? Math.min(10_000, Math.max(1, Math.trunc(value)))
+    ? Math.min(MAX_CURSOR_WINDOW_ITEMS, Math.max(1, Math.trunc(value)))
     : fallback;
 }
 
@@ -48,13 +49,13 @@ function normalizeWorker(worker: any) {
   };
 }
 
-async function drainPages<T>(
+async function fetchCursorWindow<T>(
   fetchPage: (afterCursor: string | null) => Promise<{ items: readonly T[]; nextCursor: string | null }>,
-  maximumItems = 10_000,
+  maximumItems = MAX_CURSOR_WINDOW_ITEMS,
 ): Promise<T[]> {
   const items: T[] = [];
   let cursor: string | null = null;
-  for (let i = 0; i < MAX_DRAIN_PAGES; i++) {
+  for (let i = 0; i < MAX_CURSOR_WINDOW_PAGES; i++) {
     const page = await fetchPage(cursor);
     items.push(...page.items);
     if (items.length >= maximumItems) return items.slice(0, maximumItems);
@@ -66,7 +67,7 @@ async function drainPages<T>(
 
 export async function fetchCompanyWorkers(companyId: string) {
   const numericId = numericCompanyId(companyId);
-  const items = await drainPages((cursor) =>
+  const items = await fetchCursorWindow((cursor) =>
     fetchWorkersPage({ uid: currentUid(), companyId: numericId, afterCursor: cursor }),
   );
   return items.map(normalizeWorker).filter((worker) => worker.wid || worker.uid || worker.email);
@@ -75,7 +76,7 @@ export async function fetchCompanyWorkers(companyId: string) {
 export async function fetchCompanyInventoryParts(companyId: string) {
   const numericId = numericCompanyId(companyId);
   const filters = normalizeInventoryListFilters({ pageSize: 200 });
-  const items = await drainPages((cursor) =>
+  const items = await fetchCursorWindow((cursor) =>
     fetchInventoryPage({ uid: currentUid(), companyId: numericId, scope: 'company', filters, afterCursor: cursor }),
   );
   return items.map((part: any) => ({ ...part, id: part.partId ?? part.id }));
@@ -88,7 +89,7 @@ export async function fetchUserInventoryParts(companyId: string, targetMemberNo:
     throw new Error('A valid member number is required');
   }
   const filters = normalizeInventoryListFilters({ pageSize: 200 });
-  const items = await drainPages((cursor) =>
+  const items = await fetchCursorWindow((cursor) =>
     fetchInventoryPage({
       uid: currentUid(),
       companyId: numericId,
@@ -114,7 +115,7 @@ export async function fetchCompanyJobs(companyId: string, limitOrOptions?: numbe
     ...(options.creatorUid ? { creatorUid: options.creatorUid } : {}),
     ...(options.search ? { search: options.search } : {}),
   });
-  const items = await drainPages(
+  const items = await fetchCursorWindow(
     (cursor) => fetchJobsPageApi({ uid: currentUid(), companyId: numericId, filters, afterCursor: cursor }),
     limit,
   );
@@ -152,7 +153,7 @@ export async function fetchCompanyDocuments(companyId: string, limitOrOptions?: 
     ...(options.dateTo ? { dateTo: options.dateTo } : {}),
     ...(options.search ? { search: options.search } : {}),
   });
-  const items = await drainPages(
+  const items = await fetchCursorWindow(
     (cursor) => fetchDocumentsPageApi({ uid: currentUid(), companyId: numericId, filters, afterCursor: cursor }),
     limit,
   );

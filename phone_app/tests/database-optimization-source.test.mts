@@ -7,11 +7,12 @@ function readRepoFile(...segments: string[]) {
   return fs.readFileSync(path.resolve(process.cwd(), '..', ...segments), 'utf8');
 }
 
-test('large mobile reads drain Cloud API pages', () => {
+test('large mobile reads use bounded Cloud API cursor windows', () => {
   const source = readRepoFile('phone_app', 'utils', 'read-model.ts');
 
-  assert.match(source, /drainPages/);
-  assert.match(source, /MAX_DRAIN_PAGES/);
+  assert.match(source, /fetchCursorWindow/);
+  assert.match(source, /MAX_CURSOR_WINDOW_PAGES = 5/);
+  assert.match(source, /MAX_CURSOR_WINDOW_ITEMS = 1_000/);
 });
 
 test('mobile initial cache does not bootstrap broad job/document collections', () => {

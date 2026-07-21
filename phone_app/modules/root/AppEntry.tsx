@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
-import { auth, onAuthStateChanged } from '../../firebase';
-import type { SupabaseAuthUser } from '../../firebase';
+import { auth, onAuthStateChanged } from '../../lib/auth/transport';
+import type { SupabaseAuthUser } from '../../lib/auth/transport';
 import Login from '../auth/screens/Login';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -12,12 +12,17 @@ import { useAlert } from '../../contexts/AlertContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { AppText } from '../../components';
 import { ROUTES } from '../../navigation/routes';
+import {
+  initializeCrashlytics,
+  recordCrashlyticsError,
+  setCrashlyticsUser,
+} from '../../lib/firebase-crashlytics';
 
 export default function App() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<SupabaseAuthUser | null>(null);
-  const [firebaseInitialized, setFirebaseInitialized] = useState(false);
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const { language } = useLanguageContext();
   const { initializeCache } = useCache();
@@ -154,15 +159,20 @@ export default function App() {
       console.log('🔐 Initializing auth and notifications...');
       
       try {
-        // Native services are initialized in firebase.ts.
-        // Now set up the Supabase-backed auth listener exposed through the compatibility wrapper.
+        try {
+          await initializeCrashlytics();
+        } catch (crashlyticsError) {
+          console.warn('Crash reporting is unavailable:', crashlyticsError);
+        }
+        // Set up the Supabase-backed auth listener independently of Firebase native services.
         unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
           if (!isActive) {
             return;
           }
 
           setUser(nextUser);
-          setFirebaseInitialized(true);
+          setAuthInitialized(true);
+          void setCrashlyticsUser(nextUser?.uid ?? null).catch(() => undefined);
           
           if (nextUser) {
             if (!workspaceCompanyId || !workspaceRole) {
@@ -214,6 +224,7 @@ export default function App() {
               }
             } catch (error) {
               initializedScopeRef.current = null;
+              recordCrashlyticsError(error);
               console.error('Error during authentication:', error);
               setIsLoading(false);
             }
@@ -225,8 +236,9 @@ export default function App() {
           }
         });
       } catch (error) {
-        console.error('Firebase initialization error:', error);
-        setFirebaseInitialized(true);
+        recordCrashlyticsError(error);
+        console.error('Native service initialization error:', error);
+        setAuthInitialized(true);
         setIsLoading(false);
       }
     };
@@ -253,7 +265,7 @@ export default function App() {
   ]);
 
   // Show loading screen while native services initialize with branded design
-  if (isLoading || !firebaseInitialized) {
+  if (isLoading || !authInitialized) {
     return (
       <View style={styles.container}>
         <LinearGradient

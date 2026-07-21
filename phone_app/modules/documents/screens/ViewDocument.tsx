@@ -21,6 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
@@ -32,7 +33,12 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
 import { getDocumentDownloadUrl } from '../lib/document-download';
-import type { DocumentHistoryRecord } from '../lib/document-history-model';
+import {
+  mapDocumentDetail,
+  type DocumentHistoryRecord,
+} from '../lib/document-history-model';
+import { fetchDocumentDetail } from '../lib/documents-api';
+import { tenantQueryKey } from '../../../lib/query/client';
 
 // Document type behavior configurations (visual metadata lives in @smart-job/contracts)
 const DOCUMENT_BEHAVIOR_CONFIGS = {
@@ -80,7 +86,18 @@ export default function ViewDocument() {
   const colors = getColors(isDarkMode);
   
   // Parse document from params (passed from DocumentHistory)
-  const document = safeJsonParse(params.document) as DocumentHistoryRecord | null;
+  const routeDocument = safeJsonParse(params.document) as DocumentHistoryRecord | null;
+  const uid = user?.id ?? '';
+  const companyId = workspace?.companyId ?? 0;
+  const documentId = String(routeDocument?.documentId || routeDocument?.id || '').trim();
+  const detailQuery = useQuery({
+    queryKey: tenantQueryKey(uid, companyId, 'documents', 'detail', documentId),
+    queryFn: ({ signal }) => fetchDocumentDetail({ uid, companyId, documentId, signal }),
+    enabled: uid.length > 0 && companyId > 0 && documentId.length > 0,
+  });
+  const document: DocumentHistoryRecord | null = detailQuery.data
+    ? { ...routeDocument, ...mapDocumentDetail(detailQuery.data) }
+    : routeDocument;
 
   // Translations
   const t = getTranslations(language);

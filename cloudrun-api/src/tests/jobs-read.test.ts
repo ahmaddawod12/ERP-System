@@ -12,11 +12,14 @@ import type {
 import {
   READ_JOBS_ENTITLEMENT_SQL,
   READ_JOBS_PAGE_SQL,
+  READ_JOB_ATTACHMENT_FILE_SQL,
+  READ_JOB_DETAIL_SQL,
   decodeJobListCursor,
   encodeJobListCursor,
   readJobsPage,
 } from "../jobs/read-repository.js";
 import { registerJobsReadRoutes } from "../routes/jobs-read.js";
+import type { CompanyFileStorage } from "../storage/company-files.js";
 import { RESOLVE_TENANT_SQL } from "../tenancy/context.js";
 
 const userId = "3ff2c74a-b0bf-4c46-b759-dbdf23d93ab1";
@@ -26,6 +29,8 @@ const webSessionToken = "R".repeat(43);
 const firstJobId = "ffe77602-d9b1-4a53-97e1-52df99f97224";
 const secondJobId = "4877089d-60c8-44f6-be79-116e6f3b34cc";
 const thirdJobId = "126bf50f-51de-4cf7-a2a1-90fb615e12b5";
+const attachmentId = "18188ccf-bb15-46ba-8825-c302b6e3d107";
+const partId = "ab8224f8-8d29-49c2-949a-ae8cf92ab984";
 
 function verifier(): SupabaseJwtVerifier {
   return {
@@ -296,4 +301,137 @@ test("job read SQL enforces entitlement, role scope, filters, and composite keys
   assert.match(READ_JOBS_PAGE_SQL, /ORDER BY job\.created_at DESC, job\.id DESC/);
   assert.match(READ_JOBS_PAGE_SQL, /LIMIT \$9::integer/);
   assert.doesNotMatch(READ_JOBS_PAGE_SQL, /\bOFFSET\b|SELECT \*/i);
+});
+
+test("job detail returns parts and opaque attachment metadata, then signs an exact file", async (context) => {
+  let objectPath = `${internalCompanyId}/${userId}/session/${attachmentId}.jpg`;
+  const transaction: DatabaseQueryable = {
+    async query<Row extends QueryResultRow>(text: string, values?: readonly unknown[]) {
+      if (text === RESOLVE_TENANT_SQL) {
+        return {
+          rowCount: 1,
+          rows: [{
+            internal_company_id: internalCompanyId,
+            public_company_id: "42",
+            name: "Field Services",
+            account_type: "business",
+            role: "manager",
+            member_no: 1,
+            tier: "Team",
+            enabled_modules: {},
+          }] as unknown as Row[],
+        };
+      }
+      if (text === READ_JOBS_ENTITLEMENT_SQL) {
+        assert.deepEqual(values, [internalCompanyId]);
+        return {
+          rowCount: 1,
+          rows: [{ jobs_enabled: true }] as unknown as Row[],
+        };
+      }
+      if (text === READ_JOB_DETAIL_SQL) {
+        assert.deepEqual(values, [internalCompanyId, firstJobId]);
+        return {
+          rowCount: 1,
+          rows: [{
+            ...jobRow(firstJobId, 3, "2026-07-13T12:00:00.000Z"),
+            parts: [{ partId, partNo: 42, name: "Relay", quantity: 2 }],
+            attachments: [{
+              attachmentId,
+              kind: "photo",
+              fileName: "before.jpg",
+              mimeType: "image/jpeg",
+              sizeBytes: 1_024,
+              sha256: "a".repeat(64),
+              createdAt: "2026-07-13T12:00:00.000Z",
+            }],
+          }] as unknown as Row[],
+        };
+      }
+      if (text === READ_JOB_ATTACHMENT_FILE_SQL) {
+        assert.deepEqual(values, [internalCompanyId, firstJobId, attachmentId]);
+        return {
+          rowCount: 1,
+          rows: [{
+            job_id: firstJobId,
+            attachment_id: attachmentId,
+            kind: "photo",
+            storage_path: objectPath,
+          }] as unknown as Row[],
+        };
+      }
+      throw new Error("Unexpected query");
+    },
+  };
+  const runtime: ApiDatabaseRuntime = {
+    maxConnections: 5,
+    async checkReadiness() {},
+    async close() {},
+    async withTransaction(_context, work) {
+      return work(transaction);
+    },
+  };
+  const signedPaths: string[] = [];
+  const storage: CompanyFileStorage = {
+    async createSignedUploadTargets() { return []; },
+    async verifyUploadedAttachments() {},
+    async createSignedDownloadUrl(path, expiresInSeconds) {
+      signedPaths.push(path);
+      assert.equal(expiresInSeconds, 900);
+      return "https://storage.example/signed-job-photo?token=private";
+    },
+    async removeObjects() {},
+  };
+  const app = await buildApp({ config: loadConfig({}), logger: false });
+  context.after(() => app.close());
+  registerJobsReadRoutes(app, {
+    database: runtime,
+    authenticator: createApiRequestAuthenticator({
+      jwtVerifier: verifier(),
+      webSessions: { async authenticateSession() { throw new Error("not used"); } },
+    }),
+    storage,
+  });
+
+  const detailResponse = await app.inject({
+    method: "GET",
+    url: `/api/v1/companies/42/jobs/${firstJobId}`,
+    headers: { authorization: "Bearer header.payload.signature" },
+  });
+  assert.equal(detailResponse.statusCode, 200, detailResponse.body);
+  assert.equal(detailResponse.headers["cache-control"], "private, no-store");
+  const detail = detailResponse.json().data;
+  assert.equal(detail.parts[0].partNo, 42);
+  assert.equal(detail.attachments[0].fileName, "before.jpg");
+  assert.equal("storagePath" in detail.attachments[0], false);
+
+  const downloadResponse = await app.inject({
+    method: "GET",
+    url: `/api/v1/companies/42/jobs/${firstJobId}/attachments/${attachmentId}/download`,
+    headers: { authorization: "Bearer header.payload.signature" },
+  });
+  assert.equal(downloadResponse.statusCode, 200, downloadResponse.body);
+  assert.equal(downloadResponse.headers["cache-control"], "private, no-store");
+  assert.equal(downloadResponse.json().data.downloadURL, "https://storage.example/signed-job-photo?token=private");
+  assert.deepEqual(signedPaths, [objectPath]);
+
+  objectPath = `${internalCompanyId}/../foreign/${attachmentId}.jpg`;
+  const invalidPathResponse = await app.inject({
+    method: "GET",
+    url: `/api/v1/companies/42/jobs/${firstJobId}/attachments/${attachmentId}/download`,
+    headers: { authorization: "Bearer header.payload.signature" },
+  });
+  assert.equal(invalidPathResponse.statusCode, 409, invalidPathResponse.body);
+  assert.equal(invalidPathResponse.json().error.code, "JOB_ATTACHMENT_FILE_INVALID");
+  assert.equal(signedPaths.length, 1);
+});
+
+test("job detail and attachment SQL preserve the list role scope", () => {
+  for (const sql of [READ_JOB_DETAIL_SQL, READ_JOB_ATTACHMENT_FILE_SQL]) {
+    assert.match(sql, /membership\.user_id = private\.app_auth_uid\(\)/);
+    assert.match(sql, /requester\.role = 'worker'/);
+    assert.match(sql, /requester\.role = 'user'[\s\S]*requester\.account_type = 'solo'/);
+    assert.match(sql, /job\.assigned_membership_id = requester\.membership_id/);
+    assert.doesNotMatch(sql, /SELECT \*/i);
+  }
 });

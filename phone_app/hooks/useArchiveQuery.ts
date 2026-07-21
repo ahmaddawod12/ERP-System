@@ -12,9 +12,6 @@
 
 import { useCallback } from 'react';
 import {
-  ArchiveContentResponseSchema,
-} from '@smart-job/api-contracts';
-import {
   mmkvHelpers,
   CACHE_KEYS,
   CACHE_EXPIRY_MS,
@@ -22,23 +19,13 @@ import {
   TIER2_CACHE_TTL_MS,
   getCacheStartDate,
 } from '../contexts/mmkv-storage';
-import {
-  buildJobMembershipQueryValues,
-  roleUsesScopedJobAccess,
-} from '../contexts/job-membership';
 import { fetchCompanyDocuments, fetchCompanyJobs } from '../utils/read-model';
-import { requestApi } from '../lib/api/client';
+import { downloadArchiveRun, findArchiveRun } from '../lib/api/archives';
 import { logger } from '../utils/logger';
 
-const ARCHIVE_READ_LIMIT = 10_000;
+const ARCHIVE_READ_LIMIT = 1_000;
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
-
-function buildJobMembershipConstraints(wid: string | number | null): any[] {
-  const values = buildJobMembershipQueryValues(wid);
-  if (values.length === 0) return [];
-  return values;
-}
 
 function normalizeTimestamp(value: any): number {
   if (!value) return 0;
@@ -54,20 +41,11 @@ function isWithinRange(value: any, startMs: number, endMs: number, inclusiveEnd 
     : timestamp >= startMs && timestamp < endMs;
 }
 
-function filterJobsByMembership(jobs: any[], role: string, wid: string | number | null) {
-  if (!roleUsesScopedJobAccess(role)) return jobs;
-  const values = buildJobMembershipConstraints(wid);
-  if (values.length === 0) return [];
-  const normalized = new Set(values.map((value) => String(value)));
-  return jobs.filter((job) => normalized.has(String(job?.wid ?? '')));
-}
-
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
 export interface ArchiveQueryDeps {
   getUserRole: () => string | null;
   getUid: () => string | null;
-  getWid: () => string | null;
   getCompanyId: () => string | null;
   jobs: any[];
   companyJobs: any[];
@@ -77,7 +55,6 @@ export interface ArchiveQueryDeps {
 export function useArchiveQuery({
   getUserRole,
   getUid,
-  getWid,
   getCompanyId,
   jobs,
   companyJobs,
@@ -114,10 +91,18 @@ export function useArchiveQuery({
       const uid = getUid();
       if (!uid) return [];
 
-      const path = `/api/v1/companies/${numericCompanyId}/archives/content?year=${year}&month=${month}&dataType=${encodeURIComponent(dataType)}`;
-      const result = await requestApi(path, ArchiveContentResponseSchema, {
+      const archiveDataType = dataType === 'finishedJobs' ? 'jobs' : 'documents';
+      const run = await findArchiveRun({
         uid,
         companyId: numericCompanyId,
+        archiveKey,
+        dataType: archiveDataType,
+      });
+      if (!run) return [];
+      const result = await downloadArchiveRun({
+        uid,
+        companyId: numericCompanyId,
+        archiveRunId: run.archiveRunId,
       });
 
       const docs = Array.isArray(result?.items) ? result.items : [];
@@ -144,11 +129,9 @@ export function useArchiveQuery({
   ): Promise<any[]> => {
     const role = getUserRole();
     const uid = getUid();
-    const wid = getWid();
     const companyId = getCompanyId();
     if (!companyId || !uid) return [];
     const safeRole = role || '';
-    const safeWid = wid || '';
 
     const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
     const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
@@ -185,17 +168,13 @@ export function useArchiveQuery({
 
       try {
         if (dataType === 'finishedJobs') {
-          const jobsData = filterJobsByMembership(
-            await fetchCompanyJobs(companyId, {
+          const jobsData = await fetchCompanyJobs(companyId, {
               limit: ARCHIVE_READ_LIMIT,
               status: 'finished',
               dateField: 'finishedAt',
               dateFrom: new Date(monthStartMs).toISOString(),
               dateTo: new Date(cacheStartMs - 1).toISOString(),
-            }),
-            safeRole,
-            safeWid,
-          );
+            });
           return [...cachedPart, ...jobsData];
         } else {
           const documentsData = await fetchCompanyDocuments(companyId, {
@@ -222,17 +201,13 @@ export function useArchiveQuery({
     try {
       let backendData: any[] = [];
       if (dataType === 'finishedJobs') {
-        backendData = filterJobsByMembership(
-          await fetchCompanyJobs(companyId, {
+        backendData = await fetchCompanyJobs(companyId, {
             limit: ARCHIVE_READ_LIMIT,
             status: 'finished',
             dateField: 'finishedAt',
             dateFrom: new Date(monthStartMs).toISOString(),
             dateTo: new Date(monthEndMs).toISOString(),
-          }),
-          safeRole,
-          safeWid,
-        );
+          });
       } else {
         backendData = await fetchCompanyDocuments(companyId, {
           limit: ARCHIVE_READ_LIMIT,
@@ -251,15 +226,7 @@ export function useArchiveQuery({
       const archiveBoundary = new Date(now.getTime() - ARCHIVE_BOUNDARY_MS);
       if (monthEnd.getTime() < archiveBoundary.getTime()) {
         const archived = await fetchFromArchive(companyId, monthDate.getFullYear(), monthDate.getMonth() + 1, dataType);
-        if (archived && archived.length > 0) {
-          if (dataType === 'finishedJobs' && safeRole !== 'manager') {
-            return archived.filter((item: any) => String(item.wid) === wid);
-          }
-          if (dataType === 'documents' && safeRole !== 'manager') {
-            return archived.filter((item: any) => item.createdByUid === uid);
-          }
-          return archived;
-        }
+        if (archived && archived.length > 0) return archived;
       }
 
       return [];
@@ -267,7 +234,7 @@ export function useArchiveQuery({
       console.error('Error fetching month data:', error);
       return [];
     }
-  }, [getUserRole, getUid, getWid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
+  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
   /**
    * Get data for an arbitrary date range with smart caching.
@@ -280,7 +247,6 @@ export function useArchiveQuery({
   ): Promise<any[]> => {
     const role = getUserRole();
     const uid = getUid();
-    const wid = getWid();
     const companyId = getCompanyId();
     if (!companyId || !uid || !role) return [];
     const safeRole = role;
@@ -317,17 +283,13 @@ export function useArchiveQuery({
     try {
       let backendData: any[] = [];
       if (dataType === 'finishedJobs') {
-        backendData = filterJobsByMembership(
-          await fetchCompanyJobs(companyId, {
+        backendData = await fetchCompanyJobs(companyId, {
             limit: ARCHIVE_READ_LIMIT,
             status: 'finished',
             dateField: 'finishedAt',
             dateFrom: new Date(startMs).toISOString(),
             dateTo: new Date(cacheStartMs - 1).toISOString(),
-          }),
-          safeRole,
-          wid,
-        );
+          });
       } else if (dataType === 'documents') {
         backendData = await fetchCompanyDocuments(companyId, {
           limit: ARCHIVE_READ_LIMIT,
@@ -336,17 +298,13 @@ export function useArchiveQuery({
           dateTo: new Date(cacheStartMs - 1).toISOString(),
         });
       } else if (dataType === 'pendingJobs') {
-        backendData = filterJobsByMembership(
-          await fetchCompanyJobs(companyId, {
+        backendData = await fetchCompanyJobs(companyId, {
             limit: ARCHIVE_READ_LIMIT,
             status: ['pending', 'waiting'],
             dateField: 'createdAt',
             dateFrom: new Date(startMs).toISOString(),
             dateTo: new Date(cacheStartMs - 1).toISOString(),
-          }),
-          safeRole,
-          wid,
-        );
+          });
       }
 
       if (backendData.length === 0 && dataType !== 'pendingJobs') {
@@ -363,11 +321,6 @@ export function useArchiveQuery({
                 const d = item[dField] ? new Date(item[dField]).getTime() : 0;
                 return d >= startMs && d <= endMs;
               });
-              if (safeRole !== 'manager') {
-                const userField = dataType === 'finishedJobs' ? 'wid' : 'createdByUid';
-                const userValue = dataType === 'finishedJobs' ? wid : uid;
-                filtered = filtered.filter((item: any) => String(item[userField]) === userValue);
-              }
               archivedDocs.push(...filtered);
             }
             cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
@@ -381,7 +334,7 @@ export function useArchiveQuery({
       console.error('Error fetching data for date range:', error);
       return cachedPortion;
     }
-  }, [getUserRole, getUid, getWid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
+  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
   return { fetchFromArchive, getDataForMonth, getDataForDateRange };
 }

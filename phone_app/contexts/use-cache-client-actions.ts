@@ -4,11 +4,10 @@ import {
   ClientUpdateRequestSchema,
   type ClientDeleteResult,
 } from '@smart-job/api-contracts';
-import { useQueryClient } from '@tanstack/react-query';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useState } from 'react';
 
-import { tenantQueryKey } from '../lib/query/client';
+import { invalidateTenantQueries } from '../lib/query/client';
 import {
   createClient as createApiClient,
   deleteOrArchiveClient as deleteOrArchiveApiClient,
@@ -29,7 +28,6 @@ interface ClientActionsParams {
   getCompanyId: () => string | null;
   clients: Client[];
   saveToLocalCache: (key: string, value: unknown) => void;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
   setClients: (value: Client[]) => void;
 }
 
@@ -51,10 +49,8 @@ export function useCacheClientActions({
   getCompanyId,
   clients,
   saveToLocalCache,
-  preIncrementVersion,
   setClients,
 }: ClientActionsParams) {
-  const queryClient = useQueryClient();
   const [actionKeys] = useState(() => new StableClientActionKeys(() => randomUUID()));
 
   const resolveScope = useCallback((companyId?: string): ClientScope => {
@@ -69,10 +65,8 @@ export function useCacheClientActions({
   }, [getCompanyId, getUid]);
 
   const refreshQueries = useCallback(async (scope: ClientScope): Promise<void> => {
-    await queryClient.invalidateQueries({
-      queryKey: tenantQueryKey(scope.uid, scope.companyId, 'clients'),
-    });
-  }, [queryClient]);
+    await invalidateTenantQueries(scope.uid, scope.companyId, 'clients');
+  }, []);
 
   const fetchClients = useCallback(async (companyId?: string) => {
     try {
@@ -110,10 +104,9 @@ export function useCacheClientActions({
     ];
     saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
     setClients(updatedClients);
-    preIncrementVersion('clientsVersion', true);
     await refreshQueries(scope);
     return newClient;
-  }, [actionKeys, clients, preIncrementVersion, refreshQueries, resolveScope, saveToLocalCache, setClients]);
+  }, [actionKeys, clients, refreshQueries, resolveScope, saveToLocalCache, setClients]);
 
   const updateClient = useCallback(async (clientId: string, updates: unknown) => {
     const scope = resolveScope();
@@ -146,10 +139,9 @@ export function useCacheClientActions({
       : [updatedClient, ...clients];
     saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
     setClients(updatedClients);
-    preIncrementVersion('clientsVersion', true);
     await refreshQueries(scope);
     return updatedClient;
-  }, [actionKeys, clients, preIncrementVersion, refreshQueries, resolveScope, saveToLocalCache, setClients]);
+  }, [actionKeys, clients, refreshQueries, resolveScope, saveToLocalCache, setClients]);
 
   const deleteClient = useCallback(async (
     clientId: string,
@@ -175,10 +167,9 @@ export function useCacheClientActions({
     const updatedClients = clients.filter((client) => client.id !== clientId);
     saveToLocalCache(CACHE_KEYS.CLIENTS, updatedClients);
     setClients(updatedClients);
-    preIncrementVersion('clientsVersion', true);
     await refreshQueries(scope);
     return removed;
-  }, [actionKeys, clients, preIncrementVersion, refreshQueries, resolveScope, saveToLocalCache, setClients]);
+  }, [actionKeys, clients, refreshQueries, resolveScope, saveToLocalCache, setClients]);
 
   return {
     fetchClients,

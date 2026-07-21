@@ -7,17 +7,25 @@ function readProjectFile(...segments: string[]) {
   return fs.readFileSync(path.resolve(process.cwd(), ...segments), 'utf8');
 }
 
-test('mobile firebase barrel does not export generic firestore mutation helpers', () => {
-  const source = readProjectFile('firebase.ts');
+test('mobile native Firebase modules are isolated from Supabase auth', () => {
+  const authTransport = readProjectFile('lib', 'auth', 'transport.ts');
+  const messaging = readProjectFile('lib', 'notifications', 'firebase-messaging.ts');
+  const crashlytics = readProjectFile('lib', 'firebase-crashlytics.ts');
+  const packageJson = JSON.parse(readProjectFile('package.json')) as {
+    dependencies?: Record<string, string>;
+  };
+  const appJson = JSON.parse(readProjectFile('app.json')) as {
+    expo?: { plugins?: unknown[] };
+  };
 
-  assert.doesNotMatch(source, /\baddDoc\b/);
-  assert.doesNotMatch(source, /export \{[\s\S]*\bsetDoc\b/);
-  assert.doesNotMatch(source, /export \{[\s\S]*\bupdateDoc\b/);
-  assert.doesNotMatch(source, /export \{[\s\S]*\bdeleteDoc\b/);
-  assert.doesNotMatch(source, /export \{[\s\S]*\bwriteBatch\b/);
-  assert.doesNotMatch(source, /export \{[\s\S]*\brunTransaction\b/);
-  assert.doesNotMatch(source, /@react-native-firebase\/app-check/);
-  assert.doesNotMatch(source, /@react-native-firebase\/firestore/);
+  assert.match(authTransport, /supabase-client/);
+  assert.doesNotMatch(authTransport, /@react-native-firebase/);
+  assert.match(messaging, /@react-native-firebase\/messaging/);
+  assert.match(crashlytics, /@react-native-firebase\/crashlytics/);
+  assert.equal(packageJson.dependencies?.['@react-native-firebase/storage'], undefined);
+  assert.equal(typeof packageJson.dependencies?.['@react-native-firebase/crashlytics'], 'string');
+  assert.equal(appJson.expo?.plugins?.includes('@react-native-firebase/crashlytics'), true);
+  assert.equal(fs.existsSync(path.resolve(process.cwd(), 'firebase.ts')), false);
 });
 
 test('mobile modules do not import direct firestore SDK writes', () => {
@@ -31,15 +39,10 @@ test('mobile modules do not import direct firestore SDK writes', () => {
   assert.doesNotMatch(documentHistory, /@react-native-firebase\/firestore/);
   assert.doesNotMatch(workerJob, /@react-native-firebase\/firestore/);
 
-  const cacheContextFirebaseImport = cacheContext.split('\n').find((line) => line.includes("from '../firebase'")) || '';
-  const userJobFirebaseImport = userJob.split('\n').find((line) => line.includes("from '../../../firebase'")) || '';
-  const documentHistoryFirebaseImport = documentHistory.split('\n').find((line) => line.includes("from '../../../firebase'")) || '';
-  const workerJobFirebaseImport = workerJob.split('\n').find((line) => line.includes("from '../../../firebase'")) || '';
-
-  assert.doesNotMatch(cacheContextFirebaseImport, /\bsetDoc\b/);
-  assert.doesNotMatch(userJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
-  assert.doesNotMatch(documentHistoryFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
-  assert.doesNotMatch(workerJobFirebaseImport, /\baddDoc\b|\bsetDoc\b|\bupdateDoc\b|\bdeleteDoc\b|\bwriteBatch\b|\brunTransaction\b/);
+  assert.doesNotMatch(cacheContext, /from ['"].*firebase['"]/);
+  assert.doesNotMatch(userJob, /from ['"].*firebase['"]/);
+  assert.doesNotMatch(documentHistory, /from ['"].*firebase['"]/);
+  assert.doesNotMatch(workerJob, /from ['"].*firebase['"]/);
 });
 
 test('mobile cache fetchers use backend naming for SQL read-model data', () => {

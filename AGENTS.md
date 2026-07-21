@@ -414,7 +414,8 @@ both the standalone website and local adapter in addition to Cloud Run images.
 The Edge deploy workflow has been removed. All Edge functions and handlers
 under `supabase/functions/` and `supabase/handlers/` have been deleted.
 Mobile and website callers now use the Cloud Run API exclusively. Firebase
-Messaging and Storage remain for push notifications and file uploads.
+Messaging and Crashlytics remain for push notifications and native crash
+reporting; Firebase Storage is no longer a runtime dependency.
 
 ---
 
@@ -811,8 +812,9 @@ the company/profile/subscription/sync/membership state atomically.
   archive retrieval API, Cloud Run deployment/IAM workflow, CI
   integration-test job, and E2E test infrastructure (Playwright + Maestro) are
   implemented. Website Firebase/legacy-auth infrastructure has been removed.
-  Mobile Firestore/App Check have been removed; Firebase Messaging and Storage
-  remain for push notifications and file uploads. Mobile Edge caller cutover
+  Mobile Firebase business-data services have been removed; Firebase Messaging
+  and Crashlytics remain for push notifications and native crash reporting.
+  Mobile Edge caller cutover
   is complete and all Edge directories have been deleted. The Cloud Run deploy
   workflow includes custom API DNS mapping for production via `API_CUSTOM_DOMAIN`.
 

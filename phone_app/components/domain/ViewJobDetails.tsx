@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   Image,
   Modal,
@@ -9,6 +10,7 @@ import {
 } from 'react-native';
 import { borderRadius, getColors, spacing } from '../../theme';
 import { useCache } from '../../contexts/CacheContext';
+import { useSession } from '../../contexts/SessionContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import AppButton from '../primitives/AppButton';
 import AppCard from '../primitives/AppCard';
@@ -18,6 +20,9 @@ import AppText from '../primitives/AppText';
 import AppDivider from '../primitives/AppDivider';
 import type { DateLike, JobFileRef } from '../../types';
 import { resolveJobFileUri } from '../../modules/jobs/lib/job-file-utils';
+import { fetchJobDetail } from '../../modules/jobs/lib/jobs-api';
+import { mapJobDetail } from '../../modules/jobs/lib/job-list-model';
+import { tenantQueryKey } from '../../lib/query/client';
 
 interface PartUsed {
   id?: string | number;
@@ -72,6 +77,7 @@ const formatDate = (value: DateLike | undefined): string => {
 };
 
 const normalizeStatus = (status: string | undefined): string => String(status || '').toLowerCase();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface DetailRowProps {
   label: string;
@@ -100,26 +106,44 @@ export default function ViewJobDetails({
   isDarkMode,
 }: ViewJobDetailsProps) {
   const { getCompanyId } = useCache();
+  const { user } = useSession();
   const themeContext = useThemeContext();
   const darkMode = typeof isDarkMode === 'boolean' ? isDarkMode : themeContext.isDarkMode;
   const palette = getColors(darkMode);
   const [resolvedPhotoUris, setResolvedPhotoUris] = useState<string[]>([]);
   const [resolvedSignatureUri, setResolvedSignatureUri] = useState<string | null>(null);
   const safeJob = job ?? null;
-  const titleText = safeJob?.title || safeJob?.jobTitle || translations.untitledJob || 'Job';
-  const descriptionText = safeJob?.description || safeJob?.workDescription || '-';
-  const status = normalizeStatus(safeJob?.status);
-  const statusColor = getStatusColor ? getStatusColor(status) : undefined;
-  const photos = Array.isArray(safeJob?.photos) ? safeJob.photos : [];
-  const partsUsed = Array.isArray(safeJob?.partsUsed) ? safeJob.partsUsed : [];
-  const companyId = getCompanyId();
+  const companyId = Number(getCompanyId());
+  const uid = user?.id ?? '';
   const jobId = String(safeJob?.id || '').trim();
+  const canLoadDetail = visible
+    && uid.length > 0
+    && Number.isSafeInteger(companyId)
+    && companyId > 0
+    && UUID_PATTERN.test(jobId);
+  const detailQuery = useQuery({
+    queryKey: tenantQueryKey(uid, companyId, 'jobs', 'detail', jobId),
+    queryFn: ({ signal }) => fetchJobDetail({ uid, companyId, jobId, signal }),
+    enabled: canLoadDetail,
+  });
+  const authoritativeJob = useMemo(
+    () => detailQuery.data ? mapJobDetail(detailQuery.data) : null,
+    [detailQuery.data],
+  );
+  const displayedJob = (authoritativeJob ?? safeJob) as JobData | null;
+  const titleText = displayedJob?.title || displayedJob?.jobTitle || translations.untitledJob || 'Job';
+  const descriptionText = displayedJob?.description || displayedJob?.workDescription || '-';
+  const status = normalizeStatus(displayedJob?.status);
+  const statusColor = getStatusColor ? getStatusColor(status) : undefined;
+  const photos = Array.isArray(displayedJob?.photos) ? displayedJob.photos : [];
+  const partsUsed = Array.isArray(displayedJob?.partsUsed) ? displayedJob.partsUsed : [];
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     async function hydrateAttachmentUris() {
-      if (!visible || !safeJob) {
+      if (!visible || !displayedJob) {
         setResolvedPhotoUris([]);
         setResolvedSignatureUri(null);
         return;
@@ -127,12 +151,14 @@ export default function ViewJobDetails({
 
       try {
         const nextPhotoUris = await Promise.all(
-          photos.map((photo) => resolveJobFileUri(photo, companyId, jobId)),
+          photos.map((photo) => resolveJobFileUri(photo, uid, companyId, jobId, controller.signal)),
         );
         const nextSignatureUri = await resolveJobFileUri(
-          safeJob.signature,
+          displayedJob.signature,
+          uid,
           companyId,
           jobId,
+          controller.signal,
         );
 
         if (!cancelled) {
@@ -147,15 +173,17 @@ export default function ViewJobDetails({
           setResolvedSignatureUri(null);
         }
       }
+
     }
 
     void hydrateAttachmentUris();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [companyId, jobId, photos, safeJob, visible]);
+  }, [authoritativeJob, companyId, jobId, safeJob, uid, visible]);
 
-  if (!visible || !safeJob) return null;
+  if (!visible || !displayedJob) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -191,25 +219,25 @@ export default function ViewJobDetails({
                 value={descriptionText}
                 labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.location || 'Location'} value={safeJob.location} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.clientName || 'Client'} value={safeJob.cname} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.clientPhone || 'Phone'} value={safeJob.cphone} labelColor={palette.textSecondary} />
+               <DetailRow label={translations.location || 'Location'} value={displayedJob.location} labelColor={palette.textSecondary} />
+               <DetailRow label={translations.clientName || 'Client'} value={displayedJob.cname} labelColor={palette.textSecondary} />
+               <DetailRow label={translations.clientPhone || 'Phone'} value={displayedJob.cphone} labelColor={palette.textSecondary} />
               <DetailRow
                 label={translations.assignedBy || 'Assigned By'}
-                value={safeJob.mname}
+                 value={displayedJob.mname}
                 labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.createdAt || 'Created'} value={formatDate(safeJob.createdAt)} labelColor={palette.textSecondary} />
-              <DetailRow label={translations.finishedAt || 'Finished'} value={formatDate(safeJob.finishedAt)} labelColor={palette.textSecondary} />
+               <DetailRow label={translations.createdAt || 'Created'} value={formatDate(displayedJob.createdAt)} labelColor={palette.textSecondary} />
+               <DetailRow label={translations.finishedAt || 'Finished'} value={formatDate(displayedJob.finishedAt)} labelColor={palette.textSecondary} />
               <DetailRow
                 label={translations.timeWorked || translations.timeStatus || 'Time'}
                 value={
-                  safeJob.timeWorked ||
-                  (safeJob.timeFrom || safeJob.timeTo ? `${safeJob.timeFrom || '--'} - ${safeJob.timeTo || '--'}` : '-')
+                   displayedJob.timeWorked ||
+                   (displayedJob.timeFrom || displayedJob.timeTo ? `${displayedJob.timeFrom || '--'} - ${displayedJob.timeTo || '--'}` : '-')
                 }
                 labelColor={palette.textSecondary}
               />
-              <DetailRow label={translations.signingPerson || 'Signed By'} value={safeJob.signingPerson} labelColor={palette.textSecondary} />
+               <DetailRow label={translations.signingPerson || 'Signed By'} value={displayedJob.signingPerson} labelColor={palette.textSecondary} />
             </AppCard>
 
             <AppCard>

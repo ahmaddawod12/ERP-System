@@ -12,8 +12,9 @@ This document summarizes the active backend boundaries as of July 21, 2026.
 - Supabase Storage (private `smart-job-company-files` bucket) owns active job
   attachments and generated documents; GCS remains only for internal monthly
   archives.
-- Firebase Messaging and Storage remain for mobile push notifications and file
-  uploads respectively; Firestore and App Check have been removed.
+- Firebase Messaging and Crashlytics remain for mobile push notifications and
+  native crash reporting; Firebase Storage, Firestore, and App Check have been
+  removed.
 - `cloudrun-api` includes tested Postgres, Supabase JWT, opaque-session,
   bounded domain routes, durable document/email dispatch, authoritative tax
   submission, and archive content retrieval. `cloudrun-tax`, `cloudrun-pdf`,
@@ -205,8 +206,9 @@ Primary ERP entities live in SQL, including:
 
 ### Firestore residual areas
 
-Firestore has been removed from the mobile and website clients. Firebase
-Messaging and Storage remain for push notifications and file uploads.
+Firebase business-data services have been removed from the mobile and website
+clients. Messaging and Crashlytics remain for push notifications and native
+crash reporting.
 
 ## Request Patterns
 
@@ -347,6 +349,6 @@ supabase db lint --local --schema public,private --level warning
 
 The Edge-to-Cloud-API cutover is complete. All Supabase Edge functions and
 handlers have been deleted. The Cloud Run API is the sole backend trust
-boundary. Firebase Messaging and Storage remain for push notifications and file
-uploads. Production tax submission remains disabled pending certification, and
+boundary. Firebase Messaging and Crashlytics remain for push notifications and
+native crash reporting. Production tax submission remains disabled pending certification, and
 stable API DNS is a production mobile-release gate.

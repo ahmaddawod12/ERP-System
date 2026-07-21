@@ -6,7 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth } from '../../../firebase';
+import { auth } from '../../../lib/auth/transport';
 import { randomUUID } from 'expo-crypto';
 import {
   acceptJob as acceptJobApi,

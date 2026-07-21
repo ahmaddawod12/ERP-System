@@ -866,6 +866,43 @@ export const JobAttachmentMimeTypeSchema = z.enum([
   "image/heif",
 ]);
 
+export const JobDetailPartSchema = z.object({
+  partId: z.uuid().nullable(),
+  partNo: z.number().int().positive().nullable(),
+  name: z.string().max(240).nullable(),
+  quantity: z.number().finite().nonnegative(),
+}).strict();
+
+export const JobAttachmentMetadataSchema = z.object({
+  attachmentId: z.uuid(),
+  kind: UploadAttachmentKindSchema,
+  fileName: z.string().trim().min(1).max(255).nullable(),
+  mimeType: JobAttachmentMimeTypeSchema.nullable(),
+  sizeBytes: z.number().int().positive().nullable(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/i).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export const JobDetailSchema = JobSummarySchema.extend({
+  parts: z.array(JobDetailPartSchema).max(500),
+  attachments: z.array(JobAttachmentMetadataSchema).max(20),
+}).strict();
+
+export const JobAttachmentDownloadAccessSchema = z.object({
+  jobId: z.uuid(),
+  attachmentId: z.uuid(),
+  kind: UploadAttachmentKindSchema,
+  downloadURL: z.url(),
+  expiresAt: z.iso.datetime({ offset: true }),
+}).strict();
+
+export type JobDetailPart = z.infer<typeof JobDetailPartSchema>;
+export type JobAttachmentMetadata = z.infer<typeof JobAttachmentMetadataSchema>;
+export type JobDetail = z.infer<typeof JobDetailSchema>;
+export type JobAttachmentDownloadAccess = z.infer<
+  typeof JobAttachmentDownloadAccessSchema
+>;
+
 export const MAX_JOB_ATTACHMENT_BYTES = 10 * 1_024 * 1_024;
 export const MAX_JOB_ATTACHMENT_TOTAL_BYTES = 50 * 1_024 * 1_024;
 
@@ -1396,6 +1433,58 @@ export const ArchiveContentResponseSchema = z.object({
 
 export type ArchiveContentQuery = z.infer<typeof ArchiveContentQuerySchema>;
 export type ArchiveContentResponse = z.infer<typeof ArchiveContentResponseSchema>;
+
+export const ArchiveDataTypeSchema = z.enum(["jobs", "documents"]);
+export const ArchiveRunStatusSchema = z.enum([
+  "pending",
+  "uploaded_not_deleted",
+  "deleted",
+  "failed",
+]);
+
+export const ArchiveListQuerySchema = z.object({
+  dataType: ArchiveDataTypeSchema.optional(),
+  pageSize: z.coerce.number().int().min(1).max(200).optional(),
+  afterCursor: CursorSchema.optional(),
+  // Retained during the mobile adoption window for callers using the pre-Batch 4 name.
+  cursor: CursorSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if (value.afterCursor !== undefined && value.cursor !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Use either afterCursor or cursor, not both",
+      path: ["cursor"],
+    });
+  }
+});
+
+export const ArchiveRunSummarySchema = z.object({
+  archiveRunId: z.uuid(),
+  archiveKey: z.string().trim().min(1).max(32),
+  dataType: ArchiveDataTypeSchema,
+  status: ArchiveRunStatusSchema,
+  docCount: z.number().int().nonnegative(),
+  deletedCount: z.number().int().nonnegative(),
+  checksum: z.string().trim().min(1).max(128).nullable(),
+  createdAt: z.iso.datetime({ offset: true }),
+  completedAt: z.iso.datetime({ offset: true }).nullable(),
+}).strict();
+
+export const ArchiveListPageSchema = CursorPageSchema(ArchiveRunSummarySchema);
+
+export const ArchiveRunDownloadSchema = z.object({
+  archiveRunId: z.uuid(),
+  archiveKey: z.string().trim().min(1).max(32),
+  dataType: ArchiveDataTypeSchema,
+  checksum: z.string().trim().min(1).max(128).nullable(),
+  items: z.array(z.record(z.string(), z.unknown())),
+}).strict();
+
+export type ArchiveDataType = z.infer<typeof ArchiveDataTypeSchema>;
+export type ArchiveListQuery = z.infer<typeof ArchiveListQuerySchema>;
+export type ArchiveListPage = z.infer<typeof ArchiveListPageSchema>;
+export type ArchiveRunSummary = z.infer<typeof ArchiveRunSummarySchema>;
+export type ArchiveRunDownload = z.infer<typeof ArchiveRunDownloadSchema>;
 
 // Authenticated viewer push-token mutations. Tokens are write-only API data and
 // intentionally have no response schema field.

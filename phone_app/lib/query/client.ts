@@ -35,3 +35,20 @@ export function tenantQueryKey(
   return ['tenant', uid, companyId, ...parts] as const;
 }
 
+export function invalidateTenantQueries(
+  uid: string,
+  companyId: number,
+  ...parts: readonly unknown[]
+): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: tenantQueryKey(uid, companyId, ...parts),
+  });
+}
+
+export function cancelTenantQueries(uid: string, companyId: number): Promise<void> {
+  return queryClient.cancelQueries({ queryKey: tenantQueryKey(uid, companyId) });
+}
+
+export function removeTenantQueries(uid: string, companyId: number): void {
+  queryClient.removeQueries({ queryKey: tenantQueryKey(uid, companyId) });
+}

@@ -53,6 +53,7 @@ export function fetchInventoryPage(input: {
   readonly filters: NormalizedInventoryListFilters;
   readonly afterCursor?: string | null;
   readonly targetMemberNo?: number;
+  readonly signal?: AbortSignal;
 }): Promise<CursorPage<InventoryPartSummary>> {
   return requestApi(
     buildInventoryListPath(
@@ -66,6 +67,7 @@ export function fetchInventoryPage(input: {
     {
       uid: input.uid,
       companyId: input.companyId,
+      signal: input.signal,
     },
   );
 }

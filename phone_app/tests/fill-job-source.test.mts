@@ -37,7 +37,7 @@ test('assigned jobs complete through the same encrypted outbox with entity versi
   assert.ok(stageIndex < enqueueIndex, 'attachments must be encrypted before completion is enqueued');
   assert.ok(enqueueIndex < synchronizeIndex, 'completion must be durable before synchronization');
   assert.match(fillJob, /entityVersion: editingJob\.entityVersion/);
-  assert.match(fillJob, /tenantQueryKey\(sessionUser\.id, workspace\.companyId, 'jobs'\)/);
+  assert.match(fillJob, /invalidateTenantQueries\(sessionUser\.id, workspace\.companyId, 'jobs'\)/);
   assert.doesNotMatch(fillJob, /pendingWorkerJobs|enqueuePendingWorkerJob/);
   assert.doesNotMatch(fillJob, /updateJobV1|uploadJobFilesForStorage|httpsCallable/);
 });

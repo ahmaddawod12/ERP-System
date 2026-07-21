@@ -16,7 +16,7 @@ import {
   cancelUserRequests,
   fetchWorkspaces,
 } from '../lib/api/client';
-import { queryClient } from '../lib/query/client';
+import { cancelTenantQueries } from '../lib/query/client';
 import {
   readLastCompanyPreference,
   writeLastCompanyPreference,
@@ -175,9 +175,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       try {
         if (previous && previous.companyId !== selected.companyId) {
           cancelTenantRequests(requestedUserId, previous.companyId);
-          await queryClient.cancelQueries({
-            queryKey: ['tenant', requestedUserId, previous.companyId],
-          });
+          await cancelTenantQueries(requestedUserId, previous.companyId);
         }
         if (
           activeUserIdRef.current !== requestedUserId

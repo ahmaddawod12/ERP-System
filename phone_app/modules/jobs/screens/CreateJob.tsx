@@ -8,7 +8,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth } from '../../../firebase';
+import { auth } from '../../../lib/auth/transport';
 import { randomUUID } from 'expo-crypto';
 import { createJob as createJobApi } from '../lib/jobs-api';
 import { spacing, borderRadius, typography, shadows, getColors, gradients } from '../../../theme';

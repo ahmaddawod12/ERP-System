@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import type {
   InventoryAdjustmentRequest,
   InventoryPartArchiveRequest,
@@ -8,7 +8,7 @@ import type {
   InventoryTransferRequest,
 } from '@smart-job/api-contracts';
 
-import { tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import {
   adjustInventoryStock,
   archiveInventoryPart,
@@ -22,7 +22,6 @@ export function useInventoryMutations(input: {
   readonly uid: string | null;
   readonly companyId: number | null;
 }) {
-  const queryClient = useQueryClient();
   const uid = input.uid ?? '';
   const companyId = input.companyId ?? 0;
 
@@ -35,9 +34,7 @@ export function useInventoryMutations(input: {
 
   async function invalidateInventory(): Promise<void> {
     if (!uid || companyId <= 0) return;
-    await queryClient.invalidateQueries({
-      queryKey: tenantQueryKey(uid, companyId, 'inventory'),
-    });
+    await invalidateTenantQueries(uid, companyId, 'inventory');
   }
 
   const createMutation = useMutation({

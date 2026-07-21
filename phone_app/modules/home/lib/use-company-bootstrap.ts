@@ -14,7 +14,7 @@ export function useCompanyBootstrap(input: {
 
   return useQuery({
     queryKey: tenantQueryKey(uid, companyId, 'bootstrap'),
-    queryFn: () => fetchCompanyBootstrap(uid, companyId),
+    queryFn: ({ signal }) => fetchCompanyBootstrap(uid, companyId, signal),
     placeholderData: (previousData, previousQuery) => {
       const previousKey = previousQuery?.queryKey;
       return previousKey?.[0] === 'tenant'

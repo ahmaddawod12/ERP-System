@@ -15,10 +15,11 @@ export function useWorkersInfinite(input: {
   const enabled = (input.enabled ?? true) && uid.length > 0 && companyId > 0;
   const query = useInfiniteQuery({
     queryKey: tenantQueryKey(uid, companyId, 'workers'),
-    queryFn: ({ pageParam }) => fetchWorkersPage({
+    queryFn: ({ pageParam, signal }) => fetchWorkersPage({
       uid,
       companyId,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,

@@ -4,8 +4,8 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { auth, onAuthStateChanged } from '../firebase';
-import type { SupabaseAuthUser } from '../firebase';
+import { auth, onAuthStateChanged } from '../lib/auth/transport';
+import type { SupabaseAuthUser } from '../lib/auth/transport';
 
 /**
  * Hook for managing authentication state

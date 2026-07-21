@@ -98,15 +98,15 @@ export function installSupabaseAuthLifecycle(): () => void {
   }
 
   lifecycleInstalled = true;
-  void updateRefreshLifecycle(AppState.currentState);
+  void updateRefreshLifecycle(AppState.currentState).catch(() => undefined);
   const subscription = AppState.addEventListener('change', (state) => {
-    void updateRefreshLifecycle(state);
+    void updateRefreshLifecycle(state).catch(() => undefined);
   });
 
   return () => {
     lifecycleInstalled = false;
     subscription.remove();
-    void getSupabaseClient().auth.stopAutoRefresh();
+    void updateRefreshLifecycle('background').catch(() => undefined);
   };
 }
 

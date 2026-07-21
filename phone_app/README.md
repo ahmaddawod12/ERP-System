@@ -14,14 +14,16 @@ Server Components.
 - Keeps registration and business onboarding on the website.
 - Uses React Native Firebase Messaging for remote FCM delivery and
   `react-native-notify-kit` for local display, notification actions, channels,
-  and badge state. NotifyKit is configured not to intercept iOS remote events.
+  and badge state. Firebase Crashlytics is the native crash-reporting module.
+  NotifyKit is configured not to intercept iOS remote events. Firebase Auth,
+  callable functions, and Firebase Storage are not mobile runtime dependencies.
 - Publishes non-tax preview/generate work through the authenticated versioned
   document-task API and polls `/document-tasks/{taskId}` for completion. Tax
   invoice type 305 can be previewed, but final submission is unavailable until
   the authoritative workflow completes certification.
 - Treats public sequential job IDs and member numbers as the client-facing job contract.
 - Uses SQL-backed read-model pages for clients, jobs, documents, and inventory through backend gateway helpers.
-- Edge function caller URLs use flattened dash names for nested paths (e.g., `contact-request`, `invites-create`) to match Supabase deploy names.
+- All ERP reads and mutations use typed `/api/v1` Cloud API clients.
 
 ## Architecture Rules
 
@@ -32,8 +34,12 @@ Server Components.
 - Use MMKV helpers in `contexts/mmkv-storage.ts`.
 - Scope MMKV draft, pending-job, and support UI state by active `uid` / `companyId`; avoid raw global keys.
 - Keep bearer and refresh tokens out of MMKV; token transport belongs in SecureStore-backed helpers.
-- Archived month retrieval uses backend `fetchArchiveMonthV1`; the app does not read protected archive objects directly.
-- Cache refresh logic must drain paginated jobs/documents read-model pages for the active 90-day cache window: open jobs, recently updated closed jobs, and recent documents.
+- Archived month retrieval first resolves a typed archive-run page, then fetches
+  `/archives/{archiveRunId}/download`; the app never guesses or reads protected
+  object paths directly.
+- Cache refresh uses bounded paginated windows for the active 90-day cache:
+  open jobs, recently updated closed jobs, and recent documents. Server sync
+  versions are authoritative; clients never pre-increment them.
 - Cache refresh must preserve the current role-scoped jobs cache when only document versions bump.
 - Read-model array helpers unwrap `{ items, nextCursor }` for legacy callers; use explicit page helpers when a screen needs cursor-aware pagination.
 - The assigned-worker jobs screen calls the versioned Cloud Run jobs endpoint
@@ -64,6 +70,9 @@ Server Components.
   successful delete invalidates only the active tenant's document queries.
   Tax invoice preview/submission remains isolated on the tax workflow and type
   305 is rejected before either generic document publisher is called.
+- Document detail refreshes through `/documents/{documentId}` so tax authority,
+  tax submission, generation, and email-delivery state comes from the
+  authoritative server record rather than navigation parameters.
 - Basic, module-disabled, and forged cross-member inventory routes issue no
   request. Canonical transfer/pick API helpers exist, but the worker company-
   catalog picker stays disabled until a scoped picker UI can supply a validated
@@ -97,6 +106,10 @@ Server Components.
 - Assigned-job completion uses the same per-user SQLCipher outbox as solo jobs.
   The jobs read model carries the opaque `entityVersion` into navigation, and
   photos/signatures are encrypted before `job.complete_assigned` is committed.
+- Job details and attachment metadata come from `/jobs/{jobId}`. Each remote
+  image is opened through the exact authenticated
+  `/jobs/{jobId}/attachments/{attachmentId}/download` signer; direct Firebase
+  Storage upload, delete, and URL refresh calls are prohibited.
 - Notification listeners and push-token registration should start only after auth + cache bootstrap succeeds for the active session; notification channel initialization must stay idempotent.
 - Register and clear native FCM tokens through `/api/v1/me/push-token` with the
   active Supabase user identity plus one UUID-like installation ID stored only
@@ -126,11 +139,13 @@ modules/        Feature logic grouped by domain
 components/     Shared UI grouped as primitives, layout, forms, feedback, and domain
 navigation/     Stable route constants used by screens and notification handling
 contexts/       Theme, alert, cache, auth, storage
+lib/auth/       SecureStore-backed Supabase auth transport
+lib/api/        Shared Cloud API and archive clients
+lib/notifications/ Firebase Messaging transport
 hooks/          Shared hooks
 utils/          Request helpers and utilities
 tests/          Mobile tests
 theme.ts        Design tokens
-firebase.ts     Auth wrappers and gateway helpers
 ```
 
 ## Environment Variables
@@ -138,11 +153,9 @@ firebase.ts     Auth wrappers and gateway helpers
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `EXPO_PUBLIC_BACKEND_API_BASE_URL`
-- `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` (optional)
 
 The backend API URL may be local HTTP only in development (`localhost`,
-`127.0.0.1`, `10.0.2.2`, or `::1`); release builds require HTTPS. The Edge URL
-remains only for feature slices that have not yet moved to the Cloud Run API.
+`127.0.0.1`, `10.0.2.2`, or `::1`); release builds require HTTPS.
 
 ## Commands
 
@@ -167,6 +180,8 @@ npm run doctor
   release build.
 - After installing or upgrading NotifyKit, create a fresh Android and iOS
   native build. An Expo OTA update cannot install or replace its native code.
+- Messaging and Crashlytics are native RNFirebase dependencies. Changes to
+  either also require a fresh native build; Expo Go is not supported.
 - The launch screen is configured through the `expo-splash-screen` config
   plugin; do not restore the removed top-level legacy `splash` field.
 
@@ -176,6 +191,9 @@ npm run doctor
 eas build --platform android
 eas build --platform ios
 ```
+
+Production promotion and the legacy Edge retirement gate are defined in
+[`MOBILE_ROLLOUT.md`](./MOBILE_ROLLOUT.md).
 
 ## References
 

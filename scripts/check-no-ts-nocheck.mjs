@@ -14,7 +14,7 @@ const protectedPaths = [
   "phone_app/components",
   "phone_app/contexts",
   "phone_app/tests",
-  "phone_app/firebase.ts",
+  "phone_app/lib",
 ];
 const monitoredModulePath = "phone_app/modules";
 

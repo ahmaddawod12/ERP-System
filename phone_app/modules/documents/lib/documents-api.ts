@@ -1,6 +1,7 @@
 import {
   DocumentDeleteRequestSchema,
   DocumentDeleteResultSchema,
+  DocumentDetailSchema,
   DocumentDownloadAccessSchema,
   DocumentGenerateRequestSchema,
   DocumentListPageSchema,
@@ -10,6 +11,7 @@ import {
   type CursorPage,
   type DocumentDeleteRequest,
   type DocumentDeleteResult,
+  type DocumentDetail,
   type DocumentDownloadAccess,
   type DocumentGenerateRequest,
   type DocumentPreviewRequest,
@@ -29,11 +31,12 @@ export function fetchDocumentsPage(input: {
   readonly companyId: number;
   readonly filters: NormalizedDocumentListFilters;
   readonly afterCursor?: string | null;
+  readonly signal?: AbortSignal;
 }): Promise<CursorPage<DocumentSummary>> {
   return requestApi(
     buildDocumentListPath(input.companyId, input.filters, input.afterCursor ?? null),
     DocumentListPageSchema,
-    { uid: input.uid, companyId: input.companyId },
+    { uid: input.uid, companyId: input.companyId, signal: input.signal },
   );
 }
 
@@ -66,6 +69,25 @@ export function fetchDocumentDownloadAccess(input: {
     `/api/v1/companies/${input.companyId}/documents/${encodeURIComponent(documentId)}/download`,
     DocumentDownloadAccessSchema,
     { uid: input.uid, companyId: input.companyId },
+  );
+}
+
+export function fetchDocumentDetail(input: {
+  readonly uid: string;
+  readonly companyId: number;
+  readonly documentId: string;
+  readonly signal?: AbortSignal;
+}): Promise<DocumentDetail> {
+  const documentId = input.documentId.trim();
+  if (!documentId) throw new Error('A document id is required');
+  return requestApi(
+    `/api/v1/companies/${input.companyId}/documents/${encodeURIComponent(documentId)}`,
+    DocumentDetailSchema,
+    {
+      uid: input.uid,
+      companyId: input.companyId,
+      signal: input.signal,
+    },
   );
 }
 

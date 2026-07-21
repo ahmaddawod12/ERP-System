@@ -1,14 +1,13 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import type { DocumentDeleteRequest } from '@smart-job/api-contracts';
 
-import { tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import { deleteDocument } from './documents-api';
 
 export function useDocumentMutations(input: {
   readonly uid: string | null;
   readonly companyId: number | null;
 }) {
-  const queryClient = useQueryClient();
   const uid = input.uid ?? '';
   const companyId = input.companyId ?? 0;
 
@@ -32,9 +31,7 @@ export function useDocumentMutations(input: {
     }),
     onSuccess: async () => {
       if (!uid || companyId <= 0) return;
-      await queryClient.invalidateQueries({
-        queryKey: tenantQueryKey(uid, companyId, 'documents'),
-      });
+      await invalidateTenantQueries(uid, companyId, 'documents');
     },
   });
 

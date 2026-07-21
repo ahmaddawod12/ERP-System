@@ -7,7 +7,11 @@ import {
 } from '@tanstack/react-query';
 import { AppState } from 'react-native';
 
-import { queryClient } from '../lib/query/client';
+import {
+  cancelTenantQueries,
+  queryClient,
+  removeTenantQueries,
+} from '../lib/query/client';
 import {
   releaseEncryptedQueryPersistence,
   startEncryptedQueryPersistence,
@@ -29,11 +33,8 @@ async function evictUserQueries(uid: string): Promise<void> {
 }
 
 async function evictTenantQueries(uid: string, companyId: number): Promise<void> {
-  const predicate = (query: { readonly queryKey: readonly unknown[] }) => (
-    belongsToUser(query.queryKey, uid) && query.queryKey[2] === companyId
-  );
-  await queryClient.cancelQueries({ predicate });
-  queryClient.removeQueries({ predicate });
+  await cancelTenantQueries(uid, companyId);
+  removeTenantQueries(uid, companyId);
 }
 
 export function QueryProvider({ children }: { children: ReactNode }) {

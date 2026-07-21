@@ -26,7 +26,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { auth } from '../firebase';
+import { auth } from '../lib/auth/transport';
 import { useAppStateListener } from '../hooks/useAppStateListener';
 import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
 import { safeJsonParse } from '../utils/helpers';
@@ -35,13 +35,10 @@ import {
   fetchDataFromBackend as _fetchDataFromBackend,
   fetchCompanySyncState as _fetchCompanySyncState,
   fetchUserSyncState as _fetchUserSyncState,
-  fetchDocumentById as _fetchDocumentById,
-  fetchAllRecentJobs as _fetchAllRecentJobs,
   fetchJobsPage as _fetchJobsPage,
   fetchDocumentsPage as _fetchDocumentsPage,
 } from './cache-fetchers';
 import { useArchiveQuery } from '../hooks/useArchiveQuery';
-import { useCacheVersionActions } from './use-cache-version-actions';
 import { useCacheJobActions } from './use-cache-job-actions';
 import { useCacheWorkerActions } from './use-cache-worker-actions';
 import { useCacheClientActions } from './use-cache-client-actions';
@@ -373,18 +370,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const fetchDocumentById = useCallback(
-    (docId: string, uid: string, companyId: string, role: string) =>
-      _fetchDocumentById(docId, uid, companyId, role),
-    [],
-  );
-
-  const fetchAllRecentJobs = useCallback(
-    (uid: string, companyId: string, role: string) =>
-      _fetchAllRecentJobs(uid, companyId, role),
-    [],
-  );
-
   const fetchJobsPage = useCallback(
     (companyId: string, opts?: {
       pageSize?: number;
@@ -412,15 +397,15 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const fetchAllCursorPages = useCallback(
+  const fetchCursorWindow = useCallback(
     async (
       fetchPage: (companyId: string, opts?: any) => Promise<{ items: any[]; nextCursor: string | null }>,
       companyId: string,
       pageSize = 200,
       baseOpts: Record<string, unknown> = {},
     ) => {
-      const MAX_PAGES = 50;
-      const MAX_ITEMS = 10_000;
+      const MAX_PAGES = 5;
+      const MAX_ITEMS = 1_000;
       const allItems: any[] = [];
       const seenCursors = new Set<string>();
       let nextCursor: string | null = null;
@@ -434,7 +419,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         }
 
         if (allItems.length >= MAX_ITEMS || pagesFetched >= MAX_PAGES) {
-          logger.warn(`fetchAllCursorPages capped for ${companyId} (pages=${pagesFetched}, items=${allItems.length})`);
+          logger.warn(`fetchCursorWindow capped for ${companyId} (pages=${pagesFetched}, items=${allItems.length})`);
           break;
         }
 
@@ -668,13 +653,13 @@ export function CacheProvider({ children }: { children: ReactNode }) {
 
               const [openJobs, closedJobs, docsItems] = await Promise.all([
                 shouldFetchJobs
-                  ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
+                  ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
                   : Promise.resolve([]),
                 shouldFetchJobs
-                  ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
+                  ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
                   : Promise.resolve([]),
                 shouldFetchDocs
-                  ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
+                  ? fetchCursorWindow(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
                   : Promise.resolve([]),
               ]);
               const jobsItems = [...openJobs, ...closedJobs];
@@ -783,7 +768,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     listenersActiveRef.current = true;
     
     logger.debug(`Cache listeners set up for ${role}`);
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromBackend, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
+  }, [applyBootstrappedJobDocumentCache, fetchCursorWindow, fetchCompanySyncState, fetchDataFromBackend, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
 
   /**
    * Initialize cache for a user (called on login/app start)
@@ -1029,20 +1014,21 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         }
       }
       
-      // Fetch all recent jobs through the backend read model.
-      logger.debug('Fetching all recent jobs for initial cache...');
-      let { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
+      // Fetch a bounded recent cursor window for the initial cache.
+      logger.debug('Fetching the recent job/document cursor window for initial cache...');
+      let jobsData: any[] = [];
+      let documentsData: any[] = [];
       if (companyId) {
         const cacheStartIso = getCacheStartDate().toISOString();
         const [openJobsData, closedJobsData, allDocumentsData] = await Promise.all([
           role !== 'basic' && role !== 'dev'
-            ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
+            ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
             : Promise.resolve([]),
           role !== 'basic' && role !== 'dev'
-            ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
+            ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
             : Promise.resolve([]),
           role !== 'dev'
-            ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
+            ? fetchCursorWindow(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
             : Promise.resolve([]),
         ]);
         const allJobsData = [...openJobsData, ...closedJobsData];
@@ -1106,33 +1092,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       console.error('Error fetching fresh data:', error);
       setIsLoading(false);
     }
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchCompanySyncState, fetchDataFromBackend, fetchAllRecentJobs, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
-
-  /**
-   * Pre-increment a summary version field locally.
-   * Used for optimistic updates so the snapshot listener won't trigger
-   * an unnecessary re-fetch when the CF-written version arrives.
-   * 
-   * For user cache: standard fields (profile, inventory, subscription)
-   * For company cache: summary fields (jobsVersion, documentsVersion, clientsVersion, workersVersion)
-   */
-  const preIncrementVersion = useCallback((field: string, isCompanyCache = false) => {
-    const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-    const localVersions: Record<string, number> = mmkvHelpers.getObject(localVersionsKey) || {};
-    localVersions[field] = (localVersions[field] || 0) + 1;
-    saveToLocalCache(localVersionsKey, localVersions);
-  }, [saveToLocalCache]);
-
-  const {
-    incrementCacheVersion,
-    updateProfile,
-    updateInventory,
-  } = useCacheVersionActions({
-    getUid,
-    getCompanyId,
-    saveToLocalCache,
-    preIncrementVersion,
-  });
+  }, [applyBootstrappedJobDocumentCache, fetchCursorWindow, fetchCompanySyncState, fetchDataFromBackend, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
 
   const {
     addJob,
@@ -1144,7 +1104,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     jobs,
     companyJobs,
     saveToLocalCache,
-    preIncrementVersion,
   });
 
   const {
@@ -1157,7 +1116,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     getUserRole,
     getCompanyId,
     saveToLocalCache,
-    preIncrementVersion,
   });
 
   const {
@@ -1170,7 +1128,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     getCompanyId,
     clients,
     saveToLocalCache,
-    preIncrementVersion,
     setClients,
   });
 
@@ -1186,9 +1143,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     
     const newDocuments = [...documents, document];
     saveToLocalCache(CACHE_KEYS.DOCUMENTS, newDocuments);
-    // Pre-increment local documentsVersion; backend handles the remote version bump.
-    preIncrementVersion('documentsVersion', true);
-  }, [documents, saveToLocalCache, preIncrementVersion]);
+  }, [documents, saveToLocalCache]);
 
   /**
    * Clear all cache (on logout)
@@ -1228,7 +1183,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const { fetchFromArchive, getDataForMonth, getDataForDateRange } = useArchiveQuery({
     getUserRole,
     getUid,
-    getWid,
     getCompanyId,
     jobs,
     companyJobs,
@@ -1275,10 +1229,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     initializeCache,
     clearCache,
     
-    // Profile & Inventory
-    updateProfile,
-    updateInventory,
-    
     // Jobs (unified)
     addJob,
     updateJob,
@@ -1309,8 +1259,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     
     // Utilities
     refreshCache,
-    preIncrementVersion,
-    
     // Direct storage access (for special cases)
     storage: mmkvHelpers,
   }), [
@@ -1318,13 +1266,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     companyJobs, documents, clients, subscription, companyInventory,
     getUid, getUserRole, getCompanyId,
     initializeCache, clearCache,
-    updateProfile, updateInventory,
     addJob, updateJob, removeJob, acceptJob,
     updateWorkers, addWorker, editWorker, deleteWorker,
     addDocument,
     fetchClients, addClient, updateClient, deleteClient,
     getDataForMonth, getDataForDateRange, fetchFromArchive,
-    refreshCache, preIncrementVersion,
+    refreshCache,
   ]);
 
   return (

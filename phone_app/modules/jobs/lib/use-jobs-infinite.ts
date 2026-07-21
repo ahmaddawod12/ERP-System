@@ -25,11 +25,12 @@ export function useJobsInfinite(input: {
 
   const query = useInfiniteQuery({
     queryKey: tenantQueryKey(uid, companyId, 'jobs', filters),
-    queryFn: ({ pageParam }) => fetchJobsPage({
+    queryFn: ({ pageParam, signal }) => fetchJobsPage({
       uid,
       companyId,
       filters,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,

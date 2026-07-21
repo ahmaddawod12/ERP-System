@@ -1,9 +1,10 @@
 import {
+  type JobDetail,
   JobListQuerySchema,
   type JobSummary,
 } from '@smart-job/api-contracts';
 
-import type { Job, JobStatusValue } from '../../../types';
+import type { Job, JobFileRef, JobStatusValue } from '../../../types';
 
 const JOB_STATUS_ORDER: Readonly<Record<JobStatusValue, number>> = {
   pending: 0,
@@ -37,6 +38,12 @@ export type MobileJobSummary = Job & {
   readonly entityVersion: string;
   readonly dueDate?: string;
   readonly deniedAt?: string;
+};
+
+export type MobileJobDetail = MobileJobSummary & {
+  readonly partsUsed: NonNullable<Job['partsUsed']>;
+  readonly photos: JobFileRef[];
+  readonly signature?: JobFileRef;
 };
 
 function toIso(value: Date | string | undefined): string | undefined {
@@ -160,6 +167,28 @@ export function mapJobSummary(summary: JobSummary): MobileJobSummary {
     updatedAt: summary.updatedAt,
     finishedAt: optional(summary.finishedAt),
     deniedAt: optional(summary.deniedAt),
+  };
+}
+
+export function mapJobDetail(detail: JobDetail): MobileJobDetail {
+  const summary = mapJobSummary(detail);
+  const attachments = detail.attachments.map((attachment) => ({
+    attachmentId: attachment.attachmentId,
+    kind: attachment.kind,
+    ...(attachment.fileName ? { fileName: attachment.fileName } : {}),
+    ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+    ...(attachment.sizeBytes ? { sizeBytes: attachment.sizeBytes } : {}),
+  }));
+  return {
+    ...summary,
+    partsUsed: detail.parts.map((part) => ({
+      // Mobile inventory mutations use the public sequential part number.
+      id: part.partNo ?? part.partId ?? undefined,
+      name: part.name ?? undefined,
+      quantity: part.quantity,
+    })),
+    photos: attachments.filter((attachment) => attachment.kind === 'photo'),
+    signature: attachments.find((attachment) => attachment.kind === 'signature'),
   };
 }
 

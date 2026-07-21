@@ -10,7 +10,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { auth } from '../../../firebase';
+import { auth } from '../../../lib/auth/transport';
 import { spacing, borderRadius, typography, shadows, getColors } from '../../../theme';
 import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ViewJobDetails } from '../../../components';
 import { useScrollHandler } from '../../../contexts/HeaderContext';

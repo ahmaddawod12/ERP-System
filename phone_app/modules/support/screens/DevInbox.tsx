@@ -28,7 +28,7 @@ import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { clearViewerPushToken } from '../../../lib/api/push-tokens';
-import { queryClient, tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import { ROUTES } from '../../../navigation/routes';
 import NotAvailableScreen from '../../shared/NotAvailableScreen';
 import { runLogoutSequence } from '../../settings/lib/logout';
@@ -165,9 +165,7 @@ export default function DevInbox() {
 
   const invalidateConversationLists = async () => {
     if (!uid) return;
-    await queryClient.invalidateQueries({
-      queryKey: tenantQueryKey(uid, scopeCompanyId, 'support', 'conversations'),
-    });
+    await invalidateTenantQueries(uid, scopeCompanyId, 'support', 'conversations');
   };
 
   const markConversationRead = async (conversationId: string) => {

@@ -16,7 +16,6 @@ import {
   type WorkerDirectoryRole,
   type WorkerSummary,
 } from '@smart-job/api-contracts';
-import { useQueryClient } from '@tanstack/react-query';
 
 import {
   borderRadius,
@@ -39,7 +38,7 @@ import {
   GlobalHeader,
   LoadingSpinner,
 } from '../../../components';
-import { tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import { logger } from '../../../utils/logger';
 import {
   createWorkerInvitation,
@@ -190,7 +189,6 @@ export default function WorkersUsers() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const queryClient = useQueryClient();
   const { user } = useSession();
   const { workspace, status: tenantStatus } = useTenant();
   const palette = getColors(isDarkMode);
@@ -243,9 +241,7 @@ export default function WorkersUsers() {
 
   const refreshWorkers = async () => {
     if (!uid || !companyId) return;
-    await queryClient.invalidateQueries({
-      queryKey: tenantQueryKey(uid, companyId, 'workers'),
-    });
+    await invalidateTenantQueries(uid, companyId, 'workers');
   };
 
   const handleInvite = async () => {

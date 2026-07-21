@@ -27,13 +27,14 @@ export function fetchWorkersPage(input: {
   readonly uid: string;
   readonly companyId: number;
   readonly afterCursor?: string | null;
+  readonly signal?: AbortSignal;
 }): Promise<CursorPage<WorkerSummary>> {
   const query = new URLSearchParams({ pageSize: '50' });
   if (input.afterCursor) query.set('afterCursor', input.afterCursor);
   return requestApi(
     `/api/v1/companies/${input.companyId}/workers?${query.toString()}`,
     WorkerListPageSchema,
-    { uid: input.uid, companyId: input.companyId },
+    { uid: input.uid, companyId: input.companyId, signal: input.signal },
   );
 }
 

@@ -16,7 +16,7 @@ import { normalizeInventoryListFilters } from '../modules/inventory/lib/inventor
 import { fetchJobsPage as fetchJobsPageApi } from '../modules/jobs/lib/jobs-api';
 import { fetchDocumentsPage as fetchDocumentsPageApi } from '../modules/documents/lib/documents-api';
 import { fetchCompanyBootstrap, fetchViewerProfile, fetchBusinessProfile } from '../lib/api/client';
-import { auth } from '../firebase';
+import { auth } from '../lib/auth/transport';
 import { mapJobSummary, normalizeJobListFilters } from '../modules/jobs/lib/job-list-model';
 import {
   mapDocumentSummary,
@@ -24,7 +24,7 @@ import {
 } from '../modules/documents/lib/document-history-model';
 import { mapSubscriptionToCache, mapViewerProfileToCache } from './cache-api-model';
 
-const MAX_DRAIN_PAGES = 50;
+const MAX_CURSOR_WINDOW_PAGES = 5;
 
 function numericCompanyId(companyId: string): number {
   const n = Number(companyId);
@@ -34,12 +34,12 @@ function numericCompanyId(companyId: string): number {
   return n;
 }
 
-async function drainPages<T>(
+async function fetchCursorWindow<T>(
   fetchPage: (afterCursor: string | null) => Promise<{ items: readonly T[]; nextCursor: string | null }>,
 ): Promise<T[]> {
   const items: T[] = [];
   let cursor: string | null = null;
-  for (let i = 0; i < MAX_DRAIN_PAGES; i++) {
+  for (let i = 0; i < MAX_CURSOR_WINDOW_PAGES; i++) {
     const page = await fetchPage(cursor);
     items.push(...page.items);
     if (!page.nextCursor) break;
@@ -109,7 +109,7 @@ export async function fetchDataFromBackend(
       case 'inventory': {
         if (!numericId) return [];
         const filters = normalizeInventoryListFilters({ pageSize: 200 });
-        const items = await drainPages((cursor) =>
+        const items = await fetchCursorWindow((cursor) =>
           fetchInventoryPage({
             uid,
             companyId: numericId,
@@ -124,7 +124,7 @@ export async function fetchDataFromBackend(
       case 'companyInventory': {
         if (!numericId) return [];
         const filters = normalizeInventoryListFilters({ pageSize: 200 });
-        const items = await drainPages((cursor) =>
+        const items = await fetchCursorWindow((cursor) =>
           fetchInventoryPage({
             uid,
             companyId: numericId,
@@ -140,7 +140,7 @@ export async function fetchDataFromBackend(
         if (role !== 'manager' || !numericId) {
           return {};
         }
-        const items = await drainPages((cursor) =>
+        const items = await fetchCursorWindow((cursor) =>
           fetchWorkersPage({
             uid,
             companyId: numericId,
@@ -173,26 +173,6 @@ export async function fetchDataFromBackend(
     console.error(`Error fetching ${field} via Cloud API:`, error);
     return null;
   }
-}
-
-export async function fetchDocumentById(
-  _docId: string,
-  _uid: string,
-  _companyId: string,
-  _role: string,
-): Promise<any | null> {
-  return null;
-}
-
-export async function fetchAllRecentJobs(
-  _uid: string,
-  companyId: string,
-  role: string,
-): Promise<{ jobsData: any[]; documentsData: any[] }> {
-  if (!companyId || role === 'dev') {
-    return { jobsData: [], documentsData: [] };
-  }
-  return { jobsData: [], documentsData: [] };
 }
 
 export async function fetchCompanySyncState(uid: string, companyId: string): Promise<{
@@ -236,6 +216,7 @@ export async function fetchJobsPage(
       companyId: numericId,
       filters,
       afterCursor: opts.afterCursor ?? null,
+      signal: opts.signal,
     });
     return { items: page.items.map(mapJobSummary), nextCursor: page.nextCursor };
   } catch (error) {
@@ -266,6 +247,7 @@ export async function fetchDocumentsPage(
       companyId: numericId,
       filters,
       afterCursor: opts.afterCursor ?? null,
+      signal: opts.signal,
     });
     return { items: page.items.map(mapDocumentSummary), nextCursor: page.nextCursor };
   } catch (error) {

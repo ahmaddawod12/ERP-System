@@ -11,7 +11,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { auth } from '../../../firebase';
+import { auth } from '../../../lib/auth/transport';
 import { colors, gradients, getColors } from '../../../theme';
 import { AppCard, AppEmptyState, AppText, SearchInput, ViewJobDetails, GlobalHeader, DateFilter, ScreenHeroCard } from '../../../components';
 import { useScrollHandler } from '../../../contexts/HeaderContext';

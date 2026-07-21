@@ -1,9 +1,13 @@
 import {
   CursorSchema,
   DEFAULT_JOB_PAGE_SIZE,
+  JobAttachmentMetadataSchema,
+  JobDetailPartSchema,
+  JobDetailSchema,
   JobListPageSchema,
   JobSummarySchema,
   type Cursor,
+  type JobDetail,
   type JobListQuery,
   type JobSummary,
 } from "@smart-job/api-contracts";
@@ -48,6 +52,18 @@ const jobRowSchema = z.object({
   updated_at: z.union([z.date(), z.iso.datetime({ offset: true })]),
   finished_at: z.union([z.date(), z.iso.datetime({ offset: true })]).nullable(),
   denied_at: z.union([z.date(), z.iso.datetime({ offset: true })]).nullable(),
+}).strict();
+
+const jobDetailRowSchema = jobRowSchema.extend({
+  parts: z.array(JobDetailPartSchema),
+  attachments: z.array(JobAttachmentMetadataSchema),
+}).strict();
+
+const jobAttachmentFileRowSchema = z.object({
+  job_id: z.uuid(),
+  attachment_id: z.uuid(),
+  kind: z.enum(["photo", "signature"]),
+  storage_path: z.string().trim().min(1).max(1_024),
 }).strict();
 
 interface JobRow extends QueryResultRow {
@@ -324,11 +340,185 @@ export const READ_JOBS_PAGE_SQL = `
   LIMIT $9::integer
 `;
 
-export async function readJobsPage(
+export const READ_JOB_DETAIL_SQL = `
+  WITH requester AS (
+    SELECT
+      company.id AS company_id,
+      company.account_type::text AS account_type,
+      membership.id AS membership_id,
+      membership.role::text AS role,
+      private.app_is_dev() AS is_dev
+    FROM public.companies company
+    LEFT JOIN public.company_memberships membership
+      ON membership.company_id = company.id
+     AND membership.user_id = private.app_auth_uid()
+     AND membership.status = 'active'
+    WHERE company.id = $1::uuid
+  )
+  SELECT
+    job.id AS job_id,
+    job.job_no,
+    job.status::text AS status,
+    COALESCE(job.title, '') AS title,
+    COALESCE(job.description, '') AS description,
+    job.notes,
+    job.location,
+    job.address,
+    job.category,
+    job.priority,
+    job.due_at,
+    job.client_id,
+    job.client_name_snapshot AS client_name,
+    job.client_phone_snapshot AS client_phone,
+    assignee.member_no AS assignee_member_no,
+    COALESCE(
+      NULLIF(BTRIM(assignee.display_name), ''),
+      NULLIF(BTRIM(assignee_user.display_name), ''),
+      job.assigned_member_name_snapshot
+    ) AS assignee_display_name,
+    creator.user_id::uuid AS creator_uid,
+    creator.member_no AS creator_member_no,
+    COALESCE(
+      NULLIF(BTRIM(creator.display_name), ''),
+      NULLIF(BTRIM(creator_user.display_name), ''),
+      job.created_by_name_snapshot
+    ) AS creator_display_name,
+    job.is_cert AS is_certificate,
+    job.meta,
+    job.entity_version,
+    job.created_at,
+    job.updated_at,
+    job.finished_at,
+    job.denied_at,
+    COALESCE((
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'partId', inventory_part.id,
+          'partNo', inventory_part.part_no,
+          'name', COALESCE(usage.part_name_snapshot, inventory_part.name),
+          'quantity', usage.quantity::double precision
+        )
+        ORDER BY usage.created_at, usage.id
+      )
+      FROM public.job_part_usages AS usage
+      LEFT JOIN public.inventory_parts AS inventory_part
+        ON inventory_part.id = usage.inventory_part_id
+       AND inventory_part.company_id = job.company_id
+      WHERE usage.job_id = job.id
+    ), '[]'::jsonb) AS parts,
+    COALESCE((
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'attachmentId', attachment.id,
+          'kind', attachment.kind::text,
+          'fileName', upload_manifest.item ->> 'fileName',
+          'mimeType', upload_manifest.item ->> 'mimeType',
+          'sizeBytes', CASE
+            WHEN upload_manifest.item ->> 'sizeBytes' ~ '^[1-9][0-9]*$'
+              THEN (upload_manifest.item ->> 'sizeBytes')::integer
+            ELSE NULL
+          END,
+          'sha256', upload_manifest.item ->> 'sha256',
+          'createdAt', pg_catalog.to_char(
+            attachment.created_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          )
+        )
+        ORDER BY attachment.created_at, attachment.id
+      )
+      FROM public.job_attachments AS attachment
+      LEFT JOIN LATERAL (
+        SELECT manifest.item
+        FROM private.file_upload_sessions AS upload_session
+        CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(
+          upload_session.expected_manifest
+        ) AS manifest(item)
+        WHERE upload_session.consumed_by_job_id = job.id
+          AND manifest.item ->> 'attachmentId' = attachment.id::text
+        LIMIT 1
+      ) AS upload_manifest ON TRUE
+      WHERE attachment.job_id = job.id
+    ), '[]'::jsonb) AS attachments
+  FROM public.jobs AS job
+  CROSS JOIN requester
+  LEFT JOIN public.company_memberships AS assignee
+    ON assignee.id = job.assigned_membership_id
+   AND assignee.company_id = job.company_id
+  LEFT JOIN public.app_users AS assignee_user
+    ON assignee_user.id = assignee.user_id
+  LEFT JOIN public.company_memberships AS creator
+    ON creator.id = job.created_by_membership_id
+   AND creator.company_id = job.company_id
+  LEFT JOIN public.app_users AS creator_user
+    ON creator_user.id = creator.user_id
+  WHERE job.company_id = $1::uuid
+    AND job.id = $2::uuid
+    AND (
+      requester.is_dev
+      OR requester.role = 'manager'
+      OR (
+        requester.role = 'user'
+        AND (
+          requester.account_type = 'solo'
+          OR job.assigned_membership_id = requester.membership_id
+        )
+      )
+      OR (
+        requester.role = 'worker'
+        AND job.assigned_membership_id = requester.membership_id
+      )
+    )
+  LIMIT 1
+`;
+
+export const READ_JOB_ATTACHMENT_FILE_SQL = `
+  WITH requester AS (
+    SELECT
+      company.account_type::text AS account_type,
+      membership.id AS membership_id,
+      membership.role::text AS role,
+      private.app_is_dev() AS is_dev
+    FROM public.companies company
+    LEFT JOIN public.company_memberships membership
+      ON membership.company_id = company.id
+     AND membership.user_id = private.app_auth_uid()
+     AND membership.status = 'active'
+    WHERE company.id = $1::uuid
+  )
+  SELECT
+    job.id AS job_id,
+    attachment.id AS attachment_id,
+    attachment.kind::text AS kind,
+    attachment.storage_path
+  FROM public.jobs AS job
+  INNER JOIN public.job_attachments AS attachment
+    ON attachment.job_id = job.id
+  CROSS JOIN requester
+  WHERE job.company_id = $1::uuid
+    AND job.id = $2::uuid
+    AND attachment.id = $3::uuid
+    AND (
+      requester.is_dev
+      OR requester.role = 'manager'
+      OR (
+        requester.role = 'user'
+        AND (
+          requester.account_type = 'solo'
+          OR job.assigned_membership_id = requester.membership_id
+        )
+      )
+      OR (
+        requester.role = 'worker'
+        AND job.assigned_membership_id = requester.membership_id
+      )
+    )
+  LIMIT 1
+`;
+
+async function assertJobsEnabled(
   transaction: DatabaseQueryable,
   internalCompanyId: string,
-  query: JobListQuery,
-) {
+): Promise<void> {
   const entitlementResult = await transaction.query<{ jobs_enabled: boolean }>(
     READ_JOBS_ENTITLEMENT_SQL,
     [internalCompanyId],
@@ -340,6 +530,66 @@ export async function readJobsPage(
       message: "Jobs are not enabled for this workspace.",
     });
   }
+}
+
+export async function readJobDetail(
+  transaction: DatabaseQueryable,
+  internalCompanyId: string,
+  jobId: string,
+): Promise<JobDetail> {
+  await assertJobsEnabled(transaction, internalCompanyId);
+  const result = await transaction.query(READ_JOB_DETAIL_SQL, [internalCompanyId, jobId]);
+  const unknownRow = result.rows[0];
+  if (unknownRow === undefined) {
+    throw new AppError({
+      statusCode: 404,
+      code: "JOB_NOT_FOUND",
+      message: "The requested job was not found.",
+    });
+  }
+  const { parts, attachments, ...jobRow } = jobDetailRowSchema.parse(unknownRow);
+  return JobDetailSchema.parse({
+    ...mapJobRow(jobRow),
+    parts,
+    attachments,
+  });
+}
+
+export async function readJobAttachmentFile(
+  transaction: DatabaseQueryable,
+  internalCompanyId: string,
+  jobId: string,
+  attachmentId: string,
+) {
+  await assertJobsEnabled(transaction, internalCompanyId);
+  const result = await transaction.query(READ_JOB_ATTACHMENT_FILE_SQL, [
+    internalCompanyId,
+    jobId,
+    attachmentId,
+  ]);
+  const unknownRow = result.rows[0];
+  if (unknownRow === undefined) {
+    throw new AppError({
+      statusCode: 404,
+      code: "JOB_ATTACHMENT_NOT_FOUND",
+      message: "The requested job attachment was not found.",
+    });
+  }
+  const row = jobAttachmentFileRowSchema.parse(unknownRow);
+  return {
+    jobId: row.job_id,
+    attachmentId: row.attachment_id,
+    kind: row.kind,
+    objectPath: row.storage_path,
+  } as const;
+}
+
+export async function readJobsPage(
+  transaction: DatabaseQueryable,
+  internalCompanyId: string,
+  query: JobListQuery,
+) {
+  await assertJobsEnabled(transaction, internalCompanyId);
 
   const pageSize = query.limit ?? query.pageSize ?? DEFAULT_JOB_PAGE_SIZE;
   const statuses = query.status === undefined

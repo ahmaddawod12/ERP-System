@@ -95,7 +95,7 @@ test('role dashboards use one tenant-scoped, runtime-validated, retryable bootst
   ]);
 
   assert.match(hook, /tenantQueryKey\(uid, companyId, 'bootstrap'\)/);
-  assert.match(hook, /fetchCompanyBootstrap\(uid, companyId\)/);
+  assert.match(hook, /fetchCompanyBootstrap\(uid, companyId, signal\)/);
   assert.match(hook, /previousKey\[1\] === uid/);
   assert.match(hook, /previousKey\[2\] === companyId/);
   assert.doesNotMatch(hook, /readModelV1|MMKV|firebase/i);
@@ -123,7 +123,7 @@ test('basic profile uses the runtime-validated tenant API and retains only same-
   ]);
 
   assert.match(hook, /tenantQueryKey\(uid, companyId, 'business-profile'\)/);
-  assert.match(hook, /fetchBusinessProfile\(uid, companyId\)/);
+  assert.match(hook, /fetchBusinessProfile\(uid, companyId, signal\)/);
   assert.match(hook, /previousKey\[1\] === uid/);
   assert.match(hook, /previousKey\[2\] === companyId/);
   assert.match(hook, /refetchOnMount: true/);

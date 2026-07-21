@@ -27,12 +27,13 @@ export function useInventoryInfinite(input: {
 
   const query = useInfiniteQuery({
     queryKey: tenantQueryKey(uid, companyId, 'inventory', input.scope, filters),
-    queryFn: ({ pageParam }) => fetchInventoryPage({
+    queryFn: ({ pageParam, signal }) => fetchInventoryPage({
       uid,
       companyId,
       scope: input.scope,
       filters,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,

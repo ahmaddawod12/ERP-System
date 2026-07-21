@@ -1,4 +1,14 @@
-import { CursorSchema, type Cursor } from "@smart-job/api-contracts";
+import {
+  ArchiveDataTypeSchema,
+  ArchiveListPageSchema,
+  ArchiveRunStatusSchema,
+  ArchiveRunSummarySchema,
+  CursorSchema,
+  type ArchiveDataType,
+  type ArchiveListPage,
+  type ArchiveRunSummary,
+  type Cursor,
+} from "@smart-job/api-contracts";
 import type { QueryResultRow } from "pg";
 import { z } from "zod";
 
@@ -17,8 +27,8 @@ const MAX_ARCHIVE_PAGE_SIZE = 200;
 const archiveRowSchema = z.object({
   id: z.uuid(),
   archive_key: z.string().trim().min(1).max(32),
-  data_type: z.string().trim().min(1).max(32),
-  status: z.enum(["pending", "uploaded_not_deleted", "deleted", "failed"]),
+  data_type: ArchiveDataTypeSchema,
+  status: ArchiveRunStatusSchema,
   doc_count: z.number().int().nonnegative(),
   deleted_count: z.number().int().nonnegative(),
   storage_path: z.string().nullable(),
@@ -27,27 +37,10 @@ const archiveRowSchema = z.object({
   completed_at: z.union([z.date(), z.iso.datetime({ offset: true })]).nullable(),
 }).strict();
 
-export interface ArchiveSummary {
-  readonly archiveKey: string;
-  readonly dataType: string;
-  readonly status: "pending" | "uploaded_not_deleted" | "deleted" | "failed";
-  readonly docCount: number;
-  readonly deletedCount: number;
-  readonly storagePath: string | null;
-  readonly checksum: string | null;
-  readonly createdAt: string;
-  readonly completedAt: string | null;
-}
-
-export interface ArchiveListQuery {
-  readonly dataType?: string;
+export interface ArchiveRepositoryListQuery {
+  readonly dataType?: ArchiveDataType;
   readonly pageSize?: number;
   readonly cursor?: string;
-}
-
-export interface ArchiveListPage {
-  readonly items: readonly ArchiveSummary[];
-  readonly nextCursor: Cursor | null;
 }
 
 const LIST_ARCHIVES_SQL = `
@@ -60,6 +53,29 @@ const LIST_ARCHIVES_SQL = `
     $5::uuid
   )
 `;
+
+export const READ_ARCHIVE_DOWNLOAD_SQL = `
+  SELECT
+    archive_run.id,
+    archive_run.archive_key,
+    archive_run.data_type,
+    archive_run.status::text AS status,
+    archive_run.storage_path,
+    archive_run.checksum
+  FROM public.archive_runs AS archive_run
+  WHERE archive_run.company_id = $1::uuid
+    AND archive_run.id = $2::uuid
+  LIMIT 1
+`;
+
+const archiveDownloadRowSchema = z.object({
+  id: z.uuid(),
+  archive_key: z.string().trim().min(1).max(32),
+  data_type: ArchiveDataTypeSchema,
+  status: ArchiveRunStatusSchema,
+  storage_path: z.string().trim().min(1).max(1_024).nullable(),
+  checksum: z.string().trim().min(1).max(128).nullable(),
+}).strict();
 
 function encodeCursor(createdAt: string, id: string): string {
   const payload = JSON.stringify(cursorPayloadSchema.parse({ version: 1, createdAt, id }));
@@ -91,8 +107,8 @@ function decodeCursor(cursor: string): { createdAt: string; id: string } {
 interface ArchiveDatabaseRow extends QueryResultRow {
   readonly id: string;
   readonly archive_key: string;
-  readonly data_type: string;
-  readonly status: string;
+  readonly data_type: ArchiveDataType;
+  readonly status: "pending" | "uploaded_not_deleted" | "deleted" | "failed";
   readonly doc_count: number;
   readonly deleted_count: number;
   readonly storage_path: string | null;
@@ -113,7 +129,7 @@ export async function readArchivesPage(
   transaction: DatabaseQueryable,
   input: {
     readonly internalCompanyId: string;
-    readonly dataType?: string;
+    readonly dataType?: ArchiveDataType;
     readonly pageSize?: number;
     readonly cursor?: string;
   },
@@ -146,13 +162,13 @@ export async function readArchivesPage(
   });
 
   let nextCursor: Cursor | null = null;
-  const items = rows.slice(0, pageSize).map((row): ArchiveSummary => ({
+  const items = rows.slice(0, pageSize).map((row): ArchiveRunSummary => ArchiveRunSummarySchema.parse({
+    archiveRunId: row.id,
     archiveKey: row.archive_key,
     dataType: row.data_type,
     status: row.status,
     docCount: row.doc_count,
     deletedCount: row.deleted_count,
-    storagePath: row.storage_path,
     checksum: row.checksum,
     createdAt: toIso(row.created_at),
     completedAt: nullableIso(row.completed_at),
@@ -165,7 +181,45 @@ export async function readArchivesPage(
     }
   }
 
-  return { items, nextCursor };
+  return ArchiveListPageSchema.parse({ items, nextCursor });
+}
+
+export async function readArchiveDownloadRecord(
+  transaction: DatabaseQueryable,
+  internalCompanyId: string,
+  archiveRunId: string,
+) {
+  const result = await transaction.query(READ_ARCHIVE_DOWNLOAD_SQL, [
+    internalCompanyId,
+    archiveRunId,
+  ]);
+  const unknownRow = result.rows[0];
+  if (unknownRow === undefined) {
+    throw new AppError({
+      statusCode: 404,
+      code: "ARCHIVE_NOT_FOUND",
+      message: "The requested archive was not found.",
+    });
+  }
+  const row = archiveDownloadRowSchema.parse(unknownRow);
+  if (
+    (row.status !== "uploaded_not_deleted" && row.status !== "deleted")
+    || row.storage_path === null
+  ) {
+    throw new AppError({
+      statusCode: 409,
+      code: "ARCHIVE_NOT_READY",
+      message: "The requested archive is not ready for download.",
+      retryable: row.status === "pending",
+    });
+  }
+  return {
+    archiveRunId: row.id,
+    archiveKey: row.archive_key,
+    dataType: row.data_type,
+    objectPath: row.storage_path,
+    checksum: row.checksum,
+  } as const;
 }
 
 export { CursorSchema };

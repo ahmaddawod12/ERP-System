@@ -1,11 +1,11 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import type {
   ClientCreateRequest,
   ClientDeleteRequest,
   ClientUpdateRequest,
 } from '@smart-job/api-contracts';
 
-import { tenantQueryKey } from '../../../lib/query/client';
+import { invalidateTenantQueries } from '../../../lib/query/client';
 import {
   createClient,
   deleteOrArchiveClient,
@@ -16,7 +16,6 @@ export function useClientMutations(input: {
   readonly uid: string | null;
   readonly companyId: number | null;
 }) {
-  const queryClient = useQueryClient();
   const uid = input.uid ?? '';
   const companyId = input.companyId ?? 0;
 
@@ -29,9 +28,7 @@ export function useClientMutations(input: {
 
   async function invalidateClients(): Promise<void> {
     if (!uid || companyId <= 0) return;
-    await queryClient.invalidateQueries({
-      queryKey: tenantQueryKey(uid, companyId, 'clients'),
-    });
+    await invalidateTenantQueries(uid, companyId, 'clients');
   }
 
   const createMutation = useMutation({

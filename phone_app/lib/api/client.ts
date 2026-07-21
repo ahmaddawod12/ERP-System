@@ -215,6 +215,7 @@ interface ApiRequestOptions {
   readonly idempotencyKey?: string;
   readonly uid?: string;
   readonly companyId?: number;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export async function requestApi<T>(
@@ -230,6 +231,12 @@ export async function requestApi<T>(
     controller,
   );
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const abortFromCaller = () => controller.abort();
+  if (options.signal?.aborted) {
+    controller.abort();
+  } else {
+    options.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  }
 
   try {
     const token = await getIdentityBoundAccessToken(options.uid);
@@ -301,6 +308,7 @@ export async function requestApi<T>(
     throw new ApiClientError('Network request failed', 0, 'NETWORK_ERROR', true);
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abortFromCaller);
     unregister();
   }
 }
@@ -312,6 +320,7 @@ export function fetchViewer(uid: string): Promise<Viewer> {
 export function fetchViewerProfile(
   uid: string,
   companyId?: number | null,
+  signal?: AbortSignal,
 ): Promise<ViewerProfile> {
   const path = companyId
     ? `/api/v1/me/profile?companyId=${encodeURIComponent(String(companyId))}`
@@ -319,6 +328,7 @@ export function fetchViewerProfile(
   return requestApi(path, ViewerProfileSchema, {
     uid,
     companyId: companyId ?? undefined,
+    signal,
   });
 }
 
@@ -329,21 +339,23 @@ export function fetchWorkspaces(uid: string): Promise<WorkspaceSummary[]> {
 export function fetchCompanyBootstrap(
   uid: string,
   companyId: number,
+  signal?: AbortSignal,
 ): Promise<CompanyBootstrap> {
   return requestApi(
     `/api/v1/companies/${companyId}/bootstrap`,
     CompanyBootstrapSchema,
-    { uid, companyId },
+    { uid, companyId, signal },
   );
 }
 
 export function fetchBusinessProfile(
   uid: string,
   companyId: number,
+  signal?: AbortSignal,
 ): Promise<BusinessProfile> {
   return requestApi(
     `/api/v1/companies/${companyId}/profile`,
     BusinessProfileSchema,
-    { uid, companyId },
+    { uid, companyId, signal },
   );
 }

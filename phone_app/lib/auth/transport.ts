@@ -1,19 +1,3 @@
-import { getApp } from '@react-native-firebase/app';
-import storage from '@react-native-firebase/storage';
-import {
-  getMessaging,
-  getToken,
-  onMessage,
-  onNotificationOpenedApp,
-  getInitialNotification,
-  onTokenRefresh,
-  requestPermission,
-  hasPermission,
-  subscribeToTopic,
-  unsubscribeFromTopic,
-  getAPNSToken,
-  AuthorizationStatus,
-} from '@react-native-firebase/messaging';
 import {
   getSupabaseAccessToken,
   installSupabaseAuthLifecycle,
@@ -21,9 +5,7 @@ import {
   signInSupabase,
   signOutSupabase,
   subscribeSupabaseAuth,
-} from './lib/auth/supabase-client';
-
-export const app = getApp();
+} from './supabase-client';
 
 export type SupabaseAuthUser = {
   uid: string;
@@ -50,45 +32,64 @@ function toSupabaseAuthUser(uid: string, email: string | null): SupabaseAuthUser
   };
 }
 
-function emitAuthStateChange() {
+function emitAuthStateChange(): void {
   for (const listener of authListeners) {
     listener(authCurrentUser);
   }
 }
 
-function setAuthCurrentUser(uid: string, email: string | null) {
+function setAuthCurrentUser(uid: string, email: string | null): void {
   authCurrentUser = toSupabaseAuthUser(uid, email);
   emitAuthStateChange();
 }
 
-function clearAuthCurrentUser() {
+function clearAuthCurrentUser(): void {
   authCurrentUser = null;
   emitAuthStateChange();
 }
 
 function ensureAuthBridge(): Promise<void> {
-  authBridgePromise ??= (async () => {
-    const removeLifecycle = installSupabaseAuthLifecycle();
-    const unsubscribe = subscribeSupabaseAuth((_session, user) => {
-      if (user) {
-        setAuthCurrentUser(user.id, user.email ?? null);
+  if (authBridgePromise) return authBridgePromise;
+
+  const promise = (async () => {
+    let removeLifecycle: (() => void) | null = null;
+    let unsubscribe: (() => void) | null = null;
+    try {
+      removeLifecycle = installSupabaseAuthLifecycle();
+      unsubscribe = subscribeSupabaseAuth((_session, user) => {
+        if (user) {
+          setAuthCurrentUser(user.id, user.email ?? null);
+        } else {
+          clearAuthCurrentUser();
+        }
+      });
+      authBridgeCleanup = () => {
+        unsubscribe?.();
+        removeLifecycle?.();
+      };
+
+      const restored = await restoreSupabaseSession();
+      if (restored?.user) {
+        setAuthCurrentUser(restored.user.id, restored.user.email ?? null);
       } else {
         clearAuthCurrentUser();
       }
-    });
-    authBridgeCleanup = () => {
-      unsubscribe();
-      removeLifecycle();
-    };
-
-    const restored = await restoreSupabaseSession();
-    if (restored?.user) {
-      setAuthCurrentUser(restored.user.id, restored.user.email ?? null);
-    } else {
-      clearAuthCurrentUser();
+    } catch (error) {
+      if (authBridgeCleanup) {
+        authBridgeCleanup();
+      } else {
+        unsubscribe?.();
+        removeLifecycle?.();
+      }
+      authBridgeCleanup = null;
+      throw error;
     }
   })();
-  return authBridgePromise;
+  authBridgePromise = promise;
+  void promise.catch(() => {
+    if (authBridgePromise === promise) authBridgePromise = null;
+  });
+  return promise;
 }
 
 export async function signInSupabaseAuthTransport(email: string, password: string): Promise<void> {
@@ -113,47 +114,43 @@ export const auth = {
   },
 };
 
-export { storage };
-
-export const messaging = getMessaging(app);
-
-export async function signInWithEmailAndPassword(authInstance: any, email: string, password: string) {
+export async function signInWithEmailAndPassword(
+  authInstance: unknown,
+  email: string,
+  password: string,
+) {
   void authInstance;
   await signInSupabaseAuthTransport(email, password);
   return { user: auth.currentUser };
 }
 
-export async function signOut(authInstance: any) {
+export async function signOut(authInstance: unknown): Promise<void> {
   void authInstance;
   await clearSupabaseAuthTransportSession();
 }
 
-export function onAuthStateChanged(authInstance: any, listener: (user: any) => void) {
+export function onAuthStateChanged(
+  authInstance: unknown,
+  listener: (user: SupabaseAuthUser | null) => void,
+): () => void {
   void authInstance;
   let active = true;
-  void ensureAuthBridge().then(() => {
-    if (!active) {
-      return;
-    }
-    authListeners.add(listener);
-    listener(auth.currentUser);
-  });
+  let notified = false;
+  const trackedListener = (user: SupabaseAuthUser | null) => {
+    if (!active) return;
+    notified = true;
+    listener(user);
+  };
+  authListeners.add(trackedListener);
+  void ensureAuthBridge()
+    .then(() => {
+      if (!notified) trackedListener(auth.currentUser);
+    })
+    .catch(() => {
+      if (!notified) trackedListener(null);
+    });
   return () => {
     active = false;
-    authListeners.delete(listener);
+    authListeners.delete(trackedListener);
   };
 }
-
-export {
-  getToken,
-  onMessage,
-  onNotificationOpenedApp,
-  getInitialNotification,
-  onTokenRefresh,
-  requestPermission,
-  hasPermission,
-  subscribeToTopic,
-  unsubscribeFromTopic,
-  getAPNSToken,
-  AuthorizationStatus,
-};

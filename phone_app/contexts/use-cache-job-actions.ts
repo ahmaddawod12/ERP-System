@@ -6,7 +6,6 @@ interface JobActionsParams {
   jobs: any[];
   companyJobs: any[];
   saveToLocalCache: (key: string, value: unknown) => void;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
 }
 
 function upsertJob(arr: any[], job: any) {
@@ -26,7 +25,6 @@ export function useCacheJobActions({
   jobs,
   companyJobs,
   saveToLocalCache,
-  preIncrementVersion,
 }: JobActionsParams) {
   const addJob = useCallback((job: any) => {
     if (!job?.id) {
@@ -37,29 +35,25 @@ export function useCacheJobActions({
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, upsertJob(current, job));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
   const updateJob = useCallback((jobId: string, updates: any) => {
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, mergeJob(current, jobId, updates));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
   const removeJob = useCallback((jobId: string) => {
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, removeJobById(current, jobId));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
   const acceptJob = useCallback((jobId: string, updates: any) => {
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, mergeJob(current, jobId, updates));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
   return {
     addJob,

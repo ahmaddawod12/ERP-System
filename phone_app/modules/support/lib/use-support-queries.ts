@@ -44,12 +44,13 @@ export function useSupportConversationsInfinite(input: {
       status,
       category,
     ),
-    queryFn: ({ pageParam }) => fetchSupportConversationsPage({
+    queryFn: ({ pageParam, signal }) => fetchSupportConversationsPage({
       uid,
       companyId: companyId > 0 ? companyId : null,
       status: input.status,
       category: input.category,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
@@ -83,11 +84,12 @@ export function useSupportThreadInfinite(input: {
   const enabled = (input.enabled ?? true) && uid.length > 0 && conversationId.length > 0;
   const query = useInfiniteQuery({
     queryKey: tenantQueryKey(uid, companyId, 'support', 'thread', conversationId),
-    queryFn: ({ pageParam }) => fetchSupportThreadPage({
+    queryFn: ({ pageParam, signal }) => fetchSupportThreadPage({
       uid,
       companyId: companyId > 0 ? companyId : null,
       conversationId,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
@@ -148,7 +150,7 @@ export function useTrustedViewerProfile(uid: string | null, companyId: number | 
   const scopeCompanyId = companyId ?? 0;
   return useQuery({
     queryKey: tenantQueryKey(normalizedUid, scopeCompanyId, 'viewer-profile'),
-    queryFn: () => fetchViewerProfile(normalizedUid, companyId),
+    queryFn: ({ signal }) => fetchViewerProfile(normalizedUid, companyId, signal),
     placeholderData: (previousData, previousQuery) => (
       sameTenant(previousQuery?.queryKey, normalizedUid, scopeCompanyId)
         ? previousData

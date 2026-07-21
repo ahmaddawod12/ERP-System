@@ -25,11 +25,12 @@ export function useDocumentsInfinite(input: {
 
   const query = useInfiniteQuery({
     queryKey: tenantQueryKey(uid, companyId, 'documents', filters),
-    queryFn: ({ pageParam }) => fetchDocumentsPage({
+    queryFn: ({ pageParam, signal }) => fetchDocumentsPage({
       uid,
       companyId,
       filters,
       afterCursor: pageParam,
+      signal,
     }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,

@@ -1,24 +1,117 @@
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
-import { getDb } from './client';
-
-const {
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobTransaction,
+} from './client';
+import type { LegacyUserProfile } from './access';
+import {
   appUsers,
   clients,
   companyMemberships,
   jobAttachments,
   jobPartUsages,
   jobs,
-} = require('./schema');
-const {
+} from './schema';
+import {
   allocateCompanyCounter,
   findActiveMembership,
   resolveCompanyByPublicId,
-} = require('./membership');
-const {
+} from './membership';
+import {
   deductUserInventoryPartsInTransaction,
-} = require('./inventory');
+} from './inventory';
 
-function asDate(value, fallback) {
+type UnknownRecord = Record<string, unknown>;
+type DateInput = string | number | Date | null | undefined;
+type JobStatus = typeof jobs.$inferSelect['status'];
+type JobRow = Omit<typeof jobs.$inferSelect, 'entityVersion' | 'searchText'>;
+type MembershipIdentity = {
+  membershipId: string;
+  memberNo: number;
+  role: 'manager' | 'worker' | 'user' | 'basic';
+  userId: string;
+  name: string;
+  phoneNumber: string;
+  email?: string;
+};
+type ClientIdentity = Pick<typeof clients.$inferSelect, 'id' | 'clientNo' | 'name' | 'phone'>;
+type AttachmentRow = Pick<typeof jobAttachments.$inferSelect, 'storagePath' | 'kind'>;
+type PartUsageRow = {
+  partNo: number | null;
+  partNameSnapshot: string | null;
+  quantity: number;
+};
+type NormalizedPart = {
+  id: unknown;
+  name: string;
+  quantity: number;
+  partId: unknown;
+  unit?: string;
+};
+type AttachmentRef = { storagePath: string };
+
+type JobMutationInput = {
+  companyId: string | number;
+  jobId?: string | number;
+  title?: string | null;
+  description?: string | null;
+  notes?: string | null;
+  location?: string | null;
+  address?: string | null;
+  category?: string | null;
+  priority?: string | null;
+  dueDate?: DateInput;
+  status?: JobStatus;
+  finishedAt?: DateInput;
+  deniedAt?: DateInput;
+  cid?: string | number | null;
+  cname?: string | null;
+  cphone?: string | null;
+  wid?: string | number | null;
+  wname?: string | null;
+  mid?: string | number | null;
+  mname?: string | null;
+  createdByName?: string | null;
+  createdByUserId?: string;
+  updatedByUserId?: string | null;
+  userId?: string | null;
+  acceptedByUserId?: string;
+  inventoryDeductionTargetUid?: string | null;
+  idempotencyKey?: string | null;
+  isCert?: boolean;
+  photos?: unknown;
+  signature?: unknown;
+  partsUsed?: unknown;
+  now?: DateInput;
+  timeFrom?: unknown;
+  timeTo?: unknown;
+  travelDistance?: unknown;
+  signingPerson?: unknown;
+  tags?: unknown;
+  images?: unknown;
+  parts?: unknown;
+  deniedBy?: unknown;
+  approvedBy?: unknown;
+};
+
+type JobQueryOptions = DatabaseOptions & {
+  limit?: number;
+  pageSize?: number;
+  status?: string | readonly string[];
+  dateField?: 'updatedAt' | 'finishedAt' | 'dueAt' | 'createdAt';
+  dateFrom?: DateInput;
+  dateTo?: DateInput;
+  afterCursor?: string | null;
+};
+
+function asRecord(value: unknown): UnknownRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as UnknownRecord
+    : {};
+}
+
+function asDate<T extends Date | null>(value: DateInput, fallback: T): Date | T {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -27,30 +120,28 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-function numericOrNull(value) {
+function numericOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function cloneMeta(meta) {
-  return meta && typeof meta === 'object' && !Array.isArray(meta)
-    ? { ...meta }
-    : {};
+function cloneMeta(meta: unknown): UnknownRecord {
+  return { ...asRecord(meta) };
 }
 
-function normalizeStringArray(value) {
+function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .map((entry: unknown) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean);
 }
 
-function normalizePartList(value) {
+function normalizePartList(value: unknown): NormalizedPart[] {
   if (!Array.isArray(value)) return [];
   return value
-    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
-    .map((entry) => ({
+    .filter((entry): entry is UnknownRecord => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry: UnknownRecord) => ({
       id: entry.id,
       name: typeof entry.name === 'string' ? entry.name : '',
       quantity: Number(entry.quantity || 0),
@@ -59,47 +150,57 @@ function normalizePartList(value) {
     }));
 }
 
-const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
+const VALID_STATUS_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   pending: ['waiting', 'finished', 'denied'],
   waiting: ['pending', 'finished', 'denied'],
   finished: [],
   denied: [],
 };
 
-function isValidStatusTransition(currentStatus: string | null | undefined, nextStatus: string) {
+function isValidStatusTransition(
+  currentStatus: JobStatus | null | undefined,
+  nextStatus: JobStatus,
+): boolean {
   const current = currentStatus || 'pending';
   return VALID_STATUS_TRANSITIONS[current]?.includes(nextStatus) || false;
 }
 
-function normalizeAttachmentRefs(value) {
+function normalizeAttachmentRefs(value: unknown): AttachmentRef[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((entry) => {
-      if (entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.storagePath === 'string') {
-        return { storagePath: entry.storagePath.trim() };
+    .map((entry: unknown) => {
+      const record = asRecord(entry);
+      if (typeof record.storagePath === 'string') {
+        return { storagePath: record.storagePath.trim() };
       }
       return null;
     })
-    .filter((entry) => entry && entry.storagePath);
+    .filter((entry): entry is AttachmentRef => Boolean(entry?.storagePath));
 }
 
-function resolveDueAt(value) {
+function copyUnknownArray(value: unknown): unknown[] | undefined {
+  return Array.isArray(value)
+    ? value.map((entry: unknown) => entry)
+    : undefined;
+}
+
+function resolveDueAt(value: DateInput): Date | null {
   if (!value) return null;
   const parsed = asDate(value, null);
   return parsed || null;
 }
 
-function normalizeStringList(value) {
+function normalizeStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
-      .map((entry) => String(entry || '').trim())
+      .map((entry: unknown) => String(entry || '').trim())
       .filter(Boolean);
   }
   const single = String(value || '').trim();
   return single ? [single] : [];
 }
 
-function resolveJobDateColumn(dateField) {
+function resolveJobDateColumn(dateField: unknown) {
   switch (String(dateField || '').trim()) {
     case 'updatedAt':
       return jobs.updatedAt;
@@ -113,7 +214,11 @@ function resolveJobDateColumn(dateField) {
   }
 }
 
-async function getMembershipIdentity(tx, companyInternalId, membershipId) {
+async function getMembershipIdentity(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  membershipId: string | null,
+): Promise<MembershipIdentity | null> {
   if (!membershipId) return null;
   const rows = await tx
     .select({
@@ -148,7 +253,11 @@ async function getMembershipIdentity(tx, companyInternalId, membershipId) {
   };
 }
 
-async function getMembershipByMemberNo(tx, companyInternalId, memberNo) {
+async function getMembershipByMemberNo(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  memberNo: unknown,
+): Promise<MembershipIdentity | null> {
   const normalizedMemberNo = numericOrNull(memberNo);
   if (!normalizedMemberNo) return null;
 
@@ -186,7 +295,11 @@ async function getMembershipByMemberNo(tx, companyInternalId, memberNo) {
   };
 }
 
-async function getClientByNo(tx, companyInternalId, clientNo) {
+async function getClientByNo(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  clientNo: unknown,
+): Promise<ClientIdentity | null> {
   const normalizedClientNo = numericOrNull(clientNo);
   if (!normalizedClientNo) return null;
 
@@ -206,7 +319,11 @@ async function getClientByNo(tx, companyInternalId, clientNo) {
   return rows[0] || null;
 }
 
-async function getJobRowByNo(tx, companyInternalId, jobNo) {
+async function getJobRowByNo(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  jobNo: unknown,
+): Promise<JobRow | null> {
   const normalizedJobNo = numericOrNull(jobNo);
   if (!normalizedJobNo) return null;
 
@@ -252,7 +369,10 @@ async function getJobRowByNo(tx, companyInternalId, jobNo) {
   return rows[0] || null;
 }
 
-function buildJobMeta(payload, existingMeta: any = {}) {
+function buildJobMeta(
+  payload: JobMutationInput,
+  existingMeta: unknown = {},
+): UnknownRecord {
   const meta = cloneMeta(existingMeta);
 
   if (Object.prototype.hasOwnProperty.call(payload, 'timeFrom')) meta.timeFrom = payload.timeFrom || null;
@@ -268,10 +388,17 @@ function buildJobMeta(payload, existingMeta: any = {}) {
   return meta;
 }
 
-async function replaceJobAttachments(tx, jobInternalId, userId, photos, signature, now) {
+async function replaceJobAttachments(
+  tx: SmartJobTransaction,
+  jobInternalId: string,
+  userId: string | null,
+  photos: unknown,
+  signature: unknown,
+  now: Date,
+) {
   await tx.delete(jobAttachments).where(eq(jobAttachments.jobId, jobInternalId));
 
-  const rows = [];
+  const rows: Array<typeof jobAttachments.$inferInsert> = [];
   for (const photo of normalizeAttachmentRefs(photos)) {
     rows.push({
       jobId: jobInternalId,
@@ -281,10 +408,11 @@ async function replaceJobAttachments(tx, jobInternalId, userId, photos, signatur
       createdAt: now,
     });
   }
-  if (signature && typeof signature === 'object' && typeof signature.storagePath === 'string' && signature.storagePath.trim()) {
+  const signatureRecord = asRecord(signature);
+  if (typeof signatureRecord.storagePath === 'string' && signatureRecord.storagePath.trim()) {
     rows.push({
       jobId: jobInternalId,
-      storagePath: signature.storagePath.trim(),
+      storagePath: signatureRecord.storagePath.trim(),
       kind: 'signature',
       uploadedByUserId: userId || null,
       createdAt: now,
@@ -296,7 +424,13 @@ async function replaceJobAttachments(tx, jobInternalId, userId, photos, signatur
   }
 }
 
-async function replaceJobPartUsages(tx, jobInternalId, companyInternalId, partsUsed, now) {
+async function replaceJobPartUsages(
+  tx: SmartJobTransaction,
+  jobInternalId: string,
+  companyInternalId: string,
+  partsUsed: unknown,
+  now: Date,
+) {
   await tx.delete(jobPartUsages).where(eq(jobPartUsages.jobId, jobInternalId));
 
   const normalizedParts = normalizePartList(partsUsed)
@@ -309,7 +443,7 @@ async function replaceJobPartUsages(tx, jobInternalId, companyInternalId, partsU
   const requestedPartNos = Array.from(new Set(normalizedParts
     .map((part) => numericOrNull(part.id ?? part.partId))
     .filter((partNo) => partNo)));
-  const partIdByNo = new Map();
+  const partIdByNo = new Map<number, string>();
   if (requestedPartNos.length > 0) {
     const partResult = await tx.execute(sql`
       SELECT id, part_no
@@ -317,8 +451,9 @@ async function replaceJobPartUsages(tx, jobInternalId, companyInternalId, partsU
       WHERE company_id = ${companyInternalId}
         AND part_no = ANY(${requestedPartNos})
     `);
-    for (const row of partResult.rows || []) {
-      partIdByNo.set(Number(row.part_no), row.id);
+    for (const value of partResult.rows || []) {
+      const row = value as UnknownRecord;
+      partIdByNo.set(Number(row.part_no), String(row.id));
     }
   }
 
@@ -335,7 +470,14 @@ async function replaceJobPartUsages(tx, jobInternalId, companyInternalId, partsU
   }));
 }
 
-function mapJobRecord(jobRow, attachmentRows, partRows, assignmentIdentity, creatorIdentity, clientRow) {
+function mapJobRecord(
+  jobRow: JobRow,
+  attachmentRows: AttachmentRow[],
+  partRows: PartUsageRow[],
+  assignmentIdentity: MembershipIdentity | null,
+  creatorIdentity: MembershipIdentity | null,
+  clientRow: ClientIdentity | null,
+) {
   const meta = cloneMeta(jobRow.meta);
   const photos = attachmentRows
     .filter((row) => row.kind === 'photo')
@@ -362,12 +504,12 @@ function mapJobRecord(jobRow, attachmentRows, partRows, assignmentIdentity, crea
     mname: creatorIdentity?.role === 'manager' ? creatorIdentity.name : (jobRow.createdByNameSnapshot || meta.mname || undefined),
     createdAt: jobRow.createdAt instanceof Date ? jobRow.createdAt.toISOString() : String(jobRow.createdAt || ''),
     updatedAt: jobRow.updatedAt instanceof Date ? jobRow.updatedAt.toISOString() : (jobRow.updatedAt ? String(jobRow.updatedAt) : undefined),
-    timeFrom: meta.timeFrom || undefined,
-    timeTo: meta.timeTo || undefined,
-    signingPerson: meta.signingPerson || undefined,
+    timeFrom: meta.timeFrom ? String(meta.timeFrom) : undefined,
+    timeTo: meta.timeTo ? String(meta.timeTo) : undefined,
+    signingPerson: meta.signingPerson ? String(meta.signingPerson) : undefined,
     photos,
     signature: signatureRow ? { storagePath: signatureRow.storagePath } : null,
-    parts: Array.isArray(meta.parts) ? meta.parts : undefined,
+    parts: copyUnknownArray(meta.parts),
     partsUsed: partRows.map((row) => ({
       id: row.partNo != null ? Number(row.partNo) : (row.partNameSnapshot || ''),
       name: row.partNameSnapshot || '',
@@ -376,15 +518,39 @@ function mapJobRecord(jobRow, attachmentRows, partRows, assignmentIdentity, crea
     travelDistance: meta.travelDistance == null ? null : Number(meta.travelDistance),
     finishedAt: jobRow.finishedAt instanceof Date ? jobRow.finishedAt.toISOString() : (jobRow.finishedAt ? String(jobRow.finishedAt) : undefined),
     deniedAt: jobRow.deniedAt instanceof Date ? jobRow.deniedAt.toISOString() : (jobRow.deniedAt ? String(jobRow.deniedAt) : undefined),
-    deniedBy: meta.deniedBy || undefined,
-    approvedBy: meta.approvedBy || undefined,
+    deniedBy: meta.deniedBy ? String(meta.deniedBy) : undefined,
+    approvedBy: meta.approvedBy ? String(meta.approvedBy) : undefined,
     isCert: jobRow.isCert === true,
-    tags: Array.isArray(meta.tags) ? meta.tags : undefined,
-    images: Array.isArray(meta.images) ? meta.images : undefined,
+    tags: copyUnknownArray(meta.tags),
+    images: copyUnknownArray(meta.images),
   };
 }
 
-async function fetchJobDetail(tx, companyInternalId, jobRow) {
+function mapPartUsageSqlRows(values: readonly unknown[]): PartUsageRow[] {
+  return values.map((value) => {
+    const row = value as UnknownRecord;
+    return {
+      partNo: row.part_no == null ? null : Number(row.part_no),
+      partNameSnapshot: row.part_name_snapshot == null ? null : String(row.part_name_snapshot),
+      quantity: Number(row.quantity || 0),
+    };
+  });
+}
+
+function normalizeJobStatusList(value: unknown): JobStatus[] {
+  return normalizeStringList(value).filter((status): status is JobStatus => (
+    status === 'pending'
+    || status === 'waiting'
+    || status === 'finished'
+    || status === 'denied'
+  ));
+}
+
+async function fetchJobDetail(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  jobRow: JobRow,
+) {
   const [attachmentRows, partRows, assignmentIdentity, creatorIdentity, clientRow] = await Promise.all([
     tx
       .select({ storagePath: jobAttachments.storagePath, kind: jobAttachments.kind })
@@ -399,18 +565,21 @@ async function fetchJobDetail(tx, companyInternalId, jobRow) {
       LEFT JOIN inventory_parts p ON p.id = u.inventory_part_id
       WHERE u.job_id = ${jobRow.id}
       ORDER BY u.created_at ASC
-    `).then((result) => result.rows || []),
+    `).then((result) => mapPartUsageSqlRows(result.rows || [])),
     getMembershipIdentity(tx, companyInternalId, jobRow.assignedMembershipId),
     getMembershipIdentity(tx, companyInternalId, jobRow.createdByMembershipId),
     jobRow.clientId
-      ? tx.select({ clientNo: clients.clientNo, name: clients.name, phone: clients.phone }).from(clients).where(eq(clients.id, jobRow.clientId)).limit(1).then((rows) => rows[0] || null)
+      ? tx.select({ id: clients.id, clientNo: clients.clientNo, name: clients.name, phone: clients.phone }).from(clients).where(eq(clients.id, jobRow.clientId)).limit(1).then((rows) => rows[0] || null)
       : Promise.resolve(null),
   ]);
 
   return mapJobRecord(jobRow, attachmentRows, partRows, assignmentIdentity, creatorIdentity, clientRow);
 }
 
-async function getPersistedJobPartUsages(tx, jobInternalId) {
+async function getPersistedJobPartUsages(
+  tx: SmartJobTransaction,
+  jobInternalId: string,
+) {
   const result = await tx.execute(sql`
     SELECT
       u.quantity,
@@ -422,14 +591,22 @@ async function getPersistedJobPartUsages(tx, jobInternalId) {
   `);
 
   return (result.rows || [])
-    .map((row) => ({
+    .map((value) => {
+      const row = value as UnknownRecord;
+      return {
       id: row.part_no != null ? Number(row.part_no) : null,
       quantity: Number(row.quantity || 0),
-    }))
-    .filter((row) => Number.isInteger(row.id) && Number.isFinite(row.quantity) && row.quantity > 0);
+      };
+    })
+    .filter((row): row is { id: number; quantity: number } => (
+      Number.isInteger(row.id) && Number.isFinite(row.quantity) && row.quantity > 0
+    ));
 }
 
-async function createJob(input, options: any = {}) {
+async function createJob(
+  input: JobMutationInput & { createdByUserId: string },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -541,12 +718,16 @@ async function createJob(input, options: any = {}) {
       updatedAt: jobs.updatedAt,
     });
 
+    if (!jobRow) {
+      throw new Error('Job insert did not return a record');
+    }
+
     await replaceJobAttachments(tx, jobRow.id, input.createdByUserId, input.photos, input.signature, now);
     await replaceJobPartUsages(tx, jobRow.id, company.id, input.partsUsed || [], now);
     if (status === 'finished' && input.inventoryDeductionTargetUid) {
       await deductUserInventoryPartsInTransaction(tx, company.id, {
         targetUid: input.inventoryDeductionTargetUid,
-        partsUsed: input.partsUsed || [],
+        partsUsed: normalizePartList(input.partsUsed),
         jobId: jobRow.id,
       }, now);
     }
@@ -555,7 +736,10 @@ async function createJob(input, options: any = {}) {
   });
 }
 
-async function updateJob(input, options: any = {}) {
+async function updateJob(
+  input: JobMutationInput & { jobId: string | number },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -574,7 +758,7 @@ async function updateJob(input, options: any = {}) {
       throw error;
     }
 
-    const updateData: Record<string, any> = { updatedAt: now };
+    const updateData: Partial<typeof jobs.$inferInsert> = { updatedAt: now };
     if (Object.prototype.hasOwnProperty.call(input, 'title')) updateData.title = input.title || null;
     if (Object.prototype.hasOwnProperty.call(input, 'description')) updateData.description = input.description || null;
     if (Object.prototype.hasOwnProperty.call(input, 'notes')) updateData.notes = input.notes || null;
@@ -654,7 +838,10 @@ async function updateJob(input, options: any = {}) {
   });
 }
 
-async function deleteJob(input, options: any = {}) {
+async function deleteJob(
+  input: Pick<JobMutationInput, 'companyId'> & { jobId: string | number },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
 
   return db.transaction(async (tx) => {
@@ -692,7 +879,13 @@ async function deleteJob(input, options: any = {}) {
   });
 }
 
-async function acceptJob(input, options: any = {}) {
+async function acceptJob(
+  input: Pick<JobMutationInput, 'companyId' | 'now'> & {
+    jobId: string | number;
+    acceptedByUserId: string;
+  },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -757,7 +950,11 @@ function decodeJobsCursor(cursor: string): { dateValue: Date; id: string } | nul
   }
 }
 
-async function getJobRecordById(companyId, jobId, options: any = {}) {
+async function getJobRecordById(
+  companyId: string | number,
+  jobId: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) return null;
@@ -769,7 +966,11 @@ async function getJobRecordById(companyId, jobId, options: any = {}) {
   });
 }
 
-async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
+async function listCompanyJobsDetailed(
+  companyId: string | number,
+  profile: LegacyUserProfile | null,
+  options: JobQueryOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company || !profile) return { items: [], nextCursor: null };
@@ -786,7 +987,7 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
   const effectiveLimit = Number.isInteger(rawLimit) && rawLimit > 0
     ? Math.min(rawLimit, 10000)
     : 50;
-  const requestedStatuses = normalizeStringList(options.status);
+  const requestedStatuses = normalizeJobStatusList(options.status);
   const dateFieldKey: 'updatedAt' | 'finishedAt' | 'dueAt' | 'createdAt' = (() => {
     switch (String(options.dateField || '').trim()) {
       case 'updatedAt': return 'updatedAt';
@@ -876,14 +1077,20 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
         LEFT JOIN inventory_parts p ON p.id = u.inventory_part_id
         WHERE u.job_id = ANY(${jobIds})
         ORDER BY u.created_at ASC
-      `).then((result) => result.rows || []),
+      `).then((result) => (result.rows || []).map((value) => {
+        const row = value as UnknownRecord;
+        return {
+          jobId: String(row.job_id),
+          ...mapPartUsageSqlRows([row])[0],
+        };
+      })),
       (() => {
         // Only query the membership rows actually referenced by these jobs.
         const referencedMembershipIds = [
           ...new Set(
             jobRows
               .flatMap((row) => [row.assignedMembershipId, row.createdByMembershipId])
-              .filter(Boolean),
+              .filter((id): id is string => Boolean(id)),
           ),
         ];
         if (referencedMembershipIds.length === 0) return Promise.resolve([]);
@@ -899,11 +1106,13 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
           LEFT JOIN app_users u ON u.id = m.user_id
           WHERE m.id = ANY(${referencedMembershipIds})
             AND m.status = 'active'
-        `).then((result) => result.rows || []);
+        `).then((result) => (result.rows || []).map((value) => value as UnknownRecord));
       })(),
       (() => {
         // Only query the client rows actually referenced by these jobs.
-        const referencedClientIds = [...new Set(jobRows.map((row) => row.clientId).filter(Boolean))];
+        const referencedClientIds = [
+          ...new Set(jobRows.map((row) => row.clientId).filter((id): id is string => Boolean(id))),
+        ];
         if (referencedClientIds.length === 0) return Promise.resolve([]);
         return tx
           .select({ id: clients.id, clientNo: clients.clientNo, name: clients.name, phone: clients.phone })
@@ -912,33 +1121,33 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
       })(),
     ]);
 
-    const attachmentsByJobId = new Map();
+    const attachmentsByJobId = new Map<string, AttachmentRow[]>();
     for (const row of attachmentRows) {
       const key = String(row.jobId);
       if (!attachmentsByJobId.has(key)) attachmentsByJobId.set(key, []);
-      attachmentsByJobId.get(key).push(row);
+      attachmentsByJobId.get(key)?.push(row);
     }
 
-    const partUsageByJobId = new Map();
+    const partUsageByJobId = new Map<string, PartUsageRow[]>();
     for (const row of partUsageRows) {
-      const key = String(row.job_id);
+      const key = row.jobId;
       if (!partUsageByJobId.has(key)) partUsageByJobId.set(key, []);
-      partUsageByJobId.get(key).push(row);
+      partUsageByJobId.get(key)?.push(row);
     }
 
-    const membershipById = new Map();
+    const membershipById = new Map<string, MembershipIdentity>();
     for (const row of membershipRows) {
       membershipById.set(String(row.id), {
-        membershipId: row.id,
-        memberNo: row.member_no,
-        role: row.role,
-        userId: row.user_id,
-        name: row.name || '',
-        phoneNumber: row.phone_number || '',
+        membershipId: String(row.id),
+        memberNo: Number(row.member_no),
+        role: String(row.role) as MembershipIdentity['role'],
+        userId: String(row.user_id),
+        name: String(row.name || ''),
+        phoneNumber: String(row.phone_number || ''),
       });
     }
 
-    const clientById = new Map();
+    const clientById = new Map<string, ClientIdentity>();
     for (const row of clientRows) {
       clientById.set(String(row.id), row);
     }
@@ -952,7 +1161,7 @@ async function listCompanyJobsDetailed(companyId, profile, options: any = {}) {
         clientById.get(String(row.clientId || '')) || null,
       ));
 
-    const lastRow = pageRows[pageRows.length - 1];
+    const lastRow = pageRows[pageRows.length - 1] as JobRow;
     const nextCursor = hasMore
       ? encodeJobsCursor(lastRow[dateFieldKey] ?? lastRow.createdAt, String(lastRow.id))
       : null;

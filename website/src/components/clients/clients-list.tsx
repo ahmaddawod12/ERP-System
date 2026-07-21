@@ -79,12 +79,12 @@ export function ClientsList({
         <table className="w-full min-w-[920px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-5 py-3 font-semibold sm:px-6">Client</th>
-              <th className="px-4 py-3 font-semibold">Contact</th>
-              <th className="px-4 py-3 font-semibold">Address</th>
-              <th className="px-4 py-3 font-semibold">VAT number</th>
-              <th className="px-5 py-3 font-semibold sm:px-6">Status</th>
-              <th className="px-5 py-3 text-right font-semibold sm:px-6">Actions</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Client</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Contact</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Address</th>
+              <th scope="col" className="px-4 py-3 font-semibold">VAT number</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Status</th>
+              <th scope="col" className="px-5 py-3 text-right font-semibold sm:px-6">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">

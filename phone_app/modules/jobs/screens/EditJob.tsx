@@ -20,6 +20,7 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { safeJsonParse } from '../../../utils/helpers';
 import type { Job } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 export default function EditJob() {
   const router = useRouter();
@@ -173,7 +174,7 @@ export default function EditJob() {
       ]);
 
     } catch (error) {
-      console.error('Error updating job:', error);
+      logger.error('Error updating job:', error);
       setIsSaving(false);
       alert.hideLoading();
 

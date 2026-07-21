@@ -15,8 +15,7 @@ import {
   hasActiveWorkersFilters,
   type WorkersFilterValues,
 } from "@/lib/dal/workers-query";
-
-const memberDateFormatter = new Intl.DateTimeFormat("en-IL", { dateStyle: "medium" });
+import { formatDate } from "@/lib/format";
 
 function statusVariant(status: WorkerMembershipStatus): "success" | "warning" | "danger" {
   if (status === "active") return "success";
@@ -86,12 +85,12 @@ export function WorkersList({
         <table className="w-full min-w-[1040px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-5 py-3 font-semibold sm:px-6">Member</th>
-              <th className="px-4 py-3 font-semibold">Contact</th>
-              <th className="px-4 py-3 font-semibold">Role</th>
-              <th className="px-4 py-3 font-semibold">Joined</th>
-              <th className="px-5 py-3 font-semibold sm:px-6">Status</th>
-              <th className="px-5 py-3 font-semibold sm:px-6">Actions</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Member</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Contact</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Role</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Joined</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Status</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -136,7 +135,7 @@ export function WorkersList({
                 <td className="px-4 py-4"><Badge variant="info">{worker.role}</Badge></td>
                 <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
                   <time dateTime={worker.joinedAt}>
-                    {memberDateFormatter.format(new Date(worker.joinedAt))}
+                    <bdi dir="ltr">{formatDate(worker.joinedAt)}</bdi>
                   </time>
                 </td>
                 <td className="px-5 py-4 sm:px-6">

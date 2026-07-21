@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { borderRadius, getColors, spacing } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import AppButton from '../primitives/AppButton';
 import AppIcon from '../primitives/AppIcon';
 import AppText from '../primitives/AppText';
+import AccessibleModal from '../feedback/AccessibleModal';
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -57,18 +58,18 @@ export default function TimePicker({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AccessibleModal visible={visible} transparent animationType="fade" onRequestClose={onClose} announcement={title}>
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
         <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <AppText variant="heading">{title}</AppText>
 
           <View style={styles.timeRow}>
             <View style={styles.column}>
-              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateHour(1)}>
+              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateHour(1)} accessibilityRole="adjustable" accessibilityLabel="Hour" accessibilityHint="Increase hour">
                 <AppIcon name="chevron-up" size={22} color={palette.textPrimary} />
               </TouchableOpacity>
-              <AppText variant="display">{format(hour)}</AppText>
-              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateHour(-1)}>
+              <AppText variant="display" accessibilityLabel={`${hour} hours`}>{format(hour)}</AppText>
+              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateHour(-1)} accessibilityRole="adjustable" accessibilityLabel="Hour" accessibilityHint="Decrease hour">
                 <AppIcon name="chevron-down" size={22} color={palette.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -76,11 +77,11 @@ export default function TimePicker({
             <AppText variant="display">:</AppText>
 
             <View style={styles.column}>
-              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateMinute(1)}>
+              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateMinute(1)} accessibilityRole="adjustable" accessibilityLabel="Minute" accessibilityHint="Increase minute">
                 <AppIcon name="chevron-up" size={22} color={palette.textPrimary} />
               </TouchableOpacity>
-              <AppText variant="display">{format(minute)}</AppText>
-              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateMinute(-1)}>
+              <AppText variant="display" accessibilityLabel={`${minute} minutes`}>{format(minute)}</AppText>
+              <TouchableOpacity style={styles.arrowBtn} onPress={() => updateMinute(-1)} accessibilityRole="adjustable" accessibilityLabel="Minute" accessibilityHint="Decrease minute">
                 <AppIcon name="chevron-down" size={22} color={palette.textPrimary} />
               </TouchableOpacity>
             </View>
@@ -99,7 +100,7 @@ export default function TimePicker({
           </View>
         </View>
       </View>
-    </Modal>
+    </AccessibleModal>
   );
 }
 

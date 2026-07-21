@@ -7,7 +7,7 @@ export function createCompanyLogoFetcher(options: {
   cacheTtlMs?: number;
   maxCacheSize?: number;
 }) {
-  const logoCache = new Map();
+  const logoCache = new Map<string, { dataUrl: string | null; fetchedAt: number }>();
   const cacheTtlMs = options.cacheTtlMs ?? 10 * 60 * 1000;
   const maxCacheSize = options.maxCacheSize ?? 100;
 
@@ -18,7 +18,11 @@ export function createCompanyLogoFetcher(options: {
     for (const [key] of toRemove) logoCache.delete(key);
   }
 
-  return async function fetchCompanyLogo(companyId, taskId, taskType) {
+  return async function fetchCompanyLogo(
+    companyId: string,
+    taskId: string,
+    taskType: string,
+  ): Promise<string | null> {
     if (!companyId) return null;
 
     const cached = logoCache.get(companyId);
@@ -44,7 +48,10 @@ export function createCompanyLogoFetcher(options: {
       evictLogoCacheIfNeeded();
       return dataUrl;
     } catch (logoError) {
-      console.warn(`[${taskType}:${taskId}] Error fetching logo:`, logoError.message);
+      console.warn(
+        `[${taskType}:${taskId}] Error fetching logo:`,
+        logoError instanceof Error ? logoError.message : 'unknown',
+      );
       return null;
     }
   };

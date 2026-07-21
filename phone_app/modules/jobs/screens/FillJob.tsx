@@ -9,7 +9,6 @@ import { View,
   SafeAreaView,
   KeyboardAvoidingView,
   Keyboard,
-  Modal,
  } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,7 +18,7 @@ import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
 import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
-import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, InventoryItemSearch, AppInput, ScreenHeroCard } from '../../../components';
+import { AppButton, AppCard, AppText, TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContainer, ClientSelector, AppInput, ScreenHeroCard } from '../../../components';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
@@ -30,6 +29,8 @@ import { useTenant } from '../../../contexts/TenantContext';
 import { storage } from '../../../contexts/mmkv-storage';
 import { safeJsonParse } from '../../../utils/helpers';
 import { logger } from '../../../utils/logger';
+import AccessibleModal from '../../../components/feedback/AccessibleModal';
+import JobPartsFormCard from '../components/JobPartsFormCard';
 import { enqueueOutboxOperation } from '../../../lib/outbox/operations';
 import type { OutboxOperationResult } from '../../../lib/outbox/processor';
 import { invalidateTenantQueries } from '../../../lib/query/client';
@@ -44,7 +45,7 @@ import {
   buildFinishedJobOutboxPayload,
 } from '../lib/finished-job-outbox-model';
 import { styles } from './FillJob.styles';
-import { generateTempId, getFillJobDraftStorageKey, type EditableJob, type FillJobDraft, type FillJobFormData, type FillJobMode, type FillJobPart } from '../lib/fill-job-model';
+import { generateTempId, getFillJobDraftStorageKey, validateFillJobForm, type EditableJob, type FillJobDraft, type FillJobFormData, type FillJobMode, type FillJobPart } from '../lib/fill-job-model';
 
 export default function FillJob() {
   const router = useRouter();
@@ -417,44 +418,17 @@ export default function FillJob() {
   };
 
   const validateForm = () => {
-    // User mode requires title, worker mode doesn't
-    if (mode === 'user' && !jobData.title) {
-      alert.error('Error', t.fillAllFields);
-      return false;
-    }
-
-    if (
-      !jobData.timeFrom
-      || !jobData.timeTo
-      || !jobData.signingPerson
-      || (mode === 'user' && (!jobData.location || !jobData.description || !jobData.cname))
-    ) {
-      alert.error('Error', t.fillAllFields);
-      return false;
-    }
-
-    // Validate time
-    const [startHour, startMin] = jobData.timeFrom.split(':').map(Number);
-    const [endHour, endMin] = jobData.timeTo.split(':').map(Number);
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
-
-    if (endMinutes <= startMinutes) {
-      alert.error('Error', t.invalidTime);
-      return false;
-    }
-
-    if (jobData.photos.length === 0) {
-      alert.error('Error', t.addAtLeastOnePhoto);
-      return false;
-    }
-
-    if (!jobData.signature) {
-      alert.error('Error', t.addSignatureRequired);
-      return false;
-    }
-
-    return true;
+    const validationCode = validateFillJobForm(mode, jobData);
+    if (!validationCode) return true;
+    const validationMessage = validationCode === 'invalid-time'
+      ? t.invalidTime
+      : validationCode === 'missing-photo'
+        ? t.addAtLeastOnePhoto
+        : validationCode === 'missing-signature'
+          ? t.addSignatureRequired
+          : t.fillAllFields;
+    alert.error('Error', validationMessage);
+    return false;
   };
 
   const showSavedOffline = () => {
@@ -965,100 +939,16 @@ export default function FillJob() {
             )}
           </AppCard>
 
-          {/* Parts Used Card */}
-          <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
-            <View style={styles.cardHeader}>
-              <MaterialCommunityIcons name="cog" size={20} color={colors.secondary} />
-              <AppText style={[styles.cardTitle, { color: colors.textPrimary }]}>
-                {t.partsUsed}
-              </AppText>
-            </View>
-
-            {/* Inline part search using InventoryItemSearch */}
-            <View style={{ paddingHorizontal: spacing.lg, marginBottom: spacing.sm }}>
-              <InventoryItemSearch
-                value={partsSearchText}
-                onChangeText={setPartsSearchText}
-                inventoryParts={inventory}
-                onSelectPart={(part) => {
-                  // Check if part already selected
-                  const existing = selectedParts.find(p => p.id === part.id || p.name === part.name);
-                  if (existing) {
-                    alert.info(
-                      language === 'en' ? 'Already Added' : language === 'he' ? 'כבר נוסף' : 'تمت الإضافة بالفعل',
-                      language === 'en' ? 'This part is already in your list' : language === 'he' ? 'חלק זה כבר ברשימה שלך' : 'هذا الجزء موجود بالفعل في قائمتك'
-                    );
-                    return;
-                  }
-                  setSelectedParts(prev => [...prev, {
-                    id: part.id || part.name,
-                    name: part.name,
-                    quantity: part.quantity,
-                    usedQuantity: 1,
-                  }]);
-                  // Clear the search box after adding
-                  setPartsSearchText('');
-                }}
-                placeholder={language === 'en' ? 'Search parts to add...' : language === 'he' ? 'חפש חלקים להוספה...' : 'ابحث عن قطع لإضافتها...'}
-                colors={colors}
-                style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, marginHorizontal: 0, marginBottom: 0 }]}
-              />
-            </View>
-
-            {selectedParts.length > 0 && (
-              <View style={styles.partsList}>
-                {selectedParts.map((part) => (
-                  <View key={part.id} style={[styles.partItem, { backgroundColor: colors.background }]}>
-                    <View style={{ flex: 1 }}>
-                      <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: spacing.sm }}>
-                        <AppText style={{ fontSize: 12, color: colors.textSecondary }}>
-                          {language === 'en' ? 'Qty:' : language === 'he' ? 'כמות:' : 'الكمية:'}
-                        </AppText>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              const current = part.usedQuantity || 1;
-                              if (current > 1) {
-                                setSelectedParts(prev => prev.map(p => p.id === part.id ? { ...p, usedQuantity: current - 1 } : p));
-                              }
-                            }}
-                            style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.border, justifyContent: 'center', alignItems: 'center' }}
-                          >
-                            <AppText style={{ fontSize: 16, fontWeight: '700', color: colors.textPrimary }}>−</AppText>
-                          </TouchableOpacity>
-                          <AppText style={{ fontSize: 15, fontWeight: '600', color: colors.textPrimary, minWidth: 24, textAlign: 'center' }}>
-                            {part.usedQuantity || 1}
-                          </AppText>
-                          <TouchableOpacity
-                            onPress={() => {
-                              const current = part.usedQuantity || 1;
-                              const max = part.quantity || 999;
-                              if (current < max) {
-                                setSelectedParts(prev => prev.map(p => p.id === part.id ? { ...p, usedQuantity: current + 1 } : p));
-                              }
-                            }}
-                            style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.secondary, justifyContent: 'center', alignItems: 'center' }}
-                          >
-                            <AppText style={{ fontSize: 16, fontWeight: '700', color: 'white' }}>+</AppText>
-                          </TouchableOpacity>
-                        </View>
-                        <AppText style={{ fontSize: 11, color: colors.textSecondary }}>
-                          / {part.quantity || '∞'}
-                        </AppText>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => setSelectedParts(prev => prev.filter(p => p.id !== part.id))}
-                      style={{ padding: 4 }}
-                    >
-                      <MaterialCommunityIcons name="close-circle" size={22} color={colors.error || '#EF4444'} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
-          </AppCard>
+          <JobPartsFormCard
+            title={t.partsUsed}
+            language={language}
+            colors={colors}
+            inventory={inventory}
+            searchText={partsSearchText}
+            selectedParts={selectedParts}
+            onSearchTextChange={setPartsSearchText}
+            onPartsChange={setSelectedParts}
+          />
 
           {/* Signature Card */}
           <AppCard style={[styles.card, { backgroundColor: colors.backgroundElevated, borderColor: colors.border }]}> 
@@ -1188,17 +1078,18 @@ export default function FillJob() {
       />
 
       {/* Signature Pad */}
-      <Modal
+      <AccessibleModal
         visible={showSignature}
         transparent={true}
         animationType="slide"
         onRequestClose={() => setShowSignature(false)}
+        announcement="Signature pad"
       >
         <SignaturePad
           onSave={handleSignature}
           onCancel={() => setShowSignature(false)}
         />
-      </Modal>
+      </AccessibleModal>
 
       <GlobalHeader />
     </SafeAreaView>

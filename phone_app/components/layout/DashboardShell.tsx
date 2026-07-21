@@ -7,6 +7,7 @@ import { useLanguageContext } from '../../contexts/LanguageContext';
 import AppIcon, { type IconLibrary } from '../primitives/AppIcon';
 import AppText from '../primitives/AppText';
 import ScrollableContainer from './ScrollableContainer';
+import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 
 const withAlpha = (hex: string, alpha: number) => {
   if (!hex || !hex.startsWith('#') || (hex.length !== 7 && hex.length !== 4)) {
@@ -69,6 +70,7 @@ export default function DashboardShell({
   const { language } = useLanguageContext();
   const palette = getColors(isDarkMode);
   const isRTL = language === 'he' || language === 'ar';
+  const responsive = useResponsiveLayout();
   const heroGradient = isDarkMode
     ? [palette.primaryDark, palette.primary, palette.secondaryDark]
     : [gradients.premium[0], palette.primary, palette.secondaryDark];
@@ -93,13 +95,17 @@ export default function DashboardShell({
       />
 
       <ScrollableContainer
-        contentContainerStyle={[styles.content, contentContainerStyle]}
+        contentContainerStyle={[
+          styles.content,
+          responsive.isWide && styles.contentWide,
+          contentContainerStyle,
+        ]}
       >
         <LinearGradient
           colors={heroGradient as [string, string, string]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.heroCard}
+          style={[styles.heroCard, responsive.isWide && styles.heroCardWide]}
         >
           <View style={styles.heroTopRow}>
             <View style={styles.heroIdentityRow}>
@@ -226,12 +232,19 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxxl + spacing.xl,
     paddingHorizontal: spacing.lg,
   },
+  contentWide: {
+    paddingHorizontal: spacing.xxl,
+  },
   heroCard: {
     borderRadius: borderRadius.xxl,
     padding: spacing.xl,
     minHeight: 220,
     justifyContent: 'space-between',
     ...shadows.floating,
+  },
+  heroCardWide: {
+    minHeight: 200,
+    padding: spacing.xxl,
   },
   heroTopRow: {
     flexDirection: 'row',

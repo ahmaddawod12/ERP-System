@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View, type StyleProp, type ViewStyle, type TextStyle } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View, type AccessibilityState, type StyleProp, type ViewStyle, type TextStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { borderRadius, getColors, shadows, spacing, type ColorPalette } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
@@ -29,6 +29,8 @@ export interface AppButtonProps {
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
   accessibilityLabel?: string;
+  accessibilityHint?: string;
+  accessibilityState?: AccessibilityState;
   size?: ButtonSize;
   minHeight?: number;
   hitSlop?: number;
@@ -82,6 +84,8 @@ export default function AppButton({
   style,
   textStyle,
   accessibilityLabel,
+  accessibilityHint,
+  accessibilityState,
   size = 'md',
   minHeight = 48,
   hitSlop = 8,
@@ -131,8 +135,9 @@ export default function AppButton({
       disabled={isDisabled}
       hitSlop={hitSlop}
       accessibilityRole="button"
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
+      accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading }}
       accessibilityLabel={accessibilityLabel || title}
+      accessibilityHint={accessibilityHint}
       style={({ pressed }) => [
         styles.base,
         sizeStyle,

@@ -1,7 +1,12 @@
 import express from 'express';
+import type { Page } from 'puppeteer';
 
 import { createBrowserPool, isTransientProcessingError } from './browser-pool';
 import { createCompanyFileStorageFromEnv } from './company-file-storage';
+import {
+  buildHtmlPayload,
+  type NormalizedDocumentData,
+} from './document-payload';
 import generateDocumentHTML from './htmlTemplate';
 import { installStructuredLogging } from './logging';
 import { createCompanyLogoFetcher } from './logo-cache';
@@ -22,8 +27,6 @@ import {
   failPdfDocumentTask,
   type CanonicalPdfTask,
 } from './worker-store';
-
-const { buildHtmlPayload } = require('./document-payload');
 
 type DocumentDispatchMessage = { readonly taskId: string };
 
@@ -107,25 +110,31 @@ const fetchCompanyLogo = createCompanyLogoFetcher({
   maxLogoSize: MAX_LOGO_SIZE,
 });
 
-function requireDocumentData(task: CanonicalPdfTask): any {
-  const data: any = task.documentData;
+function requireDocumentData(task: CanonicalPdfTask): NormalizedDocumentData {
+  const data = task.documentData;
   if (!Array.isArray(data.items) || data.items.length < 1) {
     throw new TypeError('At least one canonical document item is required');
   }
   if (data.items.length > MAX_ITEMS_PER_DOCUMENT) {
     throw new TypeError(`Maximum ${MAX_ITEMS_PER_DOCUMENT} document items allowed`);
   }
-  if (!data.client || typeof data.client !== 'object' || !String(data.client.name || '').trim()) {
+  const client = data.client && typeof data.client === 'object' && !Array.isArray(data.client)
+    ? data.client as Record<string, unknown>
+    : null;
+  if (!client || !String(client.name || '').trim()) {
     throw new TypeError('Canonical document client is invalid');
   }
-  if (!data.company || typeof data.company !== 'object' || !String(data.company.name || '').trim()) {
+  const company = data.company && typeof data.company === 'object' && !Array.isArray(data.company)
+    ? data.company as Record<string, unknown>
+    : null;
+  if (!company || !String(company.name || '').trim()) {
     throw new TypeError('Canonical document company is invalid');
   }
-  return data;
+  return data as NormalizedDocumentData;
 }
 
 async function renderPdf(task: CanonicalPdfTask): Promise<Buffer> {
-  let page: any = null;
+  let page: Page | null = null;
   let tabAcquired = false;
   try {
     const acquiredGeneration = await acquireTab(task.taskId, task.taskType);

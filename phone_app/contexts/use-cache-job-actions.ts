@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { CACHE_KEYS } from './mmkv-storage';
+import { logger } from '../utils/logger';
 
 interface JobActionsParams {
   getUserRole: () => string | null;
@@ -28,7 +29,7 @@ export function useCacheJobActions({
 }: JobActionsParams) {
   const addJob = useCallback((job: any) => {
     if (!job?.id) {
-      console.error('Cannot add job without ID');
+      logger.error('Cannot add job without ID');
       return;
     }
 

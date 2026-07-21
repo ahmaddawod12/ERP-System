@@ -4,6 +4,7 @@ import { borderRadius, getColors, shadows, spacing, typography, type ColorPalett
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useLanguageContext } from '../../contexts/LanguageContext';
 import AppText from './AppText';
+import { useAccessibilityAnnouncement } from '../../hooks/useAccessibilityAnnouncement';
 
 export interface AppInputProps extends Omit<TextInputProps, 'style'> {
   label?: string;
@@ -41,6 +42,9 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
   const isRTL = language === 'he' || language === 'ar' || I18nManager.isRTL;
   const isSecureField = Boolean(props.secureTextEntry);
   const [isFocused, setIsFocused] = useState(false);
+  const accessibilityLabel = props.accessibilityLabel || label || props.placeholder;
+  const accessibilityHint = props.accessibilityHint || (error ? undefined : helperText);
+  useAccessibilityAnnouncement(error);
 
   const borderColor = useMemo(() => {
     if (error) return palette.error;
@@ -76,6 +80,7 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
       ) : null}
 
       <Pressable
+        accessible={false}
         onPress={() => inputRef.current?.focus?.()}
         onPressIn={() => inputRef.current?.focus?.()}
         style={[
@@ -102,6 +107,12 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
             props.onBlur?.(event);
           }}
           placeholderTextColor={palette.textLight}
+          accessibilityLabel={accessibilityLabel}
+          accessibilityHint={accessibilityHint}
+          accessibilityState={{
+            ...props.accessibilityState,
+            disabled: props.editable === false || props.accessibilityState?.disabled,
+          }}
           style={[
             styles.input,
             {
@@ -117,7 +128,13 @@ const AppInput = forwardRef<TextInput, AppInputProps>(function AppInput(
       </Pressable>
 
       {error ? (
-        <AppText variant="caption" color={palette.error} style={styles.helper}>
+        <AppText
+          variant="caption"
+          color={palette.error}
+          style={styles.helper}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+        >
           {error}
         </AppText>
       ) : helperText ? (

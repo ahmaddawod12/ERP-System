@@ -23,6 +23,7 @@ import {
   normalizeDocumentListFilters,
 } from '../modules/documents/lib/document-history-model';
 import { mapSubscriptionToCache, mapViewerProfileToCache } from './cache-api-model';
+import { logger } from '../utils/logger';
 
 const MAX_CURSOR_WINDOW_PAGES = 5;
 
@@ -170,7 +171,7 @@ export async function fetchDataFromBackend(
         return null;
     }
   } catch (error) {
-    console.error(`Error fetching ${field} via Cloud API:`, error);
+    logger.error(`Error fetching ${field} via Cloud API:`, error);
     return null;
   }
 }
@@ -220,7 +221,7 @@ export async function fetchJobsPage(
     });
     return { items: page.items.map(mapJobSummary), nextCursor: page.nextCursor };
   } catch (error) {
-    console.error('Error fetching jobs page via Cloud API:', error);
+    logger.error('Error fetching jobs page via Cloud API:', error);
     return { items: [], nextCursor: null };
   }
 }
@@ -251,7 +252,7 @@ export async function fetchDocumentsPage(
     });
     return { items: page.items.map(mapDocumentSummary), nextCursor: page.nextCursor };
   } catch (error) {
-    console.error('Error fetching documents page via Cloud API:', error);
+    logger.error('Error fetching documents page via Cloud API:', error);
     return { items: [], nextCursor: null };
   }
 }

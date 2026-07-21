@@ -52,6 +52,14 @@ body::before {
   content: none;
 }
 
+.skip-navigation {
+  @apply fixed start-4 top-4 z-[100] -translate-y-24 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-lg transition-transform focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2;
+}
+
+#main-content:focus {
+  outline: none;
+}
+
 .dark body {
   background: rgb(2 6 23);
   color: rgb(226 232 240);

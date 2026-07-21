@@ -3,7 +3,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Modal,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -12,10 +11,11 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WebView } from 'react-native-webview';
-import { AppText, AppInput, GlobalHeader, InventoryItemSearch } from '../../../components';
+import { AccessibleModal, AppText, AppInput, GlobalHeader, InventoryItemSearch } from '../../../components';
 import { spacing, borderRadius, typography, shadows, type ColorPalette } from '../../../theme';
 import type { AppDocument, InventoryPart } from '../../../types';
 import type { TaxInvoiceJob } from './TaxInvoiceJobList';
+import { logger } from '../../../utils/logger';
 
 const getTimeMs = (value?: unknown): number => {
   if (!value) return 0;
@@ -140,11 +140,12 @@ export default function TaxInvoiceFormModal({
   return (
     <>
       {/* Receipt Form Modal - 2 Step Flow */}
-      <Modal
+      <AccessibleModal
         visible={modalVisible}
         animationType="slide"
         transparent={false}
         onRequestClose={closeReceiptForm}
+        announcement={currentStep === 1 ? t.step1Title : t.step2Title}
       >
         <KeyboardAvoidingView
           style={{ flex: 1 }}
@@ -573,14 +574,15 @@ export default function TaxInvoiceFormModal({
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </AccessibleModal>
 
       {/* PDF Preview Modal */}
-      <Modal
+      <AccessibleModal
         visible={pdfModalVisible}
         animationType="slide"
         transparent={false}
         onRequestClose={() => setPdfModalVisible(false)}
+        announcement={t.previewTitle}
       >
         <View style={[styles.pdfModalContainer, { backgroundColor: colors.background }]}>
           <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -636,17 +638,18 @@ export default function TaxInvoiceFormModal({
             </View>
           )}
         </View>
-      </Modal>
+      </AccessibleModal>
 
       {/* PDF Viewer Modal - iOS only, Android uses IntentLauncher */}
       {Platform.OS === 'ios' && (
-        <Modal
+        <AccessibleModal
           visible={pdfViewerVisible}
           animationType="slide"
           onRequestClose={() => {
             setPdfViewerVisible(false);
             setPdfModalVisible(true);
           }}
+          announcement="Tax invoice preview"
         >
         <View style={[styles.container, { backgroundColor: colors.background }]}>
           <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -684,12 +687,12 @@ export default function TaxInvoiceFormModal({
                 )}
                 onError={(syntheticEvent) => {
                   const { nativeEvent } = syntheticEvent;
-                  console.warn('WebView error:', nativeEvent);
+                  logger.warn('Tax invoice WebView error:', nativeEvent);
                   showErrorMessage('Error', 'Failed to load PDF preview');
                 }}
                 onHttpError={(syntheticEvent) => {
                   const { nativeEvent } = syntheticEvent;
-                  console.warn('WebView HTTP error:', nativeEvent);
+                  logger.warn('Tax invoice WebView HTTP error:', nativeEvent);
                   showErrorMessage('Error', 'Failed to load PDF preview (HTTP)');
                 }}
               />
@@ -701,7 +704,7 @@ export default function TaxInvoiceFormModal({
             )}
           </View>
         </View>
-        </Modal>
+        </AccessibleModal>
       )}
     </>
   );

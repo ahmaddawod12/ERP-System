@@ -1,5 +1,6 @@
 export { GlobalHeader } from './layout/GlobalHeader';
 export { default as LoadingOverlay } from './feedback/LoadingOverlay';
+export { default as AccessibleModal } from './feedback/AccessibleModal';
 export { default as LoadingSpinner } from './primitives/LoadingSpinner';
 export { default as ScrollableContainer } from './layout/ScrollableContainer';
 export { default as Input } from './primitives/Input';

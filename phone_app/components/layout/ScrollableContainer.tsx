@@ -1,6 +1,7 @@
 import React, { forwardRef, useCallback } from 'react';
 import { ScrollView, type NativeSyntheticEvent, type NativeScrollEvent, type ScrollViewProps } from 'react-native';
 import { useScrollHandler } from '../../contexts/HeaderContext';
+import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 
 export interface ScrollableContainerProps extends ScrollViewProps {
   children?: React.ReactNode;
@@ -18,6 +19,7 @@ const ScrollableContainer = forwardRef<ScrollView, ScrollableContainerProps>(fun
   ref
 ) {
   const { onScroll: headerOnScroll } = useScrollHandler();
+  const responsive = useResponsiveLayout();
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -36,6 +38,14 @@ const ScrollableContainer = forwardRef<ScrollView, ScrollableContainerProps>(fun
       keyboardShouldPersistTaps={keyboardShouldPersistTaps}
       keyboardDismissMode={keyboardDismissMode}
       showsVerticalScrollIndicator={false}
+      contentContainerStyle={[
+        responsive.isWide && {
+          alignSelf: 'center',
+          width: '100%',
+          maxWidth: responsive.maxContentWidth,
+        },
+        props.contentContainerStyle,
+      ]}
     >
       {children}
     </ScrollView>

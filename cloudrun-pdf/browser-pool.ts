@@ -1,16 +1,30 @@
-import puppeteer from 'puppeteer';
+import puppeteer, { type Browser } from 'puppeteer';
 
-function buildRetryableError(code, message) {
-  const error: any = new Error(message);
+type CodedError = Error & { code: string };
+
+type TabWaiter = {
+  taskId: string;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+};
+
+function buildRetryableError(code: string, message: string): CodedError {
+  const error = new Error(message) as CodedError;
   error.code = code;
   return error;
 }
 
-export function isTransientProcessingError(error) {
-  if (error?.retryable === true) {
+function errorField(error: unknown, field: 'code' | 'message' | 'retryable'): unknown {
+  return error && typeof error === 'object'
+    ? (error as Record<string, unknown>)[field]
+    : undefined;
+}
+
+export function isTransientProcessingError(error: unknown): boolean {
+  if (errorField(error, 'retryable') === true) {
     return true;
   }
-  const code = String(error?.code || '').trim().toLowerCase();
+  const code = String(errorField(error, 'code') || '').trim().toLowerCase();
   if (code === 'tab_queue_full' || code === 'tab_wait_timeout') {
     return true;
   }
@@ -26,7 +40,7 @@ export function isTransientProcessingError(error) {
   ) {
     return true;
   }
-  const message = String(error?.message || '');
+  const message = String(errorField(error, 'message') || '');
   return message.includes('retry') ||
     message.includes('Protocol error') ||
     message.includes('Navigation timeout') ||
@@ -39,12 +53,12 @@ export function createBrowserPool(options: {
   tabWaitTimeoutMs: number;
   executablePath: string;
 }) {
-  let browserInstance = null;
+  let browserInstance: Browser | null = null;
   let activeTabs = 0;
   let browserGeneration = 0;
-  const tabWaiters = [];
+  const tabWaiters: TabWaiter[] = [];
 
-  async function getBrowser() {
+  async function getBrowser(): Promise<Browser> {
     if (!browserInstance) {
       console.log('Launching new shared browser instance...');
       browserGeneration++;
@@ -70,14 +84,14 @@ export function createBrowserPool(options: {
         activeTabs = 0;
         while (tabWaiters.length > 0) {
           const waiter = tabWaiters.shift();
-          waiter.reject(new Error('Browser disconnected while waiting for tab'));
+          waiter?.reject(new Error('Browser disconnected while waiting for tab'));
         }
       });
     }
     return browserInstance;
   }
 
-  async function acquireTab(taskId, taskType) {
+  async function acquireTab(taskId: string, taskType: string): Promise<number> {
     if (activeTabs < options.maxConcurrentTabs) {
       activeTabs++;
       console.log(`[${taskType}:${taskId}] Tab acquired. Active: ${activeTabs}/${options.maxConcurrentTabs}`);
@@ -91,7 +105,7 @@ export function createBrowserPool(options: {
       );
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise<number>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         const idx = tabWaiters.findIndex((waiter) => waiter.taskId === taskId);
         if (idx !== -1) tabWaiters.splice(idx, 1);
@@ -106,7 +120,7 @@ export function createBrowserPool(options: {
           console.log(`[${taskType}:${taskId}] Tab acquired (from queue). Active: ${activeTabs}/${options.maxConcurrentTabs}`);
           resolve(browserGeneration);
         },
-        reject: (err) => {
+        reject: (err: unknown) => {
           clearTimeout(timeoutId);
           reject(err);
         },
@@ -115,7 +129,7 @@ export function createBrowserPool(options: {
     });
   }
 
-  function releaseTab(taskId, taskType) {
+  function releaseTab(taskId: string, taskType: string): void {
     if (activeTabs > 0) {
       activeTabs--;
     }
@@ -123,7 +137,7 @@ export function createBrowserPool(options: {
 
     if (tabWaiters.length > 0 && activeTabs < options.maxConcurrentTabs) {
       const next = tabWaiters.shift();
-      next.resolve();
+      next?.resolve();
     }
   }
 
@@ -152,7 +166,7 @@ export function createBrowserPool(options: {
   async function close() {
     while (tabWaiters.length > 0) {
       const waiter = tabWaiters.shift();
-      waiter.reject(new Error('Browser pool is closing'));
+      waiter?.reject(new Error('Browser pool is closing'));
     }
     if (browserInstance) {
       const instance = browserInstance;

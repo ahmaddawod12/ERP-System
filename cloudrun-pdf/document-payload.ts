@@ -1,18 +1,70 @@
-function coerceTrimmedString(value) {
+type UnknownRecord = Record<string, unknown>;
+
+export type NormalizedDocumentClient = {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  id: string;
+  clientId: string;
+  clientVatNumber?: string;
+  customerVatNumber?: string;
+  vatNumber?: string;
+};
+
+export type NormalizedDocumentItem = UnknownRecord & {
+  description?: unknown;
+  quantity?: unknown;
+  price?: unknown;
+  partId?: unknown;
+  id?: unknown;
+};
+
+export type NormalizedDocumentData = UnknownRecord & {
+  type: unknown;
+  client: NormalizedDocumentClient;
+  company: UnknownRecord;
+  items: NormalizedDocumentItem[];
+  documentNumber: unknown;
+  language: string;
+  date: string | null;
+  notes: string | null;
+  paymentMethod: string | null;
+  paymentInfo: unknown;
+  invoiceReference: string | null;
+  jobsData: unknown[] | null;
+  priceProposalId: string | null;
+  taxAuthorityConfirmationNumber: string | null;
+  totals: {
+    totalBeforeVat: number;
+    vatAmount: number;
+    totalWithVat: number;
+  };
+};
+
+function asRecord(value: unknown): UnknownRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as UnknownRecord
+    : {};
+}
+
+function coerceTrimmedString(value: unknown): string {
   if (value === null || value === undefined) return '';
   return String(value).trim();
 }
 
-function coerceOptionalString(value) {
+function coerceOptionalString(value: unknown): string | null {
   const trimmed = coerceTrimmedString(value);
   return trimmed || null;
 }
 
-function roundCurrency(value) {
+function roundCurrency(value: unknown): number {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
-function normalizeClientVatNumber(client: any = {}) {
+function normalizeClientVatNumber(value: unknown = {}): string {
+  const client = asRecord(value);
   const candidates = [
     client.clientVatNumber,
     client.customerVatNumber,
@@ -30,10 +82,11 @@ function normalizeClientVatNumber(client: any = {}) {
   return '';
 }
 
-function normalizeDocumentClient(client: any = {}) {
+function normalizeDocumentClient(value: unknown = {}): NormalizedDocumentClient {
+  const client = asRecord(value);
   const clientVatNumber = normalizeClientVatNumber(client);
   const clientId = coerceTrimmedString(client.clientId || client.id);
-  const normalized = {
+  const normalized: NormalizedDocumentClient = {
     name: coerceTrimmedString(client.name),
     email: coerceTrimmedString(client.email),
     phone: coerceTrimmedString(client.phone),
@@ -41,7 +94,7 @@ function normalizeDocumentClient(client: any = {}) {
     city: coerceTrimmedString(client.city),
     id: coerceTrimmedString(client.id) || clientId,
     clientId,
-  } as any;
+  };
 
   if (clientVatNumber) {
     normalized.clientVatNumber = clientVatNumber;
@@ -52,14 +105,24 @@ function normalizeDocumentClient(client: any = {}) {
   return normalized;
 }
 
-function normalizeDocumentData(documentType, documentData = {} as any, fallbackDocumentNumber) {
-  const normalizedClient = normalizeDocumentClient(documentData.client || {});
+function normalizeDocumentData(
+  documentType: unknown,
+  value: unknown = {},
+  fallbackDocumentNumber?: unknown,
+): NormalizedDocumentData {
+  const documentData = asRecord(value);
+  const normalizedClient = normalizeDocumentClient(documentData.client);
   const normalizedDocumentNumber = documentData.documentNumber ?? fallbackDocumentNumber ?? null;
-  const totals = documentData.totals || {};
+  const totals = asRecord(documentData.totals);
+  const items = Array.isArray(documentData.items)
+    ? documentData.items.map(asRecord)
+    : [];
   return {
     ...documentData,
     type: documentData.type || documentType,
     client: normalizedClient,
+    company: asRecord(documentData.company),
+    items,
     documentNumber: normalizedDocumentNumber,
     language: coerceTrimmedString(documentData.language) || 'he',
     date: coerceOptionalString(documentData.date),
@@ -78,7 +141,19 @@ function normalizeDocumentData(documentType, documentData = {} as any, fallbackD
   };
 }
 
-function buildHtmlPayload({ documentType, documentData, documentNumber, logoUrl, confirmationNumber }) {
+function buildHtmlPayload({
+  documentType,
+  documentData,
+  documentNumber,
+  logoUrl,
+  confirmationNumber,
+}: {
+  documentType: unknown;
+  documentData: unknown;
+  documentNumber?: unknown;
+  logoUrl?: unknown;
+  confirmationNumber?: unknown;
+}): NormalizedDocumentData & { logoUrl: unknown; confirmationNumber: string } {
   const normalizedDocumentData = normalizeDocumentData(documentType, documentData, documentNumber);
   return {
     ...normalizedDocumentData,
@@ -90,18 +165,21 @@ function buildHtmlPayload({ documentType, documentData, documentNumber, logoUrl,
   };
 }
 
-function normalizeStoredItems(items) {
+function normalizeStoredItems(items: unknown) {
   if (!Array.isArray(items)) {
     return [];
   }
 
-  return items.map((item) => ({
+  return items.map((value) => {
+    const item = asRecord(value);
+    return {
     description: item.description,
     quantity: item.quantity,
     price: item.price,
     partId: item.partId || item.id || null,
     id: item.partId || item.id || null,
-  }));
+    };
+  });
 }
 
 function buildStoredDocumentRecord({
@@ -114,6 +192,16 @@ function buildStoredDocumentRecord({
   totalWithVat,
   storagePath,
   normalizedDocumentId,
+}: {
+  documentType: unknown;
+  documentData: unknown;
+  uid: unknown;
+  createdAt: unknown;
+  totalBeforeVat: unknown;
+  vatAmount: unknown;
+  totalWithVat: unknown;
+  storagePath: unknown;
+  normalizedDocumentId: unknown;
 }) {
   const normalizedDocumentData = normalizeDocumentData(documentType, documentData, normalizedDocumentId);
   const normalizedClient = normalizedDocumentData.client;

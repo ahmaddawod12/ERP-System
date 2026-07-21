@@ -1,4 +1,4 @@
-const {
+import {
   check,
   bigint,
   boolean,
@@ -17,8 +17,8 @@ const {
   uniqueIndex,
   uuid,
   varchar,
-} = require('drizzle-orm/pg-core');
-const { sql } = require('drizzle-orm');
+} from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 const bytea = customType({
   dataType() {

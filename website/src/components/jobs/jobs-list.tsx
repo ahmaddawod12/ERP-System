@@ -9,22 +9,13 @@ import {
   hasActiveJobsFilters,
   type JobsFilterValues,
 } from "@/lib/dal/jobs-query";
-
-const jobDateFormatter = new Intl.DateTimeFormat("en", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "Asia/Jerusalem",
-});
+import { formatDateTime } from "@/lib/format";
 
 function statusVariant(status: JobSummary["status"]) {
   if (status === "finished") return "success" as const;
   if (status === "waiting") return "warning" as const;
   if (status === "denied") return "danger" as const;
   return "default" as const;
-}
-
-function formatJobDate(value: string): string {
-  return jobDateFormatter.format(new Date(value));
 }
 
 function jobLocation(job: JobSummary): string {
@@ -90,11 +81,11 @@ export function JobsList({
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-5 py-3 font-semibold sm:px-6">Job</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
-              <th className="px-4 py-3 font-semibold">Client</th>
-              <th className="px-4 py-3 font-semibold">Assignee</th>
-              <th className="px-5 py-3 font-semibold sm:px-6">Created</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Job</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Status</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Client</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Assignee</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Created</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -130,7 +121,7 @@ export function JobsList({
                 <td className="px-5 py-4 text-xs text-slate-500 dark:text-slate-400 sm:px-6">
                   <span className="inline-flex items-center gap-1.5">
                     <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
-                    <time dateTime={job.createdAt}>{formatJobDate(job.createdAt)}</time>
+                    <time dateTime={job.createdAt}><bdi dir="ltr">{formatDateTime(job.createdAt)}</bdi></time>
                   </span>
                 </td>
               </tr>

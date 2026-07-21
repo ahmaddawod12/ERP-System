@@ -267,7 +267,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
 
     const cachedProfile = mmkvHelpers.getObject<UserProfile & { uid?: string }>(CACHE_KEYS.PROFILE);
     if (!isProfileCacheOwnedByUser(cachedProfile, identity.uid)) {
-      console.warn('[CACHE READ] Ignoring scoped profile cache for a different user');
+      logger.warn('[CACHE READ] Ignoring scoped profile cache for a different user');
       setMmkvScope(identity.uid, null);
       return {
         hasCache: false,
@@ -584,7 +584,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           userPollIdleCountRef.current += 1;
         }
       } catch (error) {
-        console.error('User sync polling error:', error);
+        logger.error('User sync polling error:', error);
       } finally {
         userPollInFlightRef.current = false;
         if (listenersActiveRef.current) {
@@ -740,7 +740,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             companyPollIdleCountRef.current += 1;
           }
         } catch (error) {
-          console.error('Company sync polling error:', error);
+          logger.error('Company sync polling error:', error);
         } finally {
           companyPollInFlightRef.current = false;
           if (listenersActiveRef.current) {
@@ -835,7 +835,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         );
 
         if (!resolvedProfile) {
-          console.error('Could not resolve profile from backend');
+          logger.error('Could not resolve profile from backend');
           setIsLoading(false);
           return null;
         }
@@ -848,7 +848,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         const roleMismatch = Boolean(resolvedRole && resolvedRole !== normalizedRole);
 
         if (companyMismatch || roleMismatch || !profileData) {
-          console.warn('[CACHE] Refreshing scoped cache metadata from live profile', {
+          logger.warn('[CACHE] Refreshing scoped cache metadata from live profile', {
             uid,
             cachedCompanyId: companyId,
             resolvedCompanyId,
@@ -886,7 +886,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           profileData = await fetchDataFromBackend('profile', uid || '', companyId || '', role || '');
           
           if (!profileData) {
-            console.error('Could not fetch profile from backend');
+            logger.error('Could not fetch profile from backend');
             setIsLoading(false);
             return null;
           }
@@ -944,7 +944,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       return { uid, role, companyId, hasBusinessInfo };
       
     } catch (error) {
-      console.error('? Cache initialization error:', error);
+      logger.error('Cache initialization error:', error);
       setIsLoading(false);
       return null;
     } finally {
@@ -973,7 +973,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
           }
         } catch (e) {
-          console.warn('Could not fetch subscription:', (e as Error).message);
+          logger.warn('Could not fetch subscription:', (e as Error).message);
         }
       }
       
@@ -1009,7 +1009,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           const businessInfo = await fetchDataFromBackend('business_info', uid, companyId, role);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, businessInfo ? 'true' : 'false');
         } catch (e) {
-          console.warn('Could not check business_info existence:', (e as Error).message);
+          logger.warn('Could not check business_info existence:', (e as Error).message);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, 'false');
         }
       }
@@ -1089,7 +1089,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       logger.debug('Initial cache populated with', jobsData.length, 'jobs');
     } catch (error) {
-      console.error('Error fetching fresh data:', error);
+      logger.error('Error fetching fresh data:', error);
       setIsLoading(false);
     }
   }, [applyBootstrappedJobDocumentCache, fetchCursorWindow, fetchCompanySyncState, fetchDataFromBackend, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
@@ -1137,7 +1137,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    */
   const addDocument = useCallback(async (document: any) => {
     if (!document.id) {
-      console.error('Cannot add document without ID');
+      logger.error('Cannot add document without ID');
       return;
     }
     

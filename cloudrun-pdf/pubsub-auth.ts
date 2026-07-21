@@ -1,13 +1,36 @@
 import { createPublicKey, createVerify } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 import { OAuth2Client } from 'google-auth-library';
 
-function decodeJwtSegment(segment) {
-  const normalized = String(segment || '').replace(/-/g, '+').replace(/_/g, '/');
-  const padding = '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
-  return JSON.parse(Buffer.from(`${normalized}${padding}`, 'base64').toString('utf8'));
+type JwtClaims = Record<string, unknown>;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function verifySelfSignedServiceAccountJwt(idToken, expectedAudience, options) {
+function decodeJwtSegment(segment: string): JwtClaims {
+  const normalized = String(segment || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+  const parsed: unknown = JSON.parse(Buffer.from(`${normalized}${padding}`, 'base64').toString('utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new TypeError('JWT segment must contain a JSON object');
+  }
+  return parsed as JwtClaims;
+}
+
+type PubSubVerifierOptions = {
+  cloudRunServiceUrl: string;
+  pubsubVerificationToken: string;
+  allowedServiceAccounts: string[];
+  edgeServiceAccountEmail: string;
+  edgeServiceAccountPrivateKey: string;
+};
+
+function verifySelfSignedServiceAccountJwt(
+  idToken: string,
+  expectedAudience: string,
+  options: PubSubVerifierOptions,
+): boolean {
   if (!options.edgeServiceAccountEmail || !options.edgeServiceAccountPrivateKey || !expectedAudience) {
     return false;
   }
@@ -57,19 +80,17 @@ function verifySelfSignedServiceAccountJwt(idToken, expectedAudience, options) {
     const signature = Buffer.from(encodedSignature.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
     return verifier.verify(createPublicKey(options.edgeServiceAccountPrivateKey), signature);
   } catch (error) {
-    console.warn('Service-account JWT verification failed:', error?.message || error);
+    console.warn('Service-account JWT verification failed:', errorMessage(error));
     return false;
   }
 }
 
-export function createPubSubVerifier(options: {
-  cloudRunServiceUrl: string;
-  pubsubVerificationToken: string;
-  allowedServiceAccounts: string[];
-  edgeServiceAccountEmail: string;
-  edgeServiceAccountPrivateKey: string;
-}) {
-  return async function verifyPubSubRequest(req, res, next) {
+export function createPubSubVerifier(options: PubSubVerifierOptions) {
+  return async function verifyPubSubRequest(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<unknown> {
     const expectedAudience = options.cloudRunServiceUrl;
 
     let bearerVerified = false;
@@ -108,7 +129,7 @@ export function createPubSubVerifier(options: {
           if (selfSignedVerified) {
             bearerVerified = true;
           } else {
-            console.warn('Trusted bearer verification failed:', oidcError.message);
+            console.warn('Trusted bearer verification failed:', errorMessage(oidcError));
           }
         }
       }
@@ -144,4 +165,3 @@ export function createPubSubVerifier(options: {
     return next();
   };
 }
-

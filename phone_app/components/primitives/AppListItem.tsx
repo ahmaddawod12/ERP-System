@@ -15,6 +15,8 @@ export interface AppListItemProps {
   titleColor?: string;
   subtitleColor?: string;
   accessibilityLabel?: string;
+  accessibilityHint?: string;
+  selected?: boolean;
 }
 
 export default function AppListItem({
@@ -28,6 +30,8 @@ export default function AppListItem({
   titleColor,
   subtitleColor,
   accessibilityLabel,
+  accessibilityHint,
+  selected,
 }: AppListItemProps) {
   const { isDarkMode } = useThemeContext();
   const palette = getColors(isDarkMode);
@@ -46,6 +50,8 @@ export default function AppListItem({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel || title}
+        accessibilityHint={accessibilityHint || subtitle}
+        accessibilityState={{ selected }}
         style={({ pressed }) => [baseStyle, { opacity: pressed ? 0.9 : 1 }]}
       >
         {left ? <View style={styles.left}>{left}</View> : null}

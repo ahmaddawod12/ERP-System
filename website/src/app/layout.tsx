@@ -108,8 +108,13 @@ export default async function RootLayout({
       <body
         className={`${sans.variable} ${mono.variable} ${hebrew.variable} ${arabic.variable} min-h-screen bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100`}
       >
+        <a className="skip-navigation" href="#main-content">
+          Skip to main content
+        </a>
         <AppProviders initialLocale={initialLocale} initialTheme={initialTheme}>
-          {children}
+          <div id="main-content" tabIndex={-1}>
+            {children}
+          </div>
         </AppProviders>
       </body>
     </html>

@@ -91,8 +91,6 @@ test("same-origin login creates only opaque and CSRF cookies", async () => {
   const cookies = setCookies(response);
   const sessionCookie = cookies.find((value) => value.startsWith("__Host-sj_web_session="));
   const csrfCookie = cookies.find((value) => value.startsWith("sj_csrf="));
-  const legacySessionCookie = cookies.find((value) => value.startsWith("__session="));
-  const legacyAccessCookie = cookies.find((value) => value.startsWith("__session_access="));
   assert.match(sessionCookie || "", /HttpOnly/);
   assert.match(sessionCookie || "", /Secure/);
   assert.match(sessionCookie || "", /SameSite=lax/i);
@@ -100,8 +98,6 @@ test("same-origin login creates only opaque and CSRF cookies", async () => {
   assert.match(sessionCookie || "", /Max-Age=43200/);
   assert.doesNotMatch(csrfCookie || "", /HttpOnly/);
   assert.match(csrfCookie || "", /Secure/);
-  assert.match(legacySessionCookie || "", /Max-Age=0/);
-  assert.match(legacyAccessCookie || "", /Max-Age=0/);
 });
 
 test("login rejects an untrusted origin before forwarding credentials", async () => {

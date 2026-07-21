@@ -35,6 +35,7 @@ import {
   ViewJobDetails,
 } from '../../../components';
 import type { Job, Worker } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 type Translations = typeof translateMap.en;
 
@@ -381,7 +382,7 @@ export default function ManageJobs() {
             setSelectedJobDetails(null);
             alert.success('Success', t.acceptSuccess);
           } catch (error: any) {
-            console.error('ManageJobs accept error:', error);
+            logger.error('ManageJobs accept error:', error);
             alert.error('Error', `Failed to accept job: ${error.message}`);
           }
         },
@@ -430,7 +431,7 @@ export default function ManageJobs() {
             setSelectedJobDetails(null);
             alert.success('Success', t.denySuccess);
           } catch (error: any) {
-            console.error('ManageJobs deny error:', error);
+            logger.error('ManageJobs deny error:', error);
             alert.error('Error', `Failed to deny job: ${error.message}`);
           }
         },

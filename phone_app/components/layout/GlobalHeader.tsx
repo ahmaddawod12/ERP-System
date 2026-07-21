@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   Animated,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -17,6 +16,7 @@ import { useHeader } from '../../contexts/HeaderContext';
 import type { ColorPalette } from '../../theme';
 import AppText from '../primitives/AppText';
 import { HOME_ROUTES, ROUTES, type AppRoute } from '../../navigation/routes';
+import AccessibleModal from '../feedback/AccessibleModal';
 
 const HOME_PATHS = new Set<string>([ROUTES.root, ...HOME_ROUTES]);
 
@@ -59,6 +59,8 @@ function MenuRow({ icon, iconLibrary, label, onPress, palette, isRTL }: MenuRowP
         { borderBottomColor: palette.borderLight, opacity: pressed ? 0.86 : 1 },
       ]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
     >
       <View style={[styles.menuItemLeft, isRTL && styles.menuItemLeftRtl]}>
         <IconSet name={icon as any} size={20} color={palette.secondary} />
@@ -162,11 +164,12 @@ export function GlobalHeader() {
         )}
       </Animated.View>
 
-      <Modal
+      <AccessibleModal
         visible={menuVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setMenuVisible(false)}
+        announcement={t.menu}
       >
         <Pressable
           style={[styles.menuOverlay, { backgroundColor: palette.overlaySoft }]}
@@ -202,7 +205,7 @@ export function GlobalHeader() {
             />
           </Pressable>
         </Pressable>
-      </Modal>
+      </AccessibleModal>
     </>
   );
 }

@@ -1,10 +1,16 @@
 /**
  * POST /generate - Pub/Sub push endpoint for generate tasks
  */
+import type { Express, RequestHandler } from 'express';
+
 type DocumentDispatchMessage = { readonly taskId: string };
 
-export function registerGenerateRoute(app, deps: {
-  verifyPubSubRequest: unknown;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown generate-task error';
+}
+
+export function registerGenerateRoute(app: Express, deps: {
+  verifyPubSubRequest: RequestHandler;
   processGenerateTask: (messageData: DocumentDispatchMessage) => Promise<unknown>;
   isTransientProcessingError: (error: unknown) => boolean;
 }) {
@@ -29,12 +35,13 @@ export function registerGenerateRoute(app, deps: {
     res.status(200).send('OK');
     
   } catch (error) {
-    console.error('Generate task error:', error.message);
+    const message = errorMessage(error);
+    console.error('Generate task error:', message);
     // Return 200 for permanent failures to prevent infinite Pub/Sub retries.
     // Only transient errors (browser crash, timeout) should trigger retry via 500.
     const isTransient = deps.isTransientProcessingError(error);
     const status = isTransient ? 500 : 200;
-    res.status(status).send(`Error: ${error.message}`);
+    res.status(status).send(`Error: ${message}`);
   }
   });
 }

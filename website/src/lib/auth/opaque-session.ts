@@ -12,9 +12,6 @@ export const DEVELOPMENT_WEB_SESSION_COOKIE = "sj_web_session";
 export const WEB_CSRF_COOKIE = "sj_csrf";
 export const WEB_SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
 
-const LEGACY_SESSION_COOKIE = "__session";
-const LEGACY_SESSION_ACCESS_COOKIE = "__session_access";
-
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 export function webSessionCookieName(
@@ -133,25 +130,6 @@ export function setOpaqueSessionCookies(
     maxAge,
     expires,
   });
-  clearLegacySessionCookies(response, nodeEnv, verifiedLocalPlatform);
-}
-
-function clearLegacySessionCookies(
-  response: NextResponse,
-  nodeEnv: string | undefined,
-  verifiedLocalPlatform = isVerifiedLocalPlatformRuntime(),
-): void {
-  const secure = nodeEnv === "production" && !verifiedLocalPlatform;
-  for (const name of [LEGACY_SESSION_COOKIE, LEGACY_SESSION_ACCESS_COOKIE]) {
-    response.cookies.set(name, "", {
-      httpOnly: true,
-      secure,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 0,
-      expires: new Date(0),
-    });
-  }
 }
 
 export function clearOpaqueSessionCookies(
@@ -182,7 +160,6 @@ export function clearOpaqueSessionCookies(
     maxAge: 0,
     expires: new Date(0),
   });
-  clearLegacySessionCookies(response, nodeEnv, verifiedLocalPlatform);
 }
 
 export function buildLoginRedirectUrl(

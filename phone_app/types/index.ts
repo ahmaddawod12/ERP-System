@@ -22,6 +22,7 @@ export type { RoleTitle, JobStatusValue, DocTypeCode, TierValue, SubStatusValue 
 
 // ── Language ───────────────────────────────────────────────────────────────
 export type Language = 'en' | 'he' | 'ar';
+export type ThemePreference = 'system' | 'light' | 'dark';
 
 // ── Firestore helpers ──────────────────────────────────────────────────────
 /** A Firestore Timestamp-like object (from @react-native-firebase). */
@@ -317,7 +318,9 @@ export interface AlertContextValue {
 // ── Theme ──────────────────────────────────────────────────────────────────
 export interface ThemeContextValue {
   isDarkMode: boolean;
+  themePreference: ThemePreference;
   setTheme: (isDark: boolean) => void;
+  setThemePreference: (preference: ThemePreference) => void;
   toggleTheme: () => void;
   isLoading: boolean;
 }

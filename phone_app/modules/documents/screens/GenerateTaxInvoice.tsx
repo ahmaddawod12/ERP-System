@@ -14,6 +14,7 @@ import TaxInvoiceFormModal from '../components/TaxInvoiceFormModal';
 import { useTaxInvoiceSubmission } from '../hooks/useTaxInvoiceSubmission';
 import { fetchCompanyInventoryParts, fetchCompanyJobs } from '../../../utils/read-model';
 import type { AppDocument, Client, InventoryPart, DocumentItem } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 interface InvoicePart {
   name: string;
@@ -338,7 +339,7 @@ export default function GenerateTaxInvoice() {
         const parts = await fetchCompanyInventoryParts(cn);
         setCompanyInventoryParts(parts);
       } catch (error) {
-        console.warn('Failed to fetch company inventory:', error);
+        logger.warn('Failed to fetch company inventory:', error);
       }
     };
     fetchCompanyInventory();
@@ -358,7 +359,7 @@ export default function GenerateTaxInvoice() {
       try {
         const companyId = getCachedCompanyId();
         if (!companyId) {
-          console.log('No cached company name found');
+          logger.debug('No cached company name found');
           setLoading(false);
           return;
         }
@@ -413,7 +414,7 @@ export default function GenerateTaxInvoice() {
         setFilteredJobs(jobsData);
         setLoading(false);
       } catch (error) {
-        console.error('Error in fetchJobs:', error);
+        logger.error('Error fetching jobs:', error);
         setLoading(false);
         showErrorMessage('Error', 'Failed to load finished jobs');
       }
@@ -507,7 +508,7 @@ export default function GenerateTaxInvoice() {
         }
       }
     } catch (error) {
-      console.warn('Error parsing finishedAt date:', error);
+      logger.warn('Error parsing finished job date:', error);
     }
     
     // Look up client from client book using primary job's clientId

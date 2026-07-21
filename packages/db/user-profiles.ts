@@ -1,13 +1,31 @@
 import { eq } from 'drizzle-orm';
-import { getDb } from './client';
+import { getDb, type DatabaseOptions } from './client';
 import { getUserProfileByFirebaseUid } from './access';
-
-const {
+import {
   appUsers,
   companyMemberships,
-} = require('./schema');
+} from './schema';
 
-function asDate(value, fallback) {
+type UserProfileInput = {
+  uid: string;
+  name?: string | null;
+  phoneNumber?: string | null;
+  now?: string | Date;
+};
+
+type PushTokenInput = {
+  uid: string;
+  pushToken: string;
+  pushTokenPlatform?: string | null;
+  now?: string | Date;
+};
+
+type ClearPushTokenInput = {
+  uid: string;
+  now?: string | Date;
+};
+
+function asDate(value: unknown, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -16,19 +34,19 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-async function updateUserProfile(input, options: any = {}) {
+async function updateUserProfile(input: UserProfileInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
   return db.transaction(async (tx) => {
-    const profile: any = await getUserProfileByFirebaseUid(input.uid, { db: tx });
+    const profile = await getUserProfileByFirebaseUid(input.uid, { db: tx });
     if (!profile) {
       const error = new Error('User profile not found');
       (error as any).code = 'not-found';
       throw error;
     }
 
-    const userUpdate: Record<string, any> = { updatedAt: now };
+    const userUpdate: Partial<typeof appUsers.$inferInsert> = { updatedAt: now };
     if (input.name !== undefined) userUpdate.displayName = input.name || null;
     if (input.phoneNumber !== undefined) userUpdate.phoneNumber = input.phoneNumber || null;
 
@@ -37,7 +55,7 @@ async function updateUserProfile(input, options: any = {}) {
       .where(eq(appUsers.id, input.uid));
 
     if (profile.membershipId) {
-      const membershipUpdate: Record<string, any> = { updatedAt: now };
+      const membershipUpdate: Partial<typeof companyMemberships.$inferInsert> = { updatedAt: now };
       if (input.name !== undefined) membershipUpdate.displayName = input.name || null;
       if (input.phoneNumber !== undefined) membershipUpdate.phoneNumber = input.phoneNumber || null;
 
@@ -50,11 +68,11 @@ async function updateUserProfile(input, options: any = {}) {
   });
 }
 
-async function updateUserPushToken(input, options: any = {}) {
+async function updateUserPushToken(input: PushTokenInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
-  const updateData: Record<string, any> = {
+  const updateData: Partial<typeof appUsers.$inferInsert> = {
     updatedAt: now,
     pushToken: input.pushToken,
     pushTokenPlatform: input.pushTokenPlatform || null,
@@ -75,7 +93,7 @@ async function updateUserPushToken(input, options: any = {}) {
   return { success: true };
 }
 
-async function clearUserPushToken(input, options: any = {}) {
+async function clearUserPushToken(input: ClearPushTokenInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 

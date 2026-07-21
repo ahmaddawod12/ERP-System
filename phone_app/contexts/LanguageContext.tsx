@@ -7,6 +7,7 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { storage } from './mmkv-storage';
 import type { Language, LanguageContextValue } from '../types';
+import { logger } from '../utils/logger';
 
 const LANGUAGE_KEY = 'app_language';
 
@@ -34,7 +35,7 @@ export const LanguageProvider = ({ children }: { children: ReactNode }) => {
     try {
       storage.set(LANGUAGE_KEY, newLanguage);
     } catch (error) {
-      console.error('Error saving language preference:', error);
+      logger.error('Error saving language preference:', error);
     }
     setLanguageState(newLanguage);
   }, []);
@@ -45,7 +46,7 @@ export const LanguageProvider = ({ children }: { children: ReactNode }) => {
       try {
         storage.set(LANGUAGE_KEY, newLang);
       } catch (error) {
-        console.error('Error saving language preference:', error);
+        logger.error('Error saving language preference:', error);
       }
       return newLang;
     });

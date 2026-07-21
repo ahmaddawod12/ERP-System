@@ -20,6 +20,7 @@ import { useCache } from '../../../contexts/CacheContext';
 import { fetchCompanyWorkers, fetchUserInventoryParts } from '../../../utils/read-model';
 import { ROUTES } from '../../../navigation/routes';
 import type { Job, Worker, InventoryPart } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 const getTimeMs = (value?: unknown): number => {
   if (!value) return 0;
@@ -389,7 +390,7 @@ export default function WorkersMonitor() {
   // Watch for cached workers list changes and re-sync
   useEffect(() => {
     if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
-      console.log('📦 WorkersMonitor: cached workers list updated - re-syncing');
+      logger.debug('WorkersMonitor: cached workers list updated; re-syncing');
       loadWorkers();
     }
   }, [cachedWorkersList]);
@@ -452,13 +453,13 @@ export default function WorkersMonitor() {
       const companyId = getCompanyId();
 
       if (!companyId) {
-        console.error('CompanyId not found in cache');
+        logger.error('Company ID not found in cache');
         setLoading(false);
         return;
       }
 
       if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
-        console.log('📦 [CACHE READ] WorkersMonitor - workers list from cache:', Object.keys(cachedWorkersList).length, 'workers');
+        logger.debug('[CACHE READ] WorkersMonitor workers loaded', { count: Object.keys(cachedWorkersList).length });
         const workersList = Object.keys(cachedWorkersList).map((wid) => {
           const workerData = cachedWorkersList[wid] || {};
           return {
@@ -473,7 +474,7 @@ export default function WorkersMonitor() {
         return;
       }
 
-      console.log('[BACKEND READ] WorkersMonitor - fetching workers from backend (no cache)');
+      logger.debug('[BACKEND READ] WorkersMonitor fetching workers without cache');
       const fetchedWorkers = await fetchCompanyWorkers(companyId);
 
       if (fetchedWorkers.length > 0) {
@@ -501,7 +502,7 @@ export default function WorkersMonitor() {
         setWorkers(workersList);
       }
     } catch (error) {
-      console.error('Error loading workers:', error);
+      logger.error('Error loading workers:', error);
     } finally {
       setLoading(false);
     }
@@ -524,7 +525,7 @@ export default function WorkersMonitor() {
       setWorkerInventory(inventoryList);
       return () => {};
     } catch (error) {
-      console.error('Error setting up worker data listeners:', error);
+      logger.error('Error setting up worker data listeners:', error);
       return () => {};
     }
   };

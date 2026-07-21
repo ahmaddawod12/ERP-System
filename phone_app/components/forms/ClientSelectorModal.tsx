@@ -1,11 +1,12 @@
 import React from 'react';
-import { FlatList, Modal, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { borderRadius, getColors, spacing, typography, type ColorPalette } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import AppButton from '../primitives/AppButton';
 import AppIcon from '../primitives/AppIcon';
 import AppText from '../primitives/AppText';
 import type { Client } from '../../types';
+import AccessibleModal from '../feedback/AccessibleModal';
 
 export interface ClientSelectorModalProps {
   visible: boolean;
@@ -51,12 +52,12 @@ export default function ClientSelectorModal({
   });
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AccessibleModal visible={visible} transparent animationType="fade" onRequestClose={onClose} announcement={t.title}>
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
         <View style={[styles.modalCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <View style={styles.header}>
             <AppText variant="heading">{t.title}</AppText>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityRole="button" accessibilityLabel={t.close}>
               <AppIcon name="close" size={18} color={palette.textPrimary} />
             </TouchableOpacity>
           </View>
@@ -69,6 +70,7 @@ export default function ClientSelectorModal({
               placeholder={t.search}
               placeholderTextColor={palette.textLight}
               style={[styles.searchInput, { color: palette.textPrimary }]}
+              accessibilityLabel={t.search}
             />
           </View>
 
@@ -78,6 +80,8 @@ export default function ClientSelectorModal({
               onClose?.();
             }}
             style={[styles.clearRow, { borderColor: palette.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={t.clear}
           >
             <AppIcon name="close-circle" size={18} color={palette.textSecondary} />
             <AppText variant="caption" color={palette.textSecondary}>
@@ -115,6 +119,9 @@ export default function ClientSelectorModal({
                       onSelectClient?.(name);
                       onClose?.();
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel={[name, client.phone || client.cphone].filter(Boolean).join(', ')}
+                    accessibilityState={{ selected }}
                   >
                     <View style={styles.itemMain}>
                       <AppText variant="bodyStrong">{name}</AppText>
@@ -133,7 +140,7 @@ export default function ClientSelectorModal({
           <AppButton title={t.close} variant="secondary" onPress={onClose} />
         </View>
       </View>
-    </Modal>
+    </AccessibleModal>
   );
 }
 

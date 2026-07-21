@@ -1,13 +1,26 @@
 import { readDatabaseConfig, resolvePersistenceBackend } from './config';
 import * as schema from './schema';
-    import { Pool } from 'pg';
-    import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool, type PoolConfig } from 'pg';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-let sharedPool = null;
-let sharedDb = null;
+export type SmartJobDatabase = NodePgDatabase<typeof schema>;
+export type SmartJobTransaction = Parameters<
+  Parameters<SmartJobDatabase['transaction']>[0]
+>[0];
+export type SmartJobQueryExecutor = SmartJobDatabase | SmartJobTransaction;
+export type DatabaseOptions<TDb extends SmartJobQueryExecutor = SmartJobDatabase> = {
+  db?: TDb;
+  env?: NodeJS.ProcessEnv;
+};
 
-function buildPoolConfig(env = process.env) {
+let sharedPool: Pool | null = null;
+let sharedDb: SmartJobDatabase | null = null;
+
+function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): PoolConfig {
   const config = readDatabaseConfig(env);
+  if (!config) {
+    throw new Error('DATABASE_URL is required when SQL persistence is enabled');
+  }
   return {
     connectionString: config.connectionString,
     max: config.maxConnections,
@@ -22,7 +35,7 @@ function buildPoolConfig(env = process.env) {
   };
 }
 
-function getDb(env = process.env) {
+function getDb(env: NodeJS.ProcessEnv = process.env): SmartJobDatabase {
   const backend = resolvePersistenceBackend(env);
   if (backend !== 'sql') {
     throw new Error(`Cannot create SQL client while persistence backend is ${backend}`);

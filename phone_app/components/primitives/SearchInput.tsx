@@ -12,6 +12,8 @@ export interface SearchInputProps {
   colors?: ColorPalette;
   onClear?: () => void;
   editable?: boolean;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 export default function SearchInput({
@@ -22,6 +24,8 @@ export default function SearchInput({
   colors,
   onClear,
   editable = true,
+  accessibilityLabel,
+  accessibilityHint,
 }: SearchInputProps) {
   const { isDarkMode } = useThemeContext();
   const palette = colors || getColors(isDarkMode);
@@ -59,6 +63,9 @@ export default function SearchInput({
         autoCapitalize="none"
         autoCorrect={false}
         editable={editable}
+        accessibilityLabel={accessibilityLabel || placeholder}
+        accessibilityHint={accessibilityHint}
+        accessibilityState={{ disabled: !editable }}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
       />
@@ -70,6 +77,7 @@ export default function SearchInput({
           }}
           accessibilityRole="button"
           accessibilityLabel="Clear search"
+          accessibilityHint="Clears the current search text"
           style={({ pressed }) => [styles.clearButton, { opacity: pressed ? 0.72 : 1 }]}
         >
           <AppIcon name="close-circle" size={18} color={palette.textLight} />

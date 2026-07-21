@@ -1,19 +1,28 @@
 import { eq } from 'drizzle-orm';
-import { getDb } from './client';
+import { getDb, type DatabaseOptions } from './client';
 import { companyCounters } from './schema';
 import { allocateCompanyCounter, resolveCompanyByPublicId } from './membership';
 
-function normalizeDocumentCounterKey(documentType) {
+type DocumentCounterKey = Extract<
+  typeof companyCounters.$inferInsert['counterKey'],
+  `doc_${string}`
+>;
+
+function normalizeDocumentCounterKey(documentType: unknown): DocumentCounterKey {
   const numericType = Number(documentType);
   if (!Number.isInteger(numericType) || numericType < 1) {
     const error = new Error('Document type is required');
     (error as any).code = 'invalid-argument';
     throw error;
   }
-  return `doc_${numericType}`;
+  return `doc_${numericType}` as DocumentCounterKey;
 }
 
-async function getCompanyDocumentCounterValue(companyId, documentType, options: any = {}) {
+async function getCompanyDocumentCounterValue(
+  companyId: string | number,
+  documentType: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const counterKey = normalizeDocumentCounterKey(documentType);
 
@@ -40,7 +49,11 @@ async function getCompanyDocumentCounterValue(companyId, documentType, options: 
   });
 }
 
-async function allocateCompanyDocumentNumber(companyId, documentType, options: any = {}) {
+async function allocateCompanyDocumentNumber(
+  companyId: string | number,
+  documentType: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const counterKey = normalizeDocumentCounterKey(documentType);
 

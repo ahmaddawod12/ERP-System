@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { borderRadius, getColors, spacing } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
@@ -7,6 +7,8 @@ import { useAlert } from '../../contexts/AlertContext';
 import AppButton from '../primitives/AppButton';
 import AppText from '../primitives/AppText';
 import type { JobFileRef } from '../../types';
+import AccessibleModal from '../feedback/AccessibleModal';
+import { logger } from '../../utils/logger';
 
 const normalizeAssets = (result: ImagePicker.ImagePickerResult | null): string[] => {
   if (!result || result.canceled || !Array.isArray(result.assets)) return [];
@@ -62,7 +64,7 @@ export default function PhotoPicker({
       onPhotosSelected?.(merged);
       onClose?.();
     } catch (error) {
-      console.error('PhotoPicker gallery error:', error);
+      logger.error('PhotoPicker gallery error:', error);
       alert.error('Error', 'Failed to pick photos from gallery.');
     }
   };
@@ -91,13 +93,13 @@ export default function PhotoPicker({
       onPhotosSelected?.(merged);
       onClose?.();
     } catch (error) {
-      console.error('PhotoPicker camera error:', error);
+      logger.error('PhotoPicker camera error:', error);
       alert.error('Error', 'Failed to take photo.');
     }
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AccessibleModal visible={visible} transparent animationType="fade" onRequestClose={onClose} announcement="Add photos">
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
         <View style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <AppText variant="heading">Add Photos</AppText>
@@ -121,7 +123,7 @@ export default function PhotoPicker({
           </View>
         </View>
       </View>
-    </Modal>
+    </AccessibleModal>
   );
 }
 

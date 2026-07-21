@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 /**
  * Utility helper functions for Smart-Job App
  * Centralized common functions to reduce code duplication
@@ -12,7 +14,7 @@ export const formatDate = (date: Date | string, locale: string = 'en-US'): strin
     const dateObj = date instanceof Date ? date : new Date(date);
     return dateObj.toLocaleDateString(locale);
   } catch (error) {
-    console.error('Error formatting date:', error);
+    logger.error('Error formatting date:', error);
     return '';
   }
 };
@@ -25,7 +27,7 @@ export const formatDateTime = (date: Date | string, locale: string = 'en-US'): s
     const dateObj = date instanceof Date ? date : new Date(date);
     return dateObj.toLocaleString(locale);
   } catch (error) {
-    console.error('Error formatting datetime:', error);
+    logger.error('Error formatting datetime:', error);
     return '';
   }
 };
@@ -60,7 +62,7 @@ export const calculateTimeDifference = (timeFrom: string, timeTo: string): numbe
     
     return toTotalMinutes - fromTotalMinutes;
   } catch (error) {
-    console.error('Error calculating time difference:', error);
+    logger.error('Error calculating time difference:', error);
     return 0;
   }
 };
@@ -99,7 +101,7 @@ export const deepClone = <T>(obj: T): T => {
   try {
     return JSON.parse(JSON.stringify(obj));
   } catch (error) {
-    console.error('Error cloning object:', error);
+    logger.error('Error cloning object:', error);
     return obj;
   }
 };
@@ -136,7 +138,7 @@ export const safeJsonParse = <T = unknown>(jsonString: unknown, fallback: T | nu
   try {
     return JSON.parse(jsonString) as T;
   } catch (error) {
-    console.error('safeJsonParse: failed to parse JSON:', (error as Error).message);
+    logger.error('safeJsonParse: failed to parse JSON:', (error as Error).message);
     return fallback;
   }
 };

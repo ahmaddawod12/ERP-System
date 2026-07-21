@@ -21,6 +21,7 @@ import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { ROUTES } from '../../../navigation/routes';
 import type { Job } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 const getTimeMs = (value?: unknown): number => {
   if (!value) return 0;
@@ -364,7 +365,7 @@ export default function JobMonitor() {
         const companyId = getCompanyId();
 
         if (!companyId) {
-          console.error('CompanyId not found in cache');
+          logger.error('Company ID not found in cache');
           setLoading(false);
           return;
         }
@@ -379,7 +380,7 @@ export default function JobMonitor() {
         const waitingJobsList: Job[] = [];
 
         if (cachedPendingJobs && cachedPendingJobs.length > 0) {
-          console.log('📦 [CACHE READ] JobMonitor - pending jobs from cache:', cachedPendingJobs.length);
+          logger.debug('[CACHE READ] JobMonitor pending jobs loaded', { count: cachedPendingJobs.length });
           cachedPendingJobs.forEach((job) => {
             // Apply date filter
             const jobDateMs = getTimeMs(job.createdAt);
@@ -410,7 +411,7 @@ export default function JobMonitor() {
         if (isStartInCache) {
           // Date range is within cache, filter from cached data
           if (cachedFinishedJobs && cachedFinishedJobs.length > 0) {
-            console.log('📦 [CACHE READ] JobMonitor - finished jobs from cache:', cachedFinishedJobs.length);
+            logger.debug('[CACHE READ] JobMonitor finished jobs loaded', { count: cachedFinishedJobs.length });
             finishedJobsData = cachedFinishedJobs.filter((job) => {
               const finishedDateMs = getTimeMs(job.finishedAt);
               return finishedDateMs >= dateFilter.startDate.getTime() && finishedDateMs <= dateFilter.endDate.getTime();
@@ -418,7 +419,7 @@ export default function JobMonitor() {
           }
         } else {
           // Date range extends beyond cache - use smart filtering.
-          console.log('[BACKEND READ] JobMonitor - fetching older finished jobs');
+          logger.debug('[BACKEND READ] JobMonitor fetching older finished jobs');
           finishedJobsData = await getDataForDateRange(
             dateFilter.startDate,
             dateFilter.endDate,
@@ -442,7 +443,7 @@ export default function JobMonitor() {
         setLoading(false);
 
       } catch (error) {
-        console.error('Error loading jobs from cache:', error);
+        logger.error('Error loading jobs from cache:', error);
         setLoading(false);
       }
     };

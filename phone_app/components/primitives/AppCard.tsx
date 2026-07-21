@@ -15,6 +15,7 @@ export interface AppCardProps {
   tone?: CardTone;
   padding?: number;
   accessibilityLabel?: string;
+  accessibilityHint?: string;
 }
 
 export default function AppCard({
@@ -27,6 +28,7 @@ export default function AppCard({
   tone = 'default',
   padding = spacing.lg,
   accessibilityLabel,
+  accessibilityHint,
 }: AppCardProps) {
   const { isDarkMode } = useThemeContext();
   const palette = getColors(isDarkMode);
@@ -55,6 +57,7 @@ export default function AppCard({
         onPress={onPress}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityHint={accessibilityHint}
         style={({ pressed }) => [baseStyle, { opacity: pressed ? 0.94 : 1 }]}
       >
         <View style={contentStyle}>{children}</View>

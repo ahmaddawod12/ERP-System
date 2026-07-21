@@ -12,18 +12,7 @@ import {
   hasActiveDocumentsFilters,
   type DocumentsFilterValues,
 } from "@/lib/dal/documents-query";
-
-const documentDateFormatter = new Intl.DateTimeFormat("en", {
-  dateStyle: "medium",
-  timeStyle: "short",
-  timeZone: "Asia/Jerusalem",
-});
-
-const moneyFormatter = new Intl.NumberFormat("he-IL", {
-  style: "currency",
-  currency: "ILS",
-  maximumFractionDigits: 2,
-});
+import { formatCurrency, formatDateTime } from "@/lib/format";
 
 function statusVariant(status: DocumentSummary["generationStatus"]) {
   if (status === "completed") return "success" as const;
@@ -33,7 +22,7 @@ function statusVariant(status: DocumentSummary["generationStatus"]) {
 }
 
 function formatDocumentDate(document: DocumentSummary): string {
-  return documentDateFormatter.format(new Date(document.documentDate ?? document.createdAt));
+  return formatDateTime(document.documentDate ?? document.createdAt);
 }
 
 export function DocumentsList({
@@ -92,14 +81,14 @@ export function DocumentsList({
         <table className="w-full min-w-[1040px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-5 py-3 font-semibold sm:px-6">Document</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
-              <th className="px-4 py-3 font-semibold">Client</th>
-              <th className="px-4 py-3 font-semibold">Creator</th>
-              <th className="px-4 py-3 font-semibold">Total</th>
-              <th className="px-4 py-3 font-semibold">Date</th>
-              <th className="px-5 py-3 text-right font-semibold sm:px-6">File</th>
-              <th className="px-5 py-3 text-right font-semibold sm:px-6">Actions</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Document</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Status</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Client</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Creator</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Total</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Date</th>
+              <th scope="col" className="px-5 py-3 text-right font-semibold sm:px-6">File</th>
+              <th scope="col" className="px-5 py-3 text-right font-semibold sm:px-6">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -134,13 +123,13 @@ export function DocumentsList({
                   </span>
                 </td>
                 <td className="px-4 py-4 font-medium text-slate-700 dark:text-slate-200">
-                  {moneyFormatter.format(document.totalWithVat)}
+                  <bdi dir="ltr">{formatCurrency(document.totalWithVat)}</bdi>
                 </td>
                 <td className="px-4 py-4 text-xs text-slate-500 dark:text-slate-400">
                   <span className="inline-flex items-center gap-1.5">
                     <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
                     <time dateTime={document.documentDate ?? document.createdAt}>
-                      {formatDocumentDate(document)}
+                      <bdi dir="ltr">{formatDocumentDate(document)}</bdi>
                     </time>
                   </span>
                 </td>

@@ -33,6 +33,7 @@ import { buildFinishedJobOutboxPayload } from '../lib/finished-job-outbox-model'
 import type { DateLike, Job, JobItem } from '../../../types';
 import type { DateFilterRange } from '../../../components/forms/DateFilter';
 import { ROUTES } from '../../../navigation/routes';
+import { logger } from '../../../utils/logger';
 
 type UserJobRecord = Job & {
   isCert?: boolean;
@@ -280,7 +281,7 @@ export default function Userjob() {
       const pending = storage.getString(getUserPendingJobsStorageKey());
       if (pending) setPendingJobCount((safeJsonParse<PendingJobRecord[]>(pending, []) || []).length);
     } catch (error) {
-      console.log('Error checking pending jobs:', error);
+      logger.error('Error checking pending jobs:', error);
     }
   };
 
@@ -330,7 +331,7 @@ export default function Userjob() {
         }
       }
     } catch (error) {
-      console.error('Error checking for draft:', error);
+      logger.error('Error checking for draft:', error);
     }
   };
 
@@ -392,7 +393,7 @@ export default function Userjob() {
           if (pendingJob.localJobId) removeJob(String(pendingJob.localJobId));
           await synchronizeOperation(operationId).catch(() => undefined);
         } catch (error) {
-          console.error('Error syncing job:', error);
+          logger.error('Error syncing job:', error);
         }
       }
 
@@ -411,7 +412,7 @@ export default function Userjob() {
         loadJobs();
       }
     } catch (error) {
-      console.log('Error syncing pending jobs:', error);
+      logger.error('Error syncing pending jobs:', error);
     } finally {
       setIsSyncing(false);
     }
@@ -479,7 +480,7 @@ export default function Userjob() {
       setJobs(jobsList);
       setLoading(false);
     } catch (error) {
-      if (auth.currentUser) console.error('Error loading jobs:', error);
+      if (auth.currentUser) logger.error('Error loading jobs:', error);
       setLoading(false);
     }
   }, [cachedJobs, cachedCompanyJobs, dateFilter, clientFilter, getUid, getCompanyId, getUserRole, getDataForDateRange, isWithinCacheRange]);
@@ -637,7 +638,7 @@ export default function Userjob() {
               alert.success('Success', 'Job deleted successfully');
               loadJobs();
             } catch (error) {
-              console.error('Error deleting job:', error);
+              logger.error('Error deleting job:', error);
               alert.error('Error', 'Failed to delete job');
             }
           },

@@ -1,10 +1,51 @@
 import { sql } from 'drizzle-orm';
 import { DOC_TYPE } from '@smart-job/contracts';
-import { getDb } from './client';
+import { getDb, type DatabaseOptions } from './client';
 import { createOrUpdateDocumentRecord } from './documents';
 import { resolveCompanyByPublicId } from './membership';
 
-function asDate(value, fallback) {
+type ReservationStatus =
+  | 'reserved'
+  | 'approved'
+  | 'generated'
+  | 'failed'
+  | 'burned'
+  | 'rejected'
+  | 'validation_failed'
+  | 'submission_failed'
+  | 'approval_received_needs_reconcile';
+
+type IdempotencyStatus = 'approved' | 'in_progress' | 'failed';
+
+type ReserveTaxInvoiceInput = {
+  companyId: string | number;
+  uid: string;
+  idempotencyHash: string;
+  requestHash?: string | null;
+  clientName?: string | null;
+  record?: Record<string, unknown>;
+  now?: string | Date;
+  expireAt?: string | Date;
+  staleAfterMs?: number;
+};
+
+type UpdateReservationInput = {
+  reservationId: string;
+  status: string;
+  confirmationNumber?: string | null;
+  payload?: Record<string, unknown>;
+  now?: string | Date;
+};
+
+type UpdateTaxIdempotencyInput = {
+  companyId: string | number;
+  idempotencyHash: string;
+  status: string;
+  resultPayload?: unknown;
+  now?: string | Date;
+};
+
+function asDate(value: unknown, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -13,7 +54,7 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-function normalizeReservationStatus(value) {
+function normalizeReservationStatus(value: unknown): ReservationStatus {
   const normalized = String(value || '').trim();
   const allowed = new Set([
     'reserved',
@@ -26,17 +67,20 @@ function normalizeReservationStatus(value) {
     'submission_failed',
     'approval_received_needs_reconcile',
   ]);
-  return allowed.has(normalized) ? normalized : 'failed';
+  return allowed.has(normalized) ? normalized as ReservationStatus : 'failed';
 }
 
-function normalizeIdempotencyStatus(value) {
+function normalizeIdempotencyStatus(value: unknown): IdempotencyStatus {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'approved') return 'approved';
   if (normalized === 'in_progress') return 'in_progress';
   return 'failed';
 }
 
-async function reserveTaxInvoiceSubmission(input, options: any = {}) {
+async function reserveTaxInvoiceSubmission(
+  input: ReserveTaxInvoiceInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const expireAt = asDate(input.expireAt, new Date(now.getTime() + 24 * 60 * 60 * 1000));
@@ -58,13 +102,13 @@ async function reserveTaxInvoiceSubmission(input, options: any = {}) {
       LIMIT 1
       FOR UPDATE
     `);
-    const existing = existingResult.rows?.[0] || null;
+    const existing = existingResult.rows?.[0] as Record<string, unknown> | undefined;
 
     if (existing) {
       if (existing.status === 'approved' && existing.result_payload) {
         return { duplicate: true, result: existing.result_payload };
       }
-      const lockedAtMs = existing.locked_at ? new Date(existing.locked_at).getTime() : 0;
+      const lockedAtMs = existing.locked_at ? new Date(String(existing.locked_at)).getTime() : 0;
       if (existing.status === 'in_progress' && lockedAtMs && Date.now() - lockedAtMs < staleAfterMs) {
         const error = new Error('Invoice submission with this idempotency key is already in progress');
         (error as any).code = 'already-exists';
@@ -80,7 +124,7 @@ async function reserveTaxInvoiceSubmission(input, options: any = {}) {
         AND counter_key = 'doc_305'
       RETURNING next_value - 1 AS allocated_value
     `);
-    const row = counterResult.rows?.[0] || null;
+    const row = counterResult.rows?.[0] as Record<string, unknown> | undefined;
     const documentNumber = Number(row?.allocated_value);
     if (!Number.isInteger(documentNumber) || documentNumber < 1) {
       const error = new Error('Failed to allocate tax invoice number');
@@ -129,7 +173,8 @@ async function reserveTaxInvoiceSubmission(input, options: any = {}) {
       )
       RETURNING id
     `);
-    const reservationId = reservationInsert.rows?.[0]?.id || null;
+    const reservationRow = reservationInsert.rows?.[0] as Record<string, unknown> | undefined;
+    const reservationId = reservationRow?.id ? String(reservationRow.id) : null;
 
     if (existing) {
       await tx.execute(sql`
@@ -186,7 +231,10 @@ async function reserveTaxInvoiceSubmission(input, options: any = {}) {
   });
 }
 
-async function updateTaxInvoiceReservation(input, options: any = {}) {
+async function updateTaxInvoiceReservation(
+  input: UpdateReservationInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const payload = input.payload && typeof input.payload === 'object' ? input.payload : {};
@@ -201,7 +249,10 @@ async function updateTaxInvoiceReservation(input, options: any = {}) {
   `);
 }
 
-async function updateTaxInvoiceIdempotency(input, options: any = {}) {
+async function updateTaxInvoiceIdempotency(
+  input: UpdateTaxIdempotencyInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const status = normalizeIdempotencyStatus(input.status);

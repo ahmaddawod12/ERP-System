@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { borderRadius, getColors, shadows, spacing, typography } from '../../theme';
 import AppText from '../primitives/AppText';
+import { logger } from '../../utils/logger';
 
 const palette = getColors(false);
 
@@ -28,7 +29,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ErrorBoundary caught error:', error, errorInfo);
+    logger.error('ErrorBoundary caught error:', error, errorInfo);
   }
 
   resetError = () => {

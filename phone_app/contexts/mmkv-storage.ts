@@ -102,7 +102,7 @@ export const mmkvHelpers: MmkvHelpers = {
     try {
       return storage.getString(scopedKey(key)) || null;
     } catch (e) {
-      console.error(`MMKV getString error for ${key}:`, e);
+      logger.error(`MMKV getString error for ${key}:`, e);
       return null;
     }
   },
@@ -112,7 +112,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.set(scopedKey(key), value);
       return true;
     } catch (e) {
-      console.error(`MMKV setString error for ${key}:`, e);
+      logger.error(`MMKV setString error for ${key}:`, e);
       return false;
     }
   },
@@ -122,7 +122,7 @@ export const mmkvHelpers: MmkvHelpers = {
       const str = storage.getString(scopedKey(key));
       return safeJsonParse<T>(str);
     } catch (e) {
-      console.error(`MMKV getObject error for ${key}:`, e);
+      logger.error(`MMKV getObject error for ${key}:`, e);
       return null;
     }
   },
@@ -132,7 +132,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.set(scopedKey(key), JSON.stringify(value));
       return true;
     } catch (e) {
-      console.error(`MMKV setObject error for ${key}:`, e);
+      logger.error(`MMKV setObject error for ${key}:`, e);
       return false;
     }
   },
@@ -142,7 +142,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.remove(scopedKey(key));
       return true;
     } catch (e) {
-      console.error(`MMKV delete error for ${key}:`, e);
+      logger.error(`MMKV delete error for ${key}:`, e);
       return false;
     }
   },
@@ -152,7 +152,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.clearAll();
       return true;
     } catch (e) {
-      console.error('MMKV clearAll error:', e);
+      logger.error('MMKV clearAll error:', e);
       return false;
     }
   },

@@ -4,7 +4,9 @@ const rawConsole = {
   error: console.error.bind(console),
 };
 
-function normalizeLogValue(value) {
+type LogSeverity = 'INFO' | 'WARNING' | 'ERROR';
+
+function normalizeLogValue(value: unknown): unknown {
   if (value instanceof Error) {
     return {
       name: value.name,
@@ -20,18 +22,23 @@ function normalizeLogValue(value) {
   return value ?? null;
 }
 
-function writeStructuredLog(severity, fallbackMessage, firstArg, restArgs) {
-  const payload: any = {
+function writeStructuredLog(
+  severity: LogSeverity,
+  fallbackMessage: string,
+  firstArg: unknown,
+  restArgs: unknown[],
+): void {
+  const payload: Record<string, unknown> = {
     severity,
     message: typeof firstArg === 'string' ? firstArg : fallbackMessage,
   };
 
-  const fields: any = {};
+  const fields: Record<string, unknown> = {};
   if (typeof firstArg !== 'string') {
     fields.arg0 = normalizeLogValue(firstArg);
   }
 
-  restArgs.forEach((arg, index) => {
+  restArgs.forEach((arg: unknown, index: number) => {
     const normalized = normalizeLogValue(arg);
     if (
       normalized &&
@@ -64,4 +71,3 @@ export function installStructuredLogging(serviceName: string): void {
   console.warn = (firstArg, ...restArgs) => writeStructuredLog('WARNING', `${serviceName} warning`, firstArg, restArgs);
   console.error = (firstArg, ...restArgs) => writeStructuredLog('ERROR', `${serviceName} error`, firstArg, restArgs);
 }
-

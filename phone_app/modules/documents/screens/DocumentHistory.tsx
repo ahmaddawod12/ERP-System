@@ -487,7 +487,7 @@ export default function DocumentHistory() {
         alert.error('Error', t.downloadError);
       }
     } catch (error) {
-      console.error('Error downloading document:', error);
+      logger.error('Error downloading document:', error);
       alert.error(t.downloadError, error instanceof Error ? error.message : String(error));
     } finally {
       setDownloadingDoc(null);
@@ -520,7 +520,7 @@ export default function DocumentHistory() {
         alert.error('Error', t.shareError);
       }
     } catch (error) {
-      console.error('Error sharing document:', error);
+      logger.error('Error sharing document:', error);
       alert.error(t.shareError, error instanceof Error ? error.message : String(error));
     } finally {
       setSharingDoc(null);

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   StyleSheet,
   View,
@@ -40,6 +39,7 @@ import {
 } from '../../../components';
 import { invalidateTenantQueries } from '../../../lib/query/client';
 import { logger } from '../../../utils/logger';
+import AccessibleModal from '../../../components/feedback/AccessibleModal';
 import {
   createWorkerInvitation,
   disableWorkerMembership,
@@ -625,23 +625,25 @@ export default function WorkersUsers() {
         }
       />
 
-      <Modal
+      <AccessibleModal
         visible={showInviteModal}
         transparent
         animationType="fade"
         onRequestClose={() => setShowInviteModal(false)}
+        announcement={t.inviteWorker}
       >
         {renderInviteForm()}
-      </Modal>
+      </AccessibleModal>
 
-      <Modal
+      <AccessibleModal
         visible={editDraft !== null}
         transparent
         animationType="fade"
         onRequestClose={() => setEditDraft(null)}
+        announcement="Edit team member"
       >
         {renderEditForm()}
-      </Modal>
+      </AccessibleModal>
 
       <GlobalHeader />
     </View>

@@ -88,12 +88,29 @@ async function serverAuthFetch(
   init: RequestInit,
   timeoutMs: number,
 ): Promise<{ readonly response: Response; readonly payload: SupabaseAuthResponse }> {
-  const response = await fetch(url, {
-    ...init,
-    redirect: "error",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  return { response, payload: await readBoundedAuthResponse(response) };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new DOMException("Supabase Auth request timed out", "TimeoutError"));
+  }, timeoutMs);
+  const upstreamSignal = init.signal;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) {
+    abortFromUpstream();
+  } else {
+    upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
+  }
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      redirect: "error",
+      signal: controller.signal,
+    });
+    return { response, payload: await readBoundedAuthResponse(response) };
+  } finally {
+    clearTimeout(timeout);
+    upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+  }
 }
 
 export async function serverSignUp(email: string, password: string): Promise<SupabaseAuthResponse> {

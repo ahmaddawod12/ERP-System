@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { BackendTransportError } from "@/lib/backend/transport-core";
 import { listUpgradeRequests } from "@/lib/backend/upgrade-request-client";
 import { requireWebsiteRequestContext } from "@/lib/dal/session";
+import { formatDateTime } from "@/lib/format";
 
 export const metadata = { title: "Upgrade review | Smart-Job" };
 
@@ -25,14 +26,6 @@ function queueHref(status?: string, afterCursor?: string): string {
   if (afterCursor) search.set("afterCursor", afterCursor);
   const suffix = search.size === 0 ? "" : `?${search.toString()}`;
   return `/app/admin${suffix}`;
-}
-
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Jerusalem",
-  }).format(new Date(value));
 }
 
 export default async function AdminUpgradeQueuePage({
@@ -112,7 +105,7 @@ export default async function AdminUpgradeQueuePage({
                   <h2 className="mt-3 text-lg font-semibold text-slate-950 dark:text-white">{item.currentTier} → {item.requestedTier}</h2>
                   <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{item.message}</p>
                   <p className="mt-3 text-xs text-slate-500">
-                    {item.requesterEmail ?? "Email unavailable"} · <time dateTime={item.createdAt}>{formatTime(item.createdAt)}</time>
+                    <bdi dir="auto">{item.requesterEmail ?? "Email unavailable"}</bdi> · <time dateTime={item.createdAt}><bdi dir="ltr">{formatDateTime(item.createdAt)}</bdi></time>
                   </p>
                   {item.moderationNote ? <p className="mt-2 text-xs text-slate-500">Review note: {item.moderationNote}</p> : null}
                 </div>

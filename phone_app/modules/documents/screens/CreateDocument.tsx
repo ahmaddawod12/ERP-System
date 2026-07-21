@@ -13,14 +13,13 @@
  * workflow for type 305.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useReducer } from 'react';
 import { View,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Modal,
   ActivityIndicator,
   Linking,
   FlatList,
@@ -51,8 +50,11 @@ import {
 import { fetchCompanyInventoryParts } from '../../../utils/read-model';
 import type { AlertButton, AppDocument, Client, DateLike, DocumentItem, InventoryPart } from '../../../types';
 import { styles } from './CreateDocument.styles';
+import { logger } from '../../../utils/logger';
+import AccessibleModal from '../../../components/feedback/AccessibleModal';
 
 import { formatDateLike, getDateLikeTime, getErrorCode, getErrorMessage, toText, type BuiltClientData, type BuiltDocumentData, type ClientUpdates, type DocumentFormItem, type FormData, type InvoiceDocumentRecord, type ModalType, type ReceiptMode } from '../lib/create-document-model';
+import { documentComposerReducer, initialDocumentComposerState } from '../lib/document-composer-machine';
 
 export default function CreateDocument() {
   const router = useRouter();
@@ -106,15 +108,14 @@ export default function CreateDocument() {
 
   const [companyInventoryParts, setCompanyInventoryParts] = useState<InventoryPart[]>([]);
   
-  // Helper functions for unified modal
-  const openModal = (type: Exclude<ModalType, null>) => setModalState({ visible: true, type });
-  const closeModal = () => setModalState({ visible: false, type: null });
-  
-  // Unified Modal State (replaces multiple separate modals)
-  const [modalState, setModalState] = useState({
-    visible: false,
-    type: null as ModalType,
-  });
+  // One reducer owns modal transitions so incompatible modal states cannot overlap.
+  const [composerState, dispatchComposer] = useReducer(
+    documentComposerReducer,
+    initialDocumentComposerState,
+  );
+  const modalState = composerState.modal;
+  const openModal = (type: Exclude<ModalType, null>) => dispatchComposer({ type: 'OPEN_MODAL', modalType: type });
+  const closeModal = () => dispatchComposer({ type: 'CLOSE_MODAL' });
   
   // Form data
   const [formData, setFormData] = useState<FormData>({
@@ -208,7 +209,7 @@ export default function CreateDocument() {
           setInvoices(taxInvoiceDocuments);
         }
       } catch (error) {
-        console.error('Error initializing:', error);
+        logger.error('Error initializing document composer:', error);
       }
     };
 
@@ -239,7 +240,7 @@ export default function CreateDocument() {
         const parts = await fetchCompanyInventoryParts(cn);
         setCompanyInventoryParts(parts);
       } catch (error) {
-        console.warn('Failed to fetch company inventory:', error);
+        logger.warn('Failed to fetch company inventory:', error);
       }
     };
     fetchCompanyInventory();
@@ -565,7 +566,7 @@ export default function CreateDocument() {
     reset: resetTask,
   } = useDocumentTask({
     onPreviewComplete: (url) => {
-      console.log('Preview complete, URL:', url);
+      logger.debug('Document preview completed');
       setIsSubmitting(false);
       setPreviewURL(url);
       alert.hideLoading();
@@ -581,7 +582,7 @@ export default function CreateDocument() {
       });
     },
     onGenerateComplete: (url, docId) => {
-      console.log('âœ… onGenerateComplete called - Document generated, URL:', url, 'ID:', docId);
+      logger.debug('Document generation completed');
       safeCleanupStates();
       
       const pdfUrl = url;
@@ -606,7 +607,7 @@ export default function CreateDocument() {
             style: 'default',
             onPress: () => {
               Linking.openURL(pdfUrl).catch(err => {
-                console.error('Error opening URL:', err);
+                logger.error('Error opening generated document:', err);
                 showErrorMessage('Error', 'Could not open PDF link');
               });
             }
@@ -621,7 +622,7 @@ export default function CreateDocument() {
       }, delay);
     },
     onError: (error) => {
-      console.error('Document task error:', error);
+      logger.error('Document task error:', error);
       safeCleanupStates();
       
       // Use delay for iOS
@@ -699,10 +700,10 @@ export default function CreateDocument() {
         if (formData.clientVatNumber?.trim() && formData.clientVatNumber.trim() !== (selectedClientObj.vatNumber || '')) updates.vatNumber = formData.clientVatNumber.trim();
         if (Object.keys(updates).length > 0) {
           await updateClient(selectedClientObj.id, updates);
-          console.log('âœ… Updated existing client with new fields:', Object.keys(updates));
+          logger.debug('Updated existing client fields', { fields: Object.keys(updates) });
         }
       } catch (e) {
-        console.log('Update client failed (non-critical):', e);
+        logger.debug('Update client failed (non-critical):', e);
       }
       return selectedClientObj;
     } else if (!selectedClientObj && formData.customerName.trim()) {
@@ -721,7 +722,7 @@ export default function CreateDocument() {
           return savedClient;
         }
       } catch (e) {
-        console.log('Auto-save client failed (non-critical):', e);
+        logger.debug('Auto-save client failed (non-critical):', e);
       }
     }
     return null;
@@ -738,9 +739,9 @@ export default function CreateDocument() {
     try {
       const documentData = buildDocumentData();
       await publishPreview(documentData);
-      console.log('Preview task published, waiting for completion...');
+      logger.debug('Preview task published; waiting for completion');
     } catch (error) {
-      console.error('Error previewing document:', error);
+      logger.error('Error previewing document:', error);
       setIsSubmitting(false);
       alert.hideLoading();
       
@@ -783,9 +784,9 @@ export default function CreateDocument() {
       }
 
       await publishGenerate(documentData);
-      console.log('Generate task published, waiting for completion...');
+      logger.debug('Generate task published; waiting for completion');
     } catch (error) {
-      console.error('Error creating document:', error);
+      logger.error('Error creating document:', error);
       setIsSubmitting(false);
       alert.hideLoading();
       
@@ -845,7 +846,7 @@ export default function CreateDocument() {
         }, 300);
       }
     } catch (error) {
-      console.error('Error opening PDF:', error);
+      logger.error('Error opening PDF:', error);
       showErrorMessage('Error', `Failed to open PDF: ${getErrorMessage(error, String(error))}`);
     }
   };
@@ -1222,7 +1223,7 @@ export default function CreateDocument() {
                       )}
                     </View>
                     <AppText style={[styles.proposalMeta, { color: colors.textSecondary }]}>
-                      {proposal.items?.length || 0} {t.proposalItems} Â· â‚ª{proposalTotal.toFixed(2)}
+                      {proposal.items?.length || 0} {t.proposalItems} · ₪{proposalTotal.toFixed(2)}
                     </AppText>
                   </TouchableOpacity>
                 );
@@ -1444,7 +1445,7 @@ export default function CreateDocument() {
             <View style={[styles.totalContainer, { borderTopColor: colors.border }]}>
               <AppText style={[styles.totalLabel, { color: colors.textPrimary }]}>{t.total}</AppText>
               <AppText style={[styles.totalValue, { color: colors.primary }]}>
-                â‚ª{calculateTotal().toFixed(2)}
+                ₪{calculateTotal().toFixed(2)}
               </AppText>
             </View>
           </View>
@@ -1490,11 +1491,12 @@ export default function CreateDocument() {
         </ScrollableContainer>
 
         {/* Unified Modal - Single modal with different content based on type */}
-        <Modal
+        <AccessibleModal
           visible={modalState.visible}
           animationType="slide"
           onRequestClose={closeModal}
           presentationStyle={Platform.OS === 'ios' ? 'fullScreen' : undefined}
+          announcement="Document options"
         >
           <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -1564,7 +1566,7 @@ export default function CreateDocument() {
                                 {formatDateLike(invoice.createdAt)}
                               </AppText>
                               <AppText style={[styles.invoiceItemAmount, { color: colors.primary }]}>
-                                â‚ª{totalAmount.toFixed(2)}
+                                ₪{totalAmount.toFixed(2)}
                               </AppText>
                             </View>
                           </View>
@@ -1688,7 +1690,7 @@ export default function CreateDocument() {
                       )}
                       onError={(syntheticEvent) => {
                         const { nativeEvent } = syntheticEvent;
-                        console.warn('WebView error: ', nativeEvent);
+                        logger.warn('Document WebView error:', nativeEvent);
                         alert.error('Error', 'Failed to load PDF preview');
                       }}
                     />
@@ -1697,7 +1699,7 @@ export default function CreateDocument() {
               </>
             )}
           </View>
-        </Modal>
+        </AccessibleModal>
 
         <GlobalHeader />
       </View>

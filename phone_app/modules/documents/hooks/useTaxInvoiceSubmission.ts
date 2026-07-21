@@ -8,6 +8,7 @@ import {
   TAX_SUBMISSION_UNAVAILABLE_MESSAGE,
   TAX_SUBMISSION_UNAVAILABLE_TITLE,
 } from '../lib/tax-submission-status';
+import { logger } from '../../../utils/logger';
 
 interface InvoiceData {
   customerName: string;
@@ -89,7 +90,7 @@ export function useTaxInvoiceSubmission({
   // Preview remains available; final tax submission is gated separately.
   const { publishPreview } = useDocumentTask({
     onPreviewComplete: (url) => {
-      console.log('Preview completed via Pub/Sub:', url);
+      logger.debug('Tax invoice preview completed');
       if (Platform.OS !== 'ios') {
         alert.hideLoading();
       }
@@ -131,12 +132,12 @@ export function useTaxInvoiceSubmission({
 
   /** Preview the invoice (generates PDF preview via Pub/Sub) */
   const handlePreviewInvoice = async () => {
-    console.log('handlePreviewInvoice called');
+    logger.debug('Tax invoice preview requested');
     if (!validateInvoiceForm()) {
-      console.log('Validation failed');
+      logger.debug('Tax invoice validation failed');
       return;
     }
-    console.log('Validation passed, starting preview...');
+    logger.debug('Tax invoice validation passed; starting preview');
 
     if (Platform.OS !== 'ios') {
       alert.loading();
@@ -175,9 +176,9 @@ export function useTaxInvoiceSubmission({
       });
 
       // useDocumentTask polls the backend read model until the task completes.
-      console.log('Preview task published, waiting for completion...');
+      logger.debug('Tax invoice preview task published; waiting for completion');
     } catch (error) {
-      console.error('Error previewing invoice:', error);
+      logger.error('Error previewing invoice:', error);
       if (Platform.OS !== 'ios') {
         alert.hideLoading();
       }
@@ -233,7 +234,7 @@ export function useTaxInvoiceSubmission({
         }, Platform.OS === 'ios' ? 300 : 0);
       }
     } catch (error) {
-      console.error('Error opening PDF:', error);
+      logger.error('Error opening PDF:', error);
       showErrorMessage('Error', `Failed to open PDF: ${getErrorMessage(error, String(error))}`);
     }
   };
@@ -258,4 +259,3 @@ export function useTaxInvoiceSubmission({
     downloadAndSharePDF,
   };
 }
-

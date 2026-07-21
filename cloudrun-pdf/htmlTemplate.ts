@@ -1,5 +1,6 @@
 import sanitizeHtml from 'sanitize-html';
 import { DOC_TYPE, DOC_LABELS, VAT_RATE, getDocumentLabel } from '@smart-job/contracts';
+import type { NormalizedDocumentData } from './document-payload';
 
 /**
  * HTML Template Generator Module
@@ -9,7 +10,7 @@ import { DOC_TYPE, DOC_LABELS, VAT_RATE, getDocumentLabel } from '@smart-job/con
 /**
  * Helper function to sanitize user input
  */
-function sanitizeInput(input) {
+function sanitizeInput(input: unknown): string {
   if (typeof input !== 'string') {
     return String(input || '');
   }
@@ -37,7 +38,7 @@ function sanitizeUrl(url: unknown): string {
 /**
  * Parse amount to cents
  */
-function parseAmountToCents(value, fieldName = 'amount') {
+function parseAmountToCents(value: unknown, fieldName = 'amount'): number {
   const num = Number(value);
   
   if (isNaN(num) || !isFinite(num)) {
@@ -51,7 +52,7 @@ function parseAmountToCents(value, fieldName = 'amount') {
   return Math.round(num * 100);
 }
 
-function formatCentsToAmount(cents) {
+function formatCentsToAmount(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
@@ -60,7 +61,7 @@ function formatCentsToAmount(cents) {
 /**
  * Generate HTML template for documents
  */
-function generateDocumentHTML(documentData) {
+function generateDocumentHTML(documentData: NormalizedDocumentData): string {
   const { 
     type, client, items, company, language = 'he', documentNumber, date, notes, logoUrl, 
     invoiceReference, paymentMethod,

@@ -186,7 +186,7 @@ export function useArchiveQuery({
           return [...cachedPart, ...documentsData];
         }
       } catch (error) {
-        console.error('Error fetching partial month data:', error);
+        logger.error('Error fetching partial month data:', error);
         return cachedPart;
       }
     }
@@ -231,7 +231,7 @@ export function useArchiveQuery({
 
       return [];
     } catch (error) {
-      console.error('Error fetching month data:', error);
+      logger.error('Error fetching month data:', error);
       return [];
     }
   }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
@@ -331,7 +331,7 @@ export function useArchiveQuery({
 
       return [...cachedPortion, ...backendData];
     } catch (error) {
-      console.error('Error fetching data for date range:', error);
+      logger.error('Error fetching data for date range:', error);
       return cachedPortion;
     }
   }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);

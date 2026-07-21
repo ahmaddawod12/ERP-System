@@ -7,9 +7,9 @@
  * @example
  * ```javascript
  * const { publishPreview, publishGenerate, taskStatus, error, reset } = useDocumentTask({
- *   onPreviewComplete: (url) => console.log('Preview ready:', url),
- *   onGenerateComplete: (url, docId) => console.log('PDF ready:', url),
- *   onError: (error) => console.error('Failed:', error),
+ *   onPreviewComplete: () => logger.debug('Preview ready'),
+ *   onGenerateComplete: () => logger.debug('PDF ready'),
+ *   onError: (error) => logger.error('Document task failed', error),
  * });
  * 
  * // Publish a preview task

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -27,180 +27,7 @@ import {
 } from '../lib/inventory-list-model';
 import { useInventoryInfinite } from '../lib/use-inventory-infinite';
 import { useInventoryMutations } from '../lib/use-inventory-mutations';
-
-interface PartRowProps {
-  part: MobileInventoryPart;
-  colors: ReturnType<typeof getColors>;
-  isDarkMode: boolean;
-  disabled: boolean;
-  t: Record<string, string>;
-  onRemove: (id: string | number) => void;
-  onUse: (id: string | number, amount: number) => void;
-  onAddQuantity: (id: string | number, amount: number) => void;
-}
-
-const InventoryPartRow = memo(function InventoryPartRow({
-  part,
-  colors,
-  isDarkMode,
-  disabled,
-  t,
-  onRemove,
-  onUse,
-  onAddQuantity,
-}: PartRowProps) {
-  const alert = useAlert();
-  const [useAmount, setUseAmount] = useState('');
-  const [addAmount, setAddAmount] = useState('');
-  const [showUse, setShowUse] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
-
-  const isLowStock = part.quantity <= (part.lowThreshold || 0);
-
-  const validateAmount = (value: string) => {
-    const amount = parseInt(value, 10);
-    if (!amount || amount <= 0) {
-      alert.warning(t.invalidAmount, t.amountMustBePositive);
-      return null;
-    }
-    return amount;
-  };
-
-  const handleUse = () => {
-    const amount = validateAmount(useAmount);
-    if (amount == null) return;
-    onUse(part.id, amount);
-    setUseAmount('');
-    setShowUse(false);
-  };
-
-  const handleAdd = () => {
-    const amount = validateAmount(addAmount);
-    if (amount == null) return;
-    onAddQuantity(part.id, amount);
-    setAddAmount('');
-    setShowAdd(false);
-  };
-
-  return (
-    <View style={[styles.partCard, { backgroundColor: colors.surface }]}>
-      <View style={styles.partHeader}>
-        <View style={styles.partInfo}>
-          <View style={styles.partNameRow}>
-            {isLowStock && (
-              <MaterialCommunityIcons
-                name="alert-circle"
-                size={24}
-                color="#ef4444"
-                style={styles.warningIcon}
-              />
-            )}
-            <View style={[styles.idBadge, { backgroundColor: colors.secondary + '20' }]}>
-              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{part.id}</AppText>
-            </View>
-            <AppText style={[styles.partName, { color: colors.textPrimary }]}>{part.name}</AppText>
-          </View>
-          <AppText style={[styles.partQuantity, { color: colors.textSecondary }]}>
-            {t.quantity}: {part.quantity} ({t.alert}: {part.lowThreshold || 0})
-          </AppText>
-        </View>
-
-        <View style={styles.partActions}>
-          <TouchableOpacity
-            style={[styles.actionButton, {
-              backgroundColor: isDarkMode ? 'rgba(0, 172, 193, 0.15)' : 'rgba(0, 172, 193, 0.08)',
-              borderColor: colors.secondary,
-              borderWidth: 1,
-            }]}
-            disabled={disabled}
-            onPress={() => { setShowAdd(true); setShowUse(false); }}
-          >
-            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>+ {t.add}</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, {
-              backgroundColor: isDarkMode ? 'rgba(0, 172, 193, 0.15)' : 'rgba(0, 172, 193, 0.08)',
-              borderColor: colors.secondary,
-              borderWidth: 1,
-            }]}
-            disabled={disabled}
-            onPress={() => { setShowUse(true); setShowAdd(false); }}
-          >
-            <AppText style={[styles.actionButtonText, { color: colors.secondary }]}>- {t.use}</AppText>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, {
-              backgroundColor: isDarkMode ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.08)',
-              borderColor: '#ef4444',
-              borderWidth: 1,
-            }]}
-            disabled={disabled}
-            onPress={() => {
-              alert.confirm(
-                t.confirmRemove,
-                `${t.areYouSure}\n${part.name}\n\n${t.confirmRemoveMessage}`,
-                [
-                  { text: t.cancel, style: 'cancel', onPress: () => {} },
-                  { text: t.remove, style: 'destructive', onPress: () => onRemove(part.id) },
-                ]
-              );
-            }}
-          >
-            <AppText style={[styles.actionButtonText, { color: '#ef4444' }]}>🗑</AppText>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Use Part Input */}
-      {showUse && (
-        <View style={styles.amountInput}>
-          <AppInput
-            value={useAmount}
-            onChangeText={setUseAmount}
-            placeholder={t.amount}
-            keyboardType="numeric"
-            colors={colors}
-          />
-          <View style={styles.buttonRow}>
-            <TouchableOpacity disabled={disabled} onPress={handleUse} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
-              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { setShowUse(false); setUseAmount(''); }}
-              style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
-            >
-              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* Add Quantity Input */}
-      {showAdd && (
-        <View style={styles.amountInput}>
-          <AppInput
-            value={addAmount}
-            onChangeText={setAddAmount}
-            placeholder={t.amount}
-            keyboardType="numeric"
-            colors={colors}
-          />
-          <View style={styles.buttonRow}>
-            <TouchableOpacity disabled={disabled} onPress={handleAdd} style={[styles.confirmButton, { backgroundColor: colors.secondary }]}>
-              <AppText style={styles.confirmButtonText}>{t.confirm}</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { setShowAdd(false); setAddAmount(''); }}
-              style={[styles.cancelButton, { backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1 }]}
-            >
-              <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-    </View>
-  );
-});
+import InventoryPartRowView from '../components/InventoryPartRow';
 
 export default function WorkerInventory() {
   const [inventory, setInventory] = useState<MobileInventoryPart[]>([]);
@@ -514,12 +341,12 @@ export default function WorkerInventory() {
   );
 
   const renderItem = useCallback(({ item }: { item: MobileInventoryPart }) => (
-    <InventoryPartRow
+    <InventoryPartRowView
       part={item}
       colors={colors}
       isDarkMode={isDarkMode}
       disabled={adjustMutation.isPending}
-      t={t}
+      copy={t}
       onRemove={handleRemovePart}
       onUse={handleUsePart}
       onAddQuantity={handleAddQuantityToPart}

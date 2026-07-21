@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Image,
-  Modal,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -23,6 +22,7 @@ import { resolveJobFileUri } from '../../modules/jobs/lib/job-file-utils';
 import { fetchJobDetail } from '../../modules/jobs/lib/jobs-api';
 import { mapJobDetail } from '../../modules/jobs/lib/job-list-model';
 import { tenantQueryKey } from '../../lib/query/client';
+import AccessibleModal from '../feedback/AccessibleModal';
 
 interface PartUsed {
   id?: string | number;
@@ -186,7 +186,7 @@ export default function ViewJobDetails({
   if (!visible || !displayedJob) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <AccessibleModal visible={visible} transparent animationType="slide" onRequestClose={onClose} announcement={translations.jobDetails || translations.title || 'Job details'}>
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
         <View style={[styles.sheet, { backgroundColor: palette.backgroundElevated }]}>
           <View style={styles.headerRow}>
@@ -303,7 +303,7 @@ export default function ViewJobDetails({
           </View>
         </View>
       </View>
-    </Modal>
+    </AccessibleModal>
   );
 }
 

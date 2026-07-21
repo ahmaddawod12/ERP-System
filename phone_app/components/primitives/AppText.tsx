@@ -1,5 +1,11 @@
 import React, { useMemo } from 'react';
-import { I18nManager, Text, type StyleProp, type TextStyle } from 'react-native';
+import {
+  I18nManager,
+  Text,
+  type StyleProp,
+  type TextProps,
+  type TextStyle,
+} from 'react-native';
 import { getColors, typography } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useLanguageContext } from '../../contexts/LanguageContext';
@@ -15,7 +21,7 @@ interface VariantToken {
   textTransform?: string;
 }
 
-export interface AppTextProps {
+export interface AppTextProps extends Omit<TextProps, 'children' | 'style'> {
   children?: React.ReactNode;
   variant?: TextVariant;
   color?: string;
@@ -75,6 +81,7 @@ export default function AppText({
   align,
   allowFontScaling = true,
   weight,
+  ...textProps
 }: AppTextProps) {
   const { isDarkMode } = useThemeContext();
   const { language } = useLanguageContext();
@@ -84,6 +91,7 @@ export default function AppText({
 
   return (
     <Text
+      {...textProps}
       allowFontScaling={allowFontScaling}
       numberOfLines={numberOfLines}
       accessibilityLabel={accessibilityLabel}

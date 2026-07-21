@@ -17,6 +17,7 @@ import {
   recordCrashlyticsError,
   setCrashlyticsUser,
 } from '../../lib/firebase-crashlytics';
+import { logger } from '../../utils/logger';
 
 export default function App() {
   const router = useRouter();
@@ -156,13 +157,13 @@ export default function App() {
 
     // Initialize native services and auth listener.
     const initializeAuth = async () => {
-      console.log('🔐 Initializing auth and notifications...');
+      logger.debug('Initializing authentication and notifications');
       
       try {
         try {
           await initializeCrashlytics();
         } catch (crashlyticsError) {
-          console.warn('Crash reporting is unavailable:', crashlyticsError);
+          logger.warn('Crash reporting is unavailable:', crashlyticsError);
         }
         // Set up the Supabase-backed auth listener independently of Firebase native services.
         unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
@@ -204,14 +205,14 @@ export default function App() {
               
               if (cacheResult) {
                 const { uid, role } = cacheResult;
-                console.log(`🔐 User authenticated: ${uid} (${role})`);
+                logger.debug('User authenticated', { uid, role });
 
                 // All checks passed - show success animation then navigate
                 showSuccessAndNavigate(role);
               } else {
                 initializedScopeRef.current = null;
                 // No profile found - show error and return to login
-                console.log('❌ Could not initialize cache/profile');
+                logger.warn('Could not initialize cache profile');
                 alert.error(
                   language === 'he' ? 'הגדרה לא הושלמה' : language === 'ar' ? 'الإعداد غير مكتمل' : 'Setup Incomplete',
                   language === 'he'
@@ -225,7 +226,7 @@ export default function App() {
             } catch (error) {
               initializedScopeRef.current = null;
               recordCrashlyticsError(error);
-              console.error('Error during authentication:', error);
+              logger.error('Error during authentication:', error);
               setIsLoading(false);
             }
           } else {
@@ -237,7 +238,7 @@ export default function App() {
         });
       } catch (error) {
         recordCrashlyticsError(error);
-        console.error('Native service initialization error:', error);
+        logger.error('Native service initialization error:', error);
         setAuthInitialized(true);
         setIsLoading(false);
       }

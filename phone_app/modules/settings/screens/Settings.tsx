@@ -26,7 +26,7 @@ import { runLogoutSequence } from '../lib/logout';
 export default function Settings() {
   const router = useRouter();
   const { language, setLanguage } = useLanguageContext();
-  const { isDarkMode, toggleTheme } = useThemeContext();
+  const { isDarkMode, themePreference, setThemePreference } = useThemeContext();
   const { clearCache, profile, getUserRole } = useCache();
   const { user, signOut: signOutSession } = useSession();
   const { operations: pendingOperations } = useOutbox();
@@ -79,6 +79,12 @@ export default function Settings() {
     supportFeedback: 'الدعم والملاحظات',
     devInbox: 'صندوق بريد المطور',
   };
+
+  const systemModeLabel = language === 'he'
+    ? 'מערכת'
+    : language === 'ar'
+      ? 'النظام'
+      : 'System';
 
   const handleLogout = async () => {
     alert.confirm(
@@ -145,20 +151,49 @@ export default function Settings() {
               style={[
                 styles.optionButton,
                 { 
-                  backgroundColor: !isDarkMode ? colors.primary : colors.backgroundLight,
+                  backgroundColor: themePreference === 'system' ? colors.primary : colors.backgroundLight,
                   borderColor: colors.border,
                 }
               ]}
-              onPress={() => !isDarkMode ? null : toggleTheme()}
+              onPress={() => setThemePreference('system')}
+              accessibilityRole="radio"
+              accessibilityLabel={systemModeLabel}
+              accessibilityState={{ checked: themePreference === 'system' }}
             >
               <Ionicons 
-                name="sunny" 
+                name="contrast-outline"
                 size={24} 
-                color={!isDarkMode ? 'white' : colors.textSecondary} 
+                color={themePreference === 'system' ? 'white' : colors.textSecondary}
               />
               <AppText style={[
                 styles.optionText,
-                { color: !isDarkMode ? 'white' : colors.textSecondary }
+                { color: themePreference === 'system' ? 'white' : colors.textSecondary }
+              ]}>
+                {systemModeLabel}
+              </AppText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.optionButton,
+                { 
+                  backgroundColor: themePreference === 'light' ? colors.primary : colors.backgroundLight,
+                  borderColor: colors.border,
+                }
+              ]}
+              onPress={() => setThemePreference('light')}
+              accessibilityRole="radio"
+              accessibilityLabel={t.lightMode}
+              accessibilityState={{ checked: themePreference === 'light' }}
+            >
+              <Ionicons 
+                name="sunny"
+                size={24} 
+                color={themePreference === 'light' ? 'white' : colors.textSecondary}
+              />
+              <AppText style={[
+                styles.optionText,
+                { color: themePreference === 'light' ? 'white' : colors.textSecondary }
               ]}>
                 {t.lightMode}
               </AppText>
@@ -167,21 +202,24 @@ export default function Settings() {
             <TouchableOpacity
               style={[
                 styles.optionButton,
-                { 
-                  backgroundColor: isDarkMode ? colors.primary : colors.backgroundLight,
+                {
+                  backgroundColor: themePreference === 'dark' ? colors.primary : colors.backgroundLight,
                   borderColor: colors.border,
                 }
               ]}
-              onPress={() => isDarkMode ? null : toggleTheme()}
+              onPress={() => setThemePreference('dark')}
+              accessibilityRole="radio"
+              accessibilityLabel={t.darkMode}
+              accessibilityState={{ checked: themePreference === 'dark' }}
             >
-              <Ionicons 
-                name="moon" 
-                size={24} 
-                color={isDarkMode ? 'white' : colors.textSecondary} 
+              <Ionicons
+                name="moon"
+                size={24}
+                color={themePreference === 'dark' ? 'white' : colors.textSecondary}
               />
               <AppText style={[
                 styles.optionText,
-                { color: isDarkMode ? 'white' : colors.textSecondary }
+                { color: themePreference === 'dark' ? 'white' : colors.textSecondary }
               ]}>
                 {t.darkMode}
               </AppText>

@@ -17,7 +17,7 @@ declare module 'pg' {
   }
 
   export class Pool {
-    constructor(options?: any);
+    constructor(options?: unknown);
     connect(): Promise<PoolClient>;
     query<Row extends QueryResultRow = QueryResultRow>(
       queryText: string,

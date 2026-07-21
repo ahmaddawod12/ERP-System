@@ -86,7 +86,8 @@ test("new server Auth flows require a publishable key without legacy fallback", 
   );
   assert.match(source, /process\.env\.SUPABASE_PUBLISHABLE_KEY/);
   assert.doesNotMatch(source, /SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(source, /AbortSignal\.timeout/);
+  assert.match(source, /new AbortController\(\)/);
+  assert.match(source, /controller\.abort/);
   assert.match(source, /MAX_AUTH_RESPONSE_BYTES/);
   assert.doesNotMatch(source, /response\.json\(/);
 });

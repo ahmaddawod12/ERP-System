@@ -15,13 +15,7 @@ import {
   type InventoryFilterValues,
   type InventoryReadScope,
 } from "@/lib/dal/inventory-query";
-
-const quantityFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
-const dateFormatter = new Intl.DateTimeFormat("en-GB", {
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-});
+import { formatDate, formatNumber } from "@/lib/format";
 
 function statusVariant(status: InventoryPartStatus): "success" | "default" | "warning" {
   if (status === "active") return "success";
@@ -30,7 +24,7 @@ function statusVariant(status: InventoryPartStatus): "success" | "default" | "wa
 }
 
 function quantityLabel(value: number, unit: string | null): string {
-  return `${quantityFormatter.format(value)}${unit ? ` ${unit}` : ""}`;
+  return `${formatNumber(value)}${unit ? ` ${unit}` : ""}`;
 }
 
 export function InventoryList({
@@ -102,12 +96,12 @@ export function InventoryList({
         <table className="w-full min-w-[860px] text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-5 py-3 font-semibold sm:px-6">Part</th>
-              <th className="px-4 py-3 font-semibold">Quantity</th>
-              <th className="px-4 py-3 font-semibold">Low threshold</th>
-              <th className="px-4 py-3 font-semibold">Updated</th>
-              <th className="px-5 py-3 font-semibold sm:px-6">Status</th>
-              <th className="px-5 py-3 text-right font-semibold sm:px-6">Actions</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Part</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Quantity</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Low threshold</th>
+              <th scope="col" className="px-4 py-3 font-semibold">Updated</th>
+              <th scope="col" className="px-5 py-3 font-semibold sm:px-6">Status</th>
+              <th scope="col" className="px-5 py-3 text-right font-semibold sm:px-6">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -130,14 +124,14 @@ export function InventoryList({
                       : "font-semibold text-slate-900 dark:text-slate-100"}
                     >
                       {isLowStock ? <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-                      {quantityLabel(part.quantity, part.unit)}
+                      <bdi dir="ltr">{quantityLabel(part.quantity, part.unit)}</bdi>
                     </span>
                   </td>
                   <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                    {quantityLabel(part.lowThreshold, part.unit)}
+                    <bdi dir="ltr">{quantityLabel(part.lowThreshold, part.unit)}</bdi>
                   </td>
                   <td className="px-4 py-4 text-slate-600 dark:text-slate-300">
-                    <time dateTime={part.updatedAt}>{dateFormatter.format(new Date(part.updatedAt))}</time>
+                    <time dateTime={part.updatedAt}><bdi dir="ltr">{formatDate(part.updatedAt)}</bdi></time>
                   </td>
                   <td className="px-5 py-4 sm:px-6">
                     <Badge variant={statusVariant(part.status)}>{part.status}</Badge>

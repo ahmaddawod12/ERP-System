@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { borderRadius, getColors, gradients, shadows, spacing, type ColorPalette } from '../../theme';
@@ -7,6 +7,7 @@ import { useThemeContext } from '../../contexts/ThemeContext';
 import AppButton from '../primitives/AppButton';
 import AppText from '../primitives/AppText';
 import type { AlertType } from '../../types';
+import AccessibleModal from './AccessibleModal';
 
 interface AlertButton {
   text?: string;
@@ -149,11 +150,12 @@ export default function CustomAlert({
         ];
 
   return (
-    <Modal
+    <AccessibleModal
       visible={visible}
       transparent
       animationType="none"
       onRequestClose={() => onDismiss?.()}
+      announcement={[title, message].filter(Boolean).join('. ')}
     >
       <Animated.View
         style={[
@@ -167,6 +169,9 @@ export default function CustomAlert({
         <Pressable style={StyleSheet.absoluteFill} onPress={() => onDismiss?.()} />
 
         <Animated.View
+          accessible
+          accessibilityRole="alert"
+          accessibilityLabel={[title, message].filter(Boolean).join('. ')}
           style={[
             styles.alertContainer,
             {
@@ -235,7 +240,7 @@ export default function CustomAlert({
           </View>
         </Animated.View>
       </Animated.View>
-    </Modal>
+    </AccessibleModal>
   );
 }
 

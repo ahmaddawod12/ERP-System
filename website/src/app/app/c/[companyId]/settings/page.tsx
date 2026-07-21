@@ -22,6 +22,7 @@ import {
 } from "@/lib/backend/profile-client";
 import { BackendTransportError } from "@/lib/backend/transport-core";
 import { requireWebsiteRequestContext } from "@/lib/dal/session";
+import { formatDateTime } from "@/lib/format";
 import {
   findViewerWorkspace,
   parsePublicCompanyId,
@@ -107,7 +108,7 @@ function ProfileServerSummary({
             <dt className="text-slate-500 dark:text-slate-400">Profile updated</dt>
             <dd className="mt-1 font-medium text-slate-950 dark:text-white">
               <time dateTime={viewerProfile.updatedAt}>
-                {new Date(viewerProfile.updatedAt).toLocaleString("en-IL")}
+                <bdi dir="ltr">{formatDateTime(viewerProfile.updatedAt)}</bdi>
               </time>
             </dd>
           </div>
@@ -146,7 +147,7 @@ function ProfileServerSummary({
             <dt className="text-slate-500 dark:text-slate-400">Company updated</dt>
             <dd className="mt-1 font-medium text-slate-950 dark:text-white">
               <time dateTime={businessProfile.updatedAt}>
-                {new Date(businessProfile.updatedAt).toLocaleString("en-IL")}
+                <bdi dir="ltr">{formatDateTime(businessProfile.updatedAt)}</bdi>
               </time>
             </dd>
           </div>

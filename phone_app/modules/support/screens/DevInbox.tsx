@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   RefreshControl,
   SafeAreaView,
@@ -34,6 +33,7 @@ import NotAvailableScreen from '../../shared/NotAvailableScreen';
 import { runLogoutSequence } from '../../settings/lib/logout';
 import { borderRadius, getColors, gradients, shadows, spacing, typography } from '../../../theme';
 import { logger } from '../../../utils/logger';
+import AccessibleModal from '../../../components/feedback/AccessibleModal';
 import { StableSupportActionKeys } from '../lib/support-action-keys';
 import {
   appendSupportMessage,
@@ -424,10 +424,11 @@ export default function DevInbox() {
         />
       )}
 
-      <Modal
+      <AccessibleModal
         visible={selectedConversation !== null}
         animationType="slide"
         onRequestClose={() => setSelectedConversation(null)}
+        announcement="Support conversation"
       >
         <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
           <LinearGradient colors={gradients.primary} style={styles.modalHeader}>
@@ -534,7 +535,7 @@ export default function DevInbox() {
             </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
-      </Modal>
+      </AccessibleModal>
     </SafeAreaView>
   );
 }

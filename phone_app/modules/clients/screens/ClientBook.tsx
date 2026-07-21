@@ -14,15 +14,11 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   TouchableOpacity,
-  Modal,
-  KeyboardAvoidingView,
-  Platform,
   Keyboard,
   ActivityIndicator,
   FlatList,
   ScrollView,
   TouchableWithoutFeedback,
-  Dimensions,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -43,6 +39,14 @@ import {
 } from '@smart-job/api-contracts';
 import { randomUUID } from 'expo-crypto';
 import { logger } from '../../../utils/logger';
+import AccessibleModal from '../../../components/feedback/AccessibleModal';
+import ClientFormModalContent from '../components/ClientFormModalContent';
+import {
+  clientFormDataFromSummary,
+  emptyClientFormData,
+  normalizedClientFormData,
+  type ClientFormData,
+} from '../lib/client-form-model';
 import { useClientsInfinite } from '../lib/use-clients-infinite';
 import { useClientMutations } from '../lib/use-client-mutations';
 import type { MobileClientSummary } from '../lib/client-list-model';
@@ -244,8 +248,6 @@ const translateMap: Record<string, Translations> = {
   },
 };
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 function mutationErrorMessage(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message
@@ -272,14 +274,7 @@ export default function ClientBook() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingClient, setEditingClient] = useState<MobileClientSummary | null>(null);
-  const [formData, setFormData] = useState<Record<string, string>>({
-    name: '',
-    phone: '',
-    email: '',
-    address: '',
-    city: '',
-    vatNumber: '',
-  });
+  const [formData, setFormData] = useState<ClientFormData>(emptyClientFormData);
 
   // --- New state for client options & data viewer ---
   const [selectedClient, setSelectedClient] = useState<MobileClientSummary | null>(null);
@@ -377,7 +372,7 @@ export default function ClientBook() {
 
   // --- Form helpers ---
   const resetForm = () => {
-    setFormData({ name: '', phone: '', email: '', address: '', city: '', vatNumber: '' });
+    setFormData(emptyClientFormData());
     setEditingClient(null);
   };
 
@@ -388,14 +383,7 @@ export default function ClientBook() {
 
   const openEditModal = (client: MobileClientSummary) => {
     setEditingClient(client);
-    setFormData({
-      name: client.name || '',
-      phone: client.phone || '',
-      email: client.email || '',
-      address: client.address || '',
-      city: client.city || '',
-      vatNumber: client.vatNumber || '',
-    });
+    setFormData(clientFormDataFromSummary(client));
     setShowOptionsModal(false);
     setShowModal(true);
   };
@@ -483,14 +471,7 @@ export default function ClientBook() {
     Keyboard.dismiss();
 
     try {
-      const clientData = {
-        name: formData.name.trim(),
-        phone: formData.phone.trim() || null,
-        email: formData.email.trim() || null,
-        address: formData.address.trim() || null,
-        city: formData.city.trim() || null,
-        vatNumber: formData.vatNumber.trim() || null,
-      };
+      const clientData = normalizedClientFormData(formData);
 
       if (editingClient) {
         const request = ClientUpdateRequestSchema.parse({
@@ -888,11 +869,12 @@ export default function ClientBook() {
       />
 
       {/* ==================== MODAL 1: Client Options ==================== */}
-      <Modal
+      <AccessibleModal
         visible={showOptionsModal}
         animationType="fade"
         transparent={true}
         onRequestClose={() => setShowOptionsModal(false)}
+        announcement="Client actions"
       >
         <TouchableWithoutFeedback onPress={() => setShowOptionsModal(false)}>
           <View style={styles.optionsOverlay}>
@@ -981,14 +963,15 @@ export default function ClientBook() {
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
-      </Modal>
+      </AccessibleModal>
 
       {/* ==================== MODAL 2: Data Viewer (Jobs / Documents) ==================== */}
-      <Modal
+      <AccessibleModal
         visible={showDataModal}
         animationType="slide"
         transparent={false}
         onRequestClose={() => setShowDataModal(false)}
+        announcement="Client history"
       >
         <View style={[styles.dataModalContainer, { backgroundColor: colors.background, paddingTop: insets.top }]}>
           {/* Data Modal Header */}
@@ -1068,10 +1051,10 @@ export default function ClientBook() {
             />
           )}
         </View>
-      </Modal>
+      </AccessibleModal>
 
       {/* ==================== MODAL 3: Add/Edit Client ==================== */}
-      <Modal
+      <AccessibleModal
         visible={showModal}
         animationType="slide"
         transparent={true}
@@ -1079,189 +1062,26 @@ export default function ClientBook() {
           setShowModal(false);
           resetForm();
         }}
+        announcement={editingClient ? 'Edit client' : 'Add client'}
       >
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
-              {/* Modal Header */}
-              <View style={styles.modalHeader}>
-                <LinearGradient
-                  colors={editingClient ? gradients.secondary : gradients.primary}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.modalHeaderGradient}
-                >
-                  <MaterialCommunityIcons
-                    name={editingClient ? 'account-edit' : 'account-plus'}
-                    size={28}
-                    color="white"
-                  />
-                  <AppText style={styles.modalTitle}>
-                    {editingClient ? t.editClient : t.addClient}
-                  </AppText>
-                </LinearGradient>
-              </View>
-
-              {/* Form */}
-              <ScrollView
-                style={styles.formScroll}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                {/* Name */}
-                <View style={styles.formField}>
-                  <View style={styles.fieldLabelRow}>
-                    <Ionicons name="person" size={16} color={colors.secondary} />
-                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                      {t.name} *
-                    </AppText>
-                  </View>
-                  <AppInput
-                    placeholder={t.name}
-                    value={formData.name}
-                    onChangeText={(text) => setFormData({ ...formData, name: text })}
-                    autoFocus={!editingClient}
-                    colors={colors}
-                  />
-                </View>
-
-                {/* Phone */}
-                <View style={styles.formField}>
-                  <View style={styles.fieldLabelRow}>
-                    <Ionicons name="call" size={16} color={colors.secondary} />
-                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                      {t.phone}
-                    </AppText>
-                  </View>
-                  <AppInput
-                    placeholder={t.phone}
-                    value={formData.phone}
-                    onChangeText={(text) => setFormData({ ...formData, phone: text })}
-                    keyboardType="phone-pad"
-                    colors={colors}
-                  />
-                </View>
-
-                {/* Email */}
-                <View style={styles.formField}>
-                  <View style={styles.fieldLabelRow}>
-                    <Ionicons name="mail" size={16} color={colors.secondary} />
-                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                      {t.email}
-                    </AppText>
-                  </View>
-                  <AppInput
-                    placeholder={t.email}
-                    value={formData.email}
-                    onChangeText={(text) => setFormData({ ...formData, email: text })}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    colors={colors}
-                  />
-                </View>
-
-                {/* Address */}
-                <View style={styles.formField}>
-                  <View style={styles.fieldLabelRow}>
-                    <Ionicons name="location" size={16} color={colors.secondary} />
-                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                      {t.address}
-                    </AppText>
-                  </View>
-                  <AppInput
-                    placeholder={t.address}
-                    value={formData.address}
-                    onChangeText={(text) => setFormData({ ...formData, address: text })}
-                    colors={colors}
-                  />
-                </View>
-
-                {/* City */}
-                <View style={styles.formField}>
-                  <View style={styles.fieldLabelRow}>
-                    <MaterialCommunityIcons name="city" size={16} color={colors.secondary} />
-                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                      {t.city}
-                    </AppText>
-                  </View>
-                  <AppInput
-                    placeholder={t.city}
-                    value={formData.city}
-                    onChangeText={(text) => setFormData({ ...formData, city: text })}
-                    colors={colors}
-                  />
-                </View>
-
-                {/* VAT Number */}
-                <View style={styles.formField}>
-                  <View style={styles.fieldLabelRow}>
-                    <MaterialCommunityIcons name="file-document-outline" size={16} color={colors.secondary} />
-                    <AppText style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-                      {t.vatNumber}
-                    </AppText>
-                  </View>
-                  <AppInput
-                    placeholder={t.vatNumber}
-                    value={formData.vatNumber}
-                    onChangeText={(text) => setFormData({ ...formData, vatNumber: text })}
-                    keyboardType="numeric"
-                    colors={colors}
-                  />
-                </View>
-              </ScrollView>
-
-              {/* Action Buttons */}
-              <View style={styles.modalActions}>
-                {editingClient && (
-                  <TouchableOpacity
-                    style={[styles.deleteButton, { borderColor: colors.error }]}
-                    onPress={() => handleDelete(editingClient)}
-                    disabled={loading || removeMutation.isPending}
-                  >
-                    {removeMutation.isPending ? (
-                      <ActivityIndicator size="small" color={colors.error} />
-                    ) : (
-                      <Ionicons name="trash-outline" size={20} color={colors.error} />
-                    )}
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={[styles.cancelButton, { borderColor: colors.border, flex: 1 }]}
-                  onPress={() => {
-                    setShowModal(false);
-                    resetForm();
-                  }}
-                  disabled={loading || removeMutation.isPending}
-                >
-                  <AppText style={[styles.cancelButtonText, { color: colors.textPrimary }]}>{t.cancel}</AppText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.saveButtonWrapper, { flex: 1 }]}
-                  onPress={handleSave}
-                  disabled={loading}
-                >
-                  <LinearGradient
-                    colors={editingClient ? gradients.secondary : gradients.primary}
-                    style={styles.saveButton}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="white" size="small" />
-                    ) : (
-                      <>
-                        <Ionicons name="checkmark" size={20} color="white" />
-                        <AppText style={styles.saveButtonText}>{t.save}</AppText>
-                      </>
-                    )}
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </TouchableWithoutFeedback>
-        </KeyboardAvoidingView>
-      </Modal>
+        <ClientFormModalContent
+          editingClient={editingClient}
+          formData={formData}
+          colors={colors}
+          copy={t}
+          loading={loading}
+          removing={removeMutation.isPending}
+          onChange={(field, value) => {
+            setFormData((current) => ({ ...current, [field]: value }));
+          }}
+          onDelete={handleDelete}
+          onCancel={() => {
+            setShowModal(false);
+            resetForm();
+          }}
+          onSave={handleSave}
+        />
+      </AccessibleModal>
 
       <GlobalHeader />
     </View>

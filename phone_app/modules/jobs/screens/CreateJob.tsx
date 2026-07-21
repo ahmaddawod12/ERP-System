@@ -19,6 +19,7 @@ import { useAlert } from '../../../contexts/AlertContext';
 import { useCache } from '../../../contexts/CacheContext';
 import { fetchCompanyWorkers } from '../../../utils/read-model';
 import type { Worker, Client } from '../../../types';
+import { logger } from '../../../utils/logger';
 
 type NewJobForm = {
   title: string;
@@ -169,7 +170,7 @@ export default function CreateJob() {
   // Watch for cached workers list changes and re-sync
   useEffect(() => {
     if (cachedWorkersList && Object.keys(cachedWorkersList).length > 0) {
-      console.log('📦 CreateJob: cached workers list updated - re-syncing');
+      logger.debug('CreateJob cached workers updated; re-syncing');
       loadWorkers();
     }
   }, [cachedWorkersList]);
@@ -184,7 +185,7 @@ export default function CreateJob() {
       const companyId = getCompanyId();
       
       if (!companyId) {
-        console.log('No company ID found');
+        logger.warn('No company ID found');
         return;
       }
 
@@ -221,7 +222,7 @@ export default function CreateJob() {
         setWorkers(workersArray);
       }
     } catch (error) {
-      console.error('Error loading workers:', error);
+      logger.error('Error loading workers:', error);
       alert.error('Error', 'Failed to load workers');
     } finally {
       setLoading(false);
@@ -269,7 +270,7 @@ export default function CreateJob() {
             await updateClient(selectedClientObj.id, updates);
           }
         } catch (e) {
-          console.log('Update client failed (non-critical):', e);
+          logger.debug('Update client failed (non-critical):', e);
         }
       } else if (!selectedClientObj && newJob.cname.trim()) {
         try {
@@ -278,7 +279,7 @@ export default function CreateJob() {
           const savedClient = await addClient(clientToSave);
           if (savedClient) clientCid = savedClient.id;
         } catch (e) {
-          console.log('Auto-save client failed (non-critical):', e);
+          logger.debug('Auto-save client failed (non-critical):', e);
         }
       }
 
@@ -333,7 +334,7 @@ export default function CreateJob() {
 
       router.back();
     } catch (error) {
-      console.error('Error creating job:', error);
+      logger.error('Error creating job:', error);
       alert.error('Error', 'Failed to create job');
     }
   };

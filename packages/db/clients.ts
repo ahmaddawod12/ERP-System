@@ -1,18 +1,48 @@
 import { and, eq } from 'drizzle-orm';
-import { getDb } from './client';
-
-const {
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobTransaction,
+} from './client';
+import {
   clients,
   companyMemberships,
   documents,
   jobs,
-} = require('./schema');
-const {
+} from './schema';
+import {
   allocateCompanyCounter,
   resolveCompanyByPublicId,
-} = require('./membership');
+} from './membership';
 
-function asDate(value, fallback) {
+type ClientFields = {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  vatNumber?: string | null;
+  notes?: string | null;
+};
+
+type CreateClientInput = ClientFields & {
+  companyId: string | number;
+  createdByUserId: string;
+  now?: string | Date;
+};
+
+type UpdateClientInput = Partial<ClientFields> & {
+  companyId: string | number;
+  clientId: string | number;
+  now?: string | Date;
+};
+
+type DeleteClientInput = {
+  companyId: string | number;
+  clientId: string | number;
+};
+
+function asDate(value: unknown, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -21,7 +51,11 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-async function findMembershipId(tx, internalCompanyId, userId) {
+async function findMembershipId(
+  tx: SmartJobTransaction,
+  internalCompanyId: string,
+  userId: string,
+) {
   const rows = await tx
     .select({ id: companyMemberships.id })
     .from(companyMemberships)
@@ -34,7 +68,11 @@ async function findMembershipId(tx, internalCompanyId, userId) {
   return rows[0]?.id || null;
 }
 
-async function getClientByClientNo(companyId, clientNo, options: any = {}) {
+async function getClientByClientNo(
+  companyId: string | number,
+  clientNo: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) return null;
@@ -83,7 +121,7 @@ async function getClientByClientNo(companyId, clientNo, options: any = {}) {
   };
 }
 
-async function createClient(input, options: any = {}) {
+async function createClient(input: CreateClientInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -123,6 +161,10 @@ async function createClient(input, options: any = {}) {
       updatedAt: clients.updatedAt,
     });
 
+    if (!client) {
+      throw new Error('Client insert did not return a record');
+    }
+
     return {
       id: String(client.clientNo),
       cid: client.clientNo,
@@ -139,7 +181,7 @@ async function createClient(input, options: any = {}) {
   });
 }
 
-async function updateClient(input, options: any = {}) {
+async function updateClient(input: UpdateClientInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -173,7 +215,7 @@ async function updateClient(input, options: any = {}) {
       throw error;
     }
 
-    const updateData: Record<string, any> = { updatedAt: now };
+    const updateData: Partial<typeof clients.$inferInsert> = { updatedAt: now };
     if (input.name !== undefined) updateData.name = input.name;
     if (input.email !== undefined) updateData.email = input.email || null;
     if (input.phone !== undefined) updateData.phone = input.phone || null;
@@ -187,7 +229,7 @@ async function updateClient(input, options: any = {}) {
   });
 }
 
-async function deleteClient(input, options: any = {}) {
+async function deleteClient(input: DeleteClientInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
 
   return db.transaction(async (tx) => {

@@ -11,6 +11,7 @@ import { KeyRound, Send } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
+import { formatDateTime } from "@/lib/format";
 import { Card } from "@/components/ui/Card";
 import { readCookie, WEB_CSRF_COOKIE } from "@/lib/auth/opaque-session";
 
@@ -180,7 +181,7 @@ export function InvitationCreateForm({ companyId }: { companyId: number }) {
             <p className="font-medium">Invitation ready for a {created.targetRole}.</p>
             <p className="mt-1 break-all font-mono text-base font-semibold tracking-[0.08em]">{created.inviteCode}</p>
             <p className="mt-1 text-xs opacity-80">
-              Expires <time dateTime={created.expiresAt}>{new Date(created.expiresAt).toLocaleString("en-IL")}</time>
+              Expires <time dateTime={created.expiresAt}><bdi dir="ltr">{formatDateTime(created.expiresAt)}</bdi></time>
             </p>
           </div>
         ) : null}

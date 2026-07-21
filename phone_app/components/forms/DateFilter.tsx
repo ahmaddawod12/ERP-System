@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import { borderRadius, getColors, spacing } from '../../theme';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import AppButton from '../primitives/AppButton';
@@ -8,6 +8,7 @@ import AppIcon from '../primitives/AppIcon';
 import AppListItem from '../primitives/AppListItem';
 import AppText from '../primitives/AppText';
 import type { Language } from '../../types';
+import AccessibleModal from '../feedback/AccessibleModal';
 
 type DateFilterType = 'last7days' | 'last30days' | 'thisMonth' | 'lastMonth' | 'thisYear' | 'allTime';
 
@@ -108,12 +109,12 @@ export default function DateFilter({
   ];
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <AccessibleModal visible={visible} transparent animationType="fade" onRequestClose={onClose} announcement={t.title}>
       <View style={[styles.overlay, { backgroundColor: palette.overlay }]}>
         <AppCard style={styles.card} contentStyle={styles.cardContent}>
           <View style={styles.header}>
             <AppText variant="heading">{t.title}</AppText>
-            <TouchableOpacity onPress={onClose} style={styles.closeIconButton}>
+            <TouchableOpacity onPress={onClose} style={styles.closeIconButton} accessibilityRole="button" accessibilityLabel={t.close}>
               <AppIcon name="close" size={18} color={palette.textPrimary} />
             </TouchableOpacity>
           </View>
@@ -125,6 +126,7 @@ export default function DateFilter({
                 <AppListItem
                   key={option.type}
                   title={option.label}
+                  selected={selected}
                   onPress={() => {
                     onFilterChange?.(toFilterRange(option.type, option.label));
                     onClose?.();
@@ -150,7 +152,7 @@ export default function DateFilter({
           <AppButton title={t.close} variant="secondary" onPress={onClose} />
         </AppCard>
       </View>
-    </Modal>
+    </AccessibleModal>
   );
 }
 

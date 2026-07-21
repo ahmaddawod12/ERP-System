@@ -1,8 +1,12 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { getDb } from './client';
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobQueryExecutor,
+} from './client';
+import type { LegacyUserProfile } from './access';
 import { getCompanySyncState } from './company-sync-state';
-
-const {
+import {
   companies,
   companyCounters,
   companyProfiles,
@@ -12,47 +16,76 @@ const {
   inventoryParts,
   documents,
   clients,
-} = require('./schema');
-const {
+} from './schema';
+import {
   getUserProfileByFirebaseUid,
   getUserProfileByFirebaseUidForCompany,
-} = require('./access');
-const {
+} from './access';
+import {
   listCompanyWorkers,
   resolveCompanyByPublicId,
-} = require('./membership');
-const {
+} from './membership';
+import {
   getDocumentRecordById,
   listCompanyDocumentsDetailed,
-} = require('./documents');
-const {
+} from './documents';
+import {
   getJobRecordById,
   listCompanyJobsDetailed,
-} = require('./jobs');
+} from './jobs';
 
-function toIsoString(value) {
+type QueryOptions = DatabaseOptions<SmartJobQueryExecutor>;
+type InventoryScope = 'company' | 'user';
+type InventorySnapshot = {
+  parts: Array<{
+    id: number;
+    name: string;
+    active: boolean;
+    quantity: number;
+    lowThreshold: number;
+    dateAdded: string;
+  }>;
+  nextId: number;
+  lastUpdated: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function toIsoString(value: unknown): string {
   if (!value) return '';
   if (typeof value === 'string') return value;
   if (value instanceof Date) return value.toISOString();
-  if (typeof value.toISOString === 'function') return value.toISOString();
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'toISOString' in value
+    && typeof value.toISOString === 'function'
+  ) return String(value.toISOString());
   return String(value);
 }
 
-function toNumber(value, fallback = 0) {
+function toNumber(value: unknown, fallback = 0): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function normalizeProfileRole(profile) {
+function normalizeProfileRole(profile: LegacyUserProfile | null | undefined): string {
   return String(profile?.role || '').trim().toLowerCase();
 }
 
-function shouldScopeSqlJobReads(profile) {
+function shouldScopeSqlJobReads(profile: LegacyUserProfile): boolean {
   const role = normalizeProfileRole(profile);
   return role === 'worker' || (role === 'user' && String(profile?.accountType || '').trim().toLowerCase() !== 'solo');
 }
 
-function canReadSqlJobRecord(profile, jobRecord) {
+function canReadSqlJobRecord(
+  profile: LegacyUserProfile | null,
+  jobRecord: ({ __sqlAssignedMembershipId?: unknown } & Record<string, unknown>) | null,
+): boolean {
   if (!jobRecord || !profile) return false;
   const role = normalizeProfileRole(profile);
   if (role === 'basic') return false;
@@ -61,11 +94,14 @@ function canReadSqlJobRecord(profile, jobRecord) {
   return Boolean(membershipId) && String(jobRecord?.__sqlAssignedMembershipId || '').trim() === membershipId;
 }
 
-function canReadSqlDocumentRecord(profile) {
+function canReadSqlDocumentRecord(profile: LegacyUserProfile | null): boolean {
   return normalizeProfileRole(profile) !== 'worker';
 }
 
-async function getCompanySubscription(internalCompanyId, options: any = {}) {
+async function getCompanySubscription(
+  internalCompanyId: string,
+  options: QueryOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const rows = await db
     .select({
@@ -89,7 +125,10 @@ async function getCompanySubscription(internalCompanyId, options: any = {}) {
   };
 }
 
-async function getCompanyBusinessInfo(internalCompanyId, options: any = {}) {
+async function getCompanyBusinessInfo(
+  internalCompanyId: string,
+  options: QueryOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const profileRows = await db
     .select({
@@ -123,7 +162,7 @@ async function getCompanyBusinessInfo(internalCompanyId, options: any = {}) {
     .from(companyCounters)
     .where(eq(companyCounters.companyId, internalCompanyId));
 
-  const documentNumbers: any = {};
+  const documentNumbers: Record<string, number> = {};
   for (const row of counterRows) {
     if (!String(row.counterKey).startsWith('doc_')) continue;
     documentNumbers[String(row.counterKey).replace('doc_', '')] = row.nextValue;
@@ -150,7 +189,12 @@ async function getCompanyBusinessInfo(internalCompanyId, options: any = {}) {
   };
 }
 
-async function getInventorySnapshot(internalCompanyId, scope, membershipId, options: any = {}) {
+async function getInventorySnapshot(
+  internalCompanyId: string,
+  scope: InventoryScope,
+  membershipId: string | null,
+  options: QueryOptions = {},
+): Promise<InventorySnapshot> {
   const db = options.db || getDb(options.env);
   const locationRows = await db
     .select({ id: inventoryLocations.id })
@@ -194,14 +238,17 @@ async function getInventorySnapshot(internalCompanyId, scope, membershipId, opti
     ORDER BY p.part_no ASC
   `);
 
-  const parts = (partRows.rows || []).map((row) => ({
+  const parts = (partRows.rows || []).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
     id: toNumber(row.part_no),
     name: String(row.name || ''),
     active: row.active === undefined ? true : Boolean(row.active),
     quantity: toNumber(row.quantity_on_hand, 0),
     lowThreshold: toNumber(row.low_threshold, 0),
     dateAdded: toIsoString(row.created_at),
-  }));
+    };
+  });
   return {
     parts,
     nextId,
@@ -209,7 +256,10 @@ async function getInventorySnapshot(internalCompanyId, scope, membershipId, opti
   };
 }
 
-async function listCompanyClients(companyId, options: any = {}) {
+async function listCompanyClients(
+  companyId: string | number,
+  options: QueryOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) return [];
@@ -247,12 +297,20 @@ async function listCompanyClients(companyId, options: any = {}) {
     }));
 }
 
-async function listCompanyJobs(companyId, profile, options: any = {}) {
+async function listCompanyJobs(
+  companyId: string | number,
+  profile: LegacyUserProfile,
+  options: NonNullable<Parameters<typeof listCompanyJobsDetailed>[2]> = {},
+) {
   // Returns { items: JobRecord[], nextCursor: string | null }
   return listCompanyJobsDetailed(companyId, profile, options);
 }
 
-async function listCompanyDocuments(companyId, profile, options: any = {}) {
+async function listCompanyDocuments(
+  companyId: string | number,
+  profile: LegacyUserProfile | null,
+  options: NonNullable<Parameters<typeof listCompanyDocumentsDetailed>[1]> = {},
+) {
   if (!profile) return { items: [], nextCursor: null };
   const normalizedRole = String(profile.role || '').trim().toLowerCase();
   if (normalizedRole === 'worker') {
@@ -262,11 +320,15 @@ async function listCompanyDocuments(companyId, profile, options: any = {}) {
   return listCompanyDocumentsDetailed(companyId, options);
 }
 
-async function getBootstrapReadModel(uid, companyId = null, options: any = {}) {
+async function getBootstrapReadModel(
+  uid: string,
+  companyId: string | number | null = null,
+  options: DatabaseOptions & { includeCollections?: boolean } = {},
+) {
   // Bootstrap is count-only / lightweight by default. Callers that need full
   // collections must opt in explicitly and should prefer paginated RPCs.
   const includeCollections = options.includeCollections === true;
-  const profile: any = companyId
+  const profile = companyId
     ? await getUserProfileByFirebaseUidForCompany(uid, companyId, options)
     : await getUserProfileByFirebaseUid(uid, options);
 
@@ -275,7 +337,19 @@ async function getBootstrapReadModel(uid, companyId = null, options: any = {}) {
   }
 
   const internalCompanyId = profile.internalCompanyId || null;
-  const payload: any = {
+  const payload: {
+    profile: LegacyUserProfile;
+    subscription: unknown;
+    businessInfo: unknown;
+    inventory: InventorySnapshot;
+    companyInventory: InventorySnapshot;
+    workers: unknown[];
+    clients: unknown[];
+    jobs: unknown[];
+    documents: unknown[];
+    jobsNextCursor?: string | null;
+    documentsNextCursor?: string | null;
+  } = {
     profile,
     subscription: null,
     businessInfo: null,
@@ -321,8 +395,12 @@ async function getBootstrapReadModel(uid, companyId = null, options: any = {}) {
   return payload;
 }
 
-async function getUserInventorySnapshot(companyId, targetUid, options: any = {}) {
-  const targetProfile: any = await getUserProfileByFirebaseUidForCompany(targetUid, companyId, options);
+async function getUserInventorySnapshot(
+  companyId: string | number,
+  targetUid: string,
+  options: QueryOptions = {},
+) {
+  const targetProfile = await getUserProfileByFirebaseUidForCompany(targetUid, companyId, options);
   if (!targetProfile?.internalCompanyId || !targetProfile?.membershipId) {
     return {
       parts: [],
@@ -333,7 +411,12 @@ async function getUserInventorySnapshot(companyId, targetUid, options: any = {})
   return getInventorySnapshot(targetProfile.internalCompanyId, 'user', targetProfile.membershipId, options);
 }
 
-async function getRecordById(companyId, recordId, profile, options: any = {}) {
+async function getRecordById(
+  companyId: string | number,
+  recordId: string | number,
+  profile: LegacyUserProfile | null,
+  options: DatabaseOptions = {},
+) {
   const documentMatch = await getDocumentRecordById(companyId, recordId, options);
   if (documentMatch) {
     return canReadSqlDocumentRecord(profile) ? documentMatch : null;
@@ -342,7 +425,11 @@ async function getRecordById(companyId, recordId, profile, options: any = {}) {
   return canReadSqlJobRecord(profile, jobMatch) ? jobMatch : null;
 }
 
-async function getDocumentTaskStatus(taskId, uid, options: any = {}) {
+async function getDocumentTaskStatus(
+  taskId: string,
+  uid: string,
+  options: QueryOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const rows = await db
     .select({
@@ -365,17 +452,18 @@ async function getDocumentTaskStatus(taskId, uid, options: any = {}) {
     .limit(1);
   const row = rows[0] || null;
   if (!row) return null;
+  const requestPayload = asRecord(row.requestPayload);
   return {
     taskId: row.taskKey,
     status: row.status,
     taskType: row.taskType,
     previewURL: row.taskType === 'preview'
-      ? (row.previewUrl || row.requestPayload?.previewURL || null)
+      ? (row.previewUrl || String(requestPayload.previewURL || '') || null)
       : null,
     downloadURL: row.taskType === 'generate'
-      ? (row.requestPayload?.downloadURL || row.generateUrl || null)
+      ? (String(requestPayload.downloadURL || '') || row.generateUrl || null)
       : null,
-    documentId: row.documentId || row.requestPayload?.publicDocumentId || null,
+    documentId: row.documentId || String(requestPayload.publicDocumentId || '') || null,
     pdfSize: row.pdfSize || null,
     error: row.error || null,
   };

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
   Platform,
   StyleSheet,
   TouchableOpacity,
@@ -24,6 +23,7 @@ import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { logger } from '../../../utils/logger';
+import AccessibleModal from '../../../components/feedback/AccessibleModal';
 import { StableInventoryActionKeys } from '../lib/inventory-action-keys';
 import {
   resolveInventoryReadScope,
@@ -551,7 +551,7 @@ export default function CompanyInventory() {
         />
       </View>
 
-      <Modal visible={showAddModal} transparent animationType="fade" onRequestClose={() => setShowAddModal(false)}>
+      <AccessibleModal visible={showAddModal} transparent animationType="fade" onRequestClose={() => setShowAddModal(false)} announcement={t.addPartTitle}>
         <View style={[styles.modalOverlay, { backgroundColor: palette.overlay }]}>
           <AppCard style={styles.modalCard}>
             <AppText variant="heading">{t.addPartTitle}</AppText>
@@ -568,9 +568,9 @@ export default function CompanyInventory() {
             </View>
           </AppCard>
         </View>
-      </Modal>
+      </AccessibleModal>
 
-      <Modal visible={showEditModal} transparent animationType="fade" onRequestClose={() => setShowEditModal(false)}>
+      <AccessibleModal visible={showEditModal} transparent animationType="fade" onRequestClose={() => setShowEditModal(false)} announcement={t.rename}>
         <View style={[styles.modalOverlay, { backgroundColor: palette.overlay }]}>
           <AppCard style={styles.modalCard}>
             <AppText variant="heading">{t.rename}</AppText>
@@ -587,7 +587,7 @@ export default function CompanyInventory() {
             </View>
           </AppCard>
         </View>
-      </Modal>
+      </AccessibleModal>
 
       <GlobalHeader />
     </View>

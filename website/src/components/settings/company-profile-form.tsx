@@ -259,7 +259,7 @@ export function CompanyProfileForm({
               {...register("address")}
             />
             <span className="flex justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
-              <span id="company-address-error" className="text-red-600">{errors.address?.message}</span>
+              <span id="company-address-error" role={errors.address ? "alert" : undefined} className="text-red-600">{errors.address?.message}</span>
               <span className="ml-auto">{address.length}/500</span>
             </span>
           </label>

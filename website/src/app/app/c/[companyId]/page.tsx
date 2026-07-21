@@ -17,6 +17,7 @@ import {
   findViewerWorkspace,
   parsePublicCompanyId,
 } from "@/lib/dal/workspace-routing";
+import { formatDateTime, formatNumber } from "@/lib/format";
 
 export const metadata = { title: "Workspace overview | Smart-Job" };
 
@@ -26,14 +27,6 @@ const countCards = [
   { key: "inventoryParts", label: "Inventory parts", icon: Boxes },
   { key: "documents", label: "Documents", icon: FileText },
 ] as const;
-
-function formatSyncTime(value: string): string {
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Jerusalem",
-  }).format(new Date(value));
-}
 
 export default async function CompanyOverviewPage({
   params,
@@ -107,7 +100,7 @@ export default async function CompanyOverviewPage({
                 </span>
               </div>
               <p className="mt-4 font-mono text-3xl font-semibold text-slate-950 dark:text-white">
-                {counts[key].toLocaleString("en")}
+                <bdi dir="ltr">{formatNumber(counts[key])}</bdi>
               </p>
             </Card>
           ))}
@@ -120,11 +113,11 @@ export default async function CompanyOverviewPage({
               Document processing
             </p>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              {counts.pendingDocumentTasks.toLocaleString("en")} pending task{counts.pendingDocumentTasks === 1 ? "" : "s"}
+              <bdi dir="ltr">{formatNumber(counts.pendingDocumentTasks)}</bdi> pending task{counts.pendingDocumentTasks === 1 ? "" : "s"}
             </p>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Synced <time dateTime={syncState.updatedAt}>{formatSyncTime(syncState.updatedAt)}</time>
+            Synced <time dateTime={syncState.updatedAt}><bdi dir="ltr">{formatDateTime(syncState.updatedAt)}</bdi></time>
           </p>
         </Card>
 

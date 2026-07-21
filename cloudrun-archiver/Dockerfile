@@ -23,7 +23,10 @@ COPY --from=build /workspace/packages/contracts ./packages/contracts
 COPY --from=build /workspace/packages/db ./packages/db
 COPY --from=build /workspace/cloudrun-archiver/package*.json ./cloudrun-archiver/
 
-RUN npm --prefix cloudrun-archiver ci --omit=dev
+RUN npm --prefix packages/contracts prune --omit=dev \
+ && npm --prefix packages/db prune --omit=dev \
+ && npm --prefix cloudrun-archiver ci --omit=dev \
+ && npm cache clean --force
 
 # Stage 3: Production image
 FROM node:22-slim

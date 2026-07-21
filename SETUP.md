@@ -455,10 +455,10 @@ drains, and translates SES `SendEmail` requests to Mailpit. Supabase Storage
 remains the local backend for active files/PDFs; fake GCS represents only the
 separate archive bucket.
 
-The `archive` command is deliberately opt-in. Until Batch 5 replaces the
-legacy mutable-manifest implementation with leased archive runs, the local job
-uses a marker-gated, repository-host-restricted Postgres admin compatibility
-connection. No deployed archiver may use `ALLOW_LOCAL_ARCHIVER_ADMIN`.
+The `archive` command is deliberately opt-in. It authenticates as the generated
+least-privilege `smart_job_archiver` role and exercises the same leased,
+immutable record/ID-object protocol used by the deployed job. The removed
+`ALLOW_LOCAL_ARCHIVER_ADMIN` compatibility path is rejected.
 
 Every local-only service override requires the exact Compose flags and mounted
 `/run/secrets/smart_job_local_platform` marker. The website's production-mode
@@ -654,8 +654,8 @@ Required deployment concerns:
 
 - access to source data
 - a dedicated `smart-job-archiver-database-url` secret whose database role can
-  perform the archiver's direct archive-run writes and exact source-row deletes;
-  do not reuse the least-privileged `smart_job_api` runtime credential
+  authenticate as `smart_job_archiver` and execute only the migration `0031`
+  archive RPCs; it has no direct ERP-table writes
 - Cloud Storage archive bucket access
 - `SUPABASE_URL` plus a dedicated `SUPABASE_SECRET_KEY` (`sb_secret_...`) for
   bounded abandoned-upload cleanup; the opaque key is sent only as `apikey`
@@ -664,7 +664,10 @@ Required deployment concerns:
   `UPLOAD_CLEANUP_CONCURRENCY` (1-10, default 4), and
   `UPLOAD_CLEANUP_HTTP_TIMEOUT_MS` (1000-12000, default 10000)
 - scheduler or manual job trigger
-- checksum verification before delete
+- one task, a 60-minute task timeout, two retries, and an internal 55-minute
+  deadline (`ARCHIVER_JOB_DEADLINE_MS=3300000`)
+- bounded query pages (maximum 500), historical candidate discovery (maximum
+  2,000 company/month/type rows), and company concurrency (maximum 4)
 - image builds must use repo-root Docker context because `cloudrun-archiver` depends on local `packages/db` and `packages/contracts`
 
 Preserve these invariants:
@@ -674,12 +677,14 @@ Preserve these invariants:
 - cleanup deletes only exact paths from a claimed canonical
   `smart-job-company-files` manifest; it never recursively deletes a prefix,
   deletes consumed/finalized work, or reconciles generated PDFs
-- archive manifests are idempotent
-- month exports must drain every read-model page instead of relying on a single large query
-- archive payloads should be streamed to disk/storage instead of loading a full month into memory
-- date filtering respects ISO-string date storage
-- deletion uses only the exact IDs captured in the verified archive
-- manifests must remain resumable: `uploaded_not_deleted` retries verify the archive and can mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches
+- a company/month/type claim is lease- and advisory-lock protected; empty claims
+  release without permanently closing the month, and bounded candidate discovery
+  revisits older months when late historical rows appear
+- immutable record and companion ID objects use GCS `ifGenerationMatch=0`
+- month exports stream every bounded SQL page to disk rather than retaining a
+  whole month in memory
+- deletion resumes from the verified ID object and advances only in exact
+  chunks of at most 500
 
 ## 14. Supabase Migration Workspace
 
@@ -690,8 +695,12 @@ Use these docs when working there:
 - `backend.md`
 - `architecture.md`
 
-Cloud Run deployment/IAM workflow, custom API DNS mapping, and Playwright E2E
-CI are implemented. The Edge-to-Cloud-API cutover is complete; all Supabase
+Cloud Run deployment/IAM workflow, Cloud Armor policy application, and
+Playwright E2E CI are implemented. Production deploy requires
+`CLOUD_ARMOR_POLICY`, `WEBSITE_BACKEND_SERVICE`, and `API_BACKEND_SERVICE`; it
+attaches per-IP auth/contact throttles and restricts the API to load-balancer
+ingress instead of creating a bypassing direct domain mapping. The
+Edge-to-Cloud-API cutover is complete; all Supabase
 Edge functions and handlers have been deleted. Firebase Messaging and
 Crashlytics remain for push notifications and native crash reporting.
 Production tax submission
@@ -710,7 +719,7 @@ authenticated scenarios.
 Recommended high-level order:
 
 1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
-2. Apply expand-only SQL migrations through `0030` using the dedicated
+2. Apply expand-only SQL migrations through `0032` using the dedicated
    migration credential; runtime services never receive it.
 3. Configure API, website, worker, tax, and remaining service secrets.
 4. Deploy the main API with tax mode disabled, then the private PDF/email

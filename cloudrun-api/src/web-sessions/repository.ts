@@ -35,6 +35,23 @@ export interface InsertWebSessionRecord extends WebSessionEncryptionBinding {
   readonly createdAt: Date;
 }
 
+function mapWebSessionRow(row: RawWebSessionRow): WebSessionRow {
+  return {
+    id: row.id.toLowerCase(),
+    userId: row.user_id.toLowerCase(),
+    supabaseSessionId: row.supabase_session_id.toLowerCase(),
+    csrfTokenHash: row.csrf_token_hash,
+    credentials: {
+      ciphertext: row.credentials_ciphertext,
+      iv: row.credentials_iv,
+      authTag: row.credentials_auth_tag,
+      keyVersion: row.encryption_key_version,
+    },
+    accessTokenExpiresAt: row.access_token_expires_at,
+    absoluteExpiresAt: row.absolute_expires_at,
+  };
+}
+
 export async function insertWebSession(
   transaction: DatabaseQueryable,
   record: InsertWebSessionRecord,
@@ -86,20 +103,31 @@ export async function lockActiveWebSession(
   );
   const row = result.rows[0];
   if (row === undefined) return null;
-  return {
-    id: row.id.toLowerCase(),
-    userId: row.user_id.toLowerCase(),
-    supabaseSessionId: row.supabase_session_id.toLowerCase(),
-    csrfTokenHash: row.csrf_token_hash,
-    credentials: {
-      ciphertext: row.credentials_ciphertext,
-      iv: row.credentials_iv,
-      authTag: row.credentials_auth_tag,
-      keyVersion: row.encryption_key_version,
-    },
-    accessTokenExpiresAt: row.access_token_expires_at,
-    absoluteExpiresAt: row.absolute_expires_at,
-  };
+  return mapWebSessionRow(row);
+}
+
+/**
+ * Reads a safely-valid session without taking a row lock. Callers must still
+ * acquire the locked variant and re-check expiry before rotating credentials.
+ */
+export async function readActiveWebSession(
+  transaction: DatabaseQueryable,
+  sessionTokenHash: Buffer,
+  now: Date,
+): Promise<WebSessionRow | null> {
+  const result = await transaction.query<RawWebSessionRow>(
+    `SELECT
+       id, user_id, supabase_session_id, csrf_token_hash,
+       credentials_ciphertext, credentials_iv, credentials_auth_tag,
+       encryption_key_version, access_token_expires_at, absolute_expires_at
+     FROM private.web_sessions
+     WHERE session_token_hash = $1::bytea
+       AND revoked_at IS NULL
+       AND absolute_expires_at > $2::timestamptz`,
+    [sessionTokenHash, now],
+  );
+  const row = result.rows[0];
+  return row === undefined ? null : mapWebSessionRow(row);
 }
 
 export async function updateWebSessionCredentials(

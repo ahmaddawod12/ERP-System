@@ -218,6 +218,20 @@
       "when": 1784405203504,
       "tag": "0030_post_tax_metadata_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784650323893,
+      "tag": "0031_batch5_archive_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784652875072,
+      "tag": "0032_batch5_readiness_search",
+      "breakpoints": true
     }
   ]
 }

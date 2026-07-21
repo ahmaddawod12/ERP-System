@@ -53,6 +53,7 @@ npm --prefix cloudrun-api start
 | `DOCUMENT_PREVIEW_TOPIC` | production required | Opaque preview task topic |
 | `DOCUMENT_GENERATE_TOPIC` | production required | Opaque generate task topic |
 | `EMAIL_DELIVERY_TOPIC` | production required | Opaque email delivery topic |
+| `ARCHIVE_BUCKET` | readiness required | Private GCS archive bucket verified by `/readyz` |
 | `PUBSUB_API_BASE_URL` | verified local only | Local adapter origin; production keeps Google Pub/Sub |
 | `GOOGLE_METADATA_ACCESS_TOKEN_URL` | verified local only | Local metadata-token adapter endpoint |
 | `LOCAL_INTERNAL_IDENTITY_TOKEN` | verified local only | Random local drain identity; never a production credential |
@@ -67,14 +68,16 @@ Configuration is validated before the server starts. Invalid values fail closed.
 
 ## HTTP foundation
 
-- `GET /healthz` is the process liveness check.
-- `GET /readyz` runs the injected dependency-readiness check.
+- `GET /healthz` is dependency-free process liveness.
+- `GET /readyz` verifies the exact database schema/RPC marker, company-file and
+  archive buckets, and all mandatory Pub/Sub topics.
 - Domain routes accept exactly one strict credential: Supabase
   `Authorization: Bearer <JWT>` for mobile or
   `Authorization: SmartJobSession <opaque-token>` for the website. Combined,
   duplicate, and comma-joined credentials are rejected.
-- Opaque-session lookup refreshes and verifies rotating Supabase credentials
-  under a row lock, then returns only the user ID and absolute session expiry
+- Opaque-session lookup is lock-free while credentials are safely valid. Inside
+  the refresh window it rechecks under `FOR UPDATE`, refreshes once, and returns
+  only the user ID and absolute session expiry
   to domain authorization. `/api/v1/me` additionally performs the authoritative
   Auth-user lookup needed for email/verification state. Supabase access/refresh
   tokens never leave the web-session service.

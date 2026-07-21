@@ -15,7 +15,10 @@
   },
   "include": [
     "index.ts",
+    "archive-runner.ts",
+    "archive-files.ts",
     "archive-month.ts",
+    "local-platform.ts",
     "upload-cleanup.ts",
     "tests/**/*.js"
   ],

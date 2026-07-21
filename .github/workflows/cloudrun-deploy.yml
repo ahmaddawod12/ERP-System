@@ -43,6 +43,14 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
+      - name: Configure production Cloud Armor throttles
+        if: inputs.environment == 'production'
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          CLOUD_ARMOR_POLICY: ${{ vars.CLOUD_ARMOR_POLICY }}
+          CLOUD_ARMOR_BACKEND_SERVICES: ${{ vars.WEBSITE_BACKEND_SERVICE }},${{ vars.API_BACKEND_SERVICE }}
+        run: bash scripts/configure-cloud-armor.sh
+
       - name: Build and push main API image
         run: |
           docker build \
@@ -52,7 +60,13 @@ jobs:
           docker push ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-api:${{ inputs.image_tag }}
 
       - name: Deploy main API to Cloud Run
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
+          INGRESS_FLAG="--ingress=all"
+          if [[ "${DEPLOY_ENVIRONMENT}" == "production" ]]; then
+            INGRESS_FLAG="--ingress=internal-and-cloud-load-balancing"
+          fi
           gcloud run deploy cloudrun-api \
             --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-api:${{ inputs.image_tag }} \
             --region ${{ vars.GCP_REGION }} \
@@ -61,9 +75,10 @@ jobs:
             --max-instances ${{ vars.API_MAX_INSTANCES }} \
             --concurrency ${{ vars.API_CONCURRENCY }} \
             --timeout 30 \
+            "${INGRESS_FLAG}" \
             --allow-unauthenticated \
             --set-secrets DATABASE_URL=smart-job-api-database-url:latest,SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=smart-job-supabase-publishable-key:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest,SUPABASE_STORAGE_BUCKET=smart-job-storage-bucket:latest,WEB_SESSION_ENCRYPTION_KEY_BASE64=smart-job-web-session-key:latest,WEB_SESSION_ENCRYPTION_KEY_VERSION=smart-job-web-session-key-version:latest,INTERNAL_API_AUDIENCE=smart-job-internal-audience:latest,INTERNAL_CALLER_SERVICE_ACCOUNTS=smart-job-internal-callers:latest \
-            --set-env-vars DATABASE_SSL_MODE=require,SUPABASE_JWT_AUDIENCE=authenticated,NODE_ENV=production,LOG_LEVEL=info
+            --set-env-vars DATABASE_SSL_MODE=require,SUPABASE_JWT_AUDIENCE=authenticated,NODE_ENV=production,LOG_LEVEL=info,ARCHIVE_BUCKET=${{ vars.ARCHIVE_BUCKET }},DOCUMENT_PUBSUB_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},DOCUMENT_PREVIEW_TOPIC=${{ vars.DOCUMENT_PREVIEW_TOPIC }},DOCUMENT_GENERATE_TOPIC=${{ vars.DOCUMENT_GENERATE_TOPIC }},EMAIL_DELIVERY_TOPIC=${{ vars.EMAIL_DELIVERY_TOPIC }}
 
       - name: Output main API URL
         run: |
@@ -71,19 +86,6 @@ jobs:
             --region ${{ vars.GCP_REGION }} \
             --format='value(status.url)')"
           echo "Main API deployed to ${API_URL}"
-
-      - name: Map custom API domain (production only)
-        if: inputs.environment == 'production' && vars.API_CUSTOM_DOMAIN != ''
-        run: |
-          gcloud run domain-mappings create \
-            --service cloudrun-api \
-            --domain ${{ vars.API_CUSTOM_DOMAIN }} \
-            --region ${{ vars.GCP_REGION }} || \
-          gcloud run domain-mappings update \
-            --service cloudrun-api \
-            --domain ${{ vars.API_CUSTOM_DOMAIN }} \
-            --region ${{ vars.GCP_REGION }}
-          echo "Custom API domain mapped: ${{ vars.API_CUSTOM_DOMAIN }}"
 
   deploy_tax:
     name: Deploy tax gateway to Cloud Run (me-west1)
@@ -209,7 +211,8 @@ jobs:
             --image ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-archiver:${{ inputs.image_tag }} \
             --region ${{ vars.GCP_REGION }} \
             --service-account ${{ vars.CLOUDRUN_ARCHIVER_SERVICE_ACCOUNT }} \
-            --task-timeout 300 \
-            --max-retries 0 \
+            --tasks 1 \
+            --task-timeout 60m \
+            --max-retries 2 \
             --set-secrets DATABASE_URL=smart-job-archiver-database-url:latest,SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest \
-            --set-env-vars DATABASE_SSL_MODE=require,NODE_ENV=production
+            --set-env-vars DATABASE_SSL_MODE=require,NODE_ENV=production,SMART_JOB_PERSISTENCE_BACKEND=sql,ARCHIVE_BUCKET=${{ vars.ARCHIVE_BUCKET }},ARCHIVER_QUERY_PAGE_SIZE=500,ARCHIVER_COMPANY_CONCURRENCY=2,ARCHIVER_LEASE_SECONDS=3600,ARCHIVER_JOB_DEADLINE_MS=3300000,ARCHIVER_CANDIDATE_LIMIT=2000

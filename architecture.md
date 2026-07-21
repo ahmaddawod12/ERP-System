@@ -29,9 +29,10 @@ Scheduler/queues -------Google IAM------------^       |----Pub/Sub----> cloudrun
                                                        `----Google IAM--> cloudrun-tax (me-west1)
 ```
 
-Migrations through `0030` support the API, private file/PDF flow, versioned
+Migrations through `0032` support the API, private file/PDF flow, versioned
 domain mutations, transactional accepted-job inventory consumption, dedicated
-worker roles, durable email/tax/archive workflow state, and approval-only tax
+worker roles, durable email/tax/archive workflow state, leased immutable
+archives, schema-aware readiness, indexed bounded search, and approval-only tax
 PDF generation. Production tax submission and stable API DNS are launch gates.
 
 ## Ownership Map
@@ -48,9 +49,9 @@ PDF generation. Production tax submission and stable API DNS are launch gates.
   begin with `private.set_api_request_context(...)`; the runtime password is
   provisioned out of band and is never stored in schema migrations.
 - Initial main-API domain routes accept exactly one verified Supabase Bearer JWT
-  or one opaque `SmartJobSession`. The latter resolves under a row lock and
-  never exposes stored Supabase access/refresh credentials outside the session
-  service.
+  or one opaque `SmartJobSession`. Safely valid sessions use a lock-free read;
+  only refresh-window sessions are rechecked under `FOR UPDATE`. Stored
+  Supabase access/refresh credentials never leave the session service.
 - New Auth/mobile code uses publishable (`sb_publishable_...`) keys. Only the
   trusted API/PDF/email/archiver Storage paths receive secret (`sb_secret_...`) keys;
   no secret or legacy service-role key may enter browser/mobile configuration.
@@ -242,12 +243,26 @@ Persist only canonical `storagePath` references in records. Do not persist durab
   generated-PDF reconciliation in this path.
 - Cleanup uses the opaque Supabase secret only in the `apikey` header. A cleanup
   outage is reported independently and does not stop the monthly archive phase.
-- `cloudrun-archiver` batches old finished jobs/documents into month archives.
-- Archive export must drain paginated SQL reads; it cannot assume one page contains a full month.
-- Archive payload generation should stream JSON to disk/storage rather than holding the full month in memory.
-- Archive deletion must use the exact verified document ID list, not a rerun query.
-- Archive manifests remain resumable: `uploaded_not_deleted` retries verify the archive and can be marked `deleted` when the records are already gone, instead of failing on exact-count mismatches.
+- `cloudrun-archiver` claims one leased/advisory-locked company/month/type
+  segment at a fixed snapshot time. Later-arriving historical rows use later
+  immutable segments; an empty claim releases the lease without closing a month.
+- Archive export drains SQL pages of at most 500 and streams separate record
+  and ID JSON objects to temporary disk. Both GCS uploads are create-only with
+  `ifGenerationMatch=0` and are accepted only after generation, metadata, byte
+  count, and SHA-256 verification.
+- Source deletion consumes only the verified companion ID object in chunks of
+  at most 500. A lost worker resumes from that object and the stored delete
+  cursor; it never reruns the eligibility query to choose deletions.
 - Archive retrieval stays backend-controlled; callers provide `(companyId, year, month, dataType)` and the Cloud Run API reads the archive from GCS using the service identity.
+
+### Runtime health and public abuse boundary
+
+- `/healthz` is dependency-free process liveness. `/readyz` verifies the exact
+  schema marker and RPC privilege matrix, both storage buckets, and all three
+  mandatory Pub/Sub topics.
+- Production website/API backends sit behind Cloud Armor per-IP throttles for
+  auth and contact routes. Account-recovery responses are generic, and Auth/
+  reCAPTCHA upstream bodies and deadlines are bounded.
 
 ## Canonical Rules
 

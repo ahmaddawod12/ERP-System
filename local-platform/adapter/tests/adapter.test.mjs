@@ -101,6 +101,10 @@ test("published messages are persisted and delivered with the shared worker toke
     });
     assert.equal(metadata.status, 200);
     assert.equal((await metadata.json()).access_token, TOKEN);
+    const topic = await fetch(`http://127.0.0.1:${address.port}/v1/projects/smart-job-local/topics/document-preview`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(topic.status, 200, await topic.text());
     const payload = Buffer.from(JSON.stringify({ taskId: "00000000-0000-4000-8000-000000000001" })).toString("base64");
     const published = await fetch(`http://127.0.0.1:${address.port}/v1/projects/smart-job-local/topics/document-preview:publish`, {
       method: "POST",

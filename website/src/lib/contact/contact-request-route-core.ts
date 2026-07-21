@@ -8,6 +8,7 @@ import { z } from "zod";
 import { parseWebsiteOrigin } from "../auth/opaque-session.ts";
 import { BackendTransportError } from "../backend/transport-core.ts";
 import { contactRequestSchema } from "../validation/schemas.ts";
+import { ContactChallengeUnavailableError } from "./challenge.ts";
 
 const IdempotencyKeySchema = z.string().trim().min(8).max(128);
 
@@ -96,8 +97,17 @@ export async function handleContactRequest(
   if (parsed.data.website) {
     return failure(400, "SPAM_REJECTED", "The contact request was rejected.");
   }
-  if (!await dependencies.verifyChallenge(parsed.data.challengeToken, parsed.data.challenge)) {
-    return failure(400, "INVALID_CHALLENGE", "The challenge response is invalid or expired.");
+  try {
+    if (!await dependencies.verifyChallenge(parsed.data.challengeToken, parsed.data.challenge)) {
+      return failure(400, "INVALID_CHALLENGE", "Contact verification was not accepted.");
+    }
+  } catch (error) {
+    if (error instanceof ContactChallengeUnavailableError) {
+      return failure(503, "CHALLENGE_UNAVAILABLE", "Contact verification is temporarily unavailable.", {
+        retryable: true,
+      });
+    }
+    throw error;
   }
 
   try {

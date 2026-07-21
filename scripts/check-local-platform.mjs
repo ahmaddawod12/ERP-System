@@ -20,7 +20,9 @@ if (marker !== "smart-job-erp-local-platform-v1") {
 requireMatch(compose, /name:\s*\$\{SMART_JOB_LOCAL_NETWORK:-smart-job-local\}[\s\S]*external:\s*true/, "Compose must use the external repository network");
 requireMatch(compose, /smart_job_local_platform:[\s\S]*file:\s*\.\/local-platform\/marker/, "Compose must mount the repository marker as a secret");
 requireMatch(compose, /cloudrun-tax:[\s\S]*?TAX_SUBMISSION_MODE:\s*disabled[\s\S]*?cloudrun-pdf:/, "Local tax submission must remain disabled");
-requireMatch(compose, /cloudrun-archiver:[\s\S]*?profiles:\s*\["jobs"\][\s\S]*?ALLOW_LOCAL_ARCHIVER_ADMIN:\s*"true"/, "The temporary archiver admin mode must remain opt-in");
+requireMatch(compose, /cloudrun-archiver:[\s\S]*?profiles:\s*\["jobs"\][\s\S]*?DATABASE_URL:\s*postgresql:\/\/smart_job_archiver:/, "The archiver must use its least-privileged database role");
+requireMatch(compose, /cloudrun-archiver:[\s\S]*?ARCHIVER_CANDIDATE_LIMIT:\s*"2000"[\s\S]*?depends_on:/, "Local archive candidate discovery must remain explicitly bounded");
+if (/ALLOW_LOCAL_ARCHIVER_ADMIN/.test(compose)) throw new Error("The removed archiver admin compatibility flag is forbidden");
 requireMatch(compose, /fsouza\/fake-gcs-server:1\.55\.0/, "The GCS emulator image must be version-pinned");
 requireMatch(compose, /axllent\/mailpit:v1\.29\.7/, "The Mailpit image must be version-pinned");
 requireMatch(compose, /gcs-emulator:[\s\S]*?healthcheck:[\s\S]*?storage\/v1\/b\?project=smart-job-local[\s\S]*?mailpit:/, "The GCS emulator must have an HTTP health check");

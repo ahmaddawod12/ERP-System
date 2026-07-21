@@ -28,29 +28,41 @@ export function assertArchiverRuntimeConfig(
   const localOverridesPresent = env.SMART_JOB_DEPLOYMENT_ENV === 'local'
     || env.SMART_JOB_LOCAL_PLATFORM !== undefined
     || env.LOCAL_PLATFORM_MARKER_PATH !== undefined
-    || env.STORAGE_EMULATOR_HOST !== undefined
-    || env.ALLOW_LOCAL_ARCHIVER_ADMIN !== undefined;
-  if (!localOverridesPresent) return { verifiedLocalPlatform: false };
-  if (!isVerifiedLocalPlatform(env, readMarker)) {
+    || env.STORAGE_EMULATOR_HOST !== undefined;
+  if (env.ALLOW_LOCAL_ARCHIVER_ADMIN !== undefined) {
+    throw new Error('ALLOW_LOCAL_ARCHIVER_ADMIN has been removed; use smart_job_archiver');
+  }
+  const verifiedLocalPlatform = localOverridesPresent
+    ? isVerifiedLocalPlatform(env, readMarker)
+    : false;
+  if (localOverridesPresent && !verifiedLocalPlatform) {
     throw new Error('Local archiver overrides require the mounted local-platform marker');
-  }
-  if (env.STORAGE_EMULATOR_HOST !== 'http://gcs-emulator:4443') {
-    throw new Error('Local archiver requires the canonical GCS emulator endpoint');
-  }
-  if (env.ALLOW_LOCAL_ARCHIVER_ADMIN !== 'true') {
-    throw new Error('Local archiver admin access must be explicitly enabled');
   }
   const databaseUrl = new URL(String(env.DATABASE_URL || ''));
   if (
     !['postgres:', 'postgresql:'].includes(databaseUrl.protocol)
-    || databaseUrl.hostname !== 'supabase_db_smart-job-erp-local'
-    || (databaseUrl.port !== '' && databaseUrl.port !== '5432')
-    || databaseUrl.username !== 'postgres'
+    || databaseUrl.username !== 'smart_job_archiver'
   ) {
-    throw new Error('Local archiver admin access is restricted to the repository-owned Supabase database');
+    throw new Error('The archiver DATABASE_URL must authenticate as smart_job_archiver');
   }
-  if (env.DATABASE_SSL_MODE !== 'disable') {
-    throw new Error('Local archiver database SSL mode must be disable');
+  if (String(env.DATABASE_MAX_CONNECTIONS || '') !== '1') {
+    throw new Error('The archiver database pool must be limited to one connection');
   }
-  return { verifiedLocalPlatform: true };
+  if (verifiedLocalPlatform) {
+    if (env.STORAGE_EMULATOR_HOST !== 'http://gcs-emulator:4443') {
+      throw new Error('Local archiver requires the canonical GCS emulator endpoint');
+    }
+    if (
+      databaseUrl.hostname !== 'supabase_db_smart-job-erp-local'
+      || (databaseUrl.port !== '' && databaseUrl.port !== '5432')
+    ) {
+      throw new Error('Local archiver access is restricted to the repository-owned Supabase database');
+    }
+    if (env.DATABASE_SSL_MODE !== 'disable') {
+      throw new Error('Local archiver database SSL mode must be disable');
+    }
+  } else if (env.STORAGE_EMULATOR_HOST !== undefined) {
+    throw new Error('STORAGE_EMULATOR_HOST is forbidden outside the verified local platform');
+  }
+  return { verifiedLocalPlatform };
 }

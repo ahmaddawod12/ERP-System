@@ -21,11 +21,12 @@ This document summarizes the active backend boundaries as of July 21, 2026.
   and `cloudrun-email` implement the worker boundaries. Tax stays disabled
   pending certification.
 
-The approved migration chain now runs through `0030`. Migrations `0006`–`0030`
+The approved migration chain now runs through `0032`. Migrations `0006`–`0032`
 add least-privileged API and worker roles, request context, private
 session/idempotency/upload/workflow state, atomic domain mutations,
 transactional accepted-job inventory consumption, canonical PDF/email claims,
-and the authoritative tax transaction/outbox.
+and the authoritative tax transaction/outbox, leased immutable archives,
+exact API readiness, and normalized trigram search.
 
 ## Service Boundaries
 
@@ -140,10 +141,12 @@ This batch job owns monthly archive creation and verified deletion. It:
   acknowledges each lease as complete, retryable, or dead-lettered
 - reports upload-cleanup failures without preventing monthly archive work
 - snapshots eligible finished jobs and documents
-- drains paginated SQL reads for the full target month
-- writes archive payloads to Cloud Storage
-- verifies integrity by checksum before deletion
-- deletes only the exact IDs captured in the verified archive
+- holds a leased advisory lock per company/month/type and permits later segments
+- drains pages of at most 500 into immutable record and companion ID objects
+- uses GCS create-only generation preconditions and verifies generation,
+  metadata, bytes, and checksum before deletion
+- resumes deletion from the verified ID object in chunks of at most 500
+- authenticates as `smart_job_archiver`, which has only narrow archive RPC access
 
 ### packages/db/
 
@@ -341,7 +344,8 @@ supabase db lint --local --schema public,private --level warning
 - `manageWorker` add must handle unique-conflict races gracefully.
 - Keep PDF finalization create-only once `storage_path` is already set, for every generated document type.
 - Sanitize `item.quantity`, `item.price`, and `date` values in PDF templates; HTML-escape email template variables.
-- Keep archive manifests resumable: `uploaded_not_deleted` retries verify the archive and may mark the manifest `deleted` when the records are already gone.
+- Keep leased archive segments resumable from the verified companion ID object;
+  never infer deletions from a fresh source query.
 - Keep archived month reads behind backend handlers with fixed bucket/path derivation.
 - Run `packages/db/perf/profiling.sql` on local/staging data before broad index changes, and verify advisor output with `EXPLAIN (analyze, buffers)`.
 

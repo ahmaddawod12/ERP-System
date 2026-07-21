@@ -18,6 +18,7 @@ export interface StoredUploadAttachment extends UploadAttachmentManifest {
 }
 
 export interface CompanyFileStorage {
+  checkReadiness?(): Promise<void>;
   createSignedUploadTargets(
     attachments: readonly StoredUploadAttachment[],
   ): Promise<SignedUploadTarget[]>;
@@ -302,6 +303,18 @@ export function createCompanyFileStorage(
   };
 
   return {
+    async checkReadiness() {
+      let result: Awaited<ReturnType<typeof client.storage.getBucket>>;
+      try {
+        result = await client.storage.getBucket(options.bucketId);
+      } catch (error) {
+        throw storageUnavailable(error);
+      }
+      if (result.error || result.data?.id !== options.bucketId) {
+        throw storageUnavailable(result.error ?? new Error("Storage bucket is unavailable"));
+      }
+    },
+
     async createSignedUploadTargets(attachments) {
       return Promise.all(attachments.map(async (attachment) => {
         let signed: Awaited<ReturnType<typeof bucket.createSignedUploadUrl>>;

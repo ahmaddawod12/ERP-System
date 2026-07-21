@@ -19,6 +19,7 @@ jobs:
       - run: node scripts/check-no-ts-nocheck.mjs
       - run: node scripts/check-js-syntax.mjs scripts
       - run: node scripts/check-local-platform.mjs
+      - run: node scripts/check-deployment-security.mjs
       - name: Validate local Compose topology
         env:
           LOCAL_ADAPTER_ACCESS_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

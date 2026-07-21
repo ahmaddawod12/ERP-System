@@ -86,4 +86,17 @@ test("new server Auth flows require a publishable key without legacy fallback", 
   );
   assert.match(source, /process\.env\.SUPABASE_PUBLISHABLE_KEY/);
   assert.doesNotMatch(source, /SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(source, /AbortSignal\.timeout/);
+  assert.match(source, /MAX_AUTH_RESPONSE_BYTES/);
+  assert.doesNotMatch(source, /response\.json\(/);
+});
+
+test("forgot-password responses are generic across malformed, unknown, and upstream-failure cases", async () => {
+  const source = await readFile(
+    new URL("../src/app/api/auth/forgot-password/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /function genericResponse/);
+  assert.match(source, /serverSendPasswordReset[\s\S]*\.catch\(\(\) => undefined\)/);
+  assert.doesNotMatch(source, /error\.message|Email is required|Failed to send reset email/);
 });

@@ -24,6 +24,20 @@ const cursorPayloadSchema = z.object({
   id: z.uuid(),
 }).strict();
 
+function escapedSearch(value: string | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized.replace(/[\\%_]/g, "\\$&") : null;
+}
+
+function exactJobNumber(value: string | undefined): number | null {
+  const normalized = value?.trim();
+  if (!normalized || !/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2_147_483_647
+    ? parsed
+    : null;
+}
+
 const jobRowSchema = z.object({
   job_id: z.uuid(),
   job_no: z.number().int().positive(),
@@ -322,15 +336,8 @@ export const READ_JOBS_PAGE_SQL = `
     AND ($5::uuid IS NULL OR creator.user_id = $5::uuid::text)
     AND (
       $6::text IS NULL
-      OR job.job_no::text = $6::text
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.title, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.description, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.location, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.address, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.client_name_snapshot, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.client_phone_snapshot, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.assigned_member_name_snapshot, '')), pg_catalog.lower($6::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(job.created_by_name_snapshot, '')), pg_catalog.lower($6::text)) > 0
+      OR ($11::integer IS NOT NULL AND job.job_no = $11::integer)
+      OR job.search_text LIKE '%' || $12::text || '%' ESCAPE '\\'
     )
     AND (
       $7::timestamptz IS NULL
@@ -598,17 +605,20 @@ export async function readJobsPage(
   const cursor = query.afterCursor === undefined
     ? null
     : decodeJobListCursor(query.afterCursor);
+  const search = escapedSearch(query.search);
   const result = await transaction.query<JobRow>(READ_JOBS_PAGE_SQL, [
     internalCompanyId,
     statuses,
     query.dateFrom ?? null,
     query.dateTo ?? null,
     query.creatorUid ?? null,
-    query.search ?? null,
+    search,
     cursor?.createdAt ?? null,
     cursor?.id ?? null,
     pageSize + 1,
     query.dateField ?? "createdAt",
+    exactJobNumber(query.search),
+    search,
   ]);
   const rows = result.rows.slice(0, pageSize);
   const items = rows.map(mapJobRow);

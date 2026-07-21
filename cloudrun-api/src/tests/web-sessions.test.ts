@@ -14,6 +14,7 @@ import { loadConfig } from "../config.js";
 import { AppError } from "../http/errors.js";
 import { registerWebSessionRoutes } from "../routes/web-sessions.js";
 import { createWebSessionCrypto } from "../web-sessions/crypto.js";
+import { lockActiveWebSession, readActiveWebSession } from "../web-sessions/repository.js";
 import type { WebSessionService } from "../web-sessions/service.js";
 
 const sessionToken = WebSessionTokenSchema.parse("A".repeat(43));
@@ -142,4 +143,22 @@ test("AES-256-GCM credentials are bound to immutable session metadata", () => {
   );
   assert.equal(crypto.generateSessionToken().length, 43);
   assert.equal(crypto.generateCsrfToken().length, 43);
+});
+
+test("safely-valid session reads are lock-free while refresh reads are explicit", async () => {
+  const queries: string[] = [];
+  const transaction = {
+    async query(text: string) {
+      queries.push(text);
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const tokenHash = Buffer.alloc(32, 7);
+  const now = new Date("2026-07-14T00:00:00.000Z");
+
+  await readActiveWebSession(transaction, tokenHash, now);
+  await lockActiveWebSession(transaction, tokenHash, now);
+
+  assert.doesNotMatch(queries[0] ?? "", /FOR UPDATE/i);
+  assert.match(queries[1] ?? "", /FOR UPDATE/i);
 });

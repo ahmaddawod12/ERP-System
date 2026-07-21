@@ -22,7 +22,8 @@
   },
   "overrides": {
     "@google-cloud/storage": {
-      "fast-xml-parser": "5.5.12"
+      "fast-xml-parser": "5.7.0",
+      "uuid": "11.1.1"
     },
     "node-forge": "1.4.0"
   }

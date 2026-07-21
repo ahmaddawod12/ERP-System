@@ -6,6 +6,17 @@ const path = require('node:path');
 const indexSource = fs.readFileSync(path.resolve(__dirname, '../index.js'), 'utf8');
 const pubsubAuthSource = fs.readFileSync(path.resolve(__dirname, '../pubsub-auth.js'), 'utf8');
 const workerStoreSource = fs.readFileSync(path.resolve(__dirname, '../worker-store.js'), 'utf8');
+const pageSecuritySource = fs.readFileSync(path.resolve(__dirname, '../page-security.js'), 'utf8');
+const templateSource = fs.readFileSync(path.resolve(__dirname, '../htmlTemplate.js'), 'utf8');
+
+function resolvePackageFile(name) {
+  for (const candidate of [path.resolve(__dirname, '..', name), path.resolve(__dirname, '..', '..', name)]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error(`Unable to resolve ${name} from the PDF package`);
+}
+
+const dockerfileSource = fs.readFileSync(resolvePackageFile('Dockerfile'), 'utf8');
 
 function resolveRepoRoot() {
   for (const candidate of [path.resolve(__dirname, '..', '..'), path.resolve(__dirname, '..', '..', '..')]) {
@@ -20,6 +31,17 @@ test('Pub/Sub verification fails closed when allowlist or OIDC checks fail', () 
   assert.match(pubsubAuthSource, /verifySelfSignedServiceAccountJwt/);
   assert.match(pubsubAuthSource, /Trusted bearer token required/);
   assert.match(pubsubAuthSource, /x-pubsub-token/);
+});
+
+test('Chromium is non-root, scriptless and unable to fetch caller-controlled URLs', () => {
+  assert.match(indexSource, /hardenPdfPage[^\n(]*\(page\)/);
+  assert.match(pageSecuritySource, /setJavaScriptEnabled\(false\)/);
+  assert.match(pageSecuritySource, /setRequestInterception\(true\)/);
+  assert.match(pageSecuritySource, /request\.abort\('blockedbyclient'\)/);
+  assert.doesNotMatch(templateSource, /\^https\?:/);
+  assert.match(dockerfileSource, /USER pptruser/);
+  assert.match(dockerfileSource, /npm --prefix packages\/contracts prune --omit=dev/);
+  assert.match(dockerfileSource, /npm --prefix packages\/api-contracts prune --omit=dev/);
 });
 
 test('opaque dispatch messages cannot supply tenant, user, or document authority', async () => {

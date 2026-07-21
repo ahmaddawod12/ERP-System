@@ -24,6 +24,7 @@ interface ClaimedEmailDispatch {
 }
 
 export interface EmailDeliveryPublisher {
+  checkReadiness?(): Promise<void>;
   publish(message: EmailDispatchMessage): Promise<void>;
 }
 

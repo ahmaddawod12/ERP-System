@@ -22,16 +22,12 @@ function sanitizeInput(input) {
 }
 
 /**
- * Sanitize a URL to prevent XSS via javascript: or data: schemes.
- * Allows https://, http://, root-relative (/), and inline image data URIs
- * (data:image/png;base64, data:image/jpeg;base64) used for embedded logos.
+ * PDF input is self-contained: only bounded image data URIs produced by the
+ * trusted Storage logo loader may enter Chromium.
  */
 function sanitizeUrl(url: unknown): string {
   if (typeof url !== 'string' || url.trim() === '') return '';
   const trimmed = url.trim();
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')) {
-    return trimmed;
-  }
   if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(trimmed)) {
     return trimmed;
   }

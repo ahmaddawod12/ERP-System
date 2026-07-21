@@ -5,6 +5,7 @@ import { createCompanyFileStorageFromEnv } from './company-file-storage';
 import generateDocumentHTML from './htmlTemplate';
 import { installStructuredLogging } from './logging';
 import { createCompanyLogoFetcher } from './logo-cache';
+import { hardenPdfPage } from './page-security';
 import { hasLocalPlatformOverrides, isVerifiedLocalPlatform } from './local-platform';
 import { persistPdfBeforeFinalize } from './pdf-storage-workflow';
 import { createPubSubVerifier } from './pubsub-auth';
@@ -155,6 +156,7 @@ async function renderPdf(task: CanonicalPdfTask): Promise<Buffer> {
       throw new Error('Browser was recycled during tab wait');
     }
     page = await browser.newPage();
+    await hardenPdfPage(page);
     await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30_000 });
     const bytes = Buffer.from(await page.pdf({
       format: 'A4',

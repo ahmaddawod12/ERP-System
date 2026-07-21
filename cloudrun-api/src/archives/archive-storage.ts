@@ -18,6 +18,7 @@ export interface ArchiveContent {
 }
 
 export interface ArchiveStorage {
+  checkReadiness?(): Promise<void>;
   readArchiveJson(
     companyStorageId: string,
     archiveKey: string,
@@ -96,6 +97,8 @@ export function createArchiveStorage(options: CreateArchiveStorageOptions): Arch
     inflightToken = (async () => {
       const response = await fetchImpl(metadataUrl, {
         headers: { "Metadata-Flavor": "Google" },
+        redirect: "error",
+        signal: AbortSignal.timeout(3_000),
       });
       if (!response.ok) {
         throw new AppError({
@@ -151,6 +154,19 @@ export function createArchiveStorage(options: CreateArchiveStorageOptions): Arch
   }
 
   return {
+    async checkReadiness() {
+      const token = await getAccessToken();
+      const response = await fetchImpl(
+        `${gcsBase}/storage/v1/b/${encodeURIComponent(options.bucket)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          redirect: "error",
+          signal: AbortSignal.timeout(5_000),
+        },
+      );
+      if (!response.ok) throw new Error(`Archive bucket readiness failed (${response.status})`);
+    },
+
     readArchiveJson(companyStorageId, archiveKey) {
       return readObject(archiveObjectPath(companyStorageId, archiveKey));
     },

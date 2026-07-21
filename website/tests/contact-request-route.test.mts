@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BackendTransportError } from "../src/lib/backend/transport-core.ts";
+import { ContactChallengeUnavailableError } from "../src/lib/contact/challenge.ts";
 import {
   handleContactRequest,
   type ContactRequestRouteDependencies,
@@ -12,7 +13,7 @@ const BODY = {
   email: "manager@example.com",
   company: "Example Field Service",
   message: "Please contact us about an ERP rollout.",
-  challenge: "7",
+  challenge: "contact_request",
   challengeToken: "signed-challenge-token",
   website: "",
 };
@@ -134,4 +135,22 @@ test("contact BFF preserves validated backend throttling", async () => {
     },
     meta: { requestId: "backend-rate-limit" },
   });
+});
+
+test("contact BFF reports Enterprise verification outages as retryable", async () => {
+  const response = await handleContactRequest(request(), dependencies({
+    verifyChallenge: async () => { throw new ContactChallengeUnavailableError(); },
+  }));
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.deepEqual(body, {
+    ok: false,
+    error: {
+      code: "CHALLENGE_UNAVAILABLE",
+      message: "Contact verification is temporarily unavailable.",
+      retryable: true,
+    },
+    meta: { requestId: body.meta.requestId },
+  });
+  assert.match(body.meta.requestId, /^[0-9a-f-]{36}$/i);
 });

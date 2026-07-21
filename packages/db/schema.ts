@@ -246,6 +246,18 @@ const jobs = pgTable('jobs', {
   clientPhoneSnapshot: varchar('client_phone_snapshot', { length: 40 }),
   assignedMemberNameSnapshot: varchar('assigned_member_name_snapshot', { length: 200 }),
   createdByNameSnapshot: varchar('created_by_name_snapshot', { length: 200 }),
+  searchText: text('search_text').generatedAlwaysAs(sql`
+    pg_catalog.lower(
+      COALESCE(title, '') || ' ' ||
+      COALESCE(description, '') || ' ' ||
+      COALESCE(location, '') || ' ' ||
+      COALESCE(address, '') || ' ' ||
+      COALESCE(client_name_snapshot, '') || ' ' ||
+      COALESCE(client_phone_snapshot, '') || ' ' ||
+      COALESCE(assigned_member_name_snapshot, '') || ' ' ||
+      COALESCE(created_by_name_snapshot, '')
+    )
+  `),
   meta: jsonb('meta').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -270,6 +282,8 @@ const jobs = pgTable('jobs', {
   companyAssigneeFinishedCursorIdx: index('jobs_company_assignee_finished_cursor_idx').on(table.companyId, table.assignedMembershipId, table.finishedAt, table.id),
   companyAssigneeDueCursorIdx: index('jobs_company_assignee_due_cursor_idx').on(table.companyId, table.assignedMembershipId, table.dueAt, table.id),
   companyAssigneeStatusFinishedCursorIdx: index('jobs_company_assignee_status_finished_cursor_idx').on(table.companyId, table.assignedMembershipId, table.status, table.finishedAt, table.id),
+  searchTextTrgmIdx: index('jobs_search_text_trgm_idx')
+    .using('gin', table.searchText.asc().op('gin_trgm_ops')),
   companyStatusCreatedCursorIdx: index('jobs_company_status_created_cursor_idx').on(table.companyId, table.status, table.createdAt, table.id),
   companyStatusUpdatedCursorIdx: index('jobs_company_status_updated_cursor_idx').on(table.companyId, table.status, table.updatedAt, table.id),
 }));
@@ -319,6 +333,7 @@ const inventoryParts = pgTable('inventory_parts', {
   companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
   partNo: integer('part_no').notNull(),
   name: varchar('name', { length: 240 }).notNull(),
+  normalizedName: text('normalized_name').generatedAlwaysAs(sql`pg_catalog.lower(name)`),
   active: boolean('active').notNull().default(true),
   lowThreshold: numeric('low_threshold', { precision: 14, scale: 3 }).notNull().default('0'),
   unit: varchar('unit', { length: 40 }),
@@ -331,6 +346,8 @@ const inventoryParts = pgTable('inventory_parts', {
   companyActiveIdx: index('inventory_parts_company_active_idx').on(table.companyId, table.active),
   companyArchivedPartNoIdx: index('inventory_parts_company_archived_part_no_idx').on(table.companyId, table.archivedAt, table.partNo),
   companyActiveArchivedPartNoIdx: index('inventory_parts_company_active_archived_part_no_idx').on(table.companyId, table.active, table.archivedAt, table.partNo),
+  normalizedNameTrgmIdx: index('inventory_parts_normalized_name_trgm_idx')
+    .using('gin', table.normalizedName.asc().op('gin_trgm_ops')),
   lowThresholdNonNegative: check('inventory_parts_low_threshold_non_negative_check', sql`${table.lowThreshold} >= 0`),
   entityVersionPositive: check('inventory_parts_entity_version_positive_check', sql`${table.entityVersion} > 0`),
 }));
@@ -397,6 +414,15 @@ const documents = pgTable('documents', {
   clientPhoneSnapshot: varchar('client_phone_snapshot', { length: 40 }),
   clientCitySnapshot: varchar('client_city_snapshot', { length: 120 }),
   clientVatSnapshot: varchar('client_vat_snapshot', { length: 32 }),
+  searchText: text('search_text').generatedAlwaysAs(sql`
+    pg_catalog.lower(
+      document_code || ' ' ||
+      COALESCE(client_name_snapshot, '') || ' ' ||
+      COALESCE(client_phone_snapshot, '') || ' ' ||
+      COALESCE(client_city_snapshot, '') || ' ' ||
+      COALESCE(client_vat_snapshot, '')
+    )
+  `),
   payload: jsonb('payload').notNull().default({}),
   entityVersion: bigint('entity_version', { mode: 'bigint' }).notNull().default(sql`1`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -420,6 +446,8 @@ const documents = pgTable('documents', {
   companyTypeDocumentDateCursorIdx: index('documents_company_type_document_date_cursor_idx').on(table.companyId, table.documentType, table.documentDate, table.id),
   companyCreatorDocumentDateCursorIdx: index('documents_company_creator_document_date_cursor_idx').on(table.companyId, table.createdByMembershipId, table.documentDate, table.id),
   companyTypeStatusDocumentDateCursorIdx: index('documents_company_type_status_document_date_cursor_idx').on(table.companyId, table.documentType, table.generationStatus, table.documentDate, table.id),
+  searchTextTrgmIdx: index('documents_search_text_trgm_idx')
+    .using('gin', table.searchText.asc().op('gin_trgm_ops')),
   totalBeforeVatNonNegative: check('documents_total_before_vat_non_negative_check', sql`${table.totalBeforeVat} >= 0`),
   vatAmountNonNegative: check('documents_vat_amount_non_negative_check', sql`${table.vatAmount} >= 0`),
   totalWithVatNonNegative: check('documents_total_with_vat_non_negative_check', sql`${table.totalWithVat} >= 0`),
@@ -740,17 +768,33 @@ const orphanedUserCleanupMarkers = pgTable('orphaned_user_cleanup_markers', {
 const archiveRuns = pgTable('archive_runs', {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id').notNull().references(() => companies.id, { onDelete: 'cascade' }),
-  archiveKey: varchar('archive_key', { length: 32 }).notNull(),
+  archiveKey: varchar('archive_key', { length: 64 }).notNull(),
   dataType: varchar('data_type', { length: 32 }).notNull(),
   status: archiveStatusEnum('status').notNull().default('pending'),
+  snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull(),
+  segment: integer('segment').notNull().default(1),
   docCount: integer('doc_count').notNull().default(0),
   deletedCount: integer('deleted_count').notNull().default(0),
+  deleteCursor: integer('delete_cursor').notNull().default(0),
   storagePath: varchar('storage_path', { length: 1024 }),
-  checksum: varchar('checksum', { length: 128 }),
+  checksum: varchar('checksum', { length: 64 }),
+  storageGeneration: bigint('storage_generation', { mode: 'bigint' }),
+  idManifestPath: varchar('id_manifest_path', { length: 1024 }),
+  idManifestChecksum: varchar('id_manifest_checksum', { length: 64 }),
+  idManifestGeneration: bigint('id_manifest_generation', { mode: 'bigint' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp('completed_at', { withTimezone: true }),
 }, (table) => ({
   companyArchiveTypeUnique: uniqueIndex('archive_runs_company_archive_type_unique').on(table.companyId, table.archiveKey, table.dataType),
+  companyTypeSnapshotIdx: index('archive_runs_company_type_snapshot_idx')
+    .on(table.companyId, table.dataType, table.snapshotAt, table.segment),
+  segmentPositive: check('archive_runs_segment_positive_check', sql`${table.segment} > 0`),
+  countsValid: check(
+    'archive_runs_counts_check',
+    sql`${table.docCount} >= 0 AND ${table.deletedCount} >= 0 AND ${table.deleteCursor} >= 0
+      AND ${table.deletedCount} <= ${table.docCount}
+      AND ${table.deleteCursor} <= ${table.docCount}`,
+  ),
 }));
 
 const webSessions = privateSchema.table('web_sessions', {
@@ -948,7 +992,10 @@ const archiveRunLeases = privateSchema.table('archive_run_leases', {
   archiveKey: varchar('archive_key', { length: 64 }).notNull(),
   dataType: varchar('data_type', { length: 32 }).notNull(),
   status: archiveRunLeaseStatusEnum('status').notNull().default('pending'),
+  periodStart: timestamp('period_start', { withTimezone: true }).notNull(),
+  periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
   snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull(),
+  segment: integer('segment').notNull().default(1),
   leaseToken: uuid('lease_token'),
   leaseUntil: timestamp('lease_until', { withTimezone: true }),
   attemptCount: integer('attempt_count').notNull().default(0),
@@ -960,6 +1007,11 @@ const archiveRunLeases = privateSchema.table('archive_run_leases', {
     .on(table.companyId, table.archiveKey, table.dataType),
   queueIdx: index('archive_run_leases_queue_idx')
     .on(table.status, table.leaseUntil, table.createdAt),
+  periodValid: check(
+    'archive_run_leases_period_check',
+    sql`${table.periodEnd} > ${table.periodStart} AND ${table.snapshotAt} >= ${table.periodEnd}`,
+  ),
+  segmentPositive: check('archive_run_leases_segment_positive_check', sql`${table.segment} > 0`),
   attemptsValid: check(
     'archive_run_leases_attempt_count_check',
     sql`${table.attemptCount} BETWEEN 0 AND 100`,

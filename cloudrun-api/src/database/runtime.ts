@@ -12,6 +12,7 @@ export const DEFAULT_TRANSACTION_TIMEOUTS = Object.freeze({
 });
 
 const API_DATABASE_ROLE = "smart_job_api";
+export const EXPECTED_DATABASE_SCHEMA_VERSION = "batch5-2026-07-21";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DatabaseQueryResult<Row extends QueryResultRow = QueryResultRow> {
@@ -242,7 +243,13 @@ class PostgresApiDatabaseRuntime implements WebSessionDatabaseRuntime {
 
   async checkReadiness(): Promise<void> {
     this.#assertOpen();
-    await this.#pool.query("SELECT 1");
+    const result = await this.#pool.query<{ readonly ready: boolean }>(
+      "SELECT private.check_api_readiness($1::text) AS ready",
+      [EXPECTED_DATABASE_SCHEMA_VERSION],
+    );
+    if (result.rows[0]?.ready !== true) {
+      throw new DatabaseConfigurationError("The API database schema or RPC grants are not ready.");
+    }
   }
 
   close(): Promise<void> {

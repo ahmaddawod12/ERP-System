@@ -144,7 +144,7 @@ npm --prefix phone_app run doctor
 - SES delivery uses `queued|sending|sent|failed|delivery_unknown`. An ambiguous
   provider outcome is manual-review state and is never automatically resent.
 
-### Production workflow migrations (`0025`–`0030`)
+### Production workflow migrations (`0025`–`0032`)
 
 - `0025` is a verified no-op Drizzle metadata baseline after `0024`.
 - `0026` makes job acceptance consume inventory exactly once.
@@ -153,6 +153,9 @@ npm --prefix phone_app run doctor
 - `0029` adds atomic tax creation, outbox claiming, replay/conflict handling,
   `submission_unknown`, and approval-only PDF creation; `0030` synchronizes
   migration metadata.
+- `0031` adds leased immutable archive segments, companion ID manifests, and
+  bounded resumable deletion. `0032` adds exact API readiness metadata and
+  normalized trigram search indexes validated by the large-tenant profile.
 - `npm --prefix packages/db run test:migrations` verifies the `0024` upgrade
   path on a loopback database. The regular clean migration plus integration
   suite verifies role, tenant, inventory, PDF, email, and tax behavior.
@@ -296,7 +299,9 @@ npm --prefix phone_app run doctor
   blocking monthly archives.
 - Monthly archives now drain paginated SQL reads and stream JSON payloads through temporary disk files before upload, which removes the old single-page and whole-month-in-memory failure mode.
 - Archive verification now checks stored metadata and re-hashes the uploaded object via stream before deletion.
-- Archive manifests remain resumable: `uploaded_not_deleted` retries verify the archive and mark the manifest `deleted` when records are already gone, instead of failing on exact-count mismatches.
+- Archive segments remain resumable from their verified companion ID objects;
+  retries verify immutable GCS generation/checksum metadata and continue only
+  exact 500-row deletion chunks.
 - The archiver Docker image now builds from repo-root context so local `file:` dependencies on `packages/db` and `packages/contracts` resolve in the documented build order.
 
 ### CI / Scripts

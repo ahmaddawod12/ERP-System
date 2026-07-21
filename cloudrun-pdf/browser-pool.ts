@@ -56,9 +56,11 @@ export function createBrowserPool(options: {
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--metrics-recording-only',
           '--no-first-run',
-          '--no-zygote',
-          '--single-process',
         ],
       });
 

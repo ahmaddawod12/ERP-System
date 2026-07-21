@@ -3102,6 +3102,35 @@ if (!databaseUrl) {
       };
     }
 
+    it('exposes exact schema readiness only through the API runtime function', async () => {
+      await withTransaction(async (client) => {
+        const roles = ['anon', 'authenticated', 'service_role', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
+        const privileges = await client.query(
+          `SELECT role_name,
+             has_function_privilege(role_name, 'private.check_api_readiness(text)', 'EXECUTE') AS can_check,
+             has_table_privilege(role_name, 'private.api_schema_metadata', 'SELECT,INSERT,UPDATE,DELETE') AS metadata_access
+           FROM unnest($1::text[]) AS role_name
+           ORDER BY role_name`,
+          [roles],
+        );
+        for (const row of privileges.rows) {
+          assert.equal(row.can_check, row.role_name === 'smart_job_api');
+          assert.equal(row.metadata_access, false);
+        }
+
+        await client.query('SET LOCAL ROLE smart_job_api');
+        const readiness = await client.query(
+          `SELECT
+             private.check_api_readiness('batch5-2026-07-21') AS exact_version,
+             private.check_api_readiness('stale-version') AS stale_version`,
+        );
+        assert.deepEqual(readiness.rows[0], {
+          exact_version: true,
+          stale_version: false,
+        });
+      });
+    });
+
     it('enforces the worker-role permission matrix without direct ERP table writes', async () => {
       await withClient(async (client) => {
         const roles = ['anon', 'authenticated', 'service_role', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
@@ -3112,7 +3141,8 @@ if (!databaseUrl) {
              has_table_privilege(role_name, 'private.tax_submissions', 'SELECT,INSERT,UPDATE,DELETE') AS tax_table_access,
              has_function_privilege(role_name, 'private.claim_pdf_document_task(text,uuid,integer)', 'EXECUTE') AS pdf_claim,
              has_function_privilege(role_name, 'private.claim_email_delivery(uuid,uuid,integer)', 'EXECUTE') AS email_claim,
-             has_function_privilege(role_name, 'private.claim_archive_run_lease(uuid,text,text,timestamptz,uuid,integer)', 'EXECUTE') AS archive_claim,
+              has_function_privilege(role_name, 'private.claim_archive_run_lease(uuid,text,text,timestamptz,timestamptz,timestamptz,uuid,integer)', 'EXECUTE') AS archive_claim,
+              has_function_privilege(role_name, 'private.list_archiver_candidates(timestamptz,integer)', 'EXECUTE') AS archive_candidates,
              has_function_privilege(role_name, 'private.create_api_tax_invoice(uuid,jsonb,timestamptz)', 'EXECUTE') AS tax_create
            FROM unnest($1::text[]) AS role_name
            ORDER BY role_name`,
@@ -3125,8 +3155,188 @@ if (!databaseUrl) {
           assert.equal(row.pdf_claim, row.role_name === 'smart_job_pdf');
           assert.equal(row.email_claim, row.role_name === 'smart_job_email');
           assert.equal(row.archive_claim, row.role_name === 'smart_job_archiver');
+          assert.equal(row.archive_candidates, row.role_name === 'smart_job_archiver');
           assert.equal(row.tax_create, row.role_name === 'smart_job_api');
         }
+      });
+    });
+
+    it('archives exact snapshots through resumable least-privileged segments', async () => {
+      await withTransaction(async (client) => {
+        const userId = randomUUID();
+        const companyId = randomUUID();
+        const membershipId = randomUUID();
+        const jobId = randomUUID();
+        const publicCompanyId = publicCompanyBase + 950;
+        const firstLeaseToken = randomUUID();
+        await insertWorkflowCompany(client, {
+          userId,
+          companyId,
+          membershipId,
+          publicCompanyId,
+        });
+
+        await client.query('SET LOCAL ROLE smart_job_archiver');
+        const emptyClaim = await client.query(
+          `SELECT private.claim_archive_run_lease(
+             $1::uuid, '2026-01', 'jobs',
+             '2026-01-01T00:00:00Z'::timestamptz,
+             '2026-02-01T00:00:00Z'::timestamptz,
+             '2026-07-01T00:00:00Z'::timestamptz,
+             $2::uuid, 3600
+           ) AS claim`,
+          [companyId, firstLeaseToken],
+        );
+        assert.equal(emptyClaim.rows[0].claim.claimed, true);
+        const emptyPage = await client.query(
+          `SELECT * FROM private.read_archiver_jobs_page(
+             $1::uuid, $2::uuid, NULL, NULL, 500
+           )`,
+          [emptyClaim.rows[0].claim.leaseId, firstLeaseToken],
+        );
+        assert.equal(emptyPage.rowCount, 0);
+        const released = await client.query(
+          'SELECT private.release_empty_archive_run_lease($1::uuid, $2::uuid) AS released',
+          [emptyClaim.rows[0].claim.leaseId, firstLeaseToken],
+        );
+        assert.equal(released.rows[0].released, true);
+        await client.query('RESET ROLE');
+        const emptyState = await client.query(
+          `SELECT lease.status::text AS status,
+             (SELECT count(*)::integer FROM public.archive_runs WHERE company_id = $1) AS run_count
+           FROM private.archive_run_leases AS lease
+           WHERE lease.company_id = $1 AND lease.archive_key = '2026-01' AND lease.data_type = 'jobs'`,
+          [companyId],
+        );
+        assert.deepEqual(emptyState.rows[0], { status: 'pending', run_count: 0 });
+
+        await client.query(
+          `INSERT INTO public.jobs (
+             id, company_id, job_no, status, title, assigned_membership_id,
+             created_by_membership_id, finished_at, created_at, updated_at
+           ) VALUES (
+             $1, $2, 1, 'finished', 'Archive fixture', $3, $3,
+             '2026-01-15T12:00:00Z', '2026-01-10T12:00:00Z', '2026-01-15T12:00:00Z'
+           )`,
+          [jobId, companyId, membershipId],
+        );
+
+        const secondLeaseToken = randomUUID();
+        await client.query('SET LOCAL ROLE smart_job_archiver');
+        await client.query('SAVEPOINT archive_null_bounds');
+        await expectDatabaseError(
+          client.query(
+            "SELECT * FROM private.list_archiver_candidates('2026-02-01T00:00:00Z'::timestamptz, NULL)",
+          ),
+          '22023',
+          /ARCHIVE_CANDIDATE_QUERY_INVALID/,
+        );
+        await client.query('ROLLBACK TO SAVEPOINT archive_null_bounds');
+        const candidates = await client.query(
+          `SELECT * FROM private.list_archiver_candidates(
+             '2026-02-01T00:00:00Z'::timestamptz, 2000
+           ) WHERE company_id = $1::uuid`,
+          [companyId],
+        );
+        assert.equal(candidates.rowCount, 1);
+        assert.equal(candidates.rows[0].data_type, 'jobs');
+        assert.equal(candidates.rows[0].period_start.toISOString(), '2026-01-01T00:00:00.000Z');
+        const claimResult = await client.query(
+          `SELECT private.claim_archive_run_lease(
+             $1::uuid, '2026-01', 'jobs',
+             '2026-01-01T00:00:00Z'::timestamptz,
+             '2026-02-01T00:00:00Z'::timestamptz,
+             '2026-07-02T00:00:00Z'::timestamptz,
+             $2::uuid, 3600
+           ) AS claim`,
+          [companyId, secondLeaseToken],
+        );
+        const claimed = claimResult.rows[0].claim;
+        assert.equal(claimed.segment, 1);
+        await client.query('SAVEPOINT archive_null_page_bound');
+        await expectDatabaseError(
+          client.query(
+            'SELECT * FROM private.read_archiver_jobs_page($1::uuid, $2::uuid, NULL, NULL, NULL)',
+            [claimed.leaseId, secondLeaseToken],
+          ),
+          '22023',
+          /ARCHIVE_PAGE_INVALID/,
+        );
+        await client.query('ROLLBACK TO SAVEPOINT archive_null_page_bound');
+        const page = await client.query(
+          'SELECT * FROM private.read_archiver_jobs_page($1::uuid, $2::uuid, NULL, NULL, 500)',
+          [claimed.leaseId, secondLeaseToken],
+        );
+        assert.equal(page.rowCount, 1);
+        assert.equal(page.rows[0].source_id, jobId);
+        const fullKey = '2026-01-j-s000001';
+        const objectPrefix = `companies/${publicCompanyId}/archives/${fullKey}`;
+        const recorded = await client.query(
+          `SELECT private.record_archiver_uploaded_run(
+             $1::uuid, $2::uuid, 1, $3, $4, 101, $5, $6, 102
+           ) AS run`,
+          [
+            claimed.leaseId,
+            secondLeaseToken,
+            `${objectPrefix}.json`,
+            'a'.repeat(64),
+            `${objectPrefix}.ids.json`,
+            'b'.repeat(64),
+          ],
+        );
+        assert.equal(recorded.rows[0].run.deleteCursor, 0);
+        const deletion = await client.query(
+          `SELECT private.delete_archiver_records_chunk(
+             $1::uuid, $2::uuid, 0, ARRAY[$3::uuid]
+           ) AS deletion`,
+          [claimed.leaseId, secondLeaseToken, jobId],
+        );
+        assert.equal(deletion.rows[0].deletion.deleteCursor, 1);
+        const completed = await client.query(
+          'SELECT private.complete_archiver_run($1::uuid, $2::uuid) AS completed',
+          [claimed.leaseId, secondLeaseToken],
+        );
+        assert.equal(completed.rows[0].completed, true);
+
+        const thirdLeaseToken = randomUUID();
+        const lateClaim = await client.query(
+          `SELECT private.claim_archive_run_lease(
+             $1::uuid, '2026-01', 'jobs',
+             '2026-01-01T00:00:00Z'::timestamptz,
+             '2026-02-01T00:00:00Z'::timestamptz,
+             '2026-07-03T00:00:00Z'::timestamptz,
+             $2::uuid, 3600
+           ) AS claim`,
+          [companyId, thirdLeaseToken],
+        );
+        assert.equal(lateClaim.rows[0].claim.segment, 2);
+        const latePage = await client.query(
+          'SELECT * FROM private.read_archiver_jobs_page($1::uuid, $2::uuid, NULL, NULL, 500)',
+          [lateClaim.rows[0].claim.leaseId, thirdLeaseToken],
+        );
+        assert.equal(latePage.rowCount, 0);
+        await client.query(
+          'SELECT private.release_empty_archive_run_lease($1::uuid, $2::uuid)',
+          [lateClaim.rows[0].claim.leaseId, thirdLeaseToken],
+        );
+        await client.query('RESET ROLE');
+
+        const finalState = await client.query(
+          `SELECT run.status::text AS status, run.doc_count, run.deleted_count,
+             run.delete_cursor, run.segment,
+             EXISTS (SELECT 1 FROM public.jobs WHERE id = $2) AS source_exists
+           FROM public.archive_runs AS run
+           WHERE run.company_id = $1 AND run.archive_key = '2026-01-j-s000001'`,
+          [companyId, jobId],
+        );
+        assert.deepEqual(finalState.rows[0], {
+          status: 'deleted',
+          doc_count: 1,
+          deleted_count: 1,
+          delete_cursor: 1,
+          segment: 1,
+          source_exists: false,
+        });
       });
     });
 

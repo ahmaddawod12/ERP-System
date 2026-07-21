@@ -25,7 +25,10 @@ COPY --from=build /workspace/packages/api-contracts ./packages/api-contracts
 COPY --from=build /workspace/packages/db ./packages/db
 COPY cloudrun-api/package*.json ./cloudrun-api/
 
-RUN npm --prefix cloudrun-api ci --omit=dev \
+RUN npm --prefix packages/contracts prune --omit=dev \
+ && npm --prefix packages/api-contracts prune --omit=dev \
+ && npm --prefix packages/db prune --omit=dev \
+ && npm --prefix cloudrun-api ci --omit=dev \
  && npm cache clean --force
 
 FROM node:22-slim AS runtime

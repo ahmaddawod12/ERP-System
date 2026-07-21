@@ -271,6 +271,9 @@ BACKEND_API_TIMEOUT_MS=12000       # optional; max 12000
 WEBSITE_ORIGIN=
 WEBSITE_SESSION_SECRET=
 CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
+RECAPTCHA_ENTERPRISE_PROJECT_ID=
+RECAPTCHA_ENTERPRISE_MIN_SCORE=0.7
+RECAPTCHA_ENTERPRISE_TIMEOUT_MS=8000
 
 # Transitional legacy routes only.
 NEXT_PUBLIC_SUPABASE_URL=
@@ -302,6 +305,7 @@ DOCUMENT_PUBSUB_PROJECT_ID=
 DOCUMENT_PREVIEW_TOPIC=
 DOCUMENT_GENERATE_TOPIC=
 EMAIL_DELIVERY_TOPIC=
+ARCHIVE_BUCKET=
 TAX_SUBMISSION_MODE=disabled
 TAX_GATEWAY_URL=
 TAX_GATEWAY_AUDIENCE=
@@ -479,10 +483,12 @@ The following production and security issues were also fixed before Phase 1:
     crash reporting. Direct Firebase Storage/callable access has been removed;
     job files use signed Supabase upload sessions and exact signed downloads.
 
-The database migration chain now runs through `0030`. It includes a verified
+The database migration chain now runs through `0032`. It includes a verified
 no-op post-`0024` metadata baseline, transactional accepted-job inventory
 consumption, dedicated worker roles, durable PDF/email/tax/archive workflow
-state, opaque dispatch, and authoritative approval-only tax PDF generation.
+state, opaque dispatch, authoritative approval-only tax PDF generation, leased
+immutable archive segments, exact readiness metadata, and normalized trigram
+search indexes.
 The tax callback/approval integration, archive retrieval API, Cloud Run
 deployment/IAM workflow, CI integration-test job, and E2E test infrastructure
 (Playwright + Maestro) are now implemented. Website Firebase/legacy-auth

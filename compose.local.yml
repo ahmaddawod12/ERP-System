@@ -117,6 +117,8 @@ services:
       SUPABASE_JWT_ISSUER: http://127.0.0.1:55321/auth/v1
       SUPABASE_JWKS_URL: http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json
       SUPABASE_JWT_AUDIENCE: authenticated
+      ARCHIVE_BUCKET: smart-job-archives-local
+      STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
       WEB_SESSION_ENCRYPTION_KEY_BASE64: ${LOCAL_WEB_SESSION_ENCRYPTION_KEY_BASE64:?run the local-platform start script}
       WEB_SESSION_ENCRYPTION_KEY_VERSION: local-v1
       DOCUMENT_PUBSUB_PROJECT_ID: smart-job-local
@@ -297,15 +299,17 @@ services:
     environment:
       <<: *local-environment
       NODE_ENV: production
-      ALLOW_LOCAL_ARCHIVER_ADMIN: "true"
       SMART_JOB_PERSISTENCE_BACKEND: sql
-      DATABASE_URL: postgresql://postgres:${LOCAL_SUPABASE_DB_PASSWORD:-postgres}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_URL: postgresql://smart_job_archiver:${LOCAL_ARCHIVER_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "1"
       STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
       ARCHIVE_BUCKET: smart-job-archives-local
       ARCHIVER_QUERY_PAGE_SIZE: "500"
       ARCHIVER_COMPANY_CONCURRENCY: "1"
+      ARCHIVER_LEASE_SECONDS: "3600"
+      ARCHIVER_JOB_DEADLINE_MS: "3300000"
+      ARCHIVER_CANDIDATE_LIMIT: "2000"
       SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
       SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
     depends_on:

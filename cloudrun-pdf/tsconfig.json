@@ -21,6 +21,7 @@
     "index.ts",
     "logging.ts",
     "logo-cache.ts",
+    "page-security.ts",
     "persistence.ts",
     "pdf-storage-workflow.ts",
     "pubsub-auth.ts",

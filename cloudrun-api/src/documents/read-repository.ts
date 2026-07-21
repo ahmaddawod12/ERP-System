@@ -162,7 +162,8 @@ function arrayFilter<T>(value: T | readonly T[] | undefined): T[] | null {
 }
 
 function normalizedSearch(value: string | undefined): string | null {
-  return value?.trim() || null;
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized.replace(/[\\%_]/g, "\\$&") : null;
 }
 
 function numberPrefix(value: string | undefined): string | null {
@@ -305,8 +306,7 @@ export const READ_DOCUMENT_PAGE_SQL = `
     AND (document.document_type <> 305 OR document.tax_authority_status = 'approved')
     AND (
       $2::text IS NULL
-      OR pg_catalog.strpos(pg_catalog.lower(document.document_code), pg_catalog.lower($2::text)) > 0
-      OR pg_catalog.strpos(pg_catalog.lower(COALESCE(document.client_name_snapshot, '')), pg_catalog.lower($2::text)) > 0
+      OR document.search_text LIKE '%' || $2::text || '%' ESCAPE '\\'
       OR ($3::text IS NOT NULL AND document.document_number::text LIKE $3::text || '%' ESCAPE '\\')
     )
     AND ($4::public.document_generation_status[] IS NULL OR document.generation_status = ANY($4::public.document_generation_status[]))

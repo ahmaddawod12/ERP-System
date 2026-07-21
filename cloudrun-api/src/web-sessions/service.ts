@@ -24,6 +24,7 @@ import type { WebSessionCrypto } from "./crypto.js";
 import {
   insertWebSession,
   lockActiveWebSession,
+  readActiveWebSession,
   revokeWebSession,
   updateWebSessionCredentials,
   type WebSessionRow,
@@ -184,14 +185,34 @@ export function createWebSessionService(
     sessionToken: string,
   ): Promise<ResolvedWebSession> {
     const sessionTokenHash = options.crypto.hashToken(sessionToken);
+    const currentTime = now();
+    const unlocked = await options.database.withWebSessionTransaction(
+      (transaction) => readActiveWebSession(transaction, sessionTokenHash, currentTime),
+    );
+    if (unlocked === null) throw invalidSession();
+    if (unlocked.accessTokenExpiresAt.getTime() > currentTime.getTime() + refreshWindowMs) {
+      const credentials = options.crypto.decrypt(binding(unlocked), unlocked.credentials);
+      return {
+        sessionTokenHash,
+        session: {
+          id: unlocked.id,
+          userId: unlocked.userId,
+          accessToken: credentials.accessToken,
+          absoluteExpiresAt: unlocked.absoluteExpiresAt,
+        },
+      };
+    }
+
+    // Only sessions inside the refresh window take a write lock. Re-checking
+    // under that lock makes concurrent refresh-token rotation single-flight.
     const resolution = await options.database.withWebSessionTransaction<ResolutionResult>(
       async (transaction) => {
-        const currentTime = now();
-        const row = await lockActiveWebSession(transaction, sessionTokenHash, currentTime);
+        const lockedAt = now();
+        const row = await lockActiveWebSession(transaction, sessionTokenHash, lockedAt);
         if (row === null) return { kind: "invalid" };
         let credentials = options.crypto.decrypt(binding(row), row.credentials);
 
-        if (row.accessTokenExpiresAt.getTime() <= currentTime.getTime() + refreshWindowMs) {
+        if (row.accessTokenExpiresAt.getTime() <= lockedAt.getTime() + refreshWindowMs) {
           let refreshed;
           try {
             refreshed = await options.supabaseWebAuth.refreshSession(credentials.refreshToken);

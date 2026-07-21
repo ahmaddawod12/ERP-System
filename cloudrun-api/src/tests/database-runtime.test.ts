@@ -7,6 +7,7 @@ import {
   DatabaseConfigurationError,
   DatabaseRuntimeClosedError,
   createApiDatabaseRuntime,
+  EXPECTED_DATABASE_SCHEMA_VERSION,
   type DatabasePool,
   type DatabasePoolClient,
   type DatabaseQueryResult,
@@ -62,6 +63,9 @@ class FakePool implements DatabasePool {
     values?: readonly unknown[],
   ): Promise<DatabaseQueryResult<Row>> {
     this.queries.push({ text, ...(values === undefined ? {} : { values: [...values] }) });
+    if (text.includes("private.check_api_readiness")) {
+      return { rows: [{ ready: true } as unknown as Row], rowCount: 1 };
+    }
     return { rows: [], rowCount: 0 };
   }
 
@@ -155,13 +159,16 @@ test("runtime refuses migration, admin, and service-role database credentials", 
   );
 });
 
-test("readiness performs only a lightweight SELECT 1", async () => {
+test("readiness verifies the exact schema marker and API RPC privilege matrix", async () => {
   const pool = new FakePool();
   const runtime = createApiDatabaseRuntime({ pool });
 
   await runtime.checkReadiness();
 
-  assert.deepEqual(pool.queries, [{ text: "SELECT 1" }]);
+  assert.deepEqual(pool.queries, [{
+    text: "SELECT private.check_api_readiness($1::text) AS ready",
+    values: [EXPECTED_DATABASE_SCHEMA_VERSION],
+  }]);
   await runtime.close();
 });
 

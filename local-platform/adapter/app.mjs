@@ -502,6 +502,22 @@ export async function createLocalPlatformAdapter(
         return;
       }
       const publishMatch = /^\/v1\/projects\/([^/]+)\/topics\/([^/:]+):publish$/.exec(url.pathname);
+      const topicMatch = /^\/v1\/projects\/([^/]+)\/topics\/([^/:]+)$/.exec(url.pathname);
+      if (request.method === "GET" && topicMatch) {
+        const authorization = String(request.headers.authorization ?? "");
+        if (!authorization.startsWith("Bearer ") || !tokenEquals(
+          authorization.slice("Bearer ".length),
+          config.adapterAccessToken,
+        )) {
+          return sendJson(response, 401, { error: "unauthorized" });
+        }
+        const projectId = decodeURIComponent(topicMatch[1]);
+        const topic = decodeURIComponent(topicMatch[2]);
+        if (projectId !== config.projectId || !config.topicTargets.has(topic)) {
+          return sendJson(response, 404, { error: "unknown topic" });
+        }
+        return sendJson(response, 200, { name: `projects/${projectId}/topics/${topic}` });
+      }
       if (request.method === "POST" && publishMatch) {
         const authorization = String(request.headers.authorization ?? "");
         if (!authorization.startsWith("Bearer ") || !tokenEquals(

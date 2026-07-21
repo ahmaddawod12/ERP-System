@@ -51,6 +51,25 @@ function publishUrl(baseUrl: URL, projectId: string, topic: string): URL {
   );
 }
 
+async function checkTopic(
+  fetchImplementation: typeof fetch,
+  tokenProvider: MetadataAccessTokenProvider,
+  apiBaseUrl: URL,
+  projectId: string,
+  topic: string,
+): Promise<void> {
+  const accessToken = await tokenProvider.get();
+  const response = await fetchImplementation(
+    new URL(`v1/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topic)}`, apiBaseUrl),
+    {
+      headers: { authorization: `Bearer ${accessToken}` },
+      redirect: "error",
+      signal: AbortSignal.timeout(5_000),
+    },
+  );
+  if (!response.ok) throw new Error(`Pub/Sub topic readiness failed with status ${response.status}`);
+}
+
 class MetadataAccessTokenProvider {
   readonly #fetch: typeof fetch;
   readonly #url: string;
@@ -106,6 +125,12 @@ export function createPubSubDocumentTaskPublisher(
   } as const;
 
   return {
+    async checkReadiness(): Promise<void> {
+      await Promise.all(Object.values(topicByTaskType).map((topic) => (
+        checkTopic(fetchImplementation, tokenProvider, apiBaseUrl, config.projectId, topic)
+      )));
+    },
+
     async publish(taskType, message): Promise<void> {
       const payload = DocumentDispatchMessageSchema.parse(message);
       const accessToken = await tokenProvider.get();
@@ -142,6 +167,10 @@ export function createPubSubEmailDeliveryPublisher(
   const apiBaseUrl = options.apiBaseUrl ?? DEFAULT_PUBSUB_API_BASE_URL;
 
   return {
+    checkReadiness(): Promise<void> {
+      return checkTopic(fetchImplementation, tokenProvider, apiBaseUrl, config.projectId, config.topic);
+    },
+
     async publish(message): Promise<void> {
       const payload = EmailDispatchMessageSchema.parse(message);
       const accessToken = await tokenProvider.get();

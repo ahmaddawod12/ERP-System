@@ -21,6 +21,7 @@ import { createArchiveStorage } from "./archives/archive-storage.js";
 import { createTaxGatewayClient } from "./tax/gateway-client.js";
 import { createWebSessionCrypto } from "./web-sessions/crypto.js";
 import { createWebSessionService } from "./web-sessions/service.js";
+import { createApiReadinessCheck } from "./readiness.js";
 
 export async function startServer(): Promise<void> {
   const config = loadConfig();
@@ -102,6 +103,13 @@ export async function startServer(): Promise<void> {
     : undefined;
   const app = await buildApp({
     config,
+    readinessCheck: createApiReadinessCheck({
+      database,
+      storage,
+      ...(archiveStorage === undefined ? {} : { archiveStorage }),
+      ...(documentTaskPublisher === undefined ? {} : { documentTaskPublisher }),
+      ...(emailDeliveryPublisher === undefined ? {} : { emailDeliveryPublisher }),
+    }),
     services: {
       database,
       authenticator,

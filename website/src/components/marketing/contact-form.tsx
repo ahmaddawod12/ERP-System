@@ -1,11 +1,12 @@
 "use client";
 
-import { z } from "zod";
-import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef, useState } from "react";
-import { Input } from "@/components/ui/Input";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { useAppToast } from "@/hooks/use-toast";
 import type { ClientApiResponse } from "@/lib/api/client";
 import { getClientApiErrorMessage } from "@/lib/api/client";
@@ -15,50 +16,93 @@ const schema = z.object({
   email: z.string().email("Valid email required"),
   company: z.string().min(2, "Company is required"),
   message: z.string().min(8, "Message should be at least 8 characters"),
-  challenge: z.string().trim().regex(/^7$/, "Answer the anti-spam challenge correctly"),
-  challengeToken: z.string().min(1, "Challenge token is missing"),
   website: z.string().max(0),
 });
 
 type ContactFormValues = z.infer<typeof schema>;
+type ChallengeConfig =
+  | { provider: "recaptcha-enterprise"; action: string; siteKey: string }
+  | { provider: "local-proof"; action: string; token: string };
+
+declare global {
+  interface Window {
+    grecaptcha?: {
+      enterprise: {
+        ready(callback: () => void): void;
+        execute(siteKey: string, options: { action: string }): Promise<string>;
+      };
+    };
+  }
+}
+
+function loadEnterpriseScript(siteKey: string): Promise<void> {
+  const id = "smart-job-recaptcha-enterprise";
+  const existing = document.getElementById(id) as HTMLScriptElement | null;
+  if (existing?.dataset.loaded === "true") return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = existing ?? document.createElement("script");
+    script.id = id;
+    script.async = true;
+    script.defer = true;
+    script.src = `https://www.google.com/recaptcha/enterprise.js?render=${encodeURIComponent(siteKey)}`;
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      resolve();
+    }, { once: true });
+    script.addEventListener("error", () => reject(new Error("Contact verification failed to load")), { once: true });
+    if (!existing) document.head.appendChild(script);
+  });
+}
+
+async function enterpriseToken(config: Extract<ChallengeConfig, { provider: "recaptcha-enterprise" }>) {
+  await loadEnterpriseScript(config.siteKey);
+  const enterprise = window.grecaptcha?.enterprise;
+  if (!enterprise) throw new Error("Contact verification is unavailable");
+  await new Promise<void>((resolve) => enterprise.ready(resolve));
+  return enterprise.execute(config.siteKey, { action: config.action });
+}
+
+async function loadChallengeConfig(): Promise<ChallengeConfig> {
+  const response = await fetch("/api/contact/challenge", { cache: "no-store" });
+  if (!response.ok) throw new Error("Contact verification is unavailable");
+  const config = await response.json() as ChallengeConfig;
+  if (config.provider === "recaptcha-enterprise") await loadEnterpriseScript(config.siteKey);
+  return config;
+}
 
 export function ContactForm() {
   const { toast } = useAppToast();
-  const [challengeQuestion, setChallengeQuestion] = useState<string>("3 + 4");
+  const [challengeConfig, setChallengeConfig] = useState<ChallengeConfig | null>(null);
+  const [challengeUnavailable, setChallengeUnavailable] = useState(false);
   const idempotencyKeyRef = useRef<string | null>(null);
   const {
     register,
     handleSubmit,
     reset,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<ContactFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: {
-      website: "",
-    },
+    defaultValues: { website: "" },
   });
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/contact/challenge")
-      .then(async (res) => {
-        if (!res.ok) return;
-        const data = (await res.json()) as { question?: string; token?: string };
-        if (cancelled) return;
-        if (data.question) setChallengeQuestion(data.question);
-        if (data.token) setValue("challengeToken", data.token, { shouldValidate: false });
+    loadChallengeConfig()
+      .then((config) => {
+        if (!cancelled) setChallengeConfig(config);
       })
       .catch(() => {
-        // Silent fail: the user can still see the static question, but submission will fail without a token.
+        if (!cancelled) setChallengeUnavailable(true);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [setValue]);
+    return () => { cancelled = true; };
+  }, []);
 
   const onSubmit = async (values: ContactFormValues) => {
     try {
+      if (!challengeConfig) throw new Error("Contact verification is unavailable");
+      const challengeToken = challengeConfig.provider === "local-proof"
+        ? challengeConfig.token
+        : await enterpriseToken(challengeConfig);
       idempotencyKeyRef.current ??= crypto.randomUUID();
       const response = await fetch("/api/contact/request", {
         method: "POST",
@@ -66,7 +110,11 @@ export function ContactForm() {
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKeyRef.current,
         },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          ...values,
+          challenge: challengeConfig.action,
+          challengeToken,
+        }),
       });
       const payload = (await response.json()) as ClientApiResponse<{ requestId: string }>;
       if (!response.ok || !payload.ok) {
@@ -84,11 +132,8 @@ export function ContactForm() {
       });
       reset();
       idempotencyKeyRef.current = null;
-      // Refresh the challenge token after a successful submission.
-      const refresh = await fetch("/api/contact/challenge");
-      if (refresh.ok) {
-        const data = (await refresh.json()) as { token?: string };
-        if (data.token) setValue("challengeToken", data.token, { shouldValidate: false });
+      if (challengeConfig.provider === "local-proof") {
+        setChallengeConfig(await loadChallengeConfig());
       }
     } catch (error) {
       toast({
@@ -100,10 +145,7 @@ export function ContactForm() {
   };
 
   return (
-    <form
-      onSubmit={(event) => { void handleSubmit(onSubmit)(event); }}
-      className="grid gap-4"
-    >
+    <form onSubmit={(event) => { void handleSubmit(onSubmit)(event); }} className="grid gap-4">
       <Input label="Name" placeholder="Your name" {...register("name")} error={errors.name?.message} />
       <Input
         label="Work Email"
@@ -113,7 +155,6 @@ export function ContactForm() {
         error={errors.email?.message}
       />
       <Input label="Company" placeholder="Company name" {...register("company")} error={errors.company?.message} />
-      <Input label={`Anti-spam: ${challengeQuestion}`} placeholder="7" {...register("challenge")} error={errors.challenge?.message} />
       <input type="text" tabIndex={-1} autoComplete="off" className="hidden" {...register("website")} />
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Message</span>
@@ -125,11 +166,11 @@ export function ContactForm() {
         />
         {errors.message?.message ? <span className="text-xs text-red-600">{errors.message.message}</span> : null}
       </label>
-      <Button type="submit" disabled={isSubmitting}>
-        {isSubmitting ? "Sending..." : "Send message"}
+      <Button type="submit" disabled={isSubmitting || !challengeConfig || challengeUnavailable}>
+        {isSubmitting ? "Sending..." : challengeUnavailable ? "Verification unavailable" : "Send message"}
       </Button>
       <p className="text-xs leading-6 text-slate-500 dark:text-slate-400">
-        Share your current workflow, team size, and the modules you want first. The more specific the request, the more useful the reply.
+        This site is protected by reCAPTCHA Enterprise. Share your workflow, team size, and the modules you want first.
       </p>
     </form>
   );

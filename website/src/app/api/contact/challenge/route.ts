@@ -8,7 +8,7 @@ export async function GET() {
     const challenge = await createContactChallenge();
     return new Response(JSON.stringify(challenge), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Cache-Control": "private, no-store" },
     });
   } catch (error) {
     return handleRouteError(error);

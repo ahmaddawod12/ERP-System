@@ -157,7 +157,7 @@ test("company inventory route applies SQL filters and returns canonical cursor D
     ],
     expectedPageValues: [
       internalCompanyId,
-      "relay%",
+      "relay\\%",
       "relay\\%",
       ["active", "inactive"],
       null,
@@ -355,7 +355,8 @@ test("inventory SQL enforces entitlement, role, tenant, location, filters, and k
 
   for (const sql of [READ_COMPANY_INVENTORY_PAGE_SQL, READ_MEMBER_INVENTORY_PAGE_SQL]) {
     assert.match(sql, /entitlement\.inventory_enabled/);
-    assert.match(sql, /pg_catalog\.strpos\(pg_catalog\.lower\(part\.name\)/);
+    assert.match(sql, /part\.normalized_name LIKE/);
+    assert.doesNotMatch(sql, /pg_catalog\.strpos/);
     assert.match(sql, /part\.part_no::text LIKE/);
     assert.match(sql, /'archived' = ANY\(\$4::text\[\]\)/);
     assert.match(sql, /\(part\.created_at, part\.id\) < \(\$5::timestamptz, \$6::uuid\)/);

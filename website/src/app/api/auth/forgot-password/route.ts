@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server.js";
 import { serverSendPasswordReset } from "@/lib/auth/server-supabase";
 import { parseWebsiteOrigin } from "@/lib/auth/opaque-session";
+import { z } from "zod";
 
 export const runtime = "nodejs";
+
+const RecoveryEmailSchema = z.string().trim().email().max(320);
+
+function genericResponse() {
+  return NextResponse.json({ ok: true }, {
+    status: 200,
+    headers: { "Cache-Control": "private, no-store" },
+  });
+}
 
 export async function POST(request: Request) {
   try {
@@ -17,20 +27,15 @@ export async function POST(request: Request) {
       });
     }
     const body = (await request.json().catch(() => ({}))) as { email?: string };
-    const email = typeof body.email === "string" ? body.email.trim() : "";
-
-    if (!email || email.length > 320) {
-      return NextResponse.json({ ok: false, error: "Email is required" }, { status: 400 });
+    const parsedEmail = RecoveryEmailSchema.safeParse(body.email);
+    if (parsedEmail.success) {
+      await serverSendPasswordReset(parsedEmail.data, `${websiteOrigin}/auth/confirm`)
+        .catch(() => undefined);
     }
-
-    await serverSendPasswordReset(email, `${websiteOrigin}/auth/confirm`);
-    return NextResponse.json({ ok: true }, {
-      headers: { "Cache-Control": "private, no-store" },
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Failed to send reset email" },
-      { status: 400, headers: { "Cache-Control": "private, no-store" } },
-    );
+    return genericResponse();
+  } catch {
+    // Configuration and upstream failures are deliberately indistinguishable
+    // from an unknown address to prevent account enumeration.
+    return genericResponse();
   }
 }

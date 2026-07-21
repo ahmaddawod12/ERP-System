@@ -32,7 +32,9 @@ COPY --from=build /workspace/packages/contracts ./packages/contracts
 COPY --from=build /workspace/packages/api-contracts ./packages/api-contracts
 COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
-RUN npm --prefix cloudrun-pdf ci --omit=dev
+RUN npm --prefix packages/contracts prune --omit=dev \
+ && npm --prefix packages/api-contracts prune --omit=dev \
+ && npm --prefix cloudrun-pdf ci --omit=dev
 
 # Stage 3: Production image
 FROM ghcr.io/puppeteer/puppeteer:24.40.0

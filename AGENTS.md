@@ -309,7 +309,7 @@ npm --prefix packages/db run typecheck
 npm --prefix packages/db run build
 npm --prefix packages/db run test
 npm --prefix packages/db run test:integration   # requires the isolated local Supabase DB
-npm --prefix packages/db run test:migrations    # destructive; loopback DB only, verifies 0024 upgrade
+npm --prefix packages/db run test:migrations    # creates/drops one isolated loopback DB; verifies 0024 upgrade
 npm --prefix packages/db run db:generate   # drizzle-kit generate (new migration from schema change)
 npm --prefix packages/db run db:migrate    # drizzle-kit migrate (apply to DB)
 ```
@@ -376,14 +376,16 @@ manually combining Supabase and Compose:
 stored only in ignored `local-platform/.env.generated`. Do not hand-set the
 `SMART_JOB_LOCAL_PLATFORM*` flags: services require the mounted repository
 marker, the website derives its verification signal in its entrypoint, and tax
-must remain disabled. The optional `archive` command uses a temporary guarded
-local admin compatibility mode pending the Batch 5 leased-archive rewrite.
+must remain disabled. The optional `archive` command uses the dedicated
+`smart_job_archiver` role and the same leased, resumable archive protocol as
+the deployed job.
 
 ### Repo-level CI scripts
 ```bash
 node scripts/check-no-ts-nocheck.mjs   # blocks CI; run before pushing
 node scripts/check-js-syntax.mjs scripts  # checks .js and .mjs repo scripts
 node scripts/check-local-platform.mjs  # static Compose/container safeguards
+node scripts/check-deployment-security.mjs # Cloud Armor/archiver deploy safeguards
 node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
 ```
 
@@ -443,6 +445,10 @@ BACKEND_API_TIMEOUT_MS=12000       # optional; capped at 12 seconds
 WEBSITE_ORIGIN=                    # exact same-origin/CSRF origin
 WEBSITE_SESSION_SECRET=            # recovery state + transitional cookie signing
 CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
+RECAPTCHA_ENTERPRISE_PROJECT_ID=
+RECAPTCHA_ENTERPRISE_MIN_SCORE=0.7
+RECAPTCHA_ENTERPRISE_TIMEOUT_MS=8000
+NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
 
 # Transitional legacy website/Edge/Firebase routes only; remove after cutover.
 NEXT_PUBLIC_SUPABASE_URL=
@@ -480,6 +486,7 @@ DOCUMENT_PUBSUB_PROJECT_ID=
 DOCUMENT_PREVIEW_TOPIC=
 DOCUMENT_GENERATE_TOPIC=
 EMAIL_DELIVERY_TOPIC=
+ARCHIVE_BUCKET=
 TAX_SUBMISSION_MODE=disabled       # production launch remains disabled
 TAX_GATEWAY_URL=
 TAX_GATEWAY_AUDIENCE=
@@ -702,6 +709,13 @@ the company/profile/subscription/sync/membership state atomically.
   manual email retry. Google-identity-protected drains publish opaque document
   task and email delivery IDs and process the tax outbox. Production tax
   creation remains fail-closed while `TAX_SUBMISSION_MODE=disabled`.
+- Migration `0031_batch5_archive_hardening.sql` replaces mutable archive
+  manifests with least-privilege leased segments, immutable record/ID objects,
+  exact generation/checksum metadata, and resumable 500-row deletion RPCs.
+- Migration `0032_batch5_readiness_search.sql` records the exact API schema
+  marker, exposes a narrow readiness privilege check, and adds generated
+  normalized trigram search indexes. The measured 100k-job search p95 fell from
+  958.70 ms to 7.33 ms; keep the reproducible profile under `packages/db/perf`.
 
 ---
 
@@ -805,6 +819,16 @@ the company/profile/subscription/sync/membership state atomically.
 - Delete only the exact canonical `smart-job-company-files` paths returned by a
   claimed session manifest. Never delete consumed/finalized sessions, accept a
   cross-prefix path, or recursively delete a prefix.
+- Monthly archive work authenticates only as `smart_job_archiver`. It claims a
+  database lease/advisory lock per company/month/type, writes immutable record
+  and companion ID objects with `ifGenerationMatch=0`, verifies generation,
+  metadata, size, and SHA-256, then deletes only manifest IDs in chunks of at
+  most 500. Empty snapshots release their lease and never close the month.
+- Keep `ARCHIVER_QUERY_PAGE_SIZE <= 500`, `ARCHIVER_CANDIDATE_LIMIT <= 2000`,
+  company concurrency `<= 4`, one Cloud Run task with a 60-minute timeout, two
+  retries, and an internal deadline below the platform timeout. Candidate
+  discovery must revisit older periods so late historical rows create later
+  immutable segments.
 
 ### Remaining approval gates
 - The database/security foundation, API domain routes, SSR website, mobile
@@ -816,7 +840,9 @@ the company/profile/subscription/sync/membership state atomically.
   and Crashlytics remain for push notifications and native crash reporting.
   Mobile Edge caller cutover
   is complete and all Edge directories have been deleted. The Cloud Run deploy
-  workflow includes custom API DNS mapping for production via `API_CUSTOM_DOMAIN`.
+  production deployment configures Cloud Armor auth/contact IP throttles on the
+  external load-balancer backends and restricts API ingress to the load balancer;
+  direct Cloud Run domain mapping is intentionally forbidden.
 
 ---
 

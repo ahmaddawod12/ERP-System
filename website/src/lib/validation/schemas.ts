@@ -121,8 +121,8 @@ export const contactRequestSchema = z
     email: z.string().trim().email("Valid email is required"),
     company: requiredText(2, 140, "company"),
     message: requiredText(8, 2000, "message"),
-    challenge: requiredText(1, 8, "challenge"),
-    challengeToken: requiredText(1, 2048, "challengeToken"),
+    challenge: requiredText(1, 64, "challenge"),
+    challengeToken: requiredText(20, 8192, "challengeToken"),
     website: z.string().max(0).optional(),
   })
   .strict();

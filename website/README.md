@@ -144,6 +144,10 @@ without a browser bearer token.
 - `SUPABASE_PUBLISHABLE_KEY`
 - `WEBSITE_SESSION_SECRET`
 - `CONTACT_CHALLENGE_SECRET` (optional; falls back to the website secret)
+- `RECAPTCHA_ENTERPRISE_PROJECT_ID` (server-only Google Cloud project ID)
+- `NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY` (public Enterprise site key)
+- `RECAPTCHA_ENTERPRISE_MIN_SCORE` (optional; defaults to `0.7`)
+- `RECAPTCHA_ENTERPRISE_TIMEOUT_MS` (optional; 1000-12000, defaults to `8000`)
 - `BACKEND_API_BASE_URL` (server only; HTTPS, except loopback development)
 - `BACKEND_API_TIMEOUT_MS` (optional; defaults to and cannot exceed `12000`)
 - `WEBSITE_ORIGIN` (exact website origin used for mutation checks)

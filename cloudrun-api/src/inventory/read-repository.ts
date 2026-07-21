@@ -145,8 +145,8 @@ export function decodeInventoryListCursor(value: string): { createdAt: string; i
 }
 
 function escapeLikePattern(value: string | undefined): string | null {
-  if (value === undefined) return null;
-  return value.replace(/[\\%_]/g, "\\$&");
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized.replace(/[\\%_]/g, "\\$&") : null;
 }
 
 function normalizedStatuses(
@@ -187,7 +187,7 @@ const INVENTORY_STATUS_SQL = `
 const INVENTORY_SEARCH_SQL = `
     AND (
       $2::text IS NULL
-      OR pg_catalog.strpos(pg_catalog.lower(part.name), pg_catalog.lower($2::text)) > 0
+      OR part.normalized_name LIKE '%' || $3::text || '%' ESCAPE '\\'
       OR part.part_no::text LIKE $3::text || '%' ESCAPE '\\'
     )
 `;
@@ -404,12 +404,13 @@ async function readInventoryPage(
   const cursor = query.afterCursor === undefined
     ? null
     : decodeInventoryListCursor(query.afterCursor);
+  const search = escapeLikePattern(query.search);
   const result = await transaction.query<InventoryPartRow>(
     scope === "company" ? READ_COMPANY_INVENTORY_PAGE_SQL : READ_MEMBER_INVENTORY_PAGE_SQL,
     [
       internalCompanyId,
-      query.search ?? null,
-      escapeLikePattern(query.search),
+      search,
+      search,
       normalizedStatuses(query.status),
       cursor?.createdAt ?? null,
       cursor?.id ?? null,
@@ -479,12 +480,13 @@ export async function readManagedMemberInventoryPage(
   const cursor = query.afterCursor === undefined
     ? null
     : decodeInventoryListCursor(query.afterCursor);
+  const search = escapeLikePattern(query.search);
   const result = await transaction.query<InventoryPartRow>(
     READ_MANAGED_MEMBER_INVENTORY_PAGE_SQL,
     [
       internalCompanyId,
-      query.search ?? null,
-      escapeLikePattern(query.search),
+      search,
+      search,
       normalizedStatuses(query.status),
       cursor?.createdAt ?? null,
       cursor?.id ?? null,

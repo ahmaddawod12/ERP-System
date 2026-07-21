@@ -30,6 +30,7 @@ export interface ClaimedDocumentDispatch {
 }
 
 export interface DocumentTaskPublisher {
+  checkReadiness?(): Promise<void>;
   publish(
     taskType: ClaimedDocumentDispatch["taskType"],
     message: DocumentDispatchMessage,

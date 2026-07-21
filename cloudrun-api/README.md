@@ -40,10 +40,12 @@ npm --prefix cloudrun-api start
 | `DATABASE_SSL_MODE` | `require` | `disable` is accepted only for a loopback database |
 | `DATABASE_MAX_CONNECTIONS` | `5` | Positive integer capped at five |
 | `SUPABASE_URL` | required | HTTPS, except for local loopback development |
+| `SUPABASE_INTERNAL_URL` | verified local only | Internal Supabase Kong origin; public issuer/storage links remain loopback |
 | `SUPABASE_PUBLISHABLE_KEY` | required | Current `sb_publishable_...` server-side Auth key |
 | `SUPABASE_SECRET_KEY` | required | Current `sb_secret_...`; trusted Storage administration only |
 | `SUPABASE_STORAGE_BUCKET` | `smart-job-company-files` | Exact canonical private bucket |
 | `SUPABASE_JWT_ISSUER` | `${SUPABASE_URL}/auth/v1` | Exact Supabase Auth issuer |
+| `SUPABASE_JWKS_URL` | derived | Separately routable Auth JWKS endpoint; internal HTTP is marker-gated locally |
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` | One to five comma-separated exact audiences |
 | `WEB_SESSION_ENCRYPTION_KEY_BASE64` | required | Canonical base64 for exactly 32 random bytes |
 | `WEB_SESSION_ENCRYPTION_KEY_VERSION` | required | Non-secret key-version label |
@@ -51,6 +53,9 @@ npm --prefix cloudrun-api start
 | `DOCUMENT_PREVIEW_TOPIC` | production required | Opaque preview task topic |
 | `DOCUMENT_GENERATE_TOPIC` | production required | Opaque generate task topic |
 | `EMAIL_DELIVERY_TOPIC` | production required | Opaque email delivery topic |
+| `PUBSUB_API_BASE_URL` | verified local only | Local adapter origin; production keeps Google Pub/Sub |
+| `GOOGLE_METADATA_ACCESS_TOKEN_URL` | verified local only | Local metadata-token adapter endpoint |
+| `LOCAL_INTERNAL_IDENTITY_TOKEN` | verified local only | Random local drain identity; never a production credential |
 | `INTERNAL_API_AUDIENCE` | paired | Exact API service origin for Google identity verification |
 | `INTERNAL_CALLER_SERVICE_ACCOUNTS` | paired | One to ten allowed Google service accounts |
 | `TAX_SUBMISSION_MODE` | `disabled` | `disabled`, `sandbox`, or `production`; launch stays disabled |

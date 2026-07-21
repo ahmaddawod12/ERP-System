@@ -14,6 +14,7 @@ import {
 } from '@smart-job/db';
 import { getTargetMonth } from './archive-month';
 import { runUploadCleanupStartup } from './upload-cleanup';
+import { assertArchiverRuntimeConfig } from './local-platform';
 
 /**
  * Cloud Run Job: Firestore → Cloud Storage Archiver
@@ -113,6 +114,7 @@ console.error = (firstArg, ...restArgs) => writeStructuredLog('ERROR', 'cloudrun
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
+assertArchiverRuntimeConfig();
 const BUCKET_NAME = process.env.ARCHIVE_BUCKET;
 if (!BUCKET_NAME) {
   throw new Error('ARCHIVE_BUCKET environment variable is required');

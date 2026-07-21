@@ -86,6 +86,55 @@ test("runtime config accepts strict managed settings without exposing credential
   });
 });
 
+test("runtime config accepts marker-gated Compose endpoints and keeps tax disabled", () => {
+  const localEnvironment = {
+    ...baseEnvironment,
+    NODE_ENV: "production",
+    SMART_JOB_DEPLOYMENT_ENV: "local",
+    SMART_JOB_LOCAL_PLATFORM: "true",
+    LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
+    DATABASE_URL:
+      "postgresql://smart_job_api:local-only@supabase_db_smart-job-erp-local:5432/postgres",
+    SUPABASE_INTERNAL_URL: "http://supabase_kong_smart-job-erp-local:8000",
+    SUPABASE_JWKS_URL:
+      "http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json",
+    DOCUMENT_PUBSUB_PROJECT_ID: "smart-job-local",
+    DOCUMENT_PREVIEW_TOPIC: "document-preview",
+    DOCUMENT_GENERATE_TOPIC: "document-generate",
+    EMAIL_DELIVERY_TOPIC: "document-email",
+    PUBSUB_API_BASE_URL: "http://local-platform-adapter:8090",
+    GOOGLE_METADATA_ACCESS_TOKEN_URL:
+      "http://local-platform-adapter:8090/computeMetadata/v1/instance/service-accounts/default/token",
+    LOCAL_INTERNAL_IDENTITY_TOKEN: "local_identity_012345678901234567890123456789",
+    TAX_SUBMISSION_MODE: "disabled",
+  };
+  const config = loadApiRuntimeConfig(localEnvironment, {
+    readLocalMarker: () => "smart-job-erp-local-platform-v1",
+  });
+
+  assert.equal(config.database.ssl, false);
+  assert.equal(
+    config.supabaseAuth.baseUrl.href,
+    "http://supabase_kong_smart-job-erp-local:8000/",
+  );
+  assert.equal(config.supabaseStorage.publicBaseUrl?.href, "http://127.0.0.1:55321/");
+  assert.equal(config.documentDispatch?.apiBaseUrl?.href, "http://local-platform-adapter:8090/");
+  assert.equal(config.localIdentityToken, localEnvironment.LOCAL_INTERNAL_IDENTITY_TOKEN);
+  assert.deepEqual(config.taxSubmission, { mode: "disabled" });
+
+  assert.throws(
+    () => loadApiRuntimeConfig(localEnvironment, { readLocalMarker: () => "wrong" }),
+    /mounted marker/,
+  );
+  assert.throws(
+    () => loadApiRuntimeConfig(
+      { ...localEnvironment, TAX_SUBMISSION_MODE: "sandbox" },
+      { readLocalMarker: () => "smart-job-erp-local-platform-v1" },
+    ),
+    /must remain disabled/,
+  );
+});
+
 test("runtime config fails closed for missing, oversized, and insecure settings", () => {
   const invalidEnvironments: NodeJS.ProcessEnv[] = [
     {},

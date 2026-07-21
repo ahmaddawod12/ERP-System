@@ -86,6 +86,51 @@ test('storage configuration requires a server-only secret key and canonical priv
   }), /smart-job-company-files/);
 });
 
+test('marker-gated local storage uses internal transport and public loopback signed URLs', async () => {
+  const internalBaseUrl = new URL('http://supabase_kong_smart-job-erp-local:8000/');
+  const publicBaseUrl = new URL('http://127.0.0.1:55321/');
+  const config = resolveCompanyFileStorageConfig({
+    SMART_JOB_DEPLOYMENT_ENV: 'local',
+    SMART_JOB_LOCAL_PLATFORM: 'true',
+    LOCAL_PLATFORM_MARKER_PATH: '/run/secrets/smart_job_local_platform',
+    SUPABASE_URL: internalBaseUrl.href,
+    SUPABASE_PUBLIC_URL: publicBaseUrl.href,
+    SUPABASE_SECRET_KEY: SECRET_KEY,
+    SUPABASE_STORAGE_BUCKET: COMPANY_FILES_BUCKET,
+  }, () => 'smart-job-erp-local-platform-v1');
+  assert.equal(config.baseUrl.href, internalBaseUrl.href);
+  assert.equal(config.publicBaseUrl.href, publicBaseUrl.href);
+
+  const objectPath = buildGeneratedDocumentObjectPath(COMPANY_ID, DOCUMENT_ID);
+  const internalSignedUrl = `${internalBaseUrl.href}storage/v1/object/sign/${COMPANY_FILES_BUCKET}/${objectPath}?token=local`;
+  const storage = createCompanyFileStorage({
+    ...config,
+    client: {
+      storage: {
+        from() {
+          return {
+            async createSignedUrl() {
+              return { data: { signedUrl: internalSignedUrl }, error: null };
+            },
+          };
+        },
+      },
+    },
+  });
+  assert.equal(
+    await storage.createSignedDownloadUrl(objectPath, 900),
+    internalSignedUrl.replace(internalBaseUrl.origin, publicBaseUrl.origin),
+  );
+  assert.throws(() => resolveCompanyFileStorageConfig({
+    SMART_JOB_DEPLOYMENT_ENV: 'local',
+    SMART_JOB_LOCAL_PLATFORM: 'true',
+    LOCAL_PLATFORM_MARKER_PATH: '/run/secrets/smart_job_local_platform',
+    SUPABASE_URL: internalBaseUrl.href,
+    SUPABASE_PUBLIC_URL: publicBaseUrl.href,
+    SUPABASE_SECRET_KEY: SECRET_KEY,
+  }, () => 'wrong'), /mounted local-platform marker/);
+});
+
 test('object paths are tenant-UUID scoped and preview task IDs are hashed', () => {
   assert.equal(
     buildGeneratedDocumentObjectPath(COMPANY_ID, DOCUMENT_ID),

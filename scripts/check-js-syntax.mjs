@@ -24,7 +24,7 @@ function walk(target) {
     }
     return;
   }
-  if (stat.isFile() && resolved.endsWith('.js')) {
+  if (stat.isFile() && (resolved.endsWith('.js') || resolved.endsWith('.mjs'))) {
     files.push(resolved);
   }
 }

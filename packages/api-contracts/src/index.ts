@@ -1365,6 +1365,38 @@ export type DocumentEmailRetryResult = z.infer<typeof DocumentEmailRetryResultSc
 export type TaxInvoiceAccepted = z.infer<typeof TaxInvoiceAcceptedSchema>;
 export type TaxInvoiceCreateRequest = z.infer<typeof TaxInvoiceCreateRequestSchema>;
 
+export const TaxInvoicePreviewRequestSchema = DocumentDataInputSchema.superRefine(
+  (request, context) => {
+    request.items.forEach((item, index) => {
+      if (item.price <= 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["items", index, "price"],
+          message: "Tax-invoice item prices must be positive.",
+        });
+      }
+    });
+  },
+);
+
+export type TaxInvoicePreviewRequest = z.infer<typeof TaxInvoicePreviewRequestSchema>;
+
+export const ArchiveContentQuerySchema = z.object({
+  year: z.coerce.number().int().min(2000).max(9999),
+  month: z.coerce.number().int().min(1).max(12),
+  dataType: z.enum(["documents", "finishedJobs"]),
+}).strict();
+
+export const ArchiveContentResponseSchema = z.object({
+  year: z.number().int().min(2000).max(9999),
+  month: z.number().int().min(1).max(12),
+  dataType: z.string().min(1).max(32),
+  items: z.array(z.record(z.string(), z.unknown())),
+}).strict();
+
+export type ArchiveContentQuery = z.infer<typeof ArchiveContentQuerySchema>;
+export type ArchiveContentResponse = z.infer<typeof ArchiveContentResponseSchema>;
+
 // Authenticated viewer push-token mutations. Tokens are write-only API data and
 // intentionally have no response schema field.
 export const PushTokenPlatformSchema = z.enum(["ios", "android"]);

@@ -6,6 +6,7 @@ import type {
 import type { ApiDatabaseRuntime } from "./database/runtime.js";
 import type { WebSessionService } from "./web-sessions/service.js";
 import type { CompanyFileStorage } from "./storage/company-files.js";
+import type { ArchiveStorage } from "./archives/archive-storage.js";
 import type { DocumentTaskPublisher } from "./documents/dispatch.js";
 import type { EmailDeliveryPublisher } from "./documents/email-dispatch.js";
 import type { TaxSubmissionMode } from "@smart-job/api-contracts";
@@ -18,6 +19,7 @@ export interface ApiServices {
   readonly webSessions: WebSessionService;
   readonly storage?: CompanyFileStorage;
   readonly storageBucketId?: string;
+  readonly archiveStorage?: ArchiveStorage;
   readonly documentTaskPublisher?: DocumentTaskPublisher;
   readonly emailDeliveryPublisher?: EmailDeliveryPublisher;
   readonly internalIdentityVerifier?: GoogleServiceIdentityVerifier;

@@ -6,6 +6,8 @@ const rootDir = dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = dirname(rootDir);
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  outputFileTracingRoot: monorepoRoot,
   poweredByHeader: false,
   transpilePackages: ["@smart-job/contracts", "@smart-job/api-contracts"],
   turbopack: {

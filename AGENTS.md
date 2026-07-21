@@ -236,8 +236,6 @@ Smart-Job ERP — multi-tenant field-service platform.
 |---|---|---|
 | `website/` | Next.js 16 App Router | Node 22 |
 | `phone_app/` | Expo 57 / React Native 0.86 | Node 22 / EAS |
-| `supabase/functions/` | Edge Function HTTP entrypoints | Deno |
-| `supabase/handlers/` | Domain logic called by edge functions | Deno |
 | `cloudrun-api/` | Modular API with dual auth and initial domain routes | Node 22 |
 | `cloudrun-tax/` | Stateless Israel tax gateway foundation | Node 22 |
 | `cloudrun-pdf/` | PDF generation service | Node 22 |
@@ -336,15 +334,6 @@ npm --prefix cloudrun-email run test
 npm --prefix cloudrun-archiver run test
 ```
 
-### supabase/ (Deno — no npm scripts)
-```bash
-# Bash: enable globstar so nested function paths (e.g., tax/callback) are included
-shopt -s globstar
-deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
-deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrations" supabase/handlers/handlers-hardening.test.ts
-supabase functions serve mutation-gateway --env-file supabase/.env
-```
-
 ### Isolated local Supabase stack
 
 The repository-owned Docker Desktop stack uses `project_id = "smart-job-erp-local"`
@@ -369,10 +358,32 @@ Core ports are API `55321`, PostgreSQL `55322`, Studio `55323`, Inbucket
 `55324`, and Edge inspector `55883`; the full allocation is documented in
 `SETUP.md`. Never use `supabase stop --all` for this project.
 
+### Complete local platform (recommended)
+
+After starting Docker Desktop, use the repository lifecycle script instead of
+manually combining Supabase and Compose:
+
+```powershell
+.\scripts\local-platform.ps1 doctor
+.\scripts\local-platform.ps1 start
+.\scripts\local-platform.ps1 status
+.\scripts\local-platform.ps1 stop
+.\scripts\local-platform.ps1 reset -Yes
+```
+
+`compose.local.yml` and the Supabase CLI stack share the labeled external
+`smart-job-local` network. Generated role passwords and emulator tokens are
+stored only in ignored `local-platform/.env.generated`. Do not hand-set the
+`SMART_JOB_LOCAL_PLATFORM*` flags: services require the mounted repository
+marker, the website derives its verification signal in its entrypoint, and tax
+must remain disabled. The optional `archive` command uses a temporary guarded
+local admin compatibility mode pending the Batch 5 leased-archive rewrite.
+
 ### Repo-level CI scripts
 ```bash
 node scripts/check-no-ts-nocheck.mjs   # blocks CI; run before pushing
-node scripts/check-js-syntax.mjs scripts  # quick syntax sweep of repo scripts
+node scripts/check-js-syntax.mjs scripts  # checks .js and .mjs repo scripts
+node scripts/check-local-platform.mjs  # static Compose/container safeguards
 node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
 ```
 
@@ -381,6 +392,10 @@ node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
 ## CI (`.github/workflows/ci.yml`)
 
 All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group with `cancel-in-progress: true` avoids redundant runs.
+
+The `repo_guards` job validates the local topology, and
+`local_platform_adapter` runs the durable adapter unit tests. Image CI builds
+both the standalone website and local adapter in addition to Cloud Run images.
 
 - `repo_guards` → `check-no-ts-nocheck.mjs` + `check-js-syntax.mjs scripts`
 - `packages_contracts` → `npm ci` → typecheck → build
@@ -393,14 +408,13 @@ All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group 
 - `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
 - `cloudrun_api` → builds all three local packages → `npm ci` → typecheck → test
 - `cloudrun_tax` → builds contracts packages → `npm ci` → typecheck → test
-- `supabase_edge` → `deno check` on all edge `.ts` files + hardening tests
 - `perf_budget` → `continue-on-error: true` (never blocks)
 - `cloudrun_images` → Docker build (no push)
 
-Edge deploy workflow has been removed. The remaining Edge functions under
-`supabase/functions/` and `supabase/handlers/` are still called by mobile
-screens that have not yet been cut over to the Cloud API. The `supabase_edge`
-CI job continues to type-check them with `deno check`.
+The Edge deploy workflow has been removed. All Edge functions and handlers
+under `supabase/functions/` and `supabase/handlers/` have been deleted.
+Mobile and website callers now use the Cloud Run API exclusively. Firebase
+Messaging and Storage remain for push notifications and file uploads.
 
 ---
 
@@ -509,7 +523,6 @@ DOCUMENTS_BUCKET=smart-job-company-files
 EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 EXPO_PUBLIC_BACKEND_API_BASE_URL=
-EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=   # transitional legacy Edge operations
 ```
 Also requires: `phone_app/google-services.json`, `phone_app/GoogleService-Info.plist`
 
@@ -756,12 +769,6 @@ the company/profile/subscription/sync/membership state atomically.
 - JSON parsing: `safeJsonParse()` — **never raw `JSON.parse()`** in mobile modules
 - Business registration is website-only — no registration routes in mobile
 
-### supabase/ (Deno)
-- Type-check with `deno check`, not `tsc`
-- Keep `deno.json` import mappings in sync with any npm packages used by edge code
-- Node 22 native `fetch()` is available — do not add `node-fetch` or polyfills
-- `--no-verify-jwt` must never appear in shared or production configs
-
 ### Documentation upkeep
 - If any code behavior, runtime contract, environment requirement, workflow, or architecture changes, review the affected `.md` files in the same task and update them when needed.
 - Prefer updating existing markdown files over creating new ones.
@@ -805,10 +812,9 @@ the company/profile/subscription/sync/membership state atomically.
   integration-test job, and E2E test infrastructure (Playwright + Maestro) are
   implemented. Website Firebase/legacy-auth infrastructure has been removed.
   Mobile Firestore/App Check have been removed; Firebase Messaging and Storage
-  remain for push notifications and file uploads. Remaining mobile Edge caller
-  cutover, and final Edge/Firebase directory deletion still
-  require their implementation-time approvals. The Cloud Run deploy workflow
-  includes custom API DNS mapping for production via `API_CUSTOM_DOMAIN`.
+  remain for push notifications and file uploads. Mobile Edge caller cutover
+  is complete and all Edge directories have been deleted. The Cloud Run deploy
+  workflow includes custom API DNS mapping for production via `API_CUSTOM_DOMAIN`.
 
 ---
 

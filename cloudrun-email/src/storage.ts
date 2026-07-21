@@ -40,6 +40,9 @@ export async function createDocumentDownloadUrl(
     if (signedUrl.origin !== config.baseUrl.origin || !signedUrl.pathname.startsWith("/storage/v1/object/sign/")) {
       throw new Error("Storage signing returned an unexpected URL");
     }
+    if (config.publicBaseUrl !== undefined) {
+      return new URL(`${signedUrl.pathname}${signedUrl.search}`, config.publicBaseUrl).href;
+    }
     return signedUrl.href;
   } finally {
     clearTimeout(timeout);

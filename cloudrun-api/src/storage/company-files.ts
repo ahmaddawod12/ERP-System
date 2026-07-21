@@ -33,10 +33,31 @@ export interface CompanyFileStorage {
 
 export interface CreateCompanyFileStorageOptions {
   readonly baseUrl: URL;
+  readonly publicBaseUrl?: URL;
   readonly secretKey: string;
   readonly bucketId: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly client?: SupabaseClient;
+}
+
+function validatePublicBaseUrl(value: URL | undefined): void {
+  if (value === undefined) return;
+  const loopback = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+  if (
+    (value.protocol !== "https:" && !(value.protocol === "http:" && loopback.has(value.hostname)))
+    || value.username
+    || value.password
+    || value.pathname !== "/"
+    || value.search
+    || value.hash
+  ) {
+    throw new TypeError("The public Supabase Storage URL is invalid");
+  }
+}
+
+function externalizeSignedUrl(url: URL, publicBaseUrl: URL | undefined): string {
+  if (publicBaseUrl === undefined) return url.href;
+  return new URL(`${url.pathname}${url.search}`, publicBaseUrl).href;
 }
 
 function storageUnavailable(cause: unknown): AppError {
@@ -173,6 +194,7 @@ export function createCompanyFileStorage(
   if (!/^sb_secret_[A-Za-z0-9_-]+$/.test(options.secretKey)) {
     throw new TypeError("A Supabase secret key is required for company storage");
   }
+  validatePublicBaseUrl(options.publicBaseUrl);
   const fetchImplementation = options.fetch ?? globalThis.fetch;
   const client = options.client ?? createClient(
     options.baseUrl.href,
@@ -313,7 +335,7 @@ export function createCompanyFileStorage(
         }
         return SignedUploadTargetSchema.parse({
           ...attachment,
-          uploadUrl: uploadUrl.href,
+          uploadUrl: externalizeSignedUrl(uploadUrl, options.publicBaseUrl),
           requiredHeaders: {
             "cache-control": "max-age=3600",
             "content-type": attachment.mimeType,
@@ -362,7 +384,7 @@ export function createCompanyFileStorage(
       ) {
         throw storageUnavailable(new Error("Storage returned an invalid signed download URL"));
       }
-      return signedUrl.href;
+      return externalizeSignedUrl(signedUrl, options.publicBaseUrl);
     },
 
     async removeObjects(objectPaths) {

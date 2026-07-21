@@ -18,6 +18,37 @@ jobs:
           node-version: 22
       - run: node scripts/check-no-ts-nocheck.mjs
       - run: node scripts/check-js-syntax.mjs scripts
+      - run: node scripts/check-local-platform.mjs
+      - name: Validate local Compose topology
+        env:
+          LOCAL_ADAPTER_ACCESS_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          LOCAL_INTERNAL_IDENTITY_TOKEN: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          LOCAL_PUBSUB_VERIFICATION_TOKEN: cccccccccccccccccccccccccccccccc
+          LOCAL_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+          LOCAL_SUPABASE_SECRET_KEY: sb_secret_ci_placeholder
+          LOCAL_API_DB_PASSWORD: api-ci-password
+          LOCAL_PDF_DB_PASSWORD: pdf-ci-password
+          LOCAL_EMAIL_DB_PASSWORD: email-ci-password
+          LOCAL_ARCHIVER_DB_PASSWORD: archiver-ci-password
+          LOCAL_WEB_SESSION_ENCRYPTION_KEY_BASE64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          LOCAL_WEBSITE_SESSION_SECRET: website-ci-secret-01234567890123456789
+          LOCAL_CONTACT_CHALLENGE_SECRET: contact-ci-secret-01234567890123456789
+        run: docker compose -f compose.local.yml config --quiet
+
+  local_platform_adapter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: local-platform/adapter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: local-platform/adapter/package-lock.json
+      - run: npm ci
+      - run: npm test
 
   packages_contracts:
     runs-on: ubuntu-latest
@@ -240,23 +271,6 @@ jobs:
       - run: npm --prefix cloudrun-tax run typecheck
       - run: npm --prefix cloudrun-tax test
 
-  supabase_edge:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - name: Type-check Supabase edge runtime
-        run: |
-          shopt -s globstar
-          deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
-      - name: Run Supabase hardening tests
-        run: |
-          deno test --config deno.json \
-            --allow-read="$GITHUB_WORKSPACE/supabase,$GITHUB_WORKSPACE/packages/db/migrations" \
-            supabase/handlers/handlers-hardening.test.ts
-
   perf_budget:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -272,6 +286,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build website image
+        run: docker build -f website/Dockerfile -t smart-job-website:ci .
+      - name: Build local platform adapter image
+        run: docker build -f local-platform/adapter/Dockerfile -t smart-job-local-adapter:ci .
       - name: Build main API image
         run: docker build -f cloudrun-api/Dockerfile -t smart-job-cloudrun-api:ci .
       - name: Build tax gateway image

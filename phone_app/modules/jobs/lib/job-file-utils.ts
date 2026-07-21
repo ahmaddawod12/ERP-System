@@ -1,4 +1,4 @@
-import { functions, httpsCallable, storage as fbStorage } from '../../../firebase';
+import { storage as fbStorage } from '../../../firebase';
 
 export interface JobFileRef {
   storagePath?: string;
@@ -107,20 +107,17 @@ export function getImmediateJobFileUri(file: unknown): string | null {
 }
 
 export async function getJobFileDownloadUrl(
-  companyId: string,
-  jobId: string,
+  _companyId: string,
+  _jobId: string,
   storagePath: string,
 ): Promise<string> {
-  const callable = httpsCallable(functions, 'createJobFileDownloadUrlV1');
-  const result = await callable({ companyId, jobId, storagePath }) as {
-    data?: { success?: boolean; downloadURL?: string };
-  };
-
-  if (!result?.data?.success || !result.data.downloadURL) {
+  const normalizedPath = normalizeStoragePath(storagePath);
+  if (!normalizedPath) {
     throw new Error('Job file download URL is unavailable');
   }
 
-  return result.data.downloadURL;
+  const url = await fbStorage().ref(normalizedPath).getDownloadURL();
+  return String(url);
 }
 
 export async function resolveJobFileUri(

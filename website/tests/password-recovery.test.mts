@@ -49,6 +49,7 @@ test("recovery CSRF comparison and host cookie names fail closed", () => {
   assert.equal(recoveryCsrfMatches(null, csrf), false);
   assert.equal(recoveryCookieName("production"), "__Host-sj_recovery");
   assert.equal(recoveryCookieName("development"), "sj_recovery");
+  assert.equal(recoveryCookieName("production", true), "sj_recovery");
 });
 
 test("the reset browser never parses or submits Supabase recovery credentials", async () => {

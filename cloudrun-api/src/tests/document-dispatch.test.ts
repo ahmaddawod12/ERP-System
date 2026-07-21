@@ -129,6 +129,37 @@ test("Pub/Sub publisher uses Cloud Run metadata identity and caches its token", 
   assert.deepEqual(body.messages[0].attributes, { taskType: "preview" });
 });
 
+test("Pub/Sub publisher can target only an explicitly supplied local adapter", async () => {
+  const requests: string[] = [];
+  const publisher = createPubSubDocumentTaskPublisher({
+    projectId: "smart-job-local",
+    previewTopic: "document-preview",
+    generateTopic: "document-generate",
+  }, {
+    apiBaseUrl: new URL("http://local-platform-adapter:8090/"),
+    metadataTokenUrl:
+      "http://local-platform-adapter:8090/computeMetadata/v1/instance/service-accounts/default/token",
+    fetchImplementation: async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.includes("computeMetadata")) {
+        return new Response(JSON.stringify({
+          access_token: "local-adapter-access-token-1234567890",
+          expires_in: 3_600,
+          token_type: "Bearer",
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ messageIds: ["local-message"] }), { status: 200 });
+    },
+  });
+
+  await publisher.publish("preview", { taskId: "preview-task" });
+  assert.equal(
+    requests[1],
+    "http://local-platform-adapter:8090/v1/projects/smart-job-local/topics/document-preview:publish",
+  );
+});
+
 test("internal drain requires service identity before claiming bounded work", async (context) => {
   const serviceContextId = "6359f14e-dae2-5f57-87b9-82fb2d34fd47";
   let verifiedHeader = "";

@@ -1,0 +1,327 @@
+name: smart-job-local-platform
+
+x-local-environment: &local-environment
+  SMART_JOB_DEPLOYMENT_ENV: local
+  SMART_JOB_LOCAL_PLATFORM: "true"
+  LOCAL_PLATFORM_MARKER_PATH: /run/secrets/smart_job_local_platform
+
+x-local-service: &local-service
+  restart: unless-stopped
+  networks:
+    - smart-job-local
+  secrets:
+    - smart_job_local_platform
+
+services:
+  gcs-emulator:
+    image: fsouza/fake-gcs-server:1.55.0
+    restart: unless-stopped
+    environment:
+      FAKE_GCS_SCHEME: http
+      FAKE_GCS_PORT: "4443"
+      FAKE_GCS_BACKEND: filesystem
+      FAKE_GCS_FILESYSTEM_ROOT: /data
+      FAKE_GCS_EXTERNAL_URL: http://127.0.0.1:${LOCAL_GCS_PORT:-58080}
+    ports:
+      - 127.0.0.1:${LOCAL_GCS_PORT:-58080}:4443
+    volumes:
+      - local-gcs-data:/data
+    networks:
+      - smart-job-local
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4443/storage/v1/b?project=smart-job-local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.29.7
+    restart: unless-stopped
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - 127.0.0.1:${LOCAL_MAILPIT_PORT:-58025}:8025
+    volumes:
+      - local-mailpit-data:/data
+    networks:
+      - smart-job-local
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  local-platform-adapter:
+    <<: *local-service
+    build:
+      context: .
+      dockerfile: local-platform/adapter/Dockerfile
+    environment:
+      <<: *local-environment
+      HOST: 0.0.0.0
+      PORT: "8090"
+      LOCAL_ADAPTER_DATA_DIR: /data
+      LOCAL_ADAPTER_ACCESS_TOKEN: ${LOCAL_ADAPTER_ACCESS_TOKEN:?run the local-platform start script}
+      LOCAL_IDENTITY_TOKEN: ${LOCAL_INTERNAL_IDENTITY_TOKEN:?run the local-platform start script}
+      PUBSUB_VERIFICATION_TOKEN: ${LOCAL_PUBSUB_VERIFICATION_TOKEN:?run the local-platform start script}
+      LOCAL_PUBSUB_PROJECT_ID: smart-job-local
+      LOCAL_PREVIEW_TOPIC: document-preview
+      LOCAL_GENERATE_TOPIC: document-generate
+      LOCAL_EMAIL_TOPIC: document-email
+      LOCAL_PREVIEW_PUSH_URL: http://cloudrun-pdf:8080/preview
+      LOCAL_GENERATE_PUSH_URL: http://cloudrun-pdf:8080/generate
+      LOCAL_EMAIL_PUSH_URL: http://cloudrun-email:8080/deliver
+      LOCAL_DOCUMENT_DRAIN_URL: http://cloudrun-api:8080/internal/v1/document-dispatch/drain
+      LOCAL_EMAIL_DRAIN_URL: http://cloudrun-api:8080/internal/v1/email-dispatch/drain
+      LOCAL_DRAIN_INTERVAL_MS: "2000"
+      LOCAL_GCS_URL: http://gcs-emulator:4443
+      LOCAL_GCS_BUCKET: smart-job-archives-local
+      LOCAL_MAILPIT_URL: http://mailpit:8025
+    ports:
+      - 127.0.0.1:${LOCAL_ADAPTER_PORT:-58084}:8090
+    volumes:
+      - local-adapter-data:/data
+    depends_on:
+      gcs-emulator:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/readyz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  cloudrun-api:
+    <<: *local-service
+    build:
+      context: .
+      dockerfile: cloudrun-api/Dockerfile
+    environment:
+      <<: *local-environment
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8080"
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://smart_job_api:${LOCAL_API_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_SSL_MODE: disable
+      DATABASE_MAX_CONNECTIONS: "5"
+      SUPABASE_URL: http://127.0.0.1:55321
+      SUPABASE_INTERNAL_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_PUBLISHABLE_KEY: ${LOCAL_SUPABASE_PUBLISHABLE_KEY:?run the local-platform start script}
+      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
+      SUPABASE_STORAGE_BUCKET: smart-job-company-files
+      SUPABASE_JWT_ISSUER: http://127.0.0.1:55321/auth/v1
+      SUPABASE_JWKS_URL: http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json
+      SUPABASE_JWT_AUDIENCE: authenticated
+      WEB_SESSION_ENCRYPTION_KEY_BASE64: ${LOCAL_WEB_SESSION_ENCRYPTION_KEY_BASE64:?run the local-platform start script}
+      WEB_SESSION_ENCRYPTION_KEY_VERSION: local-v1
+      DOCUMENT_PUBSUB_PROJECT_ID: smart-job-local
+      DOCUMENT_PREVIEW_TOPIC: document-preview
+      DOCUMENT_GENERATE_TOPIC: document-generate
+      EMAIL_DELIVERY_TOPIC: document-email
+      PUBSUB_API_BASE_URL: http://local-platform-adapter:8090
+      GOOGLE_METADATA_ACCESS_TOKEN_URL: http://local-platform-adapter:8090/computeMetadata/v1/instance/service-accounts/default/token
+      LOCAL_INTERNAL_IDENTITY_TOKEN: ${LOCAL_INTERNAL_IDENTITY_TOKEN:?run the local-platform start script}
+      LOCAL_INTERNAL_IDENTITY_EMAIL: local-platform@smart-job-local.iam.gserviceaccount.com
+      TAX_SUBMISSION_MODE: disabled
+    ports:
+      - 127.0.0.1:${LOCAL_API_PORT:-58081}:8080
+    depends_on:
+      local-platform-adapter:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 4s
+      start_period: 10s
+      retries: 30
+
+  cloudrun-tax:
+    <<: *local-service
+    build:
+      context: .
+      dockerfile: cloudrun-tax/Dockerfile
+    environment:
+      <<: *local-environment
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8080"
+      LOG_LEVEL: info
+      TAX_SUBMISSION_MODE: disabled
+    ports:
+      - 127.0.0.1:${LOCAL_TAX_PORT:-58082}:8080
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  cloudrun-pdf:
+    <<: *local-service
+    build:
+      context: .
+      dockerfile: cloudrun-pdf/Dockerfile
+    environment:
+      <<: *local-environment
+      NODE_ENV: production
+      PORT: "8080"
+      SMART_JOB_PERSISTENCE_BACKEND: sql
+      DATABASE_URL: postgresql://smart_job_pdf:${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_SSL_MODE: disable
+      DATABASE_MAX_CONNECTIONS: "3"
+      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_PUBLIC_URL: http://127.0.0.1:55321
+      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
+      SUPABASE_STORAGE_BUCKET: smart-job-company-files
+      PUBSUB_VERIFICATION_TOKEN: ${LOCAL_PUBSUB_VERIFICATION_TOKEN:?run the local-platform start script}
+      MAX_CONCURRENT_TABS: "2"
+      MAX_TAB_WAITERS: "32"
+    ports:
+      - 127.0.0.1:${LOCAL_PDF_PORT:-58083}:8080
+    depends_on:
+      cloudrun-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 4s
+      start_period: 15s
+      retries: 18
+
+  cloudrun-email:
+    <<: *local-service
+    build:
+      context: .
+      dockerfile: cloudrun-email/Dockerfile
+    environment:
+      <<: *local-environment
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "8080"
+      DATABASE_URL: postgresql://smart_job_email:${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_SSL_MODE: disable
+      DATABASE_MAX_CONNECTIONS: "3"
+      PUBSUB_VERIFICATION_TOKEN: ${LOCAL_PUBSUB_VERIFICATION_TOKEN:?run the local-platform start script}
+      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_PUBLIC_URL: http://127.0.0.1:55321
+      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
+      SUPABASE_STORAGE_BUCKET: smart-job-company-files
+      AWS_REGION: eu-central-1
+      AWS_SES_ENDPOINT: http://local-platform-adapter:8090/ses
+      AWS_ACCESS_KEY_ID: local-access-key
+      AWS_SECRET_ACCESS_KEY: local-secret-access-key
+      SES_FROM_EMAIL: documents@local.smart-job.invalid
+      SES_FROM_NAME: Smart-Job Local
+    ports:
+      - 127.0.0.1:${LOCAL_EMAIL_PORT:-58085}:8080
+    depends_on:
+      cloudrun-api:
+        condition: service_healthy
+      local-platform-adapter:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+
+  website:
+    <<: *local-service
+    build:
+      context: .
+      dockerfile: website/Dockerfile
+    environment:
+      <<: *local-environment
+      NODE_ENV: production
+      PORT: "3000"
+      BACKEND_API_BASE_URL: http://cloudrun-api:8080
+      BACKEND_API_TIMEOUT_MS: "12000"
+      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_PUBLISHABLE_KEY: ${LOCAL_SUPABASE_PUBLISHABLE_KEY:?run the local-platform start script}
+      WEBSITE_ORIGIN: http://127.0.0.1:${LOCAL_WEBSITE_PORT:-3000}
+      WEBSITE_SESSION_SECRET: ${LOCAL_WEBSITE_SESSION_SECRET:?run the local-platform start script}
+      CONTACT_CHALLENGE_SECRET: ${LOCAL_CONTACT_CHALLENGE_SECRET:?run the local-platform start script}
+    ports:
+      - 127.0.0.1:${LOCAL_WEBSITE_PORT:-3000}:3000
+    depends_on:
+      cloudrun-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/readyz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 18
+
+  db-role-bootstrap:
+    image: postgres:17-alpine
+    profiles: ["bootstrap"]
+    networks:
+      - smart-job-local
+    environment:
+      PGHOST: supabase_db_smart-job-erp-local
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${LOCAL_SUPABASE_DB_PASSWORD:-postgres}
+      LOCAL_API_DB_PASSWORD: ${LOCAL_API_DB_PASSWORD:?run the local-platform start script}
+      LOCAL_PDF_DB_PASSWORD: ${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}
+      LOCAL_EMAIL_DB_PASSWORD: ${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}
+      LOCAL_ARCHIVER_DB_PASSWORD: ${LOCAL_ARCHIVER_DB_PASSWORD:?run the local-platform start script}
+    volumes:
+      - ./local-platform/db/bootstrap-roles.sql:/bootstrap/bootstrap-roles.sql:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        exec psql
+        -v ON_ERROR_STOP=1
+        -v api_password="$$LOCAL_API_DB_PASSWORD"
+        -v pdf_password="$$LOCAL_PDF_DB_PASSWORD"
+        -v email_password="$$LOCAL_EMAIL_DB_PASSWORD"
+        -v archiver_password="$$LOCAL_ARCHIVER_DB_PASSWORD"
+        -f /bootstrap/bootstrap-roles.sql
+
+  cloudrun-archiver:
+    build:
+      context: .
+      dockerfile: cloudrun-archiver/Dockerfile
+    profiles: ["jobs"]
+    networks:
+      - smart-job-local
+    secrets:
+      - smart_job_local_platform
+    environment:
+      <<: *local-environment
+      NODE_ENV: production
+      ALLOW_LOCAL_ARCHIVER_ADMIN: "true"
+      SMART_JOB_PERSISTENCE_BACKEND: sql
+      DATABASE_URL: postgresql://postgres:${LOCAL_SUPABASE_DB_PASSWORD:-postgres}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_SSL_MODE: disable
+      DATABASE_MAX_CONNECTIONS: "1"
+      STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
+      ARCHIVE_BUCKET: smart-job-archives-local
+      ARCHIVER_QUERY_PAGE_SIZE: "500"
+      ARCHIVER_COMPANY_CONCURRENCY: "1"
+      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
+    depends_on:
+      local-platform-adapter:
+        condition: service_healthy
+
+secrets:
+  smart_job_local_platform:
+    file: ./local-platform/marker
+
+volumes:
+  local-adapter-data:
+  local-gcs-data:
+  local-mailpit-data:
+
+networks:
+  smart-job-local:
+    name: ${SMART_JOB_LOCAL_NETWORK:-smart-job-local}
+    external: true

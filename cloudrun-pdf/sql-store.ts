@@ -1,5 +1,10 @@
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 import { getSqlConnectionString, isSqlPersistenceEnabledForCloudRun } from './persistence';
+import {
+  hasLocalPlatformOverrides,
+  isVerifiedLocalPlatform,
+  type LocalMarkerReader,
+} from './local-platform';
 
 let pool: Pool | null = null;
 
@@ -50,12 +55,19 @@ function databaseMaxConnections(env: NodeJS.ProcessEnv): number {
   return Number(raw);
 }
 
-export function resolveSqlPoolConfig(env: NodeJS.ProcessEnv = process.env) {
+export function resolveSqlPoolConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  readMarker?: LocalMarkerReader,
+) {
   const connectionString = getSqlConnectionString(env);
   if (!connectionString) {
     throw new Error('SQL persistence is enabled but no database connection string is configured');
   }
   const databaseUrl = new URL(connectionString);
+  const verifiedLocalPlatform = isVerifiedLocalPlatform(env, readMarker);
+  if (hasLocalPlatformOverrides(env) && !verifiedLocalPlatform) {
+    throw new Error('Local database overrides require the mounted local-platform marker');
+  }
   if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) {
     throw new Error('DATABASE_URL must use postgres:// or postgresql://');
   }
@@ -70,7 +82,10 @@ export function resolveSqlPoolConfig(env: NodeJS.ProcessEnv = process.env) {
   if (sslMode !== 'disable' && sslMode !== 'require') {
     throw new Error('DATABASE_SSL_MODE must be disable or require');
   }
-  if (sslMode === 'disable' && !isLoopback(databaseUrl.hostname)) {
+  const isLocalPlatformDatabase = verifiedLocalPlatform
+    && databaseUrl.hostname === 'supabase_db_smart-job-erp-local'
+    && (databaseUrl.port === '5432' || databaseUrl.port === '');
+  if (sslMode === 'disable' && !isLoopback(databaseUrl.hostname) && !isLocalPlatformDatabase) {
     throw new Error('DATABASE_SSL_MODE=disable is allowed only for a loopback database');
   }
   const ca = String(env.DATABASE_SSL_CA || '').replace(/\\n/g, '\n').trim();

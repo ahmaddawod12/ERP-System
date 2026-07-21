@@ -28,10 +28,10 @@ test('document task polling carries user and company scope to the Cloud API', ()
   assert.match(source, /uid,\s*companyId: resolvedCompanyId,\s*taskId: newTaskId/);
   assert.match(source, /createDocumentPreviewTask\(\{/);
   assert.match(source, /createDocumentGenerationTask\(\{/);
-  assert.match(source, /listenToTask\(result\.data\.taskId, 'preview', params\.companyId\)/);
   assert.match(source, /listenToTask\(accepted\.taskId, 'preview', companyId\)/);
   assert.match(source, /listenToTask\(accepted\.taskId, 'generate', companyId\)/);
-  assert.match(source, /if \(isTaxDocumentType\(params\.documentType\)\)/);
+  assert.doesNotMatch(source, /['"]publishPreviewTask['"]/);
   assert.doesNotMatch(source, /['"]publishGenerateTask['"]/);
+  assert.doesNotMatch(source, /httpsCallable/);
   assert.doesNotMatch(source, /readModelV1|callHttpFunction/);
 });

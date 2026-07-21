@@ -6,7 +6,12 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth, functions, httpsCallable } from '../../../firebase';
+import { auth } from '../../../firebase';
+import { randomUUID } from 'expo-crypto';
+import {
+  acceptJob as acceptJobApi,
+  updateJob as updateJobApi,
+} from '../lib/jobs-api';
 import {
   borderRadius,
   getColors,
@@ -338,15 +343,29 @@ export default function ManageJobs() {
         style: 'default',
         onPress: async () => {
           try {
-            const companyId = getCompanyId();
-            if (!companyId) {
-              alert.error('Error', 'Company ID not found in profile.');
+            const companyIdStr = getCompanyId();
+            const uid = getUid() || auth.currentUser?.uid;
+            if (!companyIdStr || !uid) {
+              alert.error('Error', 'Company ID or user not found.');
+              return;
+            }
+            const companyId = Number(companyIdStr);
+            if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+              alert.error('Error', 'Company ID is invalid.');
+              return;
+            }
+            if (!job.entityVersion) {
+              alert.error('Error', 'The job version is missing. Reload the list and try again.');
               return;
             }
 
-            const acceptJobFn = httpsCallable(functions, 'acceptJobV1');
-
-            await acceptJobFn({ companyId, jobId: job.id });
+            await acceptJobApi({
+              uid,
+              companyId,
+              jobId: String(job.id),
+              request: { entityVersion: job.entityVersion },
+              idempotencyKey: randomUUID(),
+            });
 
             const acceptedAt = new Date().toISOString();
 
@@ -354,7 +373,7 @@ export default function ManageJobs() {
               status: 'finished',
               finishedAt: job.finishedAt || acceptedAt,
               acceptedAt,
-              acceptedBy: getUid() || auth.currentUser?.uid,
+              acceptedBy: uid,
               updatedAt: acceptedAt,
               isCert: job.isCert === true,
             });
@@ -378,22 +397,35 @@ export default function ManageJobs() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const companyId = getCompanyId();
-            if (!companyId) {
-              alert.error('Error', 'Company ID not found in profile.');
+            const companyIdStr = getCompanyId();
+            const uid = getUid() || auth.currentUser?.uid;
+            if (!companyIdStr || !uid) {
+              alert.error('Error', 'Company ID or user not found.');
+              return;
+            }
+            const companyId = Number(companyIdStr);
+            if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+              alert.error('Error', 'Company ID is invalid.');
+              return;
+            }
+            if (!job.entityVersion) {
+              alert.error('Error', 'The job version is missing. Reload the list and try again.');
               return;
             }
 
-            const deniedBy = getUid() || auth.currentUser?.uid;
-            const payload = {
-              status: 'denied' as const,
-              deniedAt: new Date().toISOString(),
-              deniedBy,
-            };
+            await updateJobApi({
+              uid,
+              companyId,
+              jobId: String(job.id),
+              request: {
+                entityVersion: job.entityVersion,
+                status: 'denied',
+              },
+              idempotencyKey: randomUUID(),
+            });
 
-            const updateJobFn = httpsCallable(functions, 'updateJobV1');
-            await updateJobFn({ companyId, jobId: job.id, ...payload });
-            await updateJob(job.id, payload);
+            const deniedAt = new Date().toISOString();
+            await updateJob(job.id, { status: 'denied', deniedAt, updatedAt: deniedAt });
 
             setSelectedJobDetails(null);
             alert.success('Success', t.denySuccess);

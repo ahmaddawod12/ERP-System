@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
   createRemoteJWKSet,
   jwtVerify,
@@ -29,6 +29,11 @@ export interface CreateGoogleServiceIdentityVerifierOptions {
   readonly audience: string;
   readonly allowedServiceAccounts: readonly string[];
   readonly keyResolver?: JWTVerifyGetKey;
+}
+
+export interface CreateLocalServiceIdentityVerifierOptions {
+  readonly token: string;
+  readonly email?: string;
 }
 
 function invalidInternalIdentity(cause?: unknown): AppError {
@@ -89,6 +94,38 @@ export function createGoogleServiceIdentityVerifier(
         if (error instanceof AppError) throw error;
         throw invalidInternalIdentity(error);
       }
+    },
+  };
+}
+
+export function createLocalServiceIdentityVerifier(
+  options: CreateLocalServiceIdentityVerifierOptions,
+): GoogleServiceIdentityVerifier {
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(options.token)) {
+    throw new TypeError("The local identity token is invalid");
+  }
+  const expected = Buffer.from(options.token);
+  const email = (options.email ?? "local-platform@smart-job-local.iam.gserviceaccount.com")
+    .trim()
+    .toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.gserviceaccount\.com$/.test(email)) {
+    throw new TypeError("The local identity email is invalid");
+  }
+  const subject = "100000000000000000001";
+  return {
+    async verifyAuthorizationHeader(header): Promise<GoogleServiceIdentity> {
+      const prefix = "Bearer ";
+      const supplied = header?.startsWith(prefix)
+        ? Buffer.from(header.slice(prefix.length))
+        : Buffer.alloc(0);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+        throw invalidInternalIdentity();
+      }
+      return {
+        subject,
+        email,
+        contextUserId: serviceIdentityContextUserId(subject),
+      };
     },
   };
 }

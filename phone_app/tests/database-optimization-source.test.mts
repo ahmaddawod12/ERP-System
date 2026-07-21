@@ -7,21 +7,6 @@ function readRepoFile(...segments: string[]) {
   return fs.readFileSync(path.resolve(process.cwd(), '..', ...segments), 'utf8');
 }
 
-test('read model supports opt-in clients and inventory pagination', () => {
-  const readModel = readRepoFile('supabase', 'functions', 'read-model', 'index.ts');
-  const sharedData = readRepoFile('supabase', 'functions', 'read-model', 'kinds', 'shared-data.ts');
-  const schema = readRepoFile('website', 'src', 'lib', 'validation', 'schemas.ts');
-
-  assert.match(readModel, /handleClients[\s\S]*nextCursor/);
-  assert.match(readModel, /rpc\("get_clients_page"/);
-  assert.match(readModel, /parseNumberCursor\(body\.afterCursor\)/);
-  assert.match(sharedData, /getCompanyInventoryParts\(internalCompanyId: string, options: InventoryReadOptions = \{\}\)/);
-  assert.match(sharedData, /getUserInventoryParts\(internalCompanyId: string, targetUid: string, options: InventoryReadOptions = \{\}\)/);
-  assert.match(sharedData, /rpc\("get_company_inventory_page"/);
-  assert.match(sharedData, /rpc\("get_member_inventory_page"/);
-  assert.match(schema, /search: optionalText\(80\)/);
-});
-
 test('large mobile reads drain Cloud API pages', () => {
   const source = readRepoFile('phone_app', 'utils', 'read-model.ts');
 
@@ -34,16 +19,6 @@ test('mobile initial cache does not bootstrap broad job/document collections', (
 
   assert.doesNotMatch(fetchers, /readBootstrap\([^)]*,\s*true\s*\)/);
   assert.doesNotMatch(fetchers, /callHttpFunction/);
-});
-
-test('inventory and profile cache bumps use atomic sync RPC', () => {
-  const inventory = readRepoFile('supabase', 'handlers', 'inventory.ts');
-  const profile = readRepoFile('supabase', 'handlers', 'profile.ts');
-
-  assert.match(inventory, /bumpCompanySyncVersion\(companyId, "company_inventory_version", ctx\)/);
-  assert.match(profile, /bumpCompanySyncVersion\(/);
-  assert.doesNotMatch(inventory, /select\("company_inventory_version"\)/);
-  assert.doesNotMatch(profile, /\.from\("company_sync_state"\)[\s\S]*\.update\(/);
 });
 
 test('database optimization migration adds indexes, RLS, and RPC execute hardening', () => {
@@ -125,14 +100,4 @@ test('database profiling checklist covers hot read-model paths', () => {
   assert.match(profiling, /tax_invoice_reservations/);
   assert.match(profiling, /tax_oauth_callbacks/);
   assert.match(profiling, /support_conversations/);
-});
-
-test('client mutations preserve camelCase VAT number payloads', () => {
-  const clients = readRepoFile('supabase', 'handlers', 'clients.ts');
-
-  assert.match(clients, /String\(payload\.email\)\.trim\(\) !== ""/);
-  assert.match(clients, /payload\?\.vatNumber \?\? payload\?\.vat_number/);
-  assert.match(clients, /payload\?\.vatNumber !== undefined \|\| payload\?\.vat_number !== undefined/);
-  assert.match(clients, /vatNumber: insertedClient\.vat_number/);
-  assert.match(clients, /vatNumber: updatedClient\.vat_number/);
 });

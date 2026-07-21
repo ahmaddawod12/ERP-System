@@ -36,6 +36,7 @@ test("status-specific schemas cannot exchange success and failure envelopes", ()
   assert.equal(ApiFailureResponseSchema.safeParse(success).success, false);
 });
 
-test("migration-only Edge fixtures are excluded from the package root", () => {
+test("legacy characterization fixtures are not exported from the package root", () => {
   assert.equal("LEGACY_MUTATION_CHARACTERIZATION_FIXTURES" in rootExports, false);
+  assert.equal("LEGACY_DEFAULT_MUTATION_OPERATIONS" in rootExports, false);
 });

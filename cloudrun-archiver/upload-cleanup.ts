@@ -1,3 +1,5 @@
+import { isVerifiedLocalPlatform, type LocalMarkerReader } from './local-platform';
+
 const CANONICAL_BUCKET = 'smart-job-company-files';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
 const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`);
@@ -81,7 +83,7 @@ function isLoopbackHostname(hostname: string): boolean {
     || normalized === '::1';
 }
 
-function parseSupabaseOrigin(rawValue: string): string {
+function parseSupabaseOrigin(rawValue: string, verifiedLocalPlatform = false): string {
   let parsed: URL;
   try {
     parsed = new URL(rawValue);
@@ -94,7 +96,15 @@ function parseSupabaseOrigin(rawValue: string): string {
   if (parsed.pathname !== '/' && parsed.pathname !== '') {
     throw new Error('SUPABASE_URL must contain only the project origin');
   }
-  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname))) {
+  const localService = verifiedLocalPlatform
+    && parsed.protocol === 'http:'
+    && parsed.hostname === 'supabase_kong_smart-job-erp-local'
+    && parsed.port === '8000';
+  if (
+    parsed.protocol !== 'https:'
+    && !(parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname))
+    && !localService
+  ) {
     throw new Error('SUPABASE_URL must use HTTPS except for a loopback local stack');
   }
   return parsed.origin;
@@ -102,6 +112,7 @@ function parseSupabaseOrigin(rawValue: string): string {
 
 export function readUploadCleanupConfig(
   env: NodeJS.ProcessEnv = process.env,
+  options: { readonly readLocalMarker?: LocalMarkerReader } = {},
 ): UploadCleanupConfig | null {
   const rawUrl = String(env.SUPABASE_URL || '').trim();
   const secretKey = String(env.SUPABASE_SECRET_KEY || '').trim();
@@ -112,9 +123,16 @@ export function readUploadCleanupConfig(
   if (!secretKey.startsWith('sb_secret_')) {
     throw new Error('SUPABASE_SECRET_KEY must use the server-only sb_secret_ key format');
   }
+  const localFlagsPresent = env.SMART_JOB_DEPLOYMENT_ENV === 'local'
+    || env.SMART_JOB_LOCAL_PLATFORM !== undefined
+    || env.LOCAL_PLATFORM_MARKER_PATH !== undefined;
+  const verifiedLocalPlatform = isVerifiedLocalPlatform(env, options.readLocalMarker);
+  if (localFlagsPresent && !verifiedLocalPlatform) {
+    throw new Error('Local upload cleanup overrides require the mounted local-platform marker');
+  }
 
   return {
-    supabaseOrigin: parseSupabaseOrigin(rawUrl),
+    supabaseOrigin: parseSupabaseOrigin(rawUrl, verifiedLocalPlatform),
     secretKey,
     batchSize: boundedInteger(
       env.UPLOAD_CLEANUP_BATCH_SIZE,

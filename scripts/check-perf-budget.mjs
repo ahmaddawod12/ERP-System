@@ -110,13 +110,6 @@ if (/readBootstrap\([^)]*,\s*true\s*\)/.test(mfText)) {
   warn(`phone_app/contexts/cache-fetchers.ts: bootstrap with includeCollections:true is still used — use paginated jobs/documents fetch instead.`);
 }
 
-const readModel = join(ROOT, 'supabase', 'functions', 'read-model', 'index.ts');
-const rmText = readText(readModel);
-if (/const userInventory = await getUserInventoryParts[\s\S]*if \(countOnly\)/.test(rmText) ||
-    /const companyInventory = await getCompanyInventoryParts[\s\S]*if \(countOnly\)/.test(rmText)) {
-  warn(`supabase/functions/read-model/index.ts: countOnly still loads full inventory payloads before returning counts.`);
-}
-
 // ─── Check 4: packages/db list functions return nextCursor ───────────────────
 const dbJobs = join(ROOT, 'packages', 'db', 'jobs.ts');
 const dbDocs = join(ROOT, 'packages', 'db', 'documents.ts');

@@ -5,6 +5,7 @@ import { SignJWT } from "jose";
 
 import {
   createGoogleServiceIdentityVerifier,
+  createLocalServiceIdentityVerifier,
   serviceIdentityContextUserId,
 } from "../auth/google-service-identity.js";
 import { AppError } from "../http/errors.js";
@@ -83,4 +84,16 @@ test("Google service identity fails closed for wrong audience, caller, or header
       (error: unknown) => error instanceof AppError && error.statusCode === 401,
     );
   }
+});
+
+test("local service identity accepts only its marker-gated shared token", async () => {
+  const tokenValue = "local_identity_012345678901234567890123456789";
+  const verifier = createLocalServiceIdentityVerifier({ token: tokenValue });
+  const identity = await verifier.verifyAuthorizationHeader(`Bearer ${tokenValue}`);
+  assert.equal(identity.email, "local-platform@smart-job-local.iam.gserviceaccount.com");
+  assert.match(identity.contextUserId, /^[0-9a-f-]{36}$/);
+  await assert.rejects(
+    verifier.verifyAuthorizationHeader("Bearer wrong-token"),
+    (error: unknown) => error instanceof AppError && error.statusCode === 401,
+  );
 });

@@ -4,27 +4,26 @@ These instructions apply to the full repository.
 
 ## Current Runtime State
 
-As of June 22, 2026:
+As of July 21, 2026:
 
 - Supabase Auth is the active auth provider for website and mobile sign-in.
-- The in-repo backend runtime and trust boundary are under `supabase/functions/`.
+- The Cloud Run API (`cloudrun-api`) is the sole backend trust boundary. All
+  Supabase Edge functions and handlers have been deleted.
 - PostgreSQL, through `packages/db`, is the primary persistence layer for company-scoped ERP data.
-- Firestore and Cloud Storage still support compatibility reads, operational metadata, rules-backed surfaces, and file storage.
-- Supabase Edge gateway rollout is still in hardening, but repository backend runtime changes target `supabase/functions/` and `supabase/handlers/`.
-- Client and inventory read-model search/pagination is SQL RPC-backed; avoid reintroducing full-collection Edge memory filtering for those paths.
-- Module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) is enforced for both mutations and read-model kinds based on `company_subscriptions.enabled_modules`.
-- Edge function caller URLs in website/mobile use flattened dash names for nested paths (e.g., `contact-request`, `invites-create`) to match Supabase deploy names.
-- Privileged SQL RPC implementations live in the `private` schema with `SECURITY DEFINER`; public RPC names are thin `SECURITY INVOKER` wrappers for service-role Edge callers.
-- `getEnv()` fails closed when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or `JWT_SECRET` are missing.
+- Firebase Messaging and Storage remain for mobile push notifications and file
+  uploads; Firestore and App Check have been removed.
+- Client and inventory search/pagination is SQL RPC-backed through the Cloud API.
+- Module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) is enforced by the Cloud API based on `company_subscriptions.enabled_modules`.
+- Privileged SQL RPC implementations live in the `private` schema with `SECURITY DEFINER`; only narrow `smart_job_api`-executable wrappers are exposed to the Cloud Run API.
 
-This means backend migration code is live in `supabase/`. Treat `supabase/functions/` and `supabase/handlers/` as the implementation target for backend runtime changes in this repository.
+This means backend code lives in `cloudrun-api/`. Treat it as the implementation target for backend runtime changes in this repository.
 
 ## Canonical Docs
 
 - Use `SETUP.md` for setup and deployment.
 - Use `architecture.md` for the current storage and runtime map.
 - Use `backend.md` for backend service boundaries.
-- Use `SUPABASE-MIGRATION-GUIDE.md` and `supabase/README.md` for migration-specific work.
+- Use `AGENTS.md` for per-package conventions and architecture rules.
 
 Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notifications, or email. Update `SETUP.md` instead.
 
@@ -75,7 +74,7 @@ Do not create new setup-only markdown files for Cloud Run, Pub/Sub, notification
 - Never persist durable Storage download URLs on document or job records.
 - Signed access to company documents, job files, and archives stays backend-controlled.
 - Keep signed URL buckets server-controlled; do not allow caller-selected buckets for protected file URLs.
-- Archived months must be loaded through backend functions such as `fetchArchiveMonthV1`.
+- Archived months must be loaded through the Cloud API archive content route.
 
 ### Mutations and side effects
 

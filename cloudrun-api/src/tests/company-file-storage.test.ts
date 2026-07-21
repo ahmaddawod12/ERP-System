@@ -145,6 +145,33 @@ test("signed downloads stay on the configured private bucket path", async () => 
   );
 });
 
+test("local signed URLs validate against the internal origin and return the public loopback origin", async () => {
+  const internalBaseUrl = new URL("http://supabase_kong_smart-job-erp-local:8000/");
+  const publicBaseUrl = new URL("http://127.0.0.1:55321/");
+  const expectedPath = `/storage/v1/object/upload/sign/${BUCKET_ID}/${attachment.objectPath}`;
+  const storage = createCompanyFileStorage({
+    baseUrl: internalBaseUrl,
+    publicBaseUrl,
+    bucketId: BUCKET_ID,
+    secretKey: SECRET_KEY,
+    client: clientFor(unusedBucket({
+      async createSignedUploadUrl(path) {
+        return {
+          data: {
+            path,
+            token: "local-token",
+            signedUrl: `${internalBaseUrl.origin}${expectedPath}?token=local-token`,
+          },
+          error: null,
+        };
+      },
+    })),
+  });
+
+  const [target] = await storage.createSignedUploadTargets([attachment]);
+  assert.equal(target?.uploadUrl, `${publicBaseUrl.origin}${expectedPath}?token=local-token`);
+});
+
 test("signed upload targets reject malformed, cross-origin, and wrong-object URLs", async () => {
   const invalidUrls = [
     "not-a-url",

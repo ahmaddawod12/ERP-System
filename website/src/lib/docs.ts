@@ -26,8 +26,8 @@ export const docs: DocEntry[] = [
     body: [
       "Sign in with Supabase auth and complete onboarding on the website.",
       "Managers create business workspaces; workers/basic members join via invite flow.",
-      "The website calls backend proxies (/api/callable and /api/read-model), not direct protected writes.",
-      "Core runtime data is SQL-first through supabase/functions gateways.",
+      "The website uses an opaque Postgres-backed session and a server-only BFF; browsers never call Cloud Run directly.",
+      "Core runtime data is SQL-first through the Cloud Run API.",
     ],
   },
   {
@@ -35,7 +35,7 @@ export const docs: DocEntry[] = [
     title: "Runtime Boundaries",
     summary: "Understand where reads/writes execute and which layer owns each responsibility.",
     body: [
-      "Supabase Edge gateways are the backend trust boundary in this repository.",
+      "The Cloud Run API is the backend trust boundary in this repository.",
       "Primary company-scoped entities (jobs, clients, documents, inventory, memberships) are SQL-owned.",
       "Firestore remains for compatibility and operational paths only.",
       "Cloud Run PDF and Archiver services handle asynchronous document generation and archive lifecycle.",
@@ -124,9 +124,9 @@ export const docs: DocEntry[] = [
         columns: ["Invariant", "Rule", "Enforcement"],
         rows: [
           ["Identity", "uid + companyId are canonical", "Auth and company access checks in handlers"],
-          ["Counter allocation", "SQL counters only", "shared-edge-helpers + DB constraints"],
-          ["Job statuses", "pending/waiting/finished/denied", "Enum + handler validation"],
-          ["File references", "storagePath persisted, signed URLs ephemeral", "handler and Cloud Run logic"],
+          ["Counter allocation", "SQL counters only", "Cloud API + DB constraints"],
+          ["Job statuses", "pending/waiting/finished/denied", "Enum + API validation"],
+          ["File references", "storagePath persisted, signed URLs ephemeral", "Cloud API and Cloud Run logic"],
         ],
       },
     ],

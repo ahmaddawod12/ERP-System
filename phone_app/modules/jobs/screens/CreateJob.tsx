@@ -8,7 +8,9 @@ import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth, functions, httpsCallable } from '../../../firebase';
+import { auth } from '../../../firebase';
+import { randomUUID } from 'expo-crypto';
+import { createJob as createJobApi } from '../lib/jobs-api';
 import { spacing, borderRadius, typography, shadows, getColors, gradients } from '../../../theme';
 import { AppButton, AppCard, AppText, AppInput, SearchInput, LoadingSpinner, GlobalHeader, ScrollableContainer, ClientSelector, ScreenHeroCard } from '../../../components';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
@@ -244,33 +246,32 @@ export default function CreateJob() {
     }
 
     try {
-      // Get manager's info and company name from cache
-      const companyId = getCompanyId();
-      const managerUid = getUid() || user.uid;
-      const managerName = profile?.name || managerUid;
-      
-      if (!companyId) {
+      const companyIdStr = getCompanyId();
+      const uid = getUid() || user.uid;
+
+      if (!companyIdStr) {
         alert.error('Error', 'Company ID not found');
         return;
       }
+      const companyId = Number(companyIdStr);
+      if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+        alert.error('Error', 'Company ID is invalid');
+        return;
+      }
 
-      // Auto-save new client or update existing client with missing fields
       let clientCid: string | number | null = selectedClientObj?.id || null;
       if (selectedClientObj && newJob.cname.trim()) {
-        // Update existing client with any newly filled fields
         try {
           const updates: Record<string, string> = {};
           if (newJob.cname.trim() && newJob.cname.trim() !== (selectedClientObj.cname || selectedClientObj.name || '')) updates.name = newJob.cname.trim();
           if (newJob.cphone.trim() && newJob.cphone.trim() !== (selectedClientObj.cphone || selectedClientObj.phone || '')) updates.phone = newJob.cphone.trim();
           if (Object.keys(updates).length > 0) {
             await updateClient(selectedClientObj.id, updates);
-            console.log('Updated existing client with new fields:', Object.keys(updates));
           }
         } catch (e) {
           console.log('Update client failed (non-critical):', e);
         }
       } else if (!selectedClientObj && newJob.cname.trim()) {
-        // Save as new client
         try {
           const clientToSave: Record<string, string> = { name: newJob.cname.trim() };
           if (newJob.cphone.trim()) clientToSave.phone = newJob.cphone.trim();
@@ -280,40 +281,48 @@ export default function CreateJob() {
           console.log('Auto-save client failed (non-critical):', e);
         }
       }
-      
-      // Build clean job payload using new field names
+
       const selectedWorkerObj = workers.find(w => w.uid === selectedWorker);
-      const workerWid = selectedWorkerObj?.wid || selectedWorkerWid;
-      const managerMid = profile?.mid || null;
+      const assigneeMemberNo = Number(selectedWorkerObj?.wid || selectedWorkerWid);
+      if (!Number.isSafeInteger(assigneeMemberNo) || assigneeMemberNo <= 0) {
+        alert.error('Error', 'Selected worker is missing a member number');
+        return;
+      }
+
+      const clientId = clientCid && typeof clientCid === 'string' ? clientCid : null;
+
+      const result = await createJobApi({
+        uid,
+        companyId,
+        request: {
+          title: newJob.title,
+          description: newJob.description,
+          location: newJob.location,
+          status: 'pending',
+          assigneeMemberNo,
+          ...(clientId ? { clientId } : {}),
+        },
+        idempotencyKey: randomUUID(),
+      });
 
       const jobData = {
         title: newJob.title,
         description: newJob.description,
         location: newJob.location,
-        status: 'pending',
-        mname: managerName,
-        mid: managerMid ? String(managerMid) : null,
-        wid: workerWid ? String(workerWid) : null,
+        status: 'pending' as const,
+        id: result.jobId,
+        jobNo: result.jobNo,
+        entityVersion: result.entityVersion,
+        wid: selectedWorkerObj?.wid || selectedWorkerWid || undefined,
         wname: selectedWorkerName,
         cname: newJob.cname.trim(),
         cphone: newJob.cphone.trim(),
-        ...(clientCid && { cid: clientCid }),
+        ...(clientCid ? { cid: String(clientCid) } : {}),
+        createdAt: result.createdAt,
+        updatedAt: result.updatedAt,
       };
 
-      // Use createJobV1 Cloud Function for atomic job creation with sequential ID
-      const createJobFn = httpsCallable(functions, 'createJobV1');
-      const result = await createJobFn({
-        companyId,
-        type: 'pending',
-        ...jobData,
-      });
-
-      const resultData = (result as any).data || result || {};
-      const serverJobId = resultData.jobId;
-      const createdJob = { ...jobData, id: serverJobId, createdAt: new Date().toISOString() };
-
-      // Update local cache with the server-generated ID
-      await addJob(createdJob);
+      await addJob(jobData);
 
       alert.success('Success', t.jobCreated);
       setNewJob({ title: '', description: '', location: '', cname: '', cphone: '' });
@@ -321,8 +330,7 @@ export default function CreateJob() {
       setSelectedWorkerName('');
       setSelectedWorkerWid(null);
       setSelectedClientObj(null);
-      
-      // Navigate back to manager homepage
+
       router.back();
     } catch (error) {
       console.error('Error creating job:', error);

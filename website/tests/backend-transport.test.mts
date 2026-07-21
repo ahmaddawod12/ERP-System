@@ -27,6 +27,10 @@ test("backend runtime config requires a secure server-only base URL", () => {
     () => parseBackendBaseUrl("http://localhost:8080", "production"),
     /production/,
   );
+  assert.equal(
+    parseBackendBaseUrl("http://cloudrun-api:8080", "production", true),
+    "http://cloudrun-api:8080",
+  );
   assert.throws(
     () => parseBackendBaseUrl("https://api.example.com/prefix", "production"),
     /must not contain a path/,
@@ -40,6 +44,23 @@ test("backend runtime config requires a secure server-only base URL", () => {
     baseUrl: "https://api.example.com",
     timeoutMs: 9000,
   });
+
+  const localEnvironment: NodeJS.ProcessEnv = {
+    BACKEND_API_BASE_URL: "http://cloudrun-api:8080",
+    NODE_ENV: "production",
+    SMART_JOB_DEPLOYMENT_ENV: "local",
+    SMART_JOB_LOCAL_PLATFORM: "true",
+    SMART_JOB_LOCAL_PLATFORM_VERIFIED: "true",
+    LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
+  };
+  assert.equal(loadBackendRuntimeConfig(localEnvironment).baseUrl, "http://cloudrun-api:8080");
+  assert.throws(
+    () => loadBackendRuntimeConfig({
+      ...localEnvironment,
+      SMART_JOB_LOCAL_PLATFORM_VERIFIED: undefined,
+    }),
+    /verified local-platform entrypoint/,
+  );
 });
 
 test("backend transport validates the canonical envelope and disables caching", async () => {

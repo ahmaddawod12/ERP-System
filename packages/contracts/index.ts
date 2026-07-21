@@ -257,30 +257,6 @@ export const paths = {
   documentTask: (id: string) => `documentTasks/${id}`,
 };
 
-/**
- * Maps logical edge-function operation names to the dashed HTTP paths used by
- * Supabase Edge Functions. Nested function paths (e.g. `invites/create`) are
- * flattened at deploy time, so callers must use the dashed form.
- */
-export const EDGE_FUNCTION_NAME_MAP = Object.freeze({
-  mutationGatewayV1: 'mutation-gateway',
-  mutationGatewayMeWest1V1: 'mutation-gateway-me-west1',
-  readModelV1: 'read-model',
-  createInviteV1: 'invites-create',
-  joinCompanyV1: 'invites-join',
-  requestUpgradeV1: 'upgrades-request',
-  listUpgradeRequestsV1: 'upgrades-list',
-  moderateUpgradeRequestV1: 'upgrades-moderate',
-  contactRequestV1: 'contact-request',
-  getInvoiceApproval: 'mutation-gateway-me-west1',
-} as const);
-
-export type EdgeFunctionOperation = keyof typeof EDGE_FUNCTION_NAME_MAP;
-
-export function getEdgeFunctionPath(functionName: string): string {
-  return (EDGE_FUNCTION_NAME_MAP as Record<string, string>)[functionName] || functionName;
-}
-
 export function resolveCompanyScope(companyId?: string | null): string {
   const normalized = String(companyId || '').trim();
   if (!normalized) {

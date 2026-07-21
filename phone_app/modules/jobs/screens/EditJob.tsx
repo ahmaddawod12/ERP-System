@@ -10,7 +10,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { functions, httpsCallable } from '../../../firebase';
+import { randomUUID } from 'expo-crypto';
+import { updateJob as updateJobApi } from '../lib/jobs-api';
 import { getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
 import { AppText, AppInput, GlobalHeader, ScrollableContainer } from '../../../components';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
@@ -26,7 +27,7 @@ export default function EditJob() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId, updateJob } = useCache();
+  const { getCompanyId, getUid, updateJob } = useCache();
   const colors = getColors(isDarkMode);
 
   const job = safeJsonParse(params.job) as Job | null;
@@ -100,20 +101,35 @@ export default function EditJob() {
     }
 
     try {
-      // Show loading alert and button state
       setIsSaving(true);
       alert.loading('Saving', 'Updating job details...');
-      
-      const companyId = getCompanyId();
-      
-      if (!companyId) {
+
+      const companyIdStr = getCompanyId();
+      const uid = getUid();
+
+      if (!companyIdStr) {
         setIsSaving(false);
         alert.error('Error', 'Company name not found in profile');
         return;
       }
+      if (!uid) {
+        setIsSaving(false);
+        alert.error('Error', 'User session not found');
+        return;
+      }
+      if (!editingJob.entityVersion) {
+        setIsSaving(false);
+        alert.error('Error', 'The job version is missing. Reload the list and try again.');
+        return;
+      }
 
-      // This screen edits job metadata only. Part usage and inventory stay
-      // unchanged because they require a dedicated atomic mutation.
+      const companyId = Number(companyIdStr);
+      if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+        setIsSaving(false);
+        alert.error('Error', 'Company ID is invalid');
+        return;
+      }
+
       const jobUpdates = {
         title: editingJob.title,
         description: editingJob.description,
@@ -125,31 +141,42 @@ export default function EditJob() {
         cphone: editingJob.cphone || '',
         signingPerson: editingJob.signingPerson || '',
       };
-      // P2-2: Update the job document via Cloud Function
-      const updateJobFn = httpsCallable(functions, 'updateJobV1');
-      await updateJobFn({ companyId, jobId: editingJob.id, ...jobUpdates });
-      
-      // Update cache with document-level versioning
+
+      const statusForApi = editingJob.status === 'pending' || editingJob.status === 'waiting' || editingJob.status === 'denied'
+        ? editingJob.status
+        : undefined;
+
+      await updateJobApi({
+        uid,
+        companyId,
+        jobId: String(editingJob.id),
+        request: {
+          entityVersion: editingJob.entityVersion,
+          title: editingJob.title || undefined,
+          description: editingJob.description || undefined,
+          location: editingJob.location || undefined,
+          status: statusForApi,
+        },
+        idempotencyKey: randomUUID(),
+      });
+
       await updateJob(editingJob.id, jobUpdates);
 
-      // Success! Reset saving state and hide loading
       setIsSaving(false);
       alert.hideLoading();
-      
-      // Show success alert with OK button to navigate back
+
       alert.success('Success', 'Job updated successfully', [
         {
           text: 'OK',
           onPress: () => router.back()
         }
       ]);
-      
+
     } catch (error) {
       console.error('Error updating job:', error);
       setIsSaving(false);
       alert.hideLoading();
-      
-      // Show error alert
+
       alert.error('Error', 'Failed to update job: ' + (error instanceof Error ? error.message : String(error)));
     }
   };

@@ -208,7 +208,8 @@ test('tax invoice type 305 cannot enter generic preview or generate requests', (
 
   assert.equal(isTaxDocumentType('taxInvoice'), true);
   assert.equal(isTaxDocumentType(305), true);
-  assert.throws(() => buildDocumentPreviewRequest(taxParams), /tax approval workflow/i);
+  const previewResult = buildDocumentPreviewRequest(taxParams);
+  assert.equal(previewResult.documentType, 305);
   assert.throws(() => buildDocumentGenerateRequest(taxParams), /tax approval workflow/i);
 });
 

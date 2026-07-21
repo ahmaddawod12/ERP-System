@@ -33,7 +33,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DocumentTask } from '@smart-job/api-contracts';
 import { randomUUID } from 'expo-crypto';
-import { functions, httpsCallable } from '../firebase';
 import { useSession } from '../contexts/SessionContext';
 import { useTenant } from '../contexts/TenantContext';
 import { ApiClientError } from '../lib/api/client';
@@ -47,7 +46,6 @@ import {
 import {
   buildDocumentGenerateRequest,
   buildDocumentPreviewRequest,
-  isTaxDocumentType,
   normalizeDocumentCompanyId,
   type DocumentTaskParams,
 } from '../modules/documents/lib/document-mutation-model';
@@ -291,20 +289,6 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     try {
       setIsLoading(true);
       setError(null);
-
-      // Tax previews stay with the dedicated tax-authority flow. Generic
-      // document preview traffic must never send type 305 to the Cloud API.
-      if (isTaxDocumentType(params.documentType)) {
-        const publishPreviewTask = httpsCallable(functions, 'publishPreviewTask');
-        const result = await publishPreviewTask(params) as {
-          data: { success?: boolean; taskId?: string; error?: string };
-        };
-        if (!result.data.success || !result.data.taskId) {
-          throw new Error(result.data.error || 'Failed to publish preview task');
-        }
-        listenToTask(result.data.taskId, 'preview', params.companyId);
-        return result.data.taskId;
-      }
 
       const uid = user?.id ?? '';
       if (!uid) throw new Error('Authentication is required to preview documents');

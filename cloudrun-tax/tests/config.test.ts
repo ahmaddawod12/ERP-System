@@ -120,4 +120,27 @@ describe("loadConfig", () => {
       /Invalid cloudrun-tax configuration/,
     );
   });
+
+  it("keeps local tax submission disabled and marker-gated", () => {
+    const local = {
+      NODE_ENV: "production",
+      TAX_SUBMISSION_MODE: "disabled",
+      SMART_JOB_DEPLOYMENT_ENV: "local",
+      SMART_JOB_LOCAL_PLATFORM: "true",
+      LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
+    };
+    assert.equal(loadConfig(local, {
+      readLocalMarker: () => Buffer.from("smart-job-erp-local-platform-v1"),
+    }).taxSubmissionMode, "disabled");
+    assert.throws(
+      () => loadConfig({ ...local, TAX_SUBMISSION_MODE: "sandbox" }, {
+        readLocalMarker: () => Buffer.from("smart-job-erp-local-platform-v1"),
+      }),
+      /must remain disabled/,
+    );
+    assert.throws(
+      () => loadConfig(local, { readLocalMarker: () => Buffer.from("wrong") }),
+      /mounted local-platform marker/,
+    );
+  });
 });

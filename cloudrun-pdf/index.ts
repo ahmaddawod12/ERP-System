@@ -5,6 +5,7 @@ import { createCompanyFileStorageFromEnv } from './company-file-storage';
 import generateDocumentHTML from './htmlTemplate';
 import { installStructuredLogging } from './logging';
 import { createCompanyLogoFetcher } from './logo-cache';
+import { hasLocalPlatformOverrides, isVerifiedLocalPlatform } from './local-platform';
 import { persistPdfBeforeFinalize } from './pdf-storage-workflow';
 import { createPubSubVerifier } from './pubsub-auth';
 import { registerGenerateRoute } from './routes/generate';
@@ -53,6 +54,7 @@ const PROCESSING_LEASE_SECONDS = Math.min(
 const MAX_LOGO_SIZE = 1024 * 1024;
 const CLOUD_RUN_SERVICE_URL = String(process.env.CLOUD_RUN_SERVICE_URL || '').trim();
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_LOCAL_PLATFORM = isVerifiedLocalPlatform();
 const PUBSUB_VERIFICATION_TOKEN = process.env.PUBSUB_VERIFICATION_TOKEN || '';
 const PUBSUB_ALLOWED_SERVICE_ACCOUNTS = (process.env.PUBSUB_ALLOWED_SERVICE_ACCOUNTS || '')
   .split(',')
@@ -65,10 +67,13 @@ const EDGE_SERVICE_ACCOUNT_PRIVATE_KEY = String(
   process.env.GCP_SERVICE_ACCOUNT_PRIVATE_KEY || process.env.GOOGLE_PRIVATE_KEY || '',
 ).replace(/\\n/g, '\n').trim();
 
-if (IS_PRODUCTION && !CLOUD_RUN_SERVICE_URL) {
+if (hasLocalPlatformOverrides() && !IS_LOCAL_PLATFORM) {
+  throw new Error('Local PDF overrides require the mounted local-platform marker');
+}
+if (IS_PRODUCTION && !IS_LOCAL_PLATFORM && !CLOUD_RUN_SERVICE_URL) {
   throw new Error('CLOUD_RUN_SERVICE_URL must be set in production for Pub/Sub OIDC verification');
 }
-if (IS_PRODUCTION && PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
+if (IS_PRODUCTION && !IS_LOCAL_PLATFORM && PUBSUB_ALLOWED_SERVICE_ACCOUNTS.length === 0) {
   throw new Error('PUBSUB_ALLOWED_SERVICE_ACCOUNTS must include an allowed publisher in production');
 }
 if (!isSharedSqlStoreEnabled()) {

@@ -5,6 +5,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { isVerifiedLocalPlatformRuntime } from "../local-platform.ts";
 
 export const PRODUCTION_RECOVERY_COOKIE = "__Host-sj_recovery";
 export const DEVELOPMENT_RECOVERY_COOKIE = "sj_recovery";
@@ -40,8 +41,9 @@ function parsePart(value: string): Buffer {
 
 export function recoveryCookieName(
   nodeEnv: string | undefined = process.env.NODE_ENV,
+  verifiedLocalPlatform = isVerifiedLocalPlatformRuntime(),
 ): string {
-  return nodeEnv === "production"
+  return nodeEnv === "production" && !verifiedLocalPlatform
     ? PRODUCTION_RECOVERY_COOKIE
     : DEVELOPMENT_RECOVERY_COOKIE;
 }
@@ -140,4 +142,3 @@ export function openRecoveryCredential(
     throw new Error("The password recovery link is invalid or expired");
   }
 }
-

@@ -57,4 +57,24 @@ test('production PDF configuration requires the dedicated login role and bounded
     DATABASE_URL: 'postgresql://smart_job_pdf:secret@db.example.test/postgres',
     DATABASE_SSL_MODE: 'disable',
   }), /loopback/);
+
+  const localPlatform = resolveSqlPoolConfig({
+    NODE_ENV: 'production',
+    SMART_JOB_DEPLOYMENT_ENV: 'local',
+    SMART_JOB_LOCAL_PLATFORM: 'true',
+    LOCAL_PLATFORM_MARKER_PATH: '/run/secrets/smart_job_local_platform',
+    SMART_JOB_PERSISTENCE_BACKEND: 'sql',
+    DATABASE_URL: 'postgresql://smart_job_pdf:local@supabase_db_smart-job-erp-local:5432/postgres',
+    DATABASE_SSL_MODE: 'disable',
+  }, () => 'smart-job-erp-local-platform-v1');
+  assert.equal(localPlatform.ssl, false);
+  assert.throws(() => resolveSqlPoolConfig({
+    NODE_ENV: 'production',
+    SMART_JOB_DEPLOYMENT_ENV: 'local',
+    SMART_JOB_LOCAL_PLATFORM: 'true',
+    LOCAL_PLATFORM_MARKER_PATH: '/run/secrets/smart_job_local_platform',
+    SMART_JOB_PERSISTENCE_BACKEND: 'sql',
+    DATABASE_URL: 'postgresql://smart_job_pdf:local@supabase_db_smart-job-erp-local:5432/postgres',
+    DATABASE_SSL_MODE: 'disable',
+  }, () => 'wrong'), /mounted local-platform marker/);
 });

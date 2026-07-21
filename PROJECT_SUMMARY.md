@@ -31,13 +31,11 @@ Smart-Job ERP is a **multi-tenant field-service platform**.
 
 | Path | Runtime | Purpose |
 |---|---|---|
-| `packages/contracts/` | Node / Deno | Shared enums/constants (`Role`, `JobStatus`, `DocType`, `VAT_RATE`, `Tier`, etc.) |
-| `packages/api-contracts/` | Node 22 | Shared Zod request, response, DTO, cursor, and legacy-characterization contracts |
+| `packages/contracts/` | Node | Shared enums/constants (`Role`, `JobStatus`, `DocType`, `VAT_RATE`, `Tier`, etc.) |
+| `packages/api-contracts/` | Node 22 | Shared Zod request, response, DTO, cursor, and entity-version contracts |
 | `packages/db/` | Node | Drizzle schema, migrations, SQL access helpers |
 | `website/` | Node 22 / Next.js 16 | Admin/business web dashboard |
 | `phone_app/` | Node 22 / Expo 57 | React Native field app |
-| `supabase/functions/` | Deno | HTTP edge entrypoints |
-| `supabase/handlers/` | Deno | Domain logic called by edge functions |
 | `cloudrun-api/` | Node 22 / Fastify | Main API foundation with dual auth and initial domain routes |
 | `cloudrun-tax/` | Node 22 / Fastify | Stateless Israel tax gateway foundation |
 | `cloudrun-pdf/` | Node 22 / Puppeteer | PDF preview/generation service |
@@ -111,33 +109,37 @@ npm --prefix cloudrun-tax run test
 npm --prefix cloudrun-email run test
 ```
 
-### Edge functions
-```bash
-deno check --config deno.json supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
-deno test --config deno.json --allow-read="$PWD/supabase,$PWD/packages/db/migrations" supabase/handlers/handlers-hardening.test.ts
-```
-
-### Isolated local Supabase
+### Production-shaped local platform
 
 `supabase/config.toml` defines the Docker Desktop project
 `smart-job-erp-local`. Its core ports are API `55321`, PostgreSQL `55322`,
 Studio `55323`, Inbucket `55324`, and Edge inspector `55883`. Drizzle remains
-the migration owner through `packages/db/migrations`.
+the migration owner through `packages/db/migrations`. The Supabase CLI services
+join the external Docker network `smart-job-local`; `compose.local.yml` adds
+the standalone website, API, disabled tax gateway, PDF/email workers, local
+Pub/Sub/identity adapter, fake GCS, and Mailpit on the same network.
 
 ```powershell
-supabase start
-supabase db reset --local --no-seed
-$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
-$env:DATABASE_SSL_MODE = "disable"
-npm --prefix packages/db run db:migrate
-npm --prefix packages/db run test:integration
-supabase db lint --local --schema public,private --level warning
+.\scripts\local-platform.ps1 doctor
+.\scripts\local-platform.ps1 start
+.\scripts\local-platform.ps1 status
+.\scripts\local-platform.ps1 stop
+.\scripts\local-platform.ps1 reset -Yes
 ```
+
+The lifecycle script generates ignored local-only credentials, applies all
+Drizzle migrations, and assigns role-specific passwords outside migration
+files. Local service overrides require both exact environment flags and the
+mounted repository marker. The website container entrypoint derives its local
+verification signal only after reading that marker. Tax cannot be changed from
+`disabled` in this topology. The legacy archiver is an explicit `archive`
+command because its least-privilege leased rewrite belongs to Batch 5.
 
 ### Repo guards
 ```bash
 node scripts/check-no-ts-nocheck.mjs
 node scripts/check-js-syntax.mjs scripts
+node scripts/check-local-platform.mjs
 node scripts/check-perf-budget.mjs
 ```
 
@@ -254,8 +256,7 @@ Never use: `in_progress`, `completed`, `received`, `workerId`, `completedBy`, `a
 | Website page server wrapper | `page.tsx` (never add `"use client"`) |
 | Website client shell | `page-client.tsx` |
 | Mobile screen | `modules/<domain>/screens/<Name>.tsx` |
-| Edge HTTP entry | `supabase/functions/<name>/index.ts` |
-| Edge domain logic | `supabase/handlers/<domain>.ts` |
+| API route | `cloudrun-api/src/routes/<domain>-<verb>.ts` |
 | DB access helpers | `packages/db/<domain>.ts` |
 
 ## Environment requirements
@@ -362,7 +363,6 @@ secret key into website/mobile public variables.
 EXPO_PUBLIC_SUPABASE_URL=
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 EXPO_PUBLIC_BACKEND_API_BASE_URL=
-EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=   # transitional operations only
 ```
 Also requires `google-services.json` and `GoogleService-Info.plist`.
 
@@ -488,8 +488,9 @@ deployment/IAM workflow, CI integration-test job, and E2E test infrastructure
 (Playwright + Maestro) are now implemented. Website Firebase/legacy-auth
 infrastructure has been removed. Mobile Firestore/App Check have been removed;
 Firebase Messaging and Storage remain for push notifications and file uploads.
-Remaining mobile Edge caller cutover, stable API DNS, and final Edge/Firebase
-directory deletion remain outstanding approval-gated work.
+The Edge-to-Cloud-API cutover is complete; all Supabase Edge functions and
+handlers have been deleted. Production tax submission remains disabled pending
+certification, and stable API DNS is a mobile-release gate.
 
 ## Still on the technical-debt radar
 
@@ -498,13 +499,7 @@ directory deletion remain outstanding approval-gated work.
 - Mobile screens are very large (1000+ lines) and should be split into hooks/components.
 - Some mobile lists use `.map()` inside `ScrollView` instead of `FlatList`.
 - `npm audit` findings remain in `phone_app` and other packages; update dependencies after baseline testing.
-- Mobile `httpsCallable` Edge callers in jobs, documents, cache, and archive
-  hooks still need Cloud API cutover; the migrated Cloud API reads for jobs,
-  clients, inventory, and documents are already in place.
-- Edge import-map deployment config should be verified (`deno.json` exists but Supabase deploy may need `supabase/functions/import_map.json`).
 - Some CI jobs build shared packages inline; consider a reusable composite action once the matrix stabilizes.
-- Stable API DNS, remaining mobile Edge caller cutover, and final
-  Edge/Firebase directory deletion remain explicit future approval gates.
 
 ## When in doubt
 

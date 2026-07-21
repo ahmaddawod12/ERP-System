@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { isVerifiedLocalPlatform, type LocalMarkerReader } from "./local-platform.js";
+
 export const MAX_DATABASE_POOL_SIZE = 5;
 
 const integerValue = (name: string, minimum: number, maximum: number) =>
@@ -43,6 +45,7 @@ const runtimeEnvironmentSchema = z.object({
     12_000,
   ).default(10_000),
   SUPABASE_URL: z.url("SUPABASE_URL must be a valid URL"),
+  SUPABASE_INTERNAL_URL: z.url("SUPABASE_INTERNAL_URL must be a valid URL").optional(),
   SUPABASE_PUBLISHABLE_KEY: z.string()
     .trim()
     .min(20, "SUPABASE_PUBLISHABLE_KEY is required")
@@ -54,6 +57,7 @@ const runtimeEnvironmentSchema = z.object({
   SUPABASE_STORAGE_BUCKET: z.literal("smart-job-company-files")
     .default("smart-job-company-files"),
   SUPABASE_JWT_ISSUER: z.url("SUPABASE_JWT_ISSUER must be a valid URL").optional(),
+  SUPABASE_JWKS_URL: z.url("SUPABASE_JWKS_URL must be a valid URL").optional(),
   SUPABASE_JWT_AUDIENCE: z.string().trim().min(1).default("authenticated"),
   WEB_SESSION_ENCRYPTION_KEY_BASE64: z.string()
     .trim()
@@ -80,6 +84,15 @@ const runtimeEnvironmentSchema = z.object({
     .trim()
     .regex(/^[A-Za-z][A-Za-z0-9._~+%-]{2,254}$/, "EMAIL_DELIVERY_TOPIC is invalid")
     .optional(),
+  PUBSUB_API_BASE_URL: z.url("PUBSUB_API_BASE_URL must be a valid URL").optional(),
+  GOOGLE_METADATA_ACCESS_TOKEN_URL: z.url(
+    "GOOGLE_METADATA_ACCESS_TOKEN_URL must be a valid URL",
+  ).optional(),
+  LOCAL_INTERNAL_IDENTITY_TOKEN: z.string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{32,}$/, "LOCAL_INTERNAL_IDENTITY_TOKEN is invalid")
+    .optional(),
+  LOCAL_INTERNAL_IDENTITY_EMAIL: z.email().optional(),
   TAX_SUBMISSION_MODE: z.enum(["disabled", "sandbox", "production"])
     .default("disabled"),
   TAX_GATEWAY_URL: z.url("TAX_GATEWAY_URL must be a valid URL").optional(),
@@ -164,6 +177,7 @@ export interface SupabaseAuthRuntimeConfig {
 
 export interface SupabaseStorageRuntimeConfig {
   readonly baseUrl: URL;
+  readonly publicBaseUrl?: URL;
   readonly secretKey: string;
   readonly bucketId: string;
 }
@@ -178,6 +192,8 @@ export interface DocumentDispatchRuntimeConfig {
   readonly previewTopic: string;
   readonly generateTopic: string;
   readonly emailTopic: string;
+  readonly apiBaseUrl?: URL;
+  readonly metadataTokenUrl?: string;
 }
 
 export interface InternalIdentityRuntimeConfig {
@@ -203,6 +219,8 @@ export interface ApiRuntimeConfig {
   readonly documentDispatch?: DocumentDispatchRuntimeConfig;
   readonly internalIdentity?: InternalIdentityRuntimeConfig;
   readonly taxSubmission: TaxSubmissionRuntimeConfig;
+  readonly localIdentityToken?: string;
+  readonly localIdentityEmail?: string;
 }
 
 export class RuntimeConfigError extends Error {
@@ -222,11 +240,23 @@ function normalizedUrl(value: string): URL {
   return parsed;
 }
 
-function ensureSafeSupabaseUrl(url: URL, field: string, expectedPath: string): void {
+function ensureSafeSupabaseUrl(
+  url: URL,
+  field: string,
+  expectedPath: string,
+  localServiceHost?: string,
+): void {
   const isLoopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(
     url.hostname.toLowerCase(),
   );
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) {
+  const isVerifiedLocalService = localServiceHost !== undefined
+    && url.protocol === "http:"
+    && url.hostname === localServiceHost;
+  if (
+    url.protocol !== "https:"
+    && !(url.protocol === "http:" && isLoopback)
+    && !isVerifiedLocalService
+  ) {
     throw new RuntimeConfigError([
       `${field} must use HTTPS unless it targets the local loopback interface`,
     ]);
@@ -244,7 +274,11 @@ function ensureSafeSupabaseUrl(url: URL, field: string, expectedPath: string): v
   }
 }
 
-function parseDatabaseUrl(value: string, sslMode: "disable" | "require"): string {
+function parseDatabaseUrl(
+  value: string,
+  sslMode: "disable" | "require",
+  allowLocalPlatformDatabase: boolean,
+): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -257,7 +291,10 @@ function parseDatabaseUrl(value: string, sslMode: "disable" | "require"): string
   const isLoopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(
     parsed.hostname.toLowerCase(),
   );
-  if (sslMode === "disable" && !isLoopback) {
+  const isLocalPlatformDatabase = allowLocalPlatformDatabase
+    && parsed.hostname === "supabase_db_smart-job-erp-local"
+    && (parsed.port === "5432" || parsed.port === "");
+  if (sslMode === "disable" && !isLoopback && !isLocalPlatformDatabase) {
     throw new RuntimeConfigError([
       "DATABASE_SSL_MODE may be disabled only for a loopback database",
     ]);
@@ -283,7 +320,29 @@ function parseWebSessionEncryptionKey(value: string): Buffer {
 
 export function loadApiRuntimeConfig(
   environment: NodeJS.ProcessEnv = process.env,
+  options: { readonly readLocalMarker?: LocalMarkerReader } = {},
 ): ApiRuntimeConfig {
+  const localPlatformFlagsPresent = environment.SMART_JOB_DEPLOYMENT_ENV === "local"
+    || environment.SMART_JOB_LOCAL_PLATFORM !== undefined
+    || environment.LOCAL_PLATFORM_MARKER_PATH !== undefined;
+  const verifiedLocalPlatform = isVerifiedLocalPlatform(
+    environment,
+    options.readLocalMarker,
+  );
+  if (localPlatformFlagsPresent && !verifiedLocalPlatform) {
+    throw new RuntimeConfigError([
+      "local-platform overrides require the exact local flags and mounted marker",
+    ]);
+  }
+  if (
+    verifiedLocalPlatform
+    && environment.TAX_SUBMISSION_MODE !== undefined
+    && environment.TAX_SUBMISSION_MODE !== "disabled"
+  ) {
+    throw new RuntimeConfigError([
+      "TAX_SUBMISSION_MODE must remain disabled in the local platform",
+    ]);
+  }
   const result = runtimeEnvironmentSchema.safeParse({
     DATABASE_URL: environment.DATABASE_URL ?? environment.SMART_JOB_DATABASE_URL,
     NODE_ENV: environment.NODE_ENV,
@@ -301,10 +360,12 @@ export function loadApiRuntimeConfig(
       environment.DATABASE_CONNECT_TIMEOUT_MS
       ?? environment.SMART_JOB_DATABASE_CONNECT_TIMEOUT_MS,
     SUPABASE_URL: environment.SUPABASE_URL,
+    SUPABASE_INTERNAL_URL: environment.SUPABASE_INTERNAL_URL,
     SUPABASE_PUBLISHABLE_KEY: environment.SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_SECRET_KEY: environment.SUPABASE_SECRET_KEY,
     SUPABASE_STORAGE_BUCKET: environment.SUPABASE_STORAGE_BUCKET,
     SUPABASE_JWT_ISSUER: environment.SUPABASE_JWT_ISSUER,
+    SUPABASE_JWKS_URL: environment.SUPABASE_JWKS_URL,
     SUPABASE_JWT_AUDIENCE: environment.SUPABASE_JWT_AUDIENCE,
     WEB_SESSION_ENCRYPTION_KEY_BASE64:
       environment.WEB_SESSION_ENCRYPTION_KEY_BASE64,
@@ -314,6 +375,10 @@ export function loadApiRuntimeConfig(
     DOCUMENT_PREVIEW_TOPIC: environment.DOCUMENT_PREVIEW_TOPIC,
     DOCUMENT_GENERATE_TOPIC: environment.DOCUMENT_GENERATE_TOPIC,
     EMAIL_DELIVERY_TOPIC: environment.EMAIL_DELIVERY_TOPIC,
+    PUBSUB_API_BASE_URL: environment.PUBSUB_API_BASE_URL,
+    GOOGLE_METADATA_ACCESS_TOKEN_URL: environment.GOOGLE_METADATA_ACCESS_TOKEN_URL,
+    LOCAL_INTERNAL_IDENTITY_TOKEN: environment.LOCAL_INTERNAL_IDENTITY_TOKEN,
+    LOCAL_INTERNAL_IDENTITY_EMAIL: environment.LOCAL_INTERNAL_IDENTITY_EMAIL,
     TAX_SUBMISSION_MODE: environment.TAX_SUBMISSION_MODE,
     TAX_GATEWAY_URL: environment.TAX_GATEWAY_URL,
     TAX_GATEWAY_AUDIENCE: environment.TAX_GATEWAY_AUDIENCE,
@@ -331,20 +396,89 @@ export function loadApiRuntimeConfig(
     );
   }
 
+  const localOnlyFields = [
+    result.data.SUPABASE_INTERNAL_URL,
+    result.data.SUPABASE_JWKS_URL,
+    result.data.PUBSUB_API_BASE_URL,
+    result.data.GOOGLE_METADATA_ACCESS_TOKEN_URL,
+    result.data.LOCAL_INTERNAL_IDENTITY_TOKEN,
+  ];
+  const localOnlyFieldCount = localOnlyFields.filter((value) => value !== undefined).length;
+  if ((localPlatformFlagsPresent || localOnlyFieldCount > 0) && !verifiedLocalPlatform) {
+    throw new RuntimeConfigError([
+      "local-platform overrides require the exact local flags and mounted marker",
+    ]);
+  }
+  if (verifiedLocalPlatform && localOnlyFieldCount !== localOnlyFields.length) {
+    throw new RuntimeConfigError([
+      "all local Supabase, Pub/Sub, metadata, and identity settings are required together",
+    ]);
+  }
+  if (verifiedLocalPlatform && result.data.TAX_SUBMISSION_MODE !== "disabled") {
+    throw new RuntimeConfigError([
+      "TAX_SUBMISSION_MODE must remain disabled in the local platform",
+    ]);
+  }
+
   const supabaseUrl = normalizedUrl(result.data.SUPABASE_URL);
   ensureSafeSupabaseUrl(supabaseUrl, "SUPABASE_URL", "/");
 
+  let supabaseServiceUrl = supabaseUrl;
+  if (result.data.SUPABASE_INTERNAL_URL !== undefined) {
+    supabaseServiceUrl = normalizedUrl(result.data.SUPABASE_INTERNAL_URL);
+    ensureSafeSupabaseUrl(
+      supabaseServiceUrl,
+      "SUPABASE_INTERNAL_URL",
+      "/",
+      "supabase_kong_smart-job-erp-local",
+    );
+    if (supabaseServiceUrl.port !== "8000") {
+      throw new RuntimeConfigError([
+        "SUPABASE_INTERNAL_URL must use the local Supabase Kong port 8000",
+      ]);
+    }
+  }
+
   const defaultIssuer = new URL("auth/v1", supabaseUrl.href);
   const issuer = normalizedUrl(result.data.SUPABASE_JWT_ISSUER ?? defaultIssuer.href);
-  const jwksUrl = normalizedUrl(
-    new URL(".well-known/jwks.json", `${issuer.href}/`).href,
-  );
+  const jwksUrl = normalizedUrl(result.data.SUPABASE_JWKS_URL
+    ?? new URL(".well-known/jwks.json", `${issuer.href}/`).href);
   ensureSafeSupabaseUrl(issuer, "SUPABASE_JWT_ISSUER", "/auth/v1");
   ensureSafeSupabaseUrl(
     jwksUrl,
     "SUPABASE_JWKS_URL",
     "/auth/v1/.well-known/jwks.json",
+    verifiedLocalPlatform ? "supabase_kong_smart-job-erp-local" : undefined,
   );
+  if (verifiedLocalPlatform && jwksUrl.port !== "8000") {
+    throw new RuntimeConfigError([
+      "SUPABASE_JWKS_URL must use the local Supabase Kong port 8000",
+    ]);
+  }
+
+  let localPubSubApiBaseUrl: URL | undefined;
+  let localMetadataTokenUrl: URL | undefined;
+  if (verifiedLocalPlatform) {
+    localPubSubApiBaseUrl = normalizedUrl(result.data.PUBSUB_API_BASE_URL!);
+    localMetadataTokenUrl = normalizedUrl(result.data.GOOGLE_METADATA_ACCESS_TOKEN_URL!);
+    ensureSafeSupabaseUrl(
+      localPubSubApiBaseUrl,
+      "PUBSUB_API_BASE_URL",
+      "/",
+      "local-platform-adapter",
+    );
+    ensureSafeSupabaseUrl(
+      localMetadataTokenUrl,
+      "GOOGLE_METADATA_ACCESS_TOKEN_URL",
+      "/computeMetadata/v1/instance/service-accounts/default/token",
+      "local-platform-adapter",
+    );
+    if (localPubSubApiBaseUrl.port !== "8090" || localMetadataTokenUrl.port !== "8090") {
+      throw new RuntimeConfigError([
+        "local Pub/Sub and metadata URLs must use adapter port 8090",
+      ]);
+    }
+  }
 
   const audiences = [...new Set(
     result.data.SUPABASE_JWT_AUDIENCE
@@ -421,6 +555,7 @@ export function loadApiRuntimeConfig(
       connectionString: parseDatabaseUrl(
         result.data.DATABASE_URL,
         result.data.DATABASE_SSL_MODE,
+        verifiedLocalPlatform,
       ),
       ssl: result.data.DATABASE_SSL_MODE === "require"
         ? {
@@ -433,7 +568,7 @@ export function loadApiRuntimeConfig(
       connectionTimeoutMillis: result.data.DATABASE_CONNECT_TIMEOUT_MS,
     },
     supabaseAuth: {
-      baseUrl: supabaseUrl,
+      baseUrl: supabaseServiceUrl,
       publishableKey: result.data.SUPABASE_PUBLISHABLE_KEY,
     },
     supabaseJwt: {
@@ -442,7 +577,8 @@ export function loadApiRuntimeConfig(
       audiences,
     },
     supabaseStorage: {
-      baseUrl: supabaseUrl,
+      baseUrl: supabaseServiceUrl,
+      ...(verifiedLocalPlatform ? { publicBaseUrl: supabaseUrl } : {}),
       secretKey: result.data.SUPABASE_SECRET_KEY,
       bucketId: result.data.SUPABASE_STORAGE_BUCKET,
     },
@@ -464,8 +600,21 @@ export function loadApiRuntimeConfig(
             previewTopic: result.data.DOCUMENT_PREVIEW_TOPIC!,
             generateTopic: result.data.DOCUMENT_GENERATE_TOPIC!,
             emailTopic: result.data.EMAIL_DELIVERY_TOPIC!,
+            ...(localPubSubApiBaseUrl === undefined
+              ? {}
+              : {
+                  apiBaseUrl: localPubSubApiBaseUrl,
+                  metadataTokenUrl: localMetadataTokenUrl!.href,
+                }),
           },
         }),
     ...(internalIdentity === undefined ? {} : { internalIdentity }),
+    ...(verifiedLocalPlatform
+      ? {
+          localIdentityToken: result.data.LOCAL_INTERNAL_IDENTITY_TOKEN!,
+          localIdentityEmail: result.data.LOCAL_INTERNAL_IDENTITY_EMAIL
+            ?? "local-platform@smart-job-local.iam.gserviceaccount.com",
+        }
+      : {}),
   };
 }

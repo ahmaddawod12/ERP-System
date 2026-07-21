@@ -40,7 +40,14 @@ export class SesDocumentSender {
   readonly #client: SESClient;
   readonly #config: EmailWorkerConfig["ses"];
 
-  constructor(config: EmailWorkerConfig["ses"], client = new SESClient({ region: config.region })) {
+  constructor(
+    config: EmailWorkerConfig["ses"],
+    client = new SESClient({
+      region: config.region,
+      ...(config.endpoint === undefined ? {} : { endpoint: config.endpoint.href }),
+      ...(config.credentials === undefined ? {} : { credentials: config.credentials }),
+    }),
+  ) {
     this.#config = config;
     this.#client = client;
   }

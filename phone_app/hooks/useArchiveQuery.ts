@@ -12,9 +12,8 @@
 
 import { useCallback } from 'react';
 import {
-  functions,
-  httpsCallable,
-} from '../firebase';
+  ArchiveContentResponseSchema,
+} from '@smart-job/api-contracts';
 import {
   mmkvHelpers,
   CACHE_KEYS,
@@ -28,6 +27,7 @@ import {
   roleUsesScopedJobAccess,
 } from '../contexts/job-membership';
 import { fetchCompanyDocuments, fetchCompanyJobs } from '../utils/read-model';
+import { requestApi } from '../lib/api/client';
 import { logger } from '../utils/logger';
 
 const ARCHIVE_READ_LIMIT = 10_000;
@@ -100,37 +100,40 @@ export function useArchiveQuery({
 
     const cached = mmkvHelpers.getObject<any[]>(mmkvCacheKey);
     if (cached !== null) {
-      logger.debug(`?? Archive ${archiveKey} loaded from local cache (${(cached as any[]).length} docs)`);
+      logger.debug(`Archive ${archiveKey} loaded from local cache (${(cached as any[]).length} docs)`);
       return cached;
     }
 
-    logger.debug(`?? Fetching archive ${archiveKey} through backend`);
+    logger.debug(`Fetching archive ${archiveKey} through backend`);
 
     try {
-      const callable = httpsCallable(functions, 'fetchArchiveMonthV1');
-      const result = await callable({
-        companyId,
-        year,
-        month,
-        dataType,
-      }) as {
-        data?: { success?: boolean; items?: any[] };
-      };
+      const numericCompanyId = Number(companyId);
+      if (!Number.isSafeInteger(numericCompanyId) || numericCompanyId <= 0) {
+        return [];
+      }
+      const uid = getUid();
+      if (!uid) return [];
 
-      const docs = Array.isArray(result?.data?.items) ? result.data.items : [];
-      logger.debug(`?? Fetched archive ${archiveKey}: ${docs.length} docs`);
+      const path = `/api/v1/companies/${numericCompanyId}/archives/content?year=${year}&month=${month}&dataType=${encodeURIComponent(dataType)}`;
+      const result = await requestApi(path, ArchiveContentResponseSchema, {
+        uid,
+        companyId: numericCompanyId,
+      });
+
+      const docs = Array.isArray(result?.items) ? result.items : [];
+      logger.debug(`Fetched archive ${archiveKey}: ${docs.length} docs`);
       mmkvHelpers.setObject(mmkvCacheKey, docs);
       return docs;
     } catch (error) {
       const message = (error as Error)?.message || '';
-      if (message.includes('not-found') || message.includes('invalid')) {
-        logger.debug(`?? No archive found for ${archiveKey} or archive unavailable`);
+      if (message.includes('not-found') || message.includes('invalid') || message.includes('ARCHIVE_NOT_FOUND')) {
+        logger.debug(`No archive found for ${archiveKey} or archive unavailable`);
         return [];
       }
-      console.error(`? Error fetching archive ${archiveKey}:`, error);
+      logger.warn(`Error fetching archive ${archiveKey}:`, error);
       return [];
     }
-  }, []);
+  }, [getUid]);
 
   /**
    * Get data for a specific calendar month using 3-tier smart caching.

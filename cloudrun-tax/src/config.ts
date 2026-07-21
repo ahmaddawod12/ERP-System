@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { verifyLocalTaxMode, type LocalMarkerReader } from "./local-platform.js";
 
 const logLevelSchema = z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]);
 const nodeEnvironmentSchema = z.enum(["development", "test", "production"]);
@@ -189,14 +190,21 @@ function formatConfigurationError(error: z.ZodError): string {
     .join("; ");
 }
 
-export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ServiceConfig {
+export function loadConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+  options: { readonly readLocalMarker?: LocalMarkerReader } = {},
+): ServiceConfig {
+  verifyLocalTaxMode(
+    environment,
+    environment.TAX_SUBMISSION_MODE ?? "disabled",
+    options.readLocalMarker,
+  );
   const parsed = environmentSchema.safeParse(environment);
   if (!parsed.success) {
     throw new Error(`Invalid cloudrun-tax configuration: ${formatConfigurationError(parsed.error)}`);
   }
 
   const data = parsed.data;
-
   return {
     nodeEnvironment: data.NODE_ENV,
     taxSubmissionMode: data.TAX_SUBMISSION_MODE,

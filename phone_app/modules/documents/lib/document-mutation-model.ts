@@ -124,7 +124,6 @@ function rejectTaxWorkflow(params: DocumentTaskParams): void {
 export function buildDocumentPreviewRequest(
   params: DocumentTaskParams,
 ): DocumentPreviewRequest {
-  rejectTaxWorkflow(params);
   return DocumentPreviewRequestSchema.parse(normalizedCandidate(params));
 }
 

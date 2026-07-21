@@ -1,38 +1,25 @@
 # Architecture
 
-This document describes the current July 18, 2026 Smart-Job ERP architecture
-and its in-progress pre-launch migration. It distinguishes active code paths
-from foundations that are not yet serving application traffic.
+This document describes the July 21, 2026 Smart-Job ERP architecture after
+the completed Edge-to-Cloud-API cutover.
 
 ## Executive Summary
 
-The system is hybrid today:
-
 - Supabase Auth is the active identity provider for user sign-in.
-- In-repo backend gateway handlers are implemented under `supabase/functions/`.
+- The Cloud Run API (`cloudrun-api`) is the sole backend trust boundary.
+  All Supabase Edge functions and handlers have been deleted.
 - PostgreSQL is the primary source of truth for company-scoped ERP entities.
-- Firestore remains for selected compatibility reads, operational records, rules-enforced read surfaces, and a few legacy mirrors.
-- The private Supabase `smart-job-company-files` bucket owns the migrated job
-  attachment and PDF/preview/branding paths; GCS remains for monthly archives,
-  and unported legacy file paths still coexist during cutover.
-- Supabase Edge Functions are the active in-repo backend runtime under hardening, even if rollout may still be staged by environment.
+- Firebase Messaging and Storage remain for mobile push notifications and file
+  uploads respectively; Firestore and App Check have been removed.
+- The private Supabase `smart-job-company-files` bucket owns job attachments
+  and PDF/preview/branding paths; GCS remains for monthly archives.
 - `packages/api-contracts`, `cloudrun-api`, `cloudrun-tax`, `cloudrun-pdf`, and
-  `cloudrun-email` implement the staged Cloud Run data plane. In addition to
-  the existing domains, the API owns opaque document/email outboxes,
-  authoritative document workflow state, and atomic tax creation/submission.
-  These services are locally verified but are not receiving production traffic;
-  tax submission remains disabled pending certification.
+  `cloudrun-email` implement the Cloud Run data plane. The API owns opaque
+  document/email outboxes, authoritative document workflow state, atomic tax
+  creation/submission, and archive content retrieval. Tax submission remains
+  disabled pending certification.
 
 ## Runtime Topology
-
-```text
-website/mobile
-  -> website API proxies or mobile gateway helpers
-  -> Supabase Edge HTTP/callable endpoints
-  -> SQL access layer / Cloud Run services / Storage / operational Firestore paths
-```
-
-The approved target topology is:
 
 ```text
 Next.js website --server-only session/BFF--> cloudrun-api --> Supabase Postgres/Auth/Storage
@@ -41,20 +28,18 @@ Scheduler/queues -------Google IAM------------^       |----Pub/Sub----> cloudrun
                                                        `----Google IAM--> cloudrun-tax (me-west1)
 ```
 
-The second topology is partially implemented but is not the global production
-routing path. Migrations through `0030` support the staged API, private
-file/PDF flow, versioned domain mutations, transactional accepted-job
-inventory consumption, dedicated worker roles, durable email/tax/archive
-workflow state, and approval-only tax PDF generation. Remaining frontend and
-mobile cutover, infrastructure promotion, and certification are launch gates.
+Migrations through `0030` support the API, private file/PDF flow, versioned
+domain mutations, transactional accepted-job inventory consumption, dedicated
+worker roles, durable email/tax/archive workflow state, and approval-only tax
+PDF generation. Production tax submission and stable API DNS are launch gates.
 
 ## Ownership Map
 
 ### Identity and authorization
 
 - Supabase Auth owns sign-in and bearer tokens.
-- Backend authorization happens inside gateway handlers and shared edge helpers.
-- Shared edge JWT verification must enforce the expected Supabase issuer/audience and reject empty `uid` claims.
+- Backend authorization happens inside the Cloud Run API.
+- The API enforces the expected Supabase issuer/audience and rejects empty `uid` claims.
 - `uid` is the canonical user identity key.
 - `companyId` is the canonical tenant scope key.
 - Company-scoped access is validated server-side, not inferred from client payloads.
@@ -68,8 +53,7 @@ mobile cutover, infrastructure promotion, and certification are launch gates.
 - New Auth/mobile code uses publishable (`sb_publishable_...`) keys. Only the
   trusted API/PDF/email/archiver Storage paths receive secret (`sb_secret_...`) keys;
   no secret or legacy service-role key may enter browser/mobile configuration.
-  Legacy anon/service-role variables remain only for the pre-cutover Edge flow.
-- Backend handlers must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes. Public numeric IDs and internal UUIDs are resolved with separate SQL filters.
+- The Cloud Run API must normalize incoming/public `companyId` values to internal company UUIDs before SQL reads/writes. Public numeric IDs and internal UUIDs are resolved with separate SQL filters.
 - Public job API boundaries use sequential `job_no` values; internal SQL UUIDs are resolved only inside backend handlers.
 - Read-model job cursors remain based on the internal stable tuple `(created_at, jobs.id)` even when item payloads expose public sequential job IDs.
 - Module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) is enforced for both mutations and read-model kinds based on `company_subscriptions.enabled_modules`.
@@ -102,7 +86,7 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
   client/inventory paged reads, lightweight counts, bounded upload cleanup,
   sync-version bumps, legacy and API job creation/registration, and self-scoped
   push-token writes are backend-only RPCs.
-- Privileged RPC implementations live in the `private` schema with `SECURITY DEFINER`; public RPC names are thin `SECURITY INVOKER` wrappers granted to the `service_role` only.
+- Privileged RPC implementations live in the `private` schema with `SECURITY DEFINER`; only narrow `smart_job_api`-executable wrappers are exposed to the Cloud Run API.
 - Jobs carry an opaque `entity_version`; API completion calls use
   `private.complete_job_with_details(...)` to validate the expected version and
   atomically commit status, parts, inventory, uploads, attachments, and sync
@@ -113,29 +97,18 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
   entity version in SQL; only the three transaction functions are executable
   by `smart_job_api`.
 
-### Firestore-owned operational and compatibility data
+### Firestore
 
-Firestore is not the primary business database anymore, but it still matters for these areas:
-
-- `system/data/comid`: company ID allocation
-- `system/orphaned_users/pending/{uid}`: failed orphaned-auth cleanup markers
-- `companies/{companyId}/documentLocks/{lockType}`: document generation coordination
-- `users/{uid}/data/profile`: compatibility profile mirror
-- `users/{uid}/data/cache`: compatibility cache/version state
-- `users/{uid}/data/inventory`: remaining personal inventory surface
-- `companies/{companyId}/data/*`: compatibility mirrors for business info, subscription, cache, and single-doc inventory
-- `companies/{companyId}/workers/{wid}` and `companies/{companyId}/managers/{mid}`: read-focused membership mirrors
-- `documentTasks/{taskId}`: legacy task mirror path
-- Historical admin collections such as `notificationLog/{logId}`, `taxAuthPending/{authId}`, and `taxAuthCallbacks/{authId}`
+Firestore has been removed from the mobile and website clients. Firebase
+Messaging and Storage remain for push notifications and file uploads.
 
 ### File storage ownership
 
 The private Supabase bucket `smart-job-company-files` is the canonical target
 and is implemented for generated PDFs, previews, company-branding reads, and
-the new job photo/signature upload-session flow. Object paths start with the
+the job photo/signature upload-session flow. Object paths start with the
 internal company UUID. Google Cloud Storage is retained for internal monthly
-archive payloads. Some older Firebase/Edge file call sites still exist and must
-be removed only as their owning feature slices are cut over.
+archive payloads. Firebase Storage remains for mobile file uploads.
 
 Upload-session creation is claim-idempotent: the API claim UUID is also the
 session UUID, so a retry cannot allocate a second prefix. Postgres serializes a
@@ -151,16 +124,11 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 ### Website
 
 - Public pages and auth pages run in Next.js.
-- Server routes verify Supabase tokens and issue signed HttpOnly `__session` cookies.
-- Website server proxy auth uses a split-cookie transport: `__session` stores signed session metadata and a separate HttpOnly `__session_access` cookie stores the current bearer token for server-side Edge proxy calls.
-- Protected web actions go through API proxy routes, then into backend functions.
-- Website read-model calls are kind-based and must remain contract-compatible with backend `read-model` kinds. Service-role read-model code must enforce the runtime role matrix before returning rows.
-- Client and inventory read-model pages are served by SQL RPCs so search and cursor filters execute in the database while preserving website response shapes.
-- The Cloud Run website path now serves `/app/select-company` plus the
-  explicit-tenant overview, jobs, clients, and inventory pages under
-  `/app/c/{companyId}`. A server-only transport validates canonical envelopes;
-  the Server Component DAL resolves the viewer, rejects forged tenant URLs, and
-  fetches bounded SQL-filtered pages before hydration.
+- The website uses an opaque Postgres-backed session cookie
+  (`__Host-sj_web_session` in production), a server-only DAL/BFF, and Server
+  Components. All `/app/*` routes use the opaque session.
+- The DAL resolves the opaque session, validates URL tenancy before scoped
+  calls, and fetches bounded SQL-filtered pages before hydration.
 - The clients page keeps its initial directory server-rendered while focused
   browser islands send create/update/delete-or-archive only to tenant-scoped
   same-origin BFF routes. Those handlers require exact Origin, double-submit
@@ -168,45 +136,37 @@ Persist only canonical `storagePath` references in records. Do not persist durab
   forwarding server-to-server with `SmartJobSession`.
 - The inventory page follows the same split: its bounded first page stays in a
   Server Component, while manager/dev create/update/archive/company-adjust
-  controls call only exact-Origin, double-submit-CSRF BFF routes. The BFF
-  forwards the opaque session and retry-stable idempotency key and preserves
-  independent part and stock entity versions before refreshing the tenant page.
+  controls call only exact-Origin, double-submit-CSRF BFF routes.
 - Same-origin login/session/logout and business-registration BFF routes use the
   opaque Postgres-backed session. Production stores only
   `__Host-sj_web_session` as HttpOnly plus readable `sj_csrf`; mutations require
   the matching `X-SJ-CSRF` header and exact `WEBSITE_ORIGIN`.
-- The root `/app` and remaining feature routes have not all moved to the opaque
-  path, so the legacy split-cookie/Edge flow still coexists.
 
 ### Mobile
 
 - The Expo app stores Supabase transport tokens through a SecureStore adapter,
   uses single-flight refresh, and starts/stops refresh with AppState.
 - Root provider order establishes session → tenant → React Query → encrypted
-  outbox → notifications before routing. Protected mounting is gated until
-  session/tenant restoration; the code has not yet moved every route into final
-  Expo Router `(auth)`/`(protected)` groups.
-- The assigned jobs list uses the bounded Cloud API jobs endpoint with query
-  keys that include `uid` and `companyId`; remaining operations still use
-  kind-based Edge/gateway helpers during migration.
+  outbox → notifications before routing.
+- All feature reads/mutations use the bounded Cloud API routes with query keys
+  that include `uid` and `companyId`.
 - Client Book uses active-only bounded Cloud API pages and Cloud API mutations.
   Create/update/delete-or-archive carry stable idempotency keys and opaque
   entity versions, then invalidate only the current `uid`/`companyId` client
-  queries. The compatibility cache client actions use the same API and perform
-  no Edge callable or Firebase data writes.
+  queries.
 - Inventory screens use the authenticated main API for company part creation/
   updates and self-scoped member adjustments. Manager/dev owns company writes,
   user company views are read-only, workers send only `/inventory/me` writes,
   and retry-stable Expo Crypto UUID keys plus opaque part/stock versions protect
-  every operation. Tenant-scoped invalidation refreshes successful writes while
-  stale query pages remain visible on transport failures.
-- MMKV still backs preferences, legacy caches/drafts, and bounded encrypted
-  query snapshots during migration. Supabase tokens and SQLCipher/file keys
-  remain in SecureStore, and the durable field outbox is not stored in MMKV.
-- Mobile cache refresh must drain paginated jobs/documents reads for the active 90-day cache window instead of assuming page one is complete.
-- Mobile cache refresh must preserve the existing role-scoped jobs cache when only document versions change.
+  every operation.
+- MMKV backs preferences, legacy caches/drafts, and bounded encrypted query
+  snapshots. Supabase tokens and SQLCipher/file keys remain in SecureStore, and
+  the durable field outbox is not stored in MMKV.
+- Mobile cache refresh drains paginated jobs/documents reads for the active
+  90-day cache window instead of assuming page one is complete.
 - Mobile debug logging uses the dev-only logger wrapper for noisy cache/read-model output.
-- Archived month reads go through backend `fetchArchiveMonthV1`; clients do not read protected archive objects directly.
+- Archived month reads go through the Cloud API archive content route; clients
+  do not read protected archive objects directly.
 - Offline v1 supports only `job.create_finished` and `job.complete_assigned`.
   One SQLCipher database is opened per uid with its key in SecureStore. Staged
   app-owned photos/signatures are AES-256-GCM chunk-encrypted, SHA-256 hashed,
@@ -229,16 +189,11 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 
 ### Backend mutations and reads
 
-- Supabase edge gateways remain the active trust boundary for legacy and
-  not-yet-ported company-scoped writes.
-- Edge handlers perform authorization, validation, rate limiting, and side-effect control.
-- Edge handlers read/write SQL for primary ERP entities and use Firestore only where compatibility or operations still require it.
-- The staged Cloud Run API is already the trust boundary for its implemented
-  local/test slices: viewer/workspace/bootstrap, bounded jobs/clients/inventory
-  reads, job attachment sessions and atomic create/complete, first-workspace
-  registration, push tokens, opaque sessions, document/email outboxes, and the
-  tax state machine. It authorizes from SQL memberships and never proxies those
-  operations through Edge.
+- The Cloud Run API is the active trust boundary for all company-scoped writes
+  and reads.
+- The API performs authorization, validation, rate limiting, and side-effect control.
+- The API reads/writes SQL for primary ERP entities and uses Supabase Storage
+  for job attachments and generated documents.
 
 ### Document generation
 
@@ -289,7 +244,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Archive payload generation should stream JSON to disk/storage rather than holding the full month in memory.
 - Archive deletion must use the exact verified document ID list, not a rerun query.
 - Archive manifests remain resumable: `uploaded_not_deleted` retries verify the archive and can be marked `deleted` when the records are already gone, instead of failing on exact-count mismatches.
-- Archive retrieval stays backend-controlled; callers provide `(companyId, year, month, dataType)` and receive JSON payloads from the edge runtime.
+- Archive retrieval stays backend-controlled; callers provide `(companyId, year, month, dataType)` and the Cloud Run API reads the archive from GCS using the service identity.
 
 ## Canonical Rules
 
@@ -306,8 +261,8 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Do not use `MAX + 1` query patterns for `public_company_id`, `member_no`, `client_no`, or `job_no`.
 - Apply the same SQL counter rule to tax invoice numbering (`doc_305`) and company inventory part numbering (`part_no`).
 - SQL helper RPCs that mutate counters, rate limits, inventory, invites, tax idempotency, or sync versions are backend-only and should not be exposed to anonymous or authenticated client roles.
-- Service-role read RPCs for clients and inventory are also backend-only; website/mobile callers reach them through the read-model gateway.
-- Privileged RPC implementations live in the private schema; public RPC names are service-role-only compatibility wrappers for Edge Functions.
+- SQL RPCs for clients and inventory pagination are backend-only; website/mobile callers reach them through the Cloud Run API.
+- Privileged RPC implementations live in the private schema; only narrow `smart_job_api`-executable wrappers are exposed to the Cloud Run API.
 - Count-only dashboard/bootstrap reads use SQL count helpers instead of loading full inventories or collections.
 - Module entitlement is checked before returning read-model rows for `jobs`, `clients`, `inventory`, `documents`, and `workers`.
 
@@ -323,7 +278,6 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 ### Documents
 
 - Document types and suffixes come from `@smart-job/contracts` (`DOC_SUFFIX`, `DocTypeCode`).
-- `deno.json` maps `@smart-job/contracts` to `./packages/contracts/index.ts` for Deno consumers.
 - Non-tax document IDs use the canonical suffix plus number pattern.
 - Tax flows require server-side validation and idempotency.
 
@@ -353,28 +307,30 @@ The repository's Docker Desktop stack is isolated by Supabase project ID
 `smart-job-erp-local`. Its primary endpoints are API `55321`, PostgreSQL
 `55322`, Studio `55323`, Inbucket `55324`, and Edge inspector `55883`.
 `supabase/config.toml` owns service startup, while application migrations remain
-owned by `packages/db/migrations` and Drizzle.
+owned by `packages/db/migrations` and Drizzle. For full-stack development,
+Supabase CLI starts on the explicit external `smart-job-local` network and
+`compose.local.yml` attaches the application services and emulators to it:
+
+```text
+browser -> standalone website -> cloudrun-api -> Supabase Auth/Postgres/Storage
+                                  |       |
+                                  |       `-> durable local adapter -> PDF/email push
+                                  |                                `-> Mailpit (SES)
+optional archiver ----------------+---------------------------------> fake GCS
+```
+
+The adapter's persistent queue is a local substitute for Pub/Sub transport,
+not a different application contract: messages still contain only `taskId` or
+`deliveryId`, and workers load canonical state through private SQL RPCs. Local
+identity, internal HTTP routing, emulator endpoints, and the temporary
+archiver admin mode are rejected unless the repository marker is mounted.
+Production-mode website cookies become insecure-loopback cookies only after
+the image entrypoint validates that marker. Tax remains disabled.
 
 ## Migration Direction
 
-The current migration target is:
-
-1. Keep client contracts stable while Edge remains the active gateway.
-2. Build the Cloud Run main API directly against the approved Postgres security
-   foundation, using Edge behavior only as characterization reference.
-3. Move website traffic through the Next.js server-only BFF and mobile traffic
-   through Supabase bearer-authenticated API calls after domain parity exists.
-4. Migrate active application files to private Supabase Storage while retaining
-   GCS only for internal monthly archives.
-5. Preserve tax, PDF, idempotency, tenancy, and concurrency guarantees during
-   cutover, then remove compatibility infrastructure only after explicit final
-   approval.
-
-The shared contracts and database/security migrations through `0030`,
-including the versioned domain foundations, durable PDF/email/tax workflows,
-authoritative tax API, private job/PDF Storage flow, explicit-tenant website
-login/onboarding plus overview/jobs/clients/inventory SSR slices, tenant-scoped
-mobile job/client/inventory reads, and the two-operation encrypted mobile field
-outbox are implemented locally. Domain parity and global frontend cutover
-are not complete. Production infrastructure, certification, remaining mobile
-Edge caller cutover, and final compatibility deletion remain launch gates.
+The Edge-to-Cloud-API cutover is complete. All Supabase Edge functions and
+handlers have been deleted. The Cloud Run API is the sole backend trust
+boundary. Firebase Messaging and Storage remain for push notifications and file
+uploads. Production tax submission remains disabled pending certification, and
+stable API DNS is a production mobile-release gate.

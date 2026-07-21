@@ -24,3 +24,11 @@ Credentials and secret values are populated out of band. The service never
 logs recipient addresses or database/storage credentials. A timeout without a
 definitive SES rejection becomes `delivery_unknown`; only an authorized manual
 retry can send again.
+
+For local full-stack development, `compose.local.yml` injects a marker-gated
+SES endpoint and non-production AWS credentials. The repository adapter
+translates the signed SES Query request to Mailpit at
+`http://127.0.0.1:58025`; no AWS request leaves the machine. The internal
+Supabase origin is used for signing, while returned links are rewritten to the
+public loopback origin. Emulator endpoints are rejected without the mounted
+local-platform marker.

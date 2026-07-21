@@ -23,6 +23,9 @@ without a browser bearer token.
 - Production uses the HttpOnly, Secure, SameSite=Lax, host-only
   `__Host-sj_web_session` cookie. Development uses `sj_web_session` because an
   insecure localhost cookie cannot legally use the `__Host-` prefix.
+- The standalone Docker image also uses `sj_web_session` on loopback, but only
+  after its non-root entrypoint validates the mounted repository local-platform
+  marker. Setting local environment flags without that marker fails startup.
 - The readable `sj_csrf` cookie must exactly match `X-SJ-CSRF`, and mutations
   must have an Origin exactly matching `WEBSITE_ORIGIN`.
 - `src/lib/dal/session.ts` is the Server Component/DAL entrypoint and uses the
@@ -137,19 +140,16 @@ without a browser bearer token.
 
 ## Environment Variables
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SESSION_COOKIE_SECRET`
+- `SUPABASE_URL` (server-only Auth origin)
+- `SUPABASE_PUBLISHABLE_KEY`
 - `WEBSITE_SESSION_SECRET`
-- `BACKEND_EDGE_FUNCTIONS_BASE_URL` (optional)
+- `CONTACT_CHALLENGE_SECRET` (optional; falls back to the website secret)
 - `BACKEND_API_BASE_URL` (server only; HTTPS, except loopback development)
 - `BACKEND_API_TIMEOUT_MS` (optional; defaults to and cannot exceed `12000`)
 - `WEBSITE_ORIGIN` (exact website origin used for mutation checks)
-- `CLOUDRUN_PDF_URL`
 
-If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is unset, functions base URL falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
+See `.env.local.example`. Local container-only variables are injected by the
+repository lifecycle script and must not be copied into deployed environments.
 
 ## Commands
 
@@ -160,6 +160,13 @@ npm run lint
 npm run typecheck
 npm run test
 npm run build
+```
+
+The production-shaped local image is built from the repository root because
+standalone tracing includes both shared contracts packages:
+
+```powershell
+.\scripts\local-platform.ps1 start
 ```
 
 ## References

@@ -7,9 +7,12 @@ function readProjectFile(...segments: string[]) {
   return fs.readFileSync(path.resolve(process.cwd(), ...segments), 'utf8');
 }
 
-test('mobile archive queries use backend archive retrieval callable', () => {
+test('mobile archive queries use the Cloud API archive content route', () => {
   const source = readProjectFile('hooks', 'useArchiveQuery.ts');
 
-  assert.match(source, /httpsCallable\(functions, 'fetchArchiveMonthV1'\)/);
-  assert.match(source, /companyId,\s*year,\s*month,\s*dataType/);
+  assert.match(source, /archives\/content/);
+  assert.match(source, /year=.*month=.*dataType=/);
+  assert.match(source, /ArchiveContentResponseSchema/);
+  assert.doesNotMatch(source, /httpsCallable/);
+  assert.doesNotMatch(source, /fetchArchiveMonthV1/);
 });

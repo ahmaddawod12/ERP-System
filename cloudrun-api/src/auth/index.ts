@@ -37,8 +37,10 @@ export {
 export { requireVerifiedMutationIdentity } from "./mutation.js";
 export {
   createGoogleServiceIdentityVerifier,
+  createLocalServiceIdentityVerifier,
   serviceIdentityContextUserId,
   type CreateGoogleServiceIdentityVerifierOptions,
+  type CreateLocalServiceIdentityVerifierOptions,
   type GoogleServiceIdentity,
   type GoogleServiceIdentityVerifier,
 } from "./google-service-identity.js";

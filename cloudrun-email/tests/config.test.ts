@@ -32,3 +32,41 @@ test("production requires the least-privilege database role", () => {
     /smart_job_email/,
   );
 });
+
+test("local service endpoints require the exact mounted platform marker", () => {
+  const local = {
+    ...base,
+    NODE_ENV: "production",
+    DATABASE_URL: "postgresql://smart_job_email:local@supabase_db_smart-job-erp-local:5432/postgres",
+    SMART_JOB_DEPLOYMENT_ENV: "local",
+    SMART_JOB_LOCAL_PLATFORM: "true",
+    LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
+    SUPABASE_URL: "http://supabase_kong_smart-job-erp-local:8000",
+    SUPABASE_PUBLIC_URL: "http://127.0.0.1:55321",
+    AWS_SES_ENDPOINT: "http://local-platform-adapter:8090/ses",
+    AWS_ACCESS_KEY_ID: "local-access-key",
+    AWS_SECRET_ACCESS_KEY: "local-secret-access-key",
+  };
+  const config = loadConfig(local, {
+    readLocalMarker: () => Buffer.from("smart-job-erp-local-platform-v1"),
+  });
+  assert.equal(config.storage.publicBaseUrl?.origin, "http://127.0.0.1:55321");
+  assert.equal(config.ses.endpoint?.href, "http://local-platform-adapter:8090/ses");
+
+  assert.throws(
+    () => loadConfig(local, { readLocalMarker: () => Buffer.from("wrong-project") }),
+    /mounted local-platform marker/,
+  );
+});
+
+test("provider emulator settings are forbidden outside the local platform", () => {
+  assert.throws(
+    () => loadConfig({
+      ...base,
+      AWS_SES_ENDPOINT: "http://127.0.0.1:58084/ses",
+      AWS_ACCESS_KEY_ID: "local-access-key",
+      AWS_SECRET_ACCESS_KEY: "local-secret-access-key",
+    }),
+    /mounted local-platform marker/,
+  );
+});

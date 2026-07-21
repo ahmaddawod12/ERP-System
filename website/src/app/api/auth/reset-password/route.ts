@@ -12,6 +12,7 @@ import {
   recoveryCookieName,
   recoveryCsrfMatches,
 } from "@/lib/auth/password-recovery";
+import { isVerifiedLocalPlatformRuntime } from "@/lib/local-platform";
 import {
   serverResetPassword,
   serverRevokeAuthSession,
@@ -27,7 +28,7 @@ function json(payload: unknown, status: number): NextResponse {
 }
 
 function clearRecoveryCookies(response: NextResponse): void {
-  const secure = process.env.NODE_ENV === "production";
+  const secure = process.env.NODE_ENV === "production" && !isVerifiedLocalPlatformRuntime();
   for (const name of new Set([
     recoveryCookieName(),
     PRODUCTION_RECOVERY_COOKIE,

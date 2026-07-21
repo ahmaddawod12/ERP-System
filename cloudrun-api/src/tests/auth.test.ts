@@ -337,6 +337,22 @@ test("auth configuration permits local Supabase but rejects unsafe remote issuer
   });
   assert.equal(localVerifier.issuer, "http://127.0.0.1:55321/auth/v1");
 
+  const containerRoutableVerifier = createSupabaseJwtVerifier({
+    issuer: "http://127.0.0.1:55321/auth/v1",
+    audiences: AUDIENCE,
+    jwksUrl: new URL(
+      "http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json",
+    ),
+    jwks: staticEs256Jwks,
+  });
+  assert.equal(containerRoutableVerifier.issuer, "http://127.0.0.1:55321/auth/v1");
+  assert.throws(() => createSupabaseJwtVerifier({
+    issuer: ISSUER,
+    audiences: AUDIENCE,
+    jwksUrl: new URL("http://untrusted.example.test/auth/v1/.well-known/jwks.json"),
+    jwks: staticEs256Jwks,
+  }), /JWKS URL/);
+
   const invalidOptions = [
     { issuer: "http://example.com/auth/v1", audiences: AUDIENCE },
     { issuer: "https://example.com/not-auth", audiences: AUDIENCE },

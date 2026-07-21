@@ -1,4 +1,9 @@
-import { ApiFailureResponseSchema, CursorSchema } from "@smart-job/api-contracts";
+import {
+  ApiFailureResponseSchema,
+  ArchiveContentQuerySchema,
+  ArchiveContentResponseSchema,
+  CursorSchema,
+} from "@smart-job/api-contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -6,8 +11,10 @@ import type { ApiRequestAuthenticator } from "../auth/index.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
 import { mapDatabaseError } from "../database/errors.js";
 import { apiSuccess } from "../http/envelope.js";
+import { AppError } from "../http/errors.js";
 import { resolveTenantContext } from "../tenancy/context.js";
 import { readArchivesPage, type ArchiveListPage } from "../archives/read-repository.js";
+import type { ArchiveStorage } from "../archives/archive-storage.js";
 
 const companyParamsSchema = z.object({
   companyId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -44,6 +51,7 @@ const archiveListResponseSchema = z.object({
 export interface ArchiveReadRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly authenticator: ApiRequestAuthenticator;
+  readonly archiveStorage?: ArchiveStorage;
 }
 
 export function registerArchiveReadRoutes(
@@ -92,4 +100,69 @@ export function registerArchiveReadRoutes(
       return apiSuccess(request.id, result, result.nextCursor);
     },
   );
+
+  if (services.archiveStorage !== undefined) {
+    const archiveStorage = services.archiveStorage;
+    const archiveContentResponseSchema = z.object({
+      ok: z.literal(true),
+      data: ArchiveContentResponseSchema,
+      meta: z.object({ requestId: z.string() }).loose(),
+    }).strict();
+
+    app.get(
+      "/api/v1/companies/:companyId/archives/content",
+      {
+        schema: {
+          tags: ["archives"],
+          summary: "Fetch archived month content from Cloud Storage",
+          params: companyParamsSchema,
+          querystring: ArchiveContentQuerySchema,
+          response: {
+            200: archiveContentResponseSchema,
+            400: ApiFailureResponseSchema,
+            401: ApiFailureResponseSchema,
+            403: ApiFailureResponseSchema,
+            404: ApiFailureResponseSchema,
+            503: ApiFailureResponseSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        reply.header("cache-control", "private, no-store");
+        const auth = await services.authenticator.authenticate(request);
+        const params = companyParamsSchema.parse(request.params);
+        const query = ArchiveContentQuerySchema.parse(request.query);
+
+        const internalCompanyId = await services.database.withTransaction(
+          { userId: auth.userId },
+          async (transaction) => {
+            const tenant = await resolveTenantContext(transaction, auth.userId, params.companyId);
+            return tenant.internalCompanyId;
+          },
+        ).catch((error: unknown) => {
+          throw mapDatabaseError(error);
+        });
+
+        const suffix = query.dataType === "finishedJobs" ? "j" : "d";
+        const archiveKey = `${query.year}-${query.month}-${suffix}`;
+        const content = await archiveStorage.readArchiveJson(internalCompanyId, archiveKey);
+        if (content === null) {
+          throw new AppError({
+            statusCode: 404,
+            code: "ARCHIVE_NOT_FOUND",
+            message: "No archive found for the requested month.",
+            retryable: false,
+          });
+        }
+
+        const result = ArchiveContentResponseSchema.parse({
+          year: query.year,
+          month: query.month,
+          dataType: query.dataType,
+          items: content.items,
+        });
+        return apiSuccess(request.id, result);
+      },
+    );
+  }
 }

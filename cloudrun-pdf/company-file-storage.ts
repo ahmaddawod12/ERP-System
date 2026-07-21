@@ -1,6 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  hasLocalPlatformOverrides,
+  isVerifiedLocalPlatform,
+  type LocalMarkerReader,
+} from './local-platform';
 
 export const COMPANY_FILES_BUCKET = 'smart-job-company-files';
 export const MAX_COMPANY_FILE_BYTES = 10 * 1024 * 1024;
@@ -9,6 +14,8 @@ type StorageBucketClient = ReturnType<SupabaseClient['storage']['from']>;
 
 type CompanyFileStorageOptions = {
   baseUrl: URL;
+  publicBaseUrl?: URL;
+  verifiedLocalPlatform?: boolean;
   secretKey: string;
   bucketId?: string;
   client?: SupabaseClient;
@@ -166,7 +173,11 @@ function validateStorageConfiguration(options: CompanyFileStorageOptions): void 
   const isHttps = options.baseUrl.protocol === 'https:';
   const isLoopbackHttp = options.baseUrl.protocol === 'http:'
     && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(options.baseUrl.hostname.toLowerCase());
-  if (!isHttps && !isLoopbackHttp) {
+  const isVerifiedLocalService = options.verifiedLocalPlatform === true
+    && options.baseUrl.protocol === 'http:'
+    && options.baseUrl.hostname === 'supabase_kong_smart-job-erp-local'
+    && options.baseUrl.port === '8000';
+  if (!isHttps && !isLoopbackHttp && !isVerifiedLocalService) {
     throw new TypeError('SUPABASE_URL must use HTTPS, except for loopback local development');
   }
   if (options.baseUrl.pathname !== '/' || !/^sb_secret_[A-Za-z0-9_-]+$/.test(options.secretKey)) {
@@ -175,14 +186,36 @@ function validateStorageConfiguration(options: CompanyFileStorageOptions): void 
   if ((options.bucketId || COMPANY_FILES_BUCKET) !== COMPANY_FILES_BUCKET) {
     throw new TypeError(`SUPABASE_STORAGE_BUCKET must be ${COMPANY_FILES_BUCKET}`);
   }
+  if (options.publicBaseUrl !== undefined) {
+    const publicUrl = options.publicBaseUrl;
+    const publicLoopback = publicUrl.protocol === 'http:'
+      && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(publicUrl.hostname.toLowerCase());
+    if (
+      options.verifiedLocalPlatform !== true
+      || !publicLoopback
+      || publicUrl.username
+      || publicUrl.password
+      || publicUrl.pathname !== '/'
+      || publicUrl.search
+      || publicUrl.hash
+    ) {
+      throw new TypeError('SUPABASE_PUBLIC_URL is invalid');
+    }
+  }
 }
 
-export function resolveCompanyFileStorageConfig(env = process.env): {
+export function resolveCompanyFileStorageConfig(
+  env = process.env,
+  readMarker?: LocalMarkerReader,
+): {
   baseUrl: URL;
+  publicBaseUrl?: URL;
+  verifiedLocalPlatform?: boolean;
   secretKey: string;
   bucketId: typeof COMPANY_FILES_BUCKET;
 } {
   const urlValue = String(env.SUPABASE_URL || '').trim();
+  const publicUrlValue = String(env.SUPABASE_PUBLIC_URL || '').trim();
   const secretKey = String(env.SUPABASE_SECRET_KEY || '').trim();
   let baseUrl: URL;
   try {
@@ -191,8 +224,27 @@ export function resolveCompanyFileStorageConfig(env = process.env): {
     throw new TypeError('SUPABASE_URL must be an absolute URL', { cause: error });
   }
   const bucketId = String(env.SUPABASE_STORAGE_BUCKET || COMPANY_FILES_BUCKET).trim();
-  validateStorageConfiguration({ baseUrl, secretKey, bucketId });
-  return { baseUrl, secretKey, bucketId: COMPANY_FILES_BUCKET };
+  const verifiedLocalPlatform = isVerifiedLocalPlatform(env, readMarker);
+  if (hasLocalPlatformOverrides(env) && !verifiedLocalPlatform) {
+    throw new TypeError('Local storage overrides require the mounted local-platform marker');
+  }
+  let publicBaseUrl: URL | undefined;
+  if (publicUrlValue) {
+    try {
+      publicBaseUrl = new URL(publicUrlValue);
+    } catch (error) {
+      throw new TypeError('SUPABASE_PUBLIC_URL must be an absolute URL', { cause: error });
+    }
+  }
+  const options = {
+    baseUrl,
+    secretKey,
+    bucketId,
+    ...(publicBaseUrl === undefined ? {} : { publicBaseUrl }),
+    ...(verifiedLocalPlatform ? { verifiedLocalPlatform: true } : {}),
+  };
+  validateStorageConfiguration(options);
+  return { ...options, bucketId: COMPANY_FILES_BUCKET };
 }
 
 export function createCompanyFileStorage(options: CompanyFileStorageOptions): CompanyFileStorage {
@@ -206,6 +258,11 @@ export function createCompanyFileStorage(options: CompanyFileStorageOptions): Co
     },
   });
   const bucket = client.storage.from(bucketId);
+
+  const externalizeSignedUrl = (url: URL): string => {
+    if (options.publicBaseUrl === undefined) return url.href;
+    return new URL(`${url.pathname}${url.search}`, options.publicBaseUrl).href;
+  };
 
   return {
     async storePdfCreateOnly(rawObjectPath, bytes, metadata = {}) {
@@ -262,7 +319,7 @@ export function createCompanyFileStorage(options: CompanyFileStorageOptions): Co
       if (signedUrl.origin !== options.baseUrl.origin || signedUrl.pathname !== expectedPath || !signedUrl.searchParams.get('token')) {
         throw storageError('storage_invalid_response', 'Storage returned an invalid signed URL');
       }
-      return signedUrl.href;
+      return externalizeSignedUrl(signedUrl);
     },
 
     async removeObject(rawObjectPath) {

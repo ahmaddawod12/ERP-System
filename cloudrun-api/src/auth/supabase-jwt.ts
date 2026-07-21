@@ -37,6 +37,8 @@ export interface SupabaseJwtVerifierOptions {
   readonly audiences: string | readonly string[];
   /** Injectable key resolver for deterministic tests or an explicitly managed JWKS. */
   readonly jwks?: JWTVerifyGetKey;
+  /** Optional separately-routable JWKS endpoint; the token issuer remains unchanged. */
+  readonly jwksUrl?: URL;
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -130,7 +132,22 @@ function requireUserId(subject: unknown): string {
 export function createSupabaseJwtVerifier(
   options: SupabaseJwtVerifierOptions,
 ): SupabaseJwtVerifier {
-  const { issuer, jwksUrl } = normalizeIssuer(options.issuer);
+  const normalized = normalizeIssuer(options.issuer);
+  const { issuer } = normalized;
+  const jwksUrl = options.jwksUrl ?? normalized.jwksUrl;
+  const issuerUrl = new URL(issuer);
+  const localRoutableJwks = jwksUrl.protocol === "http:"
+    && isLoopbackHost(issuerUrl.hostname);
+  if (
+    (jwksUrl.protocol !== "https:" && !localRoutableJwks)
+    || jwksUrl.username
+    || jwksUrl.password
+    || jwksUrl.search
+    || jwksUrl.hash
+    || jwksUrl.pathname !== "/auth/v1/.well-known/jwks.json"
+  ) {
+    throw new TypeError("Supabase JWKS URL must be a safe Auth JWKS endpoint");
+  }
   const audiences = normalizeAudiences(options.audiences);
   const jwks = options.jwks ?? createRemoteJWKSet(jwksUrl, {
     cacheMaxAge: 600_000,

@@ -11,7 +11,12 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { auth, functions, httpsCallable } from '../../../firebase';
+import { auth } from '../../../firebase';
+import { randomUUID } from 'expo-crypto';
+import {
+  createJob as createJobApi,
+  deleteJob as deleteJobApi,
+} from '../lib/jobs-api';
 import { colors as themeColors, getColors, spacing, borderRadius, typography, shadows } from '../../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../../components';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
@@ -333,11 +338,13 @@ export default function Userjob() {
 
       for (const pendingJob of pendingArray) {
         try {
-          const companyId = getCompanyId();
+          const companyIdStr = getCompanyId();
           const user = auth.currentUser;
 
-          if (!companyId) throw new Error('No companyId');
+          if (!companyIdStr) throw new Error('No companyId');
           if (!user?.uid) throw new Error('No user session');
+          const companyId = Number(companyIdStr);
+          if (!Number.isSafeInteger(companyId) || companyId <= 0) throw new Error('Invalid companyId');
 
           const jobPayload = {
             ...(pendingJob.jobData || {}),
@@ -348,7 +355,7 @@ export default function Userjob() {
             : `pending-${generateUuid()}`;
 
           const uploadResult = await uploadJobFilesForStorage(
-            companyId,
+            companyIdStr,
             attachmentUploadId,
             Array.isArray(jobPayload.photos) ? jobPayload.photos as Array<string | { storagePath?: string; uri?: string }> : [],
             (jobPayload.signature as string | { storagePath?: string; uri?: string } | null | undefined) || null,
@@ -357,14 +364,22 @@ export default function Userjob() {
           jobPayload.signature = uploadResult.signatureRef ?? undefined;
           jobPayload.attachmentUploadId = attachmentUploadId;
 
-          const createJobFn = httpsCallable(functions, 'createJobV1');
-          const result = await createJobFn({
+          const result = await createJobApi({
+            uid: user.uid,
             companyId,
-            type: 'finished',
-            ...jobPayload,
-          }) as { data?: { jobId?: string } };
+            request: {
+              title: String(jobPayload.title || ''),
+              description: String(jobPayload.description || ''),
+              location: jobPayload.location ? String(jobPayload.location) : undefined,
+              status: 'finished',
+              timeFrom: jobPayload.timeFrom || undefined,
+              timeTo: jobPayload.timeTo || undefined,
+              signingPerson: jobPayload.signingPerson ? String(jobPayload.signingPerson) : undefined,
+            },
+            idempotencyKey: randomUUID(),
+          });
 
-          const serverJobId = result.data?.jobId;
+          const serverJobId = result.jobId;
           if (!serverJobId) {
             throw new Error('Job was created without a server job ID');
           }
@@ -595,15 +610,33 @@ export default function Userjob() {
                 return;
               }
 
-              const companyId = getCompanyId();
-              if (!companyId) {
+              const companyIdStr = getCompanyId();
+              if (!companyIdStr) {
                 alert.error('Error', 'Cannot delete job: company not found');
                 return;
               }
+              const companyId = Number(companyIdStr);
+              if (!Number.isSafeInteger(companyId) || companyId <= 0) {
+                alert.error('Error', 'Cannot delete job: company ID is invalid');
+                return;
+              }
+              const uid = getUid() || currentUser.uid;
+              if (!uid) {
+                alert.error('Error', 'User identity not found');
+                return;
+              }
+              if (!job || !job.entityVersion) {
+                alert.error('Error', 'The job version is missing. Reload the list and try again.');
+                return;
+              }
 
-              // Use deleteJobV1 Cloud Function for secure deletion
-              const deleteJobFn = httpsCallable(functions, 'deleteJobV1');
-              await deleteJobFn({ companyId, jobId });
+              await deleteJobApi({
+                uid,
+                companyId,
+                jobId: String(jobId),
+                request: { entityVersion: job.entityVersion },
+                idempotencyKey: randomUUID(),
+              });
               removeJob(jobId);
               alert.success('Success', 'Job deleted successfully');
               loadJobs();

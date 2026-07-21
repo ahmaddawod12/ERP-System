@@ -2,19 +2,19 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the active July 18, 2026 architecture and the pre-launch backend
-migration foundation:
+It reflects the July 21, 2026 architecture after the completed Edge-to-Cloud-API
+cutover:
 
 - Supabase Auth for website and mobile sign-in
-- Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
+- The Cloud Run API (`cloudrun-api`) as the sole backend trust boundary
 - PostgreSQL as the primary company-scoped ERP persistence layer
-- Firestore and Cloud Storage for compatibility, rules, operations, and files
+- Supabase Storage for job attachments and generated documents; GCS for monthly
+  archives; Firebase Storage for mobile file uploads
 - Cloud Run services for API, tax gateway, PDF generation, durable SES email,
   and archiving
-- Supabase Edge Functions remain the active application gateway during migration
-- `cloudrun-api`, `cloudrun-tax`, `cloudrun-pdf`, and `cloudrun-email` are
-  implemented and locally tested; production resource provisioning and launch
-  gates remain separate work. Tax stays disabled pending certification.
+- Firebase Messaging for mobile push notifications; Firestore and App Check
+  have been removed
+- Tax stays disabled pending certification
 
 ## 1. Repository Components
 
@@ -22,7 +22,6 @@ migration foundation:
 ERP-System/
 |-- website/             Next.js website
 |-- phone_app/           Expo mobile app
-|-- supabase/functions/  Edge gateway and endpoint runtime in this repository
 |-- cloudrun-api/        Main Fastify API foundation
 |-- cloudrun-tax/        Stateless Israel tax gateway foundation
 |-- cloudrun-pdf/        PDF preview/generation service
@@ -216,22 +215,20 @@ Configure mobile envs as needed:
 
 ```dotenv
 EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_ANON_KEY=
-
-EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+EXPO_PUBLIC_BACKEND_API_BASE_URL=
 ```
 
 Notes:
 
 - Registration and onboarding remain website-only.
-- If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
 - Mobile Supabase transport tokens are stored in Expo SecureStore, separate from the general cache MMKV store.
 - General MMKV stores non-sensitive cache and identity hints only; do not store access or refresh tokens there.
 - Push notification listeners and token registration are attached after authenticated cache bootstrap succeeds for the active session; Android channel setup is safe to call more than once.
 
-## 7. Supabase Edge Environment
+## 7. Supabase Local Environment
 
-Create `supabase/.env` (or configure Supabase secrets) for local development and deployment configuration:
+Create `supabase/.env` for local Supabase CLI configuration (used by the local Docker Desktop stack):
 
 ```dotenv
 CORS_ALLOWED_ORIGINS=http://localhost:3000,https://your-website.example
@@ -310,7 +307,7 @@ Current migration shape:
   - `apply_job_inventory_consumption_batch(...)` for atomic finished-job inventory consumption
   - `create_job_with_details(...)` for atomic job creation
   - `register_business_account(...)` for atomic business registration
-  - role-sensitive RLS for jobs, documents, and membership lists so direct table reads do not rely only on Edge code
+  - role-sensitive RLS for jobs, documents, and membership lists as a second line of defense
   - private-schema privileged RPC implementations with public service-role-only compatibility wrappers
   - explicit `search_path = ''` on trigger functions that execute privileged logic
   - `get_inventory_counts(...)` for lightweight dashboard/count-only reads
@@ -393,11 +390,88 @@ Minimum steps:
 1. Provision PostgreSQL.
 2. Set `DATABASE_URL` for backend services.
 3. Run migrations from `packages/db`.
-4. Verify backend services can connect before deploying Supabase Edge Functions or Cloud Run.
+4. Verify backend services can connect before deploying Cloud Run services.
 
 Do not add direct client SQL access for protected ERP operations.
 
 ## 9. Local Development
+
+### One-command local platform (recommended)
+
+The production-shaped local checkpoint uses two owners on one explicit Docker
+network:
+
+- Supabase CLI owns PostgreSQL 17, Auth, Storage, Studio, and its supporting
+  services for `project_id = "smart-job-erp-local"`.
+- `compose.local.yml` owns the standalone non-root website, main API, disabled
+  tax gateway, PDF/email workers, the durable local Pub/Sub/identity adapter,
+  fake GCS for archive objects, and Mailpit for SES-compatible test delivery.
+
+Start Docker Desktop first, then run from the repository root:
+
+```powershell
+.\scripts\local-platform.ps1 doctor
+.\scripts\local-platform.ps1 start
+```
+
+`start` creates the labeled external network `smart-job-local`, starts
+Supabase with `--network-id smart-job-local`, generates stable local-only
+credentials, applies all Drizzle migrations, bootstraps the
+`smart_job_api|pdf|email|archiver` passwords, builds the images, and waits for
+readiness. It never writes a credential to a tracked file; the runtime file is
+`local-platform/.env.generated` and is ignored.
+
+| Local surface | URL |
+|---|---|
+| Website | `http://127.0.0.1:3000` |
+| Main API | `http://127.0.0.1:58081` |
+| Tax gateway (submission disabled) | `http://127.0.0.1:58082` |
+| PDF health endpoint | `http://127.0.0.1:58083/health` |
+| Local adapter | `http://127.0.0.1:58084/readyz` |
+| Email health endpoint | `http://127.0.0.1:58085/health` |
+| Mailpit UI | `http://127.0.0.1:58025` |
+| Fake GCS | `http://127.0.0.1:58080` |
+| Supabase API / Studio | `http://127.0.0.1:55321` / `http://127.0.0.1:55323` |
+
+Compose publishes its application and emulator ports on loopback only. The
+Supabase CLI owns its separate port bindings and the supported CLI version has
+no bind-address flag; keep Docker Desktop behind the host firewall and use a
+trusted network whenever a physical device connects over the LAN.
+
+Lifecycle commands:
+
+```powershell
+.\scripts\local-platform.ps1 status
+.\scripts\local-platform.ps1 stop
+.\scripts\local-platform.ps1 reset -Yes
+.\scripts\local-platform.ps1 archive
+```
+
+`stop` preserves named volumes. `reset -Yes` destroys only this Compose
+project's queues, fake archives, test email, and the configured local Supabase
+database, then recreates them. It never calls `supabase stop --all`.
+`status` captures the Supabase status internally and never prints its local
+publishable, secret, database, or S3 credentials.
+
+The adapter persists opaque Pub/Sub messages before push, retries boundedly,
+moves exhausted messages to its local dead-letter directory, supplies only a
+marker-gated local service identity token, invokes the document/email outbox
+drains, and translates SES `SendEmail` requests to Mailpit. Supabase Storage
+remains the local backend for active files/PDFs; fake GCS represents only the
+separate archive bucket.
+
+The `archive` command is deliberately opt-in. Until Batch 5 replaces the
+legacy mutable-manifest implementation with leased archive runs, the local job
+uses a marker-gated, repository-host-restricted Postgres admin compatibility
+connection. No deployed archiver may use `ALLOW_LOCAL_ARCHIVER_ADMIN`.
+
+Every local-only service override requires the exact Compose flags and mounted
+`/run/secrets/smart_job_local_platform` marker. The website's production-mode
+entrypoint validates the marker before enabling loopback HTTP cookies. Without
+that proof, production HTTPS/database/identity checks remain fail-closed.
+
+The phone app is not containerized. Run Expo on the host and use the backend
+port above (or the development machine's LAN address for a physical device).
 
 ### Isolated local Supabase
 
@@ -418,7 +492,9 @@ ports from another Supabase project. The reserved ports are:
 | Pooler (when enabled) | `55329` |
 | Edge inspector | `55883` |
 
-Start and inspect only this project from the repository root:
+The following manual commands are for database troubleshooting. Prefer the
+lifecycle command above for the complete platform. Start and inspect only this
+project from the repository root:
 
 ```powershell
 supabase start
@@ -531,7 +607,7 @@ Required deployment concerns:
 - `SUPABASE_URL` plus a dedicated server-only `SUPABASE_SECRET_KEY` (`sb_secret_...`)
 - `SUPABASE_STORAGE_BUCKET=smart-job-company-files` (optional because this exact canonical value is the only accepted/default value)
 - environment for tax and document generation as required by the service
-- trusted invocations from `supabase/functions/` for preview/generate task dispatch
+- trusted invocations from the Cloud Run API for preview/generate task dispatch
 
 The secret key bypasses Storage RLS and must remain in Secret Manager/Cloud Run
 only. Do not expose it to website or mobile bundles and do not log it. Migration
@@ -616,16 +692,15 @@ The `supabase/` directory contains the in-repo backend runtime and migration har
 
 Use these docs when working there:
 
-- `SUPABASE-MIGRATION-GUIDE.md`
-- `supabase/README.md`
+- `backend.md`
+- `architecture.md`
 
-If you still operate legacy Firebase backend paths outside this repository, keep rollback paths available until your production rollout is fully complete.
-
-The approved database foundation does not authorize removing those legacy paths.
 Cloud Run deployment/IAM workflow, custom API DNS mapping, and Playwright E2E
-CI are implemented. Remaining mobile Edge caller cutover is the final step.
-website/mobile cutovers, remaining non-PDF Storage unification, and final Edge/Firebase
-directory deletion remain separate future approval gates.
+CI are implemented. The Edge-to-Cloud-API cutover is complete; all Supabase
+Edge functions and handlers have been deleted. Firebase Messaging and Storage
+remain for push notifications and file uploads. Production tax submission
+remains disabled pending certification, and stable API DNS is a mobile-release
+gate.
 
 The `website_e2e` CI job runs only when the repository variable
 `RUN_WEBSITE_E2E` is set to `true`. Configure the repository secrets
@@ -641,20 +716,20 @@ Recommended high-level order:
 1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
 2. Apply expand-only SQL migrations through `0030` using the dedicated
    migration credential; runtime services never receive it.
-3. Configure API, website, worker, tax, and remaining compatibility secrets.
+3. Configure API, website, worker, tax, and remaining service secrets.
 4. Deploy the main API with tax mode disabled, then the private PDF/email
    workers and their authenticated Pub/Sub subscriptions/drain schedules.
 5. Deploy `cloudrun-tax` in the Israel region, but do not enable authority
    submission until certification gates pass.
-6. Deploy `cloudrun-archiver` and retain the compatibility Edge functions still
-   required by the current mobile binary.
+6. Deploy `cloudrun-archiver` for monthly archive creation and verified deletion.
 7. Configure website hosting, build/release mobile apps, and validate document,
    email, tax-disabled, and archive paths before traffic promotion.
 
 CI/CD evidence:
 
-- The Edge deploy workflow has been removed. Remaining Edge functions are
-  retained for mobile screens not yet cut over to the Cloud API.
+- The Edge deploy workflow has been removed. All Supabase Edge functions and
+  handlers have been deleted; mobile and website callers use the Cloud Run API
+  exclusively.
 - Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
 
 ## 16. Post-Setup Checks

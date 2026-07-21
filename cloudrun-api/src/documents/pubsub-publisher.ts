@@ -31,6 +31,7 @@ export interface PubSubEmailPublisherConfig {
 export interface PubSubDocumentPublisherOptions {
   readonly fetchImplementation?: typeof fetch;
   readonly metadataTokenUrl?: string;
+  readonly apiBaseUrl?: URL;
   readonly now?: () => number;
 }
 
@@ -41,6 +42,14 @@ interface CachedAccessToken {
 
 const DEFAULT_METADATA_TOKEN_URL =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+const DEFAULT_PUBSUB_API_BASE_URL = new URL("https://pubsub.googleapis.com/");
+
+function publishUrl(baseUrl: URL, projectId: string, topic: string): URL {
+  return new URL(
+    `v1/projects/${encodeURIComponent(projectId)}/topics/${encodeURIComponent(topic)}:publish`,
+    baseUrl,
+  );
+}
 
 class MetadataAccessTokenProvider {
   readonly #fetch: typeof fetch;
@@ -90,6 +99,7 @@ export function createPubSubDocumentTaskPublisher(
 ): DocumentTaskPublisher {
   const fetchImplementation = options.fetchImplementation ?? fetch;
   const tokenProvider = new MetadataAccessTokenProvider(options);
+  const apiBaseUrl = options.apiBaseUrl ?? DEFAULT_PUBSUB_API_BASE_URL;
   const topicByTaskType = {
     preview: config.previewTopic,
     generate: config.generateTopic,
@@ -100,7 +110,7 @@ export function createPubSubDocumentTaskPublisher(
       const payload = DocumentDispatchMessageSchema.parse(message);
       const accessToken = await tokenProvider.get();
       const topic = topicByTaskType[taskType];
-      const url = `https://pubsub.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/topics/${encodeURIComponent(topic)}:publish`;
+      const url = publishUrl(apiBaseUrl, config.projectId, topic);
       const response = await fetchImplementation(url, {
         method: "POST",
         headers: {
@@ -129,12 +139,13 @@ export function createPubSubEmailDeliveryPublisher(
 ): EmailDeliveryPublisher {
   const fetchImplementation = options.fetchImplementation ?? fetch;
   const tokenProvider = new MetadataAccessTokenProvider(options);
+  const apiBaseUrl = options.apiBaseUrl ?? DEFAULT_PUBSUB_API_BASE_URL;
 
   return {
     async publish(message): Promise<void> {
       const payload = EmailDispatchMessageSchema.parse(message);
       const accessToken = await tokenProvider.get();
-      const url = `https://pubsub.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/topics/${encodeURIComponent(config.topic)}:publish`;
+      const url = publishUrl(apiBaseUrl, config.projectId, config.topic);
       const response = await fetchImplementation(url, {
         method: "POST",
         headers: {

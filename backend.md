@@ -1,30 +1,30 @@
 # Backend
 
-This document summarizes the active backend boundaries and the pre-launch
-migration foundation as of July 18, 2026.
+This document summarizes the active backend boundaries as of July 21, 2026.
 
 ## Current Backend Reality
 
-- The top-level `functions/` package is not present in this repository.
-- Active in-repo backend entry surfaces are implemented under `supabase/functions/` plus Cloud Run services.
+- The Cloud Run API (`cloudrun-api`) is the sole backend trust boundary for
+  website and mobile clients. All Supabase Edge functions and handlers have
+  been deleted.
 - Supabase Auth is the active bearer-token provider.
-- Shared edge auth verification enforces the Supabase JWT issuer/audience and rejects empty `uid` claims.
-- `getEnv()` fails closed when `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, or `JWT_SECRET` are missing.
 - SQL is the primary persistence layer for company-scoped ERP data.
-- Firestore is still used for selected operational paths, compatibility mirrors, rules-backed reads, and residual legacy surfaces.
-- Supabase Edge Functions in `supabase/functions/` are the maintained gateway surface in this workspace.
-- `cloudrun-api` now includes tested Postgres, Supabase JWT, opaque-session,
-  bounded domain routes, durable document/email dispatch, and authoritative tax
-  submission. `cloudrun-tax`, `cloudrun-pdf`, and `cloudrun-email` implement the
-  worker boundaries. None receives production traffic yet; tax stays disabled.
+- Supabase Storage (private `smart-job-company-files` bucket) owns active job
+  attachments and generated documents; GCS remains only for internal monthly
+  archives.
+- Firebase Messaging and Storage remain for mobile push notifications and file
+  uploads respectively; Firestore and App Check have been removed.
+- `cloudrun-api` includes tested Postgres, Supabase JWT, opaque-session,
+  bounded domain routes, durable document/email dispatch, authoritative tax
+  submission, and archive content retrieval. `cloudrun-tax`, `cloudrun-pdf`,
+  and `cloudrun-email` implement the worker boundaries. Tax stays disabled
+  pending certification.
 
 The approved migration chain now runs through `0030`. Migrations `0006`–`0030`
 add least-privileged API and worker roles, request context, private
 session/idempotency/upload/workflow state, atomic domain mutations,
 transactional accepted-job inventory consumption, canonical PDF/email claims,
-and the authoritative tax transaction/outbox. The
-API consumes these foundations locally, but
-this does not activate a deployed production path.
+and the authoritative tax transaction/outbox.
 
 ## Service Boundaries
 
@@ -86,13 +86,7 @@ This is the staged Node 22 modular API boundary. Its current implementation owns
 
 The main API requires `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`) for Auth
 calls and `SUPABASE_SECRET_KEY` (`sb_secret_...`) only for trusted Storage
-administration. It rejects legacy key formats in these new runtime slots. The
-legacy `SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` names remain confined to
-the still-active Edge compatibility runtime.
-
-Remaining legacy file paths, production resource provisioning, certification,
-and full client cutover are not complete. In-progress source without its
-approved migration and behavioral tests is not an active route contract.
+administration. It rejects legacy key formats in these runtime slots.
 
 ### cloudrun-tax/
 
@@ -107,37 +101,7 @@ authority calls remain gated by certification and `TAX_SUBMISSION_MODE`.
 This package derives canonical business values from `@smart-job/contracts` and
 adds Zod schemas for API envelopes, viewers/workspaces, cursors, entity
 versions, uploads, jobs, clients, inventory, business registration, push tokens,
-document tasks, email delivery, and tax submission. Its migration-only characterization subpath freezes
-operation/deploy names and representative request shapes so catalog drift is
-visible while domain behavior is ported and integration-tested.
-
-### supabase/functions/
-
-The `supabase/functions/` package is the compatibility trust boundary for
-mobile operations not yet cut over. It remains responsible for:
-
-- auth and company-scope verification
-- protected mutations and read-model endpoints
-- rate limiting and idempotency
-- document task orchestration
-- dispatching trusted preview/generate work to `cloudrun-pdf`
-- signed URL issuance
-- archive retrieval
-- tax authority flows
-- push/email side-effect coordination
-- compatibility writes to Firestore where still required
-
-Read-model calls are kind-based and must preserve compatibility with website/mobile `kind` payload contracts.
-Job contracts must expose public sequential IDs and full attachment/meta fields at that boundary, while resolving internal UUID rows only inside handlers.
-Because read-model edge code uses the Supabase service role, it must explicitly apply the runtime role matrix in code before returning rows: worker/business-user job reads are membership-scoped, basic users get no jobs, workers get no documents, and worker lists are manager/dev only.
-Read-model handlers also enforce module entitlement (`jobs`, `clients`, `inventory`, `documents`, `workers`) from `company_subscriptions.enabled_modules` before returning rows.
-
-Important active entry surfaces include:
-
-- `mutationGatewayV1`
-- `mutationGatewayMeWest1V1`
-- `readModelV1`
-- path-based endpoint handlers under `supabase/functions/**/index.ts`
+document tasks, email delivery, tax submission, and archive content retrieval.
 
 ### cloudrun-pdf/
 
@@ -217,7 +181,10 @@ objects, preventing temporary-relation shadowing.
 
 ### supabase/
 
-This directory contains the backend gateways and extracted handler logic. `supabase/handlers/` remains the main migration work area for parity hardening and runtime rollout.
+This directory contains the local Supabase CLI configuration (`config.toml`)
+and auth email templates (`templates/`). Application migrations live under
+`packages/db/migrations` and are intentionally disabled in the Supabase CLI
+migration directory.
 
 ## Active Data Model Responsibilities
 
@@ -238,40 +205,30 @@ Primary ERP entities live in SQL, including:
 
 ### Firestore residual areas
 
-Firestore remains active for:
-
-- company ID allocation via `system/data/comid`
-- compatibility profile and cache mirrors
-- selected membership mirrors
-- document generation locks
-- residual admin and operational collections
-- remaining personal inventory surface
+Firestore has been removed from the mobile and website clients. Firebase
+Messaging and Storage remain for push notifications and file uploads.
 
 ## Request Patterns
 
 ### Website
 
-The website uses API proxy routes and signed HttpOnly `__session` cookies, then calls backend edge function endpoints.
-Those server routes authenticate backend calls from a verified split-cookie session: signed metadata in `__session`, current bearer token in HttpOnly `__session_access`.
-Alongside that transitional path, `/app/select-company` and the explicit-tenant
-overview, jobs, clients, and inventory pages under `/app/c/{companyId}` now use
-the server-only Cloud Run transport and a Server Component DAL. The DAL resolves
-the opaque session, validates URL tenancy before scoped calls, and renders a
+The website uses an opaque Postgres-backed session cookie
+(`__Host-sj_web_session` in production), a server-only DAL/BFF, and Server
+Components. All `/app/*` routes use the opaque session. The DAL resolves the
+opaque session, validates URL tenancy before scoped calls, and renders a
 bounded first page before hydration. Same-origin login/session/logout and
 business-registration BFF handlers use
 `Authorization: SmartJobSession <opaque-token>`, exact Origin checks, and
-double-submit CSRF for mutations. The production browser cookie is
-`__Host-sj_web_session`; no Supabase access/refresh token is returned to browser
-JavaScript. Other `/app/*` routes still use the legacy split-cookie/Edge flow.
+double-submit CSRF for mutations. No Supabase access/refresh token is returned
+to browser JavaScript.
 
 ### Mobile
 
 The mobile app restores Supabase sessions through a SecureStore adapter and
-attaches bearer tokens to both staged Cloud API calls and remaining Edge gateway
-operations. Its root provider order now establishes session, tenant, React
-Query, encrypted outbox, and notification state before routing. The assigned
-jobs list uses the bounded Cloud API job route with tenant-scoped infinite-query
-keys; other feature reads/mutations remain transitional.
+attaches bearer tokens to Cloud API calls. Its root provider order establishes
+session, tenant, React Query, encrypted outbox, and notification state before
+routing. All feature reads/mutations use the bounded Cloud API routes with
+tenant-scoped infinite-query keys.
 
 Offline v1 supports only `job.create_finished` and `job.complete_assigned`.
 Each authenticated uid has a SQLCipher database whose key remains in
@@ -312,7 +269,7 @@ npm --prefix packages/db run test:integration
 supabase db lint --local --schema public,private --level warning
 ```
 
-- Treat `supabase/functions/` and `supabase/handlers/` as the active in-repo backend surface.
+- The Cloud Run API (`cloudrun-api`) is the active in-repo backend surface.
 - Wrap each main-API authenticated database operation in one transaction
   and call `private.set_api_request_context(...)` before domain queries.
 - Use opaque `entity_version` values for update/completion/deletion conflicts;
@@ -341,10 +298,9 @@ supabase db lint --local --schema public,private --level warning
 - Return public membership identifiers such as `wid` at the boundary and do not leak internal membership UUIDs in invite or job flows.
 - Keep cursor-based pagination stable with composite cursor semantics when ordering by timestamp + id.
 - When read-model payloads expose public IDs, keep cursor tokens based on the underlying ordered SQL fields, not the public display IDs.
-- Keep read-model filters wired through the edge layer: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
+- Keep read-model filters wired through the Cloud API: `status`, date field/range, document type, creator, `pageSize`, `limit`, and `afterCursor`.
 - Enforce module entitlement in read-model kinds before returning rows; disabled modules return empty lists or appropriate `failed-precondition` errors.
-- Clients and inventory read-model calls may opt into cursor pagination and prefix search; callers that omit those options continue to receive the legacy array/snapshot payloads.
-- Clients and inventory pagination/search are backed by service-role RPCs so filtering and cursors execute in SQL instead of loading full collections into Edge memory.
+- Clients and inventory read-model calls support cursor pagination and prefix search through SQL RPCs so filtering and cursors execute in SQL instead of loading full collections into application memory.
 - Dashboard/count-only read-model paths use lightweight SQL count helpers and must not fetch full inventory payloads.
 - Inventory pick mutations use a batch RPC so multi-part picks commit or fail as one database transaction.
 - Finished solo-job inventory consumption uses a SQL batch RPC so all consumed parts commit or fail together.
@@ -360,7 +316,7 @@ supabase db lint --local --schema public,private --level warning
 - Apply inventory movement writes atomically through SQL helpers such as `apply_inventory_movement(...)`, while preserving partial uniqueness for company-only and membership-scoped inventory locations.
 - Use `apply_inventory_pick_batch(...)` for multi-part picks so all balance updates and movement rows share one SQL transaction.
 - Use `apply_job_inventory_consumption_batch(...)` for finished-job part consumption so job-related stock deductions are atomic.
-- Keep privileged RPC implementations in the private schema and expose only service-role public wrappers needed by Edge code; public wrappers should use `SECURITY INVOKER` and explicit `search_path = ''`.
+- Keep privileged RPC implementations in the private schema and expose only narrow `smart_job_api`-executable wrappers needed by the Cloud API.
 - `createJobV1` uses the `create_job_with_details(...)` SQL RPC so job row, part usages, attachments, and finished-job inventory consumption commit in one transaction.
 - `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so company, profile, subscription, sync state, and owner membership commit in one transaction.
 - Main-API creation uses `private.create_api_job_with_details(...)`; first-workspace
@@ -389,16 +345,8 @@ supabase db lint --local --schema public,private --level warning
 
 ## Runtime Note
 
-The migration goal remains runtime replacement without contract drift. During this period:
-
-- client payloads and response envelopes must stay stable
-- website and mobile app behavior should remain unchanged
-- active Edge behavior fixes still belong in `supabase/functions/` and
-  `supabase/handlers/`; new migration domain routes belong in `cloudrun-api`
-  and use Edge fixtures only as behavioral references
-- The implemented API, durable PDF/email/tax workflows, explicit-tenant SSR,
-  encrypted mobile field outbox, and private job/PDF Storage slices do not
-  constitute full cutover.
-- New API/tax Dockerfiles and Cloud Run deployment/IAM, stable API domain,
-  remaining domain routes and website/mobile paths, legacy file-path removal,
-  and final Edge/Firebase deletion remain separate approval gates.
+The Edge-to-Cloud-API cutover is complete. All Supabase Edge functions and
+handlers have been deleted. The Cloud Run API is the sole backend trust
+boundary. Firebase Messaging and Storage remain for push notifications and file
+uploads. Production tax submission remains disabled pending certification, and
+stable API DNS is a production mobile-release gate.

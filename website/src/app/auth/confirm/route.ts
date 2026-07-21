@@ -14,6 +14,7 @@ import {
   serverRevokeAuthSession,
   serverVerifyEmailTokenHash,
 } from "@/lib/auth/server-supabase";
+import { isVerifiedLocalPlatformRuntime } from "@/lib/local-platform";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,7 @@ function redirectResponse(origin: string, path: string): NextResponse {
 }
 
 function clearRecoveryCookies(response: NextResponse): void {
-  const secure = process.env.NODE_ENV === "production";
+  const secure = process.env.NODE_ENV === "production" && !isVerifiedLocalPlatformRuntime();
   for (const name of new Set([
     recoveryCookieName(),
     PRODUCTION_RECOVERY_COOKIE,
@@ -91,7 +92,7 @@ export async function GET(request: Request) {
     const csrfToken = createRecoveryCsrfToken();
     const response = redirectResponse(origin, "/reset-password");
     clearRecoveryCookies(response);
-    const secure = process.env.NODE_ENV === "production";
+    const secure = process.env.NODE_ENV === "production" && !isVerifiedLocalPlatformRuntime();
     const expires = new Date(nowMs + (RECOVERY_MAX_AGE_SECONDS * 1_000));
     response.cookies.set(recoveryCookieName(), sealed, {
       httpOnly: true,

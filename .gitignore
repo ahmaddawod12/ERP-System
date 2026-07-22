@@ -38,3 +38,20 @@ phone_app/android/
 *.njsproj
 *.sln
 *.sw?
+
+# Terraform local state, provider downloads, plans, and operator overrides.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+infra/environments/*/backend.hcl
+infra/environments/*/terraform.tfvars
+infra/modules/*/.terraform.lock.hcl

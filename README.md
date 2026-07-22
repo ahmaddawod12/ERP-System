@@ -76,8 +76,8 @@ Apply Drizzle migrations before starting API or worker processes.
 
 CI runs every package test/typecheck/build, website lint/build, Expo Doctor,
 database migration/integration tests, Supabase lint, Playwright, Maestro Cloud,
-CodeQL, secret scanning, the npm audit policy, Terraform checks when roots are
-present, SBOM generation, and blocking container scans.
+CodeQL, secret scanning, the npm audit policy, validation/security scanning for
+all three Terraform roots, SBOM generation, and blocking container scans.
 
 Repository guards:
 
@@ -85,6 +85,7 @@ Repository guards:
 node scripts/check-no-ts-nocheck.mjs
 node scripts/check-js-syntax.mjs .
 node scripts/check-local-platform.mjs
+node scripts/check-deployment-security.mjs
 node scripts/check-perf-budget.mjs
 node scripts/check-maestro-flows.mjs
 node scripts/check-supply-chain-pins.mjs
@@ -92,8 +93,9 @@ node scripts/check-npm-audit.mjs
 ```
 
 GitHub Actions and container bases are pinned by immutable digest. The Cloud Run
-deployment workflow builds, pushes, resolves, keyless-signs, and deploys image
-digests rather than mutable tags. Active dependency exceptions are exact,
+release workflow builds/scans/signs once in staging, preserves the exact OCI
+digest in production, runs an isolated migration/no-traffic smoke gate, and
+requires explicit 10/50/100 promotions. Active dependency exceptions are exact,
 owner-assigned, and expire within 30 days; see
 [`security/NPM_AUDIT_EXCEPTIONS.md`](./security/NPM_AUDIT_EXCEPTIONS.md).
 
@@ -115,6 +117,7 @@ owner-assigned, and expire within 30 days; see
 
 - [`PROJECT_SUMMARY.md`](./PROJECT_SUMMARY.md) — concise current implementation
 - [`SETUP.md`](./SETUP.md) — installation, environments, local topology, deploy order
+- [`infra/README.md`](./infra/README.md) — Terraform bootstrap and release variables
 - [`architecture.md`](./architecture.md) — system/data ownership and request flows
 - [`backend.md`](./backend.md) — API, worker, SQL, and security boundaries
 - [`docs/runbooks/README.md`](./docs/runbooks/README.md) — deployment and incident procedures

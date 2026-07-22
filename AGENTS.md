@@ -241,6 +241,7 @@ Smart-Job ERP — multi-tenant field-service platform.
 | `cloudrun-pdf/` | PDF generation service | Node 22 |
 | `cloudrun-email/` | Durable SES document-email worker | Node 22 |
 | `cloudrun-archiver/` | Monthly archive batch job | Node 22 |
+| `cloudrun-migrations/` | Dedicated migration and internal smoke image | Node 22 / Cloud Run Jobs |
 | `packages/contracts/` | Shared enums/constants (`@smart-job/contracts`) | Node |
 | `packages/api-contracts/` | Shared Zod HTTP contracts (`@smart-job/api-contracts`) | Node 22 |
 | `packages/db/` | Drizzle ORM schema + migrations (`@smart-job/db`) | Node 22 |
@@ -385,7 +386,7 @@ the deployed job.
 node scripts/check-no-ts-nocheck.mjs   # blocks CI; run before pushing
 node scripts/check-js-syntax.mjs .        # checks .js, .cjs, and .mjs outside generated dirs
 node scripts/check-local-platform.mjs  # static Compose/container safeguards
-node scripts/check-deployment-security.mjs # Cloud Armor/archiver deploy safeguards
+node scripts/check-deployment-security.mjs # Terraform/release/migration/traffic safeguards
 node scripts/check-perf-budget.mjs     # blocking pagination/cursor/read-bound safeguards
 node scripts/check-maestro-flows.mjs   # required login/tenant/job/offline flows
 node scripts/check-supply-chain-pins.mjs # immutable Action/container inputs
@@ -407,7 +408,7 @@ all Cloud Run images.
 - `lockfile_audit` → every independent npm lockfile + exact 30-day exception policy
 - `codeql` / `secret_scan` / `sbom` → SAST, repository secret scan, SPDX SBOM
 - `deno` → check/test every Deno source when present
-- `infrastructure_security` → Terraform fmt/validate, tflint, and Trivy when Batch 8 roots exist
+- `infrastructure_security` → Terraform fmt/validate for dev/staging/prod, tflint, and Trivy
 - `packages_contracts` → `npm ci` → typecheck → build
 - `packages_api_contracts` → builds `packages/contracts` → `npm ci` → typecheck → test
 - `packages_db` → builds `packages/contracts` → `npm ci` → typecheck → build → test
@@ -823,11 +824,11 @@ the company/profile/subscription/sync/membership state atomically.
   implemented. Website Firebase/legacy-auth infrastructure has been removed.
   Mobile Firebase business-data services have been removed; Firebase Messaging
   and Crashlytics remain for push notifications and native crash reporting.
-  Mobile Edge caller cutover
-  is complete and all Edge directories have been deleted. The Cloud Run deploy
-  production deployment configures Cloud Armor auth/contact IP throttles on the
-  external load-balancer backends and restricts API ingress to the load balancer;
-  direct Cloud Run domain mapping is intentionally forbidden.
+  Mobile Edge caller cutover is complete and all Edge directories have been
+  deleted. Batch 8 Terraform represents the production network, workloads,
+  queues, DNS/TLS/load balancer, Cloud Armor, monitoring/SLOs, and GitHub WIF.
+  The release pipeline gates migration, internal candidate smoke, and explicit
+  10/50/100 traffic while direct public Cloud Run ingress remains forbidden.
 
 ---
 

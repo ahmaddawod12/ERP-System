@@ -1,0 +1,27 @@
+project_id                 = "REPLACE_WITH_PRODUCTION_PROJECT_ID"
+archive_bucket_name        = "REPLACE_WITH_GLOBALLY_UNIQUE_PRODUCTION_ARCHIVE_BUCKET"
+backup_bucket_name         = "REPLACE_WITH_GLOBALLY_UNIQUE_PRODUCTION_BACKUP_BUCKET"
+github_repository_owner_id = "129868177"
+github_deploy_workflow_ref = "ahmaddawod12/ERP-System/.github/workflows/cloudrun-deploy.yml@refs/heads/main"
+root_domain                 = "example.com"
+website_hostname            = "app.example.com"
+api_hostname                = "api.example.com"
+tax_hostname                = "tax.example.com"
+supabase_connection_limit   = 100
+recaptcha_site_key          = "REPLACE_WITH_PUBLIC_RECAPTCHA_SITE_KEY"
+archive_retention_days      = 2555 # Requires recorded legal approval.
+backup_retention_days       = 35   # Requires recorded recovery-owner approval.
+
+# Enable only after retention, secret, capacity, and release prerequisites pass.
+enable_runtime = false
+enable_release_jobs = false
+image_digests  = {}
+secret_versions = {}
+armor_waf_preview = false
+
+# Before enable_runtime=true, supply immutable refs for all keys:
+# website, api, tax, pdf, email, archiver, migration.
+
+labels = {
+  cost-center = "production"
+}

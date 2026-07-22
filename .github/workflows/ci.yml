@@ -106,38 +106,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Detect Terraform roots
-        id: terraform
-        shell: bash
-        run: |
-          if find infra -type f -name '*.tf' -print -quit 2>/dev/null | grep -q .; then
-            echo 'present=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'present=false' >> "$GITHUB_OUTPUT"
-            echo 'Terraform roots land in Batch 8; no configuration exists in Batch 7.'
-          fi
-      - if: steps.terraform.outputs.present == 'true'
-        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.14.3
-      - if: steps.terraform.outputs.present == 'true'
-        uses: terraform-linters/setup-tflint@6770de8d186019a148cc2b144e8bfa627f7d4aa8 # v5
+      - uses: terraform-linters/setup-tflint@6770de8d186019a148cc2b144e8bfa627f7d4aa8 # v5
+        with:
+          tflint_version: v0.64.0
       - name: Terraform format and validation
-        if: steps.terraform.outputs.present == 'true'
         shell: bash
         run: |
           terraform fmt -check -recursive infra
-          while IFS= read -r directory; do
-            terraform -chdir="$directory" init -backend=false -input=false
-            terraform -chdir="$directory" validate
-            tflint --chdir="$directory" --init
-            tflint --chdir="$directory"
-          done < <(find infra -type f -name '*.tf' -printf '%h\n' | sort -u)
-      - if: steps.terraform.outputs.present == 'true'
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+          for environment in dev staging prod; do
+            root="infra/environments/${environment}"
+            terraform -chdir="${root}" init -backend=false -input=false
+            terraform -chdir="${root}" validate
+            tflint --chdir="${root}" --config="${GITHUB_WORKSPACE}/infra/.tflint.hcl" --init
+            tflint --chdir="${root}" --config="${GITHUB_WORKSPACE}/infra/.tflint.hcl"
+          done
+          terraform -chdir=infra/modules/runtime init -backend=false -input=false
+          terraform -chdir=infra/modules/runtime test
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: config
-          scan-ref: infra
+          scan-ref: infra/environments/dev
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/environments/staging
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/environments/prod
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/modules
           exit-code: "1"
           severity: HIGH,CRITICAL
 
@@ -398,6 +407,8 @@ jobs:
             dockerfile: cloudrun-email/Dockerfile
           - name: archiver
             dockerfile: cloudrun-archiver/Dockerfile
+          - name: migration
+            dockerfile: cloudrun-migrations/Dockerfile
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build image once for scanning

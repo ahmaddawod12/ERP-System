@@ -1,20 +1,34 @@
-name: Cloud Run Deploy
+name: Cloud Run Release
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Deployment environment
+        description: Target environment
         required: true
         type: choice
         default: staging
         options:
           - staging
           - production
+      promotion_stage:
+        description: Candidate deploy/migration or an explicit traffic step
+        required: true
+        type: choice
+        default: candidate
+        options:
+          - candidate
+          - "10"
+          - "50"
+          - "100"
       image_tag:
-        description: Exact 40-character commit SHA (must match the selected workflow ref)
+        description: Exact 40-character commit SHA selected as the release
         required: true
         type: string
+
+concurrency:
+  group: cloudrun-release-${{ inputs.environment }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -27,298 +41,562 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Require the selected commit SHA
+      - name: Require the selected commit on the protected release ref
         env:
           IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
         run: |
+          set -euo pipefail
           [[ "${IMAGE_TAG}" =~ ^[0-9a-f]{40}$ ]]
           test "${IMAGE_TAG}" = "${GITHUB_SHA}"
+          test "${GITHUB_REF}" = "refs/heads/main"
       - name: Require a successful CI run for this commit
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
           SUCCESS_COUNT="$(gh api \
             "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=completed&per_page=100" \
             --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
           test "${SUCCESS_COUNT}" -gt 0
 
-  deploy_api:
-    name: Deploy main API to Cloud Run
+  prepare_release:
+    name: Prepare signed ${{ matrix.name }} release image
     runs-on: ubuntu-latest
     needs: release_preflight
-    environment: ${{ inputs.environment }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: website
+            repository: website
+            dockerfile: website/Dockerfile
+          - name: api
+            repository: cloudrun-api
+            dockerfile: cloudrun-api/Dockerfile
+          - name: tax
+            repository: cloudrun-tax
+            dockerfile: cloudrun-tax/Dockerfile
+          - name: pdf
+            repository: cloudrun-pdf
+            dockerfile: cloudrun-pdf/Dockerfile
+          - name: email
+            repository: cloudrun-email
+            dockerfile: cloudrun-email/Dockerfile
+          - name: archiver
+            repository: cloudrun-archiver
+            dockerfile: cloudrun-archiver/Dockerfile
+          - name: migration
+            repository: cloudrun-migrations
+            dockerfile: cloudrun-migrations/Dockerfile
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-
-      - name: Authenticate to Google Cloud
-        id: auth
+      - name: Validate release-registry configuration
+        env:
+          GCP_RELEASE_ARTIFACT_REPO: ${{ vars.GCP_RELEASE_ARTIFACT_REPO }}
+          GCP_RELEASE_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_RELEASE_DEPLOY_SERVICE_ACCOUNT }}
+          GCP_RELEASE_PROJECT_ID: ${{ vars.GCP_RELEASE_PROJECT_ID }}
+          GCP_RELEASE_REGION: ${{ vars.GCP_RELEASE_REGION }}
+          GCP_RELEASE_WIF_PROVIDER: ${{ vars.GCP_RELEASE_WIF_PROVIDER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GCP_RELEASE_ARTIFACT_REPO}"
+          test -n "${GCP_RELEASE_DEPLOY_SERVICE_ACCOUNT}"
+          test -n "${GCP_RELEASE_PROJECT_ID}"
+          test -n "${GCP_RELEASE_REGION}"
+          test -n "${GCP_RELEASE_WIF_PROVIDER}"
+      - name: Authenticate to the release project
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Configure Docker for Artifact Registry
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+          workload_identity_provider: ${{ vars.GCP_RELEASE_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_RELEASE_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Authorize Docker for Artifact Registry
-        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
-
+          project_id: ${{ vars.GCP_RELEASE_PROJECT_ID }}
+      - name: Authorize the release registry
+        run: gcloud auth configure-docker "${{ vars.GCP_RELEASE_REGION }}-docker.pkg.dev" --quiet
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.0.6
-
-      - name: Configure production Cloud Armor throttles
+      - name: Detect an existing immutable release
+        id: existing
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${{ vars.GCP_RELEASE_REGION }}-docker.pkg.dev/${{ vars.GCP_RELEASE_PROJECT_ID }}/${{ vars.GCP_RELEASE_ARTIFACT_REPO }}/${{ matrix.repository }}:${IMAGE_TAG}"
+          if gcloud artifacts docker images describe "${IMAGE}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Require a prebuilt release for production
         if: inputs.environment == 'production'
         env:
-          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-          CLOUD_ARMOR_POLICY: ${{ vars.CLOUD_ARMOR_POLICY }}
-          CLOUD_ARMOR_BACKEND_SERVICES: ${{ vars.WEBSITE_BACKEND_SERVICE }},${{ vars.API_BACKEND_SERVICE }}
-        run: bash scripts/configure-cloud-armor.sh
-
-      - name: Build and push main API image
-        run: |
-          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-api:${{ inputs.image_tag }}"
-          docker build \
-            -f cloudrun-api/Dockerfile \
-            -t "${IMAGE}" \
-            .
-          docker push "${IMAGE}"
-          DIGEST="$(gcloud artifacts docker images describe "${IMAGE}" --format='value(image_summary.digest)')"
-          test -n "${DIGEST}"
-          echo "API_IMAGE_DIGEST=${IMAGE%:*}@${DIGEST}" >> "${GITHUB_ENV}"
-
-      - name: Keyless-sign main API image digest
-        run: cosign sign --yes "${API_IMAGE_DIGEST}"
-
-      - name: Verify main API image signature
-        run: |
-          cosign verify \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/.+$" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${API_IMAGE_DIGEST}"
-
-      - name: Deploy main API to Cloud Run
+          EXISTS: ${{ steps.existing.outputs.exists }}
+        run: test "${EXISTS}" = "true"
+      - name: Build the image exactly once
+        if: inputs.environment == 'staging' && steps.existing.outputs.exists != 'true'
         env:
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
         run: |
-          INGRESS_FLAG="--ingress=all"
-          if [[ "${DEPLOY_ENVIRONMENT}" == "production" ]]; then
-            INGRESS_FLAG="--ingress=internal-and-cloud-load-balancing"
+          set -euo pipefail
+          docker build \
+            -f "${{ matrix.dockerfile }}" \
+            -t "smart-job-${{ matrix.name }}:${IMAGE_TAG}" \
+            .
+      - name: Scan the newly built image
+        if: inputs.environment == 'staging' && steps.existing.outputs.exists != 'true'
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: smart-job-${{ matrix.name }}:${{ inputs.image_tag }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Publish the newly built image
+        if: inputs.environment == 'staging' && steps.existing.outputs.exists != 'true'
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ vars.GCP_RELEASE_REGION }}-docker.pkg.dev/${{ vars.GCP_RELEASE_PROJECT_ID }}/${{ vars.GCP_RELEASE_ARTIFACT_REPO }}/${{ matrix.repository }}:${IMAGE_TAG}"
+          docker tag "smart-job-${{ matrix.name }}:${IMAGE_TAG}" "${TARGET}"
+          docker push "${TARGET}"
+      - name: Resolve the immutable source digest
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          TAGGED_IMAGE="${{ vars.GCP_RELEASE_REGION }}-docker.pkg.dev/${{ vars.GCP_RELEASE_PROJECT_ID }}/${{ vars.GCP_RELEASE_ARTIFACT_REPO }}/${{ matrix.repository }}:${IMAGE_TAG}"
+          DIGEST="$(gcloud artifacts docker images describe "${TAGGED_IMAGE}" --format='value(image_summary.digest)')"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s@%s\n' "${TAGGED_IMAGE%:*}" "${DIGEST}" > "release/${{ matrix.name }}.digest"
+      - name: Keyless-sign the staging source digest
+        if: inputs.environment == 'staging' && steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: cosign sign --yes "$(cat 'release/${{ matrix.name }}.digest')"
+      - name: Verify the source signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/heads/main$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$(cat 'release/${{ matrix.name }}.digest')"
+      - name: Upload the source digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-${{ matrix.name }}
+          path: release/${{ matrix.name }}.digest
+          if-no-files-found: error
+          retention-days: 30
+
+  environment_gate:
+    name: Approve and load ${{ inputs.environment }} configuration
+    runs-on: ubuntu-latest
+    needs: prepare_release
+    environment: ${{ inputs.environment }}
+    outputs:
+      api_origin: ${{ steps.configuration.outputs.api_origin }}
+      artifact_repository: ${{ steps.configuration.outputs.artifact_repository }}
+      deploy_service_account: ${{ steps.configuration.outputs.deploy_service_account }}
+      name_prefix: ${{ steps.configuration.outputs.name_prefix }}
+      project_id: ${{ steps.configuration.outputs.project_id }}
+      region: ${{ steps.configuration.outputs.region }}
+      tax_origin: ${{ steps.configuration.outputs.tax_origin }}
+      tax_region: ${{ steps.configuration.outputs.tax_region }}
+      website_origin: ${{ steps.configuration.outputs.website_origin }}
+      wif_provider: ${{ steps.configuration.outputs.wif_provider }}
+    steps:
+      - name: Validate and export protected environment configuration
+        id: configuration
+        env:
+          API_ORIGIN: ${{ vars.API_ORIGIN }}
+          CLOUD_RUN_NAME_PREFIX: ${{ vars.CLOUD_RUN_NAME_PREFIX }}
+          GCP_ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_TAX_REGION: ${{ vars.GCP_TAX_REGION }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          TAX_ORIGIN: ${{ vars.TAX_ORIGIN }}
+          WEBSITE_ORIGIN: ${{ vars.WEBSITE_ORIGIN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in \
+            "${API_ORIGIN}" "${CLOUD_RUN_NAME_PREFIX}" "${GCP_ARTIFACT_REPO}" \
+            "${GCP_DEPLOY_SERVICE_ACCOUNT}" "${GCP_PROJECT_ID}" "${GCP_REGION}" \
+            "${GCP_TAX_REGION}" "${GCP_WIF_PROVIDER}" "${TAX_ORIGIN}" "${WEBSITE_ORIGIN}"; do
+            test -n "${value}"
+            [[ "${value}" != *$'\n'* ]]
+          done
+          [[ "${API_ORIGIN}" =~ ^https://[^/]+$ ]]
+          [[ "${TAX_ORIGIN}" =~ ^https://[^/]+$ ]]
+          [[ "${WEBSITE_ORIGIN}" =~ ^https://[^/]+$ ]]
+          {
+            echo "api_origin=${API_ORIGIN}"
+            echo "artifact_repository=${GCP_ARTIFACT_REPO}"
+            echo "deploy_service_account=${GCP_DEPLOY_SERVICE_ACCOUNT}"
+            echo "name_prefix=${CLOUD_RUN_NAME_PREFIX}"
+            echo "project_id=${GCP_PROJECT_ID}"
+            echo "region=${GCP_REGION}"
+            echo "tax_origin=${TAX_ORIGIN}"
+            echo "tax_region=${GCP_TAX_REGION}"
+            echo "website_origin=${WEBSITE_ORIGIN}"
+            echo "wif_provider=${GCP_WIF_PROVIDER}"
+          } >> "${GITHUB_OUTPUT}"
+
+  promote_release:
+    name: Promote ${{ matrix.name }} digest to production
+    if: inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    needs:
+      - prepare_release
+      - environment_gate
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: website
+            repository: website
+          - name: api
+            repository: cloudrun-api
+          - name: tax
+            repository: cloudrun-tax
+          - name: pdf
+            repository: cloudrun-pdf
+          - name: email
+            repository: cloudrun-email
+          - name: archiver
+            repository: cloudrun-archiver
+          - name: migration
+            repository: cloudrun-migrations
+    steps:
+      - name: Download the signed source digest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: source-${{ matrix.name }}
+          path: source
+      - name: Authenticate to production
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ needs.environment_gate.outputs.wif_provider }}
+          service_account: ${{ needs.environment_gate.outputs.deploy_service_account }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        with:
+          project_id: ${{ needs.environment_gate.outputs.project_id }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Copy the exact manifest into the production registry
+        id: copy
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE="$(cat 'source/${{ matrix.name }}.digest')"
+          EXPECTED_DIGEST="${SOURCE##*@}"
+          SOURCE_HOST="${SOURCE%%/*}"
+          DESTINATION_TAG="${{ needs.environment_gate.outputs.region }}-docker.pkg.dev/${{ needs.environment_gate.outputs.project_id }}/${{ needs.environment_gate.outputs.artifact_repository }}/${{ matrix.repository }}:${IMAGE_TAG}"
+
+          gcloud auth configure-docker "${SOURCE_HOST}" "${{ needs.environment_gate.outputs.region }}-docker.pkg.dev" --quiet
+          if gcloud artifacts docker images describe "${DESTINATION_TAG}" >/dev/null 2>&1; then
+            EXISTING_DIGEST="$(gcloud artifacts docker images describe "${DESTINATION_TAG}" --format='value(image_summary.digest)')"
+            test "${EXISTING_DIGEST}" = "${EXPECTED_DIGEST}"
+            echo "created=false" >> "${GITHUB_OUTPUT}"
+          else
+            docker buildx imagetools create --tag "${DESTINATION_TAG}" "${SOURCE}"
+            echo "created=true" >> "${GITHUB_OUTPUT}"
           fi
-          gcloud run deploy cloudrun-api \
-            --image "${API_IMAGE_DIGEST}" \
-            --region ${{ vars.GCP_REGION }} \
-            --service-account ${{ vars.CLOUDRUN_API_SERVICE_ACCOUNT }} \
-            --min-instances ${{ vars.API_MIN_INSTANCES }} \
-            --max-instances ${{ vars.API_MAX_INSTANCES }} \
-            --concurrency ${{ vars.API_CONCURRENCY }} \
-            --timeout 30 \
-            "${INGRESS_FLAG}" \
-            --allow-unauthenticated \
-            --set-secrets DATABASE_URL=smart-job-api-database-url:latest,SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_PUBLISHABLE_KEY=smart-job-supabase-publishable-key:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest,SUPABASE_STORAGE_BUCKET=smart-job-storage-bucket:latest,WEB_SESSION_ENCRYPTION_KEY_BASE64=smart-job-web-session-key:latest,WEB_SESSION_ENCRYPTION_KEY_VERSION=smart-job-web-session-key-version:latest,INTERNAL_API_AUDIENCE=smart-job-internal-audience:latest,INTERNAL_CALLER_SERVICE_ACCOUNTS=smart-job-internal-callers:latest \
-            --set-env-vars DATABASE_SSL_MODE=require,SUPABASE_JWT_AUDIENCE=authenticated,NODE_ENV=production,LOG_LEVEL=info,ARCHIVE_BUCKET=${{ vars.ARCHIVE_BUCKET }},DOCUMENT_PUBSUB_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},DOCUMENT_PREVIEW_TOPIC=${{ vars.DOCUMENT_PREVIEW_TOPIC }},DOCUMENT_GENERATE_TOPIC=${{ vars.DOCUMENT_GENERATE_TOPIC }},EMAIL_DELIVERY_TOPIC=${{ vars.EMAIL_DELIVERY_TOPIC }}
 
-      - name: Output main API URL
+          DESTINATION_DIGEST="$(gcloud artifacts docker images describe "${DESTINATION_TAG}" --format='value(image_summary.digest)')"
+          test "${DESTINATION_DIGEST}" = "${EXPECTED_DIGEST}"
+          mkdir -p promoted
+          printf '%s@%s\n' "${DESTINATION_TAG%:*}" "${DESTINATION_DIGEST}" > "promoted/${{ matrix.name }}.digest"
+      - name: Sign and verify the promoted digest
+        env:
+          CREATED: ${{ steps.copy.outputs.created }}
+        shell: bash
         run: |
-          API_URL="$(gcloud run services describe cloudrun-api \
-            --region ${{ vars.GCP_REGION }} \
-            --format='value(status.url)')"
-          echo "Main API deployed to ${API_URL}"
+          set -euo pipefail
+          TARGET="$(cat 'promoted/${{ matrix.name }}.digest')"
+          if [[ "${CREATED}" == "true" ]]; then
+            cosign sign --yes "${TARGET}"
+          fi
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/heads/main$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${TARGET}"
+      - name: Upload the promoted digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: promoted-${{ matrix.name }}
+          path: promoted/${{ matrix.name }}.digest
+          if-no-files-found: error
+          retention-days: 30
 
-  deploy_tax:
-    name: Deploy tax gateway to Cloud Run (me-west1)
+  deploy:
+    name: ${{ inputs.environment }} ${{ inputs.promotion_stage }} release stage
+    if: >-
+      always() &&
+      needs.release_preflight.result == 'success' &&
+      needs.prepare_release.result == 'success' &&
+      needs.environment_gate.result == 'success' &&
+      (inputs.environment == 'staging' || needs.promote_release.result == 'success')
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    needs: deploy_api
+    needs:
+      - release_preflight
+      - prepare_release
+      - environment_gate
+      - promote_release
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - name: Download the target digest manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          node-version: 22
-
-      - name: Authenticate to Google Cloud
+          pattern: ${{ inputs.environment == 'production' && 'promoted-*' || 'source-*' }}
+          path: release
+          merge-multiple: true
+      - name: Validate deployment configuration
+        env:
+          API_ORIGIN: ${{ needs.environment_gate.outputs.api_origin }}
+          CLOUD_RUN_NAME_PREFIX: ${{ needs.environment_gate.outputs.name_prefix }}
+          GCP_ARTIFACT_REPO: ${{ needs.environment_gate.outputs.artifact_repository }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ needs.environment_gate.outputs.deploy_service_account }}
+          GCP_PROJECT_ID: ${{ needs.environment_gate.outputs.project_id }}
+          GCP_REGION: ${{ needs.environment_gate.outputs.region }}
+          GCP_TAX_REGION: ${{ needs.environment_gate.outputs.tax_region }}
+          GCP_WIF_PROVIDER: ${{ needs.environment_gate.outputs.wif_provider }}
+          TAX_ORIGIN: ${{ needs.environment_gate.outputs.tax_origin }}
+          WEBSITE_ORIGIN: ${{ needs.environment_gate.outputs.website_origin }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in website api tax pdf email archiver migration; do
+            test -f "release/${name}.digest"
+            grep -Eq '@sha256:[0-9a-f]{64}$' "release/${name}.digest"
+          done
+          for value in \
+            "${API_ORIGIN}" "${CLOUD_RUN_NAME_PREFIX}" "${GCP_ARTIFACT_REPO}" \
+            "${GCP_DEPLOY_SERVICE_ACCOUNT}" "${GCP_PROJECT_ID}" "${GCP_REGION}" \
+            "${GCP_TAX_REGION}" "${GCP_WIF_PROVIDER}" "${TAX_ORIGIN}" "${WEBSITE_ORIGIN}"; do
+            test -n "${value}"
+          done
+          [[ "${API_ORIGIN}" =~ ^https://[^/]+$ ]]
+          [[ "${TAX_ORIGIN}" =~ ^https://[^/]+$ ]]
+          [[ "${WEBSITE_ORIGIN}" =~ ^https://[^/]+$ ]]
+      - name: Authenticate to the target project
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Configure Docker for Artifact Registry
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+          workload_identity_provider: ${{ needs.environment_gate.outputs.wif_provider }}
+          service_account: ${{ needs.environment_gate.outputs.deploy_service_account }}
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Authorize Docker for Artifact Registry
-        run: gcloud auth configure-docker "${{ vars.GCP_TAX_REGION }}-docker.pkg.dev" --quiet
-
+          project_id: ${{ needs.environment_gate.outputs.project_id }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.0.6
-
-      - name: Build and push tax gateway image
+      - name: Verify every target signature
+        shell: bash
         run: |
-          IMAGE="${{ vars.GCP_TAX_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-tax:${{ inputs.image_tag }}"
-          docker build \
-            -f cloudrun-tax/Dockerfile \
-            -t "${IMAGE}" \
-            .
-          docker push "${IMAGE}"
-          DIGEST="$(gcloud artifacts docker images describe "${IMAGE}" --format='value(image_summary.digest)')"
-          test -n "${DIGEST}"
-          echo "TAX_IMAGE_DIGEST=${IMAGE%:*}@${DIGEST}" >> "${GITHUB_ENV}"
-
-      - name: Keyless-sign tax gateway image digest
-        run: cosign sign --yes "${TAX_IMAGE_DIGEST}"
-
-      - name: Verify tax gateway image signature
+          set -euo pipefail
+          for digest_file in release/*.digest; do
+            cosign verify \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/heads/main$" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$(cat "${digest_file}")"
+          done
+      - name: Run migration, deploy no-traffic revisions, and smoke them internally
+        if: inputs.promotion_stage == 'candidate'
+        env:
+          CLOUD_RUN_NAME_PREFIX: ${{ needs.environment_gate.outputs.name_prefix }}
+          GCP_REGION: ${{ needs.environment_gate.outputs.region }}
+          GCP_TAX_REGION: ${{ needs.environment_gate.outputs.tax_region }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        shell: bash
         run: |
-          cosign verify \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/.+$" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${TAX_IMAGE_DIGEST}"
+          set -euo pipefail
+          declare -A IMAGE
+          for name in website api tax pdf email archiver migration; do
+            IMAGE["${name}"]="$(cat "release/${name}.digest")"
+          done
+          CANDIDATE_TAG="candidate-${IMAGE_TAG:0:8}"
 
-      - name: Deploy tax gateway to Cloud Run
+          for key_region in \
+            "website:${GCP_REGION}" \
+            "api:${GCP_REGION}" \
+            "tax:${GCP_TAX_REGION}" \
+            "pdf:${GCP_REGION}" \
+            "email:${GCP_REGION}"; do
+            key="${key_region%%:*}"
+            region="${key_region#*:}"
+            description="$(gcloud run services describe "${CLOUD_RUN_NAME_PREFIX}-${key}" --region "${region}" --format=json)"
+            existing_revision="$(jq -r --arg tag "${CANDIDATE_TAG}" '[.status.traffic[]? | select(.tag == $tag) | (.revisionName // .revision)][0] // [.status.trafficStatuses[]? | select(.tag == $tag) | (.revision // .revisionName)][0] // empty' <<<"${description}")"
+            existing_percent="$(jq -r --arg revision "${existing_revision}" 'if $revision == "" then 0 else ((.status.traffic // []) as $traffic | (if ($traffic | length) > 0 then $traffic else (.status.trafficStatuses // []) end) | map(select((.revisionName // .revision) == $revision) | (.percent // 0)) | add // 0) end' <<<"${description}")"
+            test "${existing_percent}" = "0"
+          done
+
+          gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-migration" \
+            --image "${IMAGE[migration]}" --region "${GCP_REGION}" --quiet
+          gcloud run jobs execute "${CLOUD_RUN_NAME_PREFIX}-migration" \
+            --region "${GCP_REGION}" --wait --quiet
+
+          gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-archiver" \
+            --image "${IMAGE[archiver]}" --region "${GCP_REGION}" --quiet
+          gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-smoke" \
+            --image "${IMAGE[migration]}" --region "${GCP_REGION}" --quiet
+
+          deploy_candidate() {
+            local key="$1"
+            local region="$2"
+            gcloud run deploy "${CLOUD_RUN_NAME_PREFIX}-${key}" \
+              --image "${IMAGE[${key}]}" \
+              --region "${region}" \
+              --no-traffic \
+              --tag "${CANDIDATE_TAG}" \
+              --quiet
+          }
+
+          deploy_candidate website "${GCP_REGION}"
+          deploy_candidate api "${GCP_REGION}"
+          deploy_candidate tax "${GCP_TAX_REGION}"
+          deploy_candidate pdf "${GCP_REGION}"
+          deploy_candidate email "${GCP_REGION}"
+
+          TARGETS='[]'
+          add_smoke_target() {
+            local key="$1"
+            local region="$2"
+            local path="$3"
+            local description revision ready tag_url service_url
+            description="$(gcloud run services describe "${CLOUD_RUN_NAME_PREFIX}-${key}" --region "${region}" --format=json)"
+            revision="$(jq -r '.status.latestCreatedRevisionName // .status.latestCreatedRevision // empty' <<<"${description}")"
+            test -n "${revision}"
+            ready="$(gcloud run revisions describe "${revision}" --region "${region}" --format=json)"
+            jq -e '.status.conditions[] | select(.type == "Ready" and .status == "True")' <<<"${ready}" >/dev/null
+            tag_url="$(jq -r --arg tag "${CANDIDATE_TAG}" '[.status.traffic[]? | select(.tag == $tag) | (.url // .uri)][0] // [.status.trafficStatuses[]? | select(.tag == $tag) | (.uri // .url)][0] // empty' <<<"${description}")"
+            service_url="$(jq -r '.status.url // .uri // empty' <<<"${description}")"
+            test -n "${tag_url}"
+            test -n "${service_url}"
+            TARGETS="$(jq -c \
+              --arg url "${tag_url}${path}" \
+              --arg audience "${service_url}" \
+              '. + [{url: $url, audience: $audience}]' <<<"${TARGETS}")"
+          }
+
+          add_smoke_target website "${GCP_REGION}" "/"
+          add_smoke_target api "${GCP_REGION}" "/readyz"
+          add_smoke_target tax "${GCP_TAX_REGION}" "/readyz"
+          add_smoke_target pdf "${GCP_REGION}" "/health"
+          add_smoke_target email "${GCP_REGION}" "/health"
+
+          gcloud run jobs execute "${CLOUD_RUN_NAME_PREFIX}-smoke" \
+            --region "${GCP_REGION}" \
+            --wait \
+            --update-env-vars "^@^SMOKE_TARGETS=${TARGETS}" \
+            --quiet
+      - name: Promote candidate traffic and smoke the public edge
+        if: inputs.promotion_stage != 'candidate'
+        env:
+          API_ORIGIN: ${{ needs.environment_gate.outputs.api_origin }}
+          CLOUD_RUN_NAME_PREFIX: ${{ needs.environment_gate.outputs.name_prefix }}
+          GCP_REGION: ${{ needs.environment_gate.outputs.region }}
+          GCP_TAX_REGION: ${{ needs.environment_gate.outputs.tax_region }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          PROMOTION_PERCENT: ${{ inputs.promotion_stage }}
+          TAX_ORIGIN: ${{ needs.environment_gate.outputs.tax_origin }}
+          WEBSITE_ORIGIN: ${{ needs.environment_gate.outputs.website_origin }}
+        shell: bash
         run: |
-          gcloud run deploy cloudrun-tax \
-            --image "${TAX_IMAGE_DIGEST}" \
-            --region ${{ vars.GCP_TAX_REGION }} \
-            --service-account ${{ vars.CLOUDRUN_TAX_SERVICE_ACCOUNT }} \
-            --min-instances ${{ vars.TAX_MIN_INSTANCES }} \
-            --max-instances ${{ vars.TAX_MAX_INSTANCES }} \
-            --concurrency 8 \
-            --timeout 30 \
-            --allow-unauthenticated \
-            --set-secrets TAX_TOKEN_URL=smart-job-tax-token-url:latest,TAX_APPROVAL_URL=smart-job-tax-approval-url:latest,TAX_CLIENT_ID=smart-job-tax-client-id:latest,TAX_CLIENT_SECRET=smart-job-tax-client-secret:latest,TAX_CALLBACK_HMAC_SECRET=smart-job-tax-callback-hmac:latest,MAIN_API_URL=smart-job-tax-main-api-url:latest,MAIN_API_AUDIENCE=smart-job-tax-main-api-audience:latest,TAX_GATEWAY_AUDIENCE=smart-job-tax-gateway-audience:latest,TAX_APPROVAL_CALLER_SERVICE_ACCOUNT=smart-job-tax-approval-caller:latest \
-            --set-env-vars NODE_ENV=production,LOG_LEVEL=info
+          set -euo pipefail
+          CANDIDATE_TAG="candidate-${IMAGE_TAG:0:8}"
+          declare -A REGION STABLE CANDIDATE CURRENT
+          REGION[website]="${GCP_REGION}"
+          REGION[api]="${GCP_REGION}"
+          REGION[tax]="${GCP_TAX_REGION}"
+          REGION[pdf]="${GCP_REGION}"
+          REGION[email]="${GCP_REGION}"
 
-  deploy_pdf:
-    name: Deploy PDF service to Cloud Run
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    needs: deploy_api
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
+          case "${PROMOTION_PERCENT}" in
+            10) EXPECTED_PREVIOUS=0 ;;
+            50) EXPECTED_PREVIOUS=10 ;;
+            100) EXPECTED_PREVIOUS=50 ;;
+            *) exit 2 ;;
+          esac
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          for key in website api tax pdf email; do
+            description="$(gcloud run services describe "${CLOUD_RUN_NAME_PREFIX}-${key}" --region "${REGION[$key]}" --format=json)"
+            CANDIDATE[$key]="$(jq -r --arg tag "${CANDIDATE_TAG}" '[.status.traffic[]? | select(.tag == $tag) | (.revisionName // .revision)][0] // [.status.trafficStatuses[]? | select(.tag == $tag) | (.revision // .revisionName)][0] // empty' <<<"${description}")"
+            test -n "${CANDIDATE[$key]}"
+            expected_image="$(cat "release/${key}.digest")"
+            revision_description="$(gcloud run revisions describe "${CANDIDATE[$key]}" --region "${REGION[$key]}" --format=json)"
+            actual_image="$(jq -r '.spec.containers[0].image // .spec.template.spec.containers[0].image // empty' <<<"${revision_description}")"
+            test "${actual_image}" = "${expected_image}"
+            CURRENT[$key]="$(jq -r --arg revision "${CANDIDATE[$key]}" '(.status.traffic // []) as $traffic | (if ($traffic | length) > 0 then $traffic else (.status.trafficStatuses // []) end) | map(select((.revisionName // .revision) == $revision) | (.percent // 0)) | add // 0' <<<"${description}")"
+            STABLE[$key]="$(jq -r --arg revision "${CANDIDATE[$key]}" '(.status.traffic // []) as $traffic | (if ($traffic | length) > 0 then $traffic else (.status.trafficStatuses // []) end) | map({revision: (.revisionName // .revision), percent: (.percent // 0)}) | map(select(.revision != $revision and .percent > 0)) | sort_by(.percent) | reverse | .[0].revision // empty' <<<"${description}")"
+            if [[ "${CURRENT[$key]}" != "${PROMOTION_PERCENT}" ]]; then
+              test "${CURRENT[$key]}" = "${EXPECTED_PREVIOUS}"
+              if [[ "${PROMOTION_PERCENT}" != "100" ]]; then
+                test -n "${STABLE[$key]}"
+              fi
+            fi
+          done
 
-      - name: Configure Docker for Artifact Registry
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
+          PROMOTION_STARTED=false
+          rollback() {
+            trap - ERR
+            set +e
+            if [[ "${PROMOTION_STARTED}" == "true" ]]; then
+              for key in website api tax pdf email; do
+                if [[ -n "${STABLE[$key]}" ]]; then
+                  gcloud run services update-traffic "${CLOUD_RUN_NAME_PREFIX}-${key}" \
+                    --region "${REGION[$key]}" \
+                    --to-revisions "${STABLE[$key]}=100" \
+                    --quiet
+                fi
+              done
+            fi
+          }
+          trap 'code=$?; rollback; exit ${code}' ERR
 
-      - name: Authorize Docker for Artifact Registry
-        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+          for key in website api tax pdf email; do
+            if [[ "${CURRENT[$key]}" == "${PROMOTION_PERCENT}" ]]; then
+              continue
+            fi
+            PROMOTION_STARTED=true
+            if [[ "${PROMOTION_PERCENT}" == "100" ]]; then
+              allocation="${CANDIDATE[$key]}=100"
+            else
+              allocation="${CANDIDATE[$key]}=${PROMOTION_PERCENT},${STABLE[$key]}=$((100 - PROMOTION_PERCENT))"
+            fi
+            gcloud run services update-traffic "${CLOUD_RUN_NAME_PREFIX}-${key}" \
+              --region "${REGION[$key]}" \
+              --to-revisions "${allocation}" \
+              --quiet
+          done
 
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v3.0.6
+          for endpoint in \
+            "${WEBSITE_ORIGIN}/" \
+            "${API_ORIGIN}/readyz" \
+            "${TAX_ORIGIN}/readyz"; do
+            curl --fail --location --silent --show-error \
+              --connect-timeout 5 --max-time 20 \
+              --retry 5 --retry-delay 3 --retry-all-errors \
+              "${endpoint}" >/dev/null
+          done
 
-      - name: Build and push PDF service image
-        run: |
-          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-pdf:${{ inputs.image_tag }}"
-          docker build \
-            -f cloudrun-pdf/Dockerfile \
-            -t "${IMAGE}" \
-            .
-          docker push "${IMAGE}"
-          DIGEST="$(gcloud artifacts docker images describe "${IMAGE}" --format='value(image_summary.digest)')"
-          test -n "${DIGEST}"
-          echo "PDF_IMAGE_DIGEST=${IMAGE%:*}@${DIGEST}" >> "${GITHUB_ENV}"
-
-      - name: Keyless-sign PDF service image digest
-        run: cosign sign --yes "${PDF_IMAGE_DIGEST}"
-
-      - name: Verify PDF service image signature
-        run: |
-          cosign verify \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/.+$" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${PDF_IMAGE_DIGEST}"
-
-      - name: Deploy PDF service to Cloud Run
-        run: |
-          gcloud run deploy cloudrun-pdf \
-            --image "${PDF_IMAGE_DIGEST}" \
-            --region ${{ vars.GCP_REGION }} \
-            --service-account ${{ vars.CLOUDRUN_PDF_SERVICE_ACCOUNT }} \
-            --min-instances 0 \
-            --max-instances 3 \
-            --concurrency 4 \
-            --timeout 60 \
-            --no-allow-unauthenticated \
-            --set-secrets SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest \
-            --set-env-vars PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable,SUPABASE_STORAGE_BUCKET=smart-job-company-files,NODE_ENV=production
-
-  deploy_archiver:
-    name: Deploy archiver job to Cloud Run
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    needs: deploy_api
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Configure Docker for Artifact Registry
-        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
-        with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
-
-      - name: Authorize Docker for Artifact Registry
-        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
-
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v3.0.6
-
-      - name: Build and push archiver image
-        run: |
-          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/cloudrun-archiver:${{ inputs.image_tag }}"
-          docker build \
-            -f cloudrun-archiver/Dockerfile \
-            -t "${IMAGE}" \
-            .
-          docker push "${IMAGE}"
-          DIGEST="$(gcloud artifacts docker images describe "${IMAGE}" --format='value(image_summary.digest)')"
-          test -n "${DIGEST}"
-          echo "ARCHIVER_IMAGE_DIGEST=${IMAGE%:*}@${DIGEST}" >> "${GITHUB_ENV}"
-
-      - name: Keyless-sign archiver image digest
-        run: cosign sign --yes "${ARCHIVER_IMAGE_DIGEST}"
-
-      - name: Verify archiver image signature
-        run: |
-          cosign verify \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/\\.github/workflows/cloudrun-deploy\\.yml@refs/.+$" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${ARCHIVER_IMAGE_DIGEST}"
-
-      - name: Deploy archiver as Cloud Run Job
-        run: |
-          gcloud run jobs deploy cloudrun-archiver \
-            --image "${ARCHIVER_IMAGE_DIGEST}" \
-            --region ${{ vars.GCP_REGION }} \
-            --service-account ${{ vars.CLOUDRUN_ARCHIVER_SERVICE_ACCOUNT }} \
-            --tasks 1 \
-            --task-timeout 60m \
-            --max-retries 2 \
-            --set-secrets DATABASE_URL=smart-job-archiver-database-url:latest,SUPABASE_URL=smart-job-supabase-url:latest,SUPABASE_SECRET_KEY=smart-job-supabase-secret-key:latest \
-            --set-env-vars DATABASE_SSL_MODE=require,NODE_ENV=production,SMART_JOB_PERSISTENCE_BACKEND=sql,ARCHIVE_BUCKET=${{ vars.ARCHIVE_BUCKET }},ARCHIVER_QUERY_PAGE_SIZE=500,ARCHIVER_COMPANY_CONCURRENCY=2,ARCHIVER_LEASE_SECONDS=3600,ARCHIVER_JOB_DEADLINE_MS=3300000,ARCHIVER_CANDIDATE_LIMIT=2000
+          trap - ERR

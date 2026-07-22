@@ -28,6 +28,7 @@ const dockerfiles = [
   'cloudrun-pdf/Dockerfile',
   'cloudrun-email/Dockerfile',
   'cloudrun-archiver/Dockerfile',
+  'cloudrun-migrations/Dockerfile',
   'local-platform/adapter/Dockerfile',
 ];
 for (const relativePath of dockerfiles) {

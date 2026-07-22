@@ -27,6 +27,8 @@ ERP-System/
 |-- cloudrun-pdf/        PDF preview/generation service
 |-- cloudrun-email/      Durable SES document-email worker
 |-- cloudrun-archiver/   Archive batch job
+|-- cloudrun-migrations/ Dedicated migration and internal smoke image
+|-- infra/               Terraform modules and dev/staging/prod roots
 |-- packages/contracts/  Shared enums/constants/path helpers
 |-- packages/api-contracts/ Shared Zod HTTP contracts
 |-- packages/db/         PostgreSQL schema, migrations, access layer
@@ -49,6 +51,7 @@ Install locally:
 - PostgreSQL access for SQL-backed development and deploys
 - Supabase project access for auth and migration testing
 - AWS access only if SES email delivery is used
+- Terraform 1.14.3 and TFLint 0.64.0 for Batch 8 infrastructure validation
 
 Suggested installs:
 
@@ -66,7 +69,7 @@ gcloud auth application-default login
 
 ## 3. Cloud Project Setup
 
-Create or configure the Firebase and Google Cloud project:
+Create or configure Firebase for mobile push/crash reporting:
 
 1. Create a Firebase project.
 2. Upgrade to Blaze.
@@ -74,41 +77,18 @@ Create or configure the Firebase and Google Cloud project:
 4. Enable Crashlytics and register the Android and iOS applications.
 5. Download the native Firebase configuration files used by Messaging and
    Crashlytics. Do not enable Firebase Auth, Firestore, or Storage for ERP data.
-6. Enable these Google Cloud APIs:
 
-```bash
-gcloud services enable \
-  cloudbuild.googleapis.com \
-  run.googleapis.com \
-  artifactregistry.googleapis.com \
-  cloudscheduler.googleapis.com \
-  pubsub.googleapis.com \
-  firebase.googleapis.com \
-  secretmanager.googleapis.com \
-  iamcredentials.googleapis.com
-```
+The production platform has a narrow manual bootstrap boundary. Pre-create one
+billed GCP project per environment and one versioned, encrypted,
+uniformly-controlled GCS Terraform-state bucket. Use a separate state prefix
+from each `infra/environments/*/backend.hcl.example`. Terraform then owns the
+service APIs, Artifact Registry, IAM, network/NAT, static egress, DNS/TLS/load
+balancing, Cloud Armor, workloads, queues, schedules, data buckets, monitoring,
+and GitHub WIF. See `infra/README.md` for the staged three-apply bootstrap.
 
-Set local shell variables as needed:
-
-```bash
-export PROJECT_ID="your-project-id"
-export REGION="us-central1"
-export ARCHIVE_BUCKET="your-archive-bucket"
-export ARTIFACT_REPO="smart-job"
-export PDF_SERVICE="pdf-service"
-export ARCHIVER_JOB="smart-job-archiver"
-```
-
-PowerShell:
-
-```powershell
-$env:PROJECT_ID = "your-project-id"
-$env:REGION = "us-central1"
-$env:ARCHIVE_BUCKET = "your-archive-bucket"
-$env:ARTIFACT_REPO = "smart-job"
-$env:PDF_SERVICE = "pdf-service"
-$env:ARCHIVER_JOB = "smart-job-archiver"
-```
+Secret payloads are populated out of band after the foundation apply. Record
+only their numeric enabled versions in the ignored `terraform.tfvars`; never
+put secret bytes in Terraform, CI variables, or the repository.
 
 ## 4. Install Dependencies
 
@@ -525,10 +505,9 @@ identity settings. Keep `TAX_SUBMISSION_MODE=disabled` at platform launch.
 Sandbox/production modes additionally require exact `TAX_GATEWAY_URL` and
 `TAX_GATEWAY_AUDIENCE` service origins.
 
-The deployment workflow uses Workload Identity Federation, Artifact Registry,
-digest resolution, and keyless signing. Batch 8 Terraform remains the source of
-truth for production resource provisioning; do not treat the workflow alone as
-proof that IAM, networking, queues, DNS, or monitoring have been provisioned.
+Batch 8 Terraform is the production source of truth. The release workflow uses
+the Terraform-created WIF identities and service/job names; it does not create
+or repair IAM, networking, queues, DNS, or monitoring.
 
 ## 11. Cloud Run PDF Service
 
@@ -661,17 +640,20 @@ uses Maestro Cloud and requires the repository configuration documented in
 
 Recommended high-level order:
 
-1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
-2. Apply expand-only SQL migrations through `0032` using the dedicated
-   migration credential; runtime services never receive it.
-3. Configure API, website, worker, tax, and remaining service secrets.
-4. Deploy the main API with tax mode disabled, then the private PDF/email
-   workers and their authenticated Pub/Sub subscriptions/drain schedules.
-5. Deploy `cloudrun-tax` in the Israel region, but do not enable authority
-   submission until certification gates pass.
-6. Deploy `cloudrun-archiver` for monthly archive creation and verified deletion.
-7. Configure website hosting, build/release mobile apps, and validate document,
-   email, tax-disabled, and archive paths before traffic promotion.
+1. Pre-create billed projects and the protected Terraform-state bucket.
+2. Apply each environment root with `enable_runtime=false`.
+3. Populate numbered Secret Manager versions, configure GitHub environment
+   variables/reviewers, and record the purchased Supabase connection ceiling.
+4. Build/sign the migration image, set `enable_release_jobs=true`, apply, and
+   execute the migration job before any serving workload exists.
+5. Enter all seven immutable digests and numbered secret versions, then apply
+   with `enable_runtime=true` while public DNS remains undelegated.
+6. Dispatch the `candidate` release stage. It runs the dedicated expand-only
+   migration job, creates no-traffic revisions, and executes internal smoke.
+7. Dispatch separate `10`, `50`, and `100` stages, observing alerts and SLOs
+   between steps. Production requires the protected environment approval.
+8. Keep tax submission disabled until the separate certification approval and
+   finish website/mobile validation only after the platform reaches 100%.
 
 CI/CD evidence:
 
@@ -681,9 +663,8 @@ CI/CD evidence:
 - CI pins all external Actions and container bases by immutable digest, produces
   an SBOM, audits every independent lockfile, and blocks on SAST, secret,
   container, database, Playwright, and Maestro verification.
-- Cloud Run deployment requires the environment-scoped GCP WIF, service-account,
-  service, queue, bucket, and Cloud Armor variables referenced by
-  `.github/workflows/cloudrun-deploy.yml`. No long-lived GCP key is required.
+- Cloud Run release requires the repository and protected-environment variables
+  documented in `infra/README.md`. No long-lived GCP key is required.
 - Operational preflight, rollback, recovery, replay, and reconciliation steps
   are indexed in `docs/runbooks/README.md`.
 
@@ -703,6 +684,9 @@ Verify:
 - solo mobile job creation uploads attachments first and succeeds with temp `attachmentUploadId` references before the final job number exists
 - push-token updates and notification paths
 - archive creation and retrieval
+- migration job isolation, candidate smoke, and 10/50/100 traffic evidence
+- DNSSEC, managed-certificate activation, fixed egress IPs, Cloud Armor logs,
+  database pool budget, queue/DLQ alerts, and SLO visibility
 
 ## 17. Canonical Documentation Rule
 

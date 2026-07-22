@@ -13,9 +13,10 @@ business-data boundary used by clients; all Supabase Edge functions and handlers
 have been deleted. Firebase Messaging and Crashlytics remain for mobile push and
 crash reporting. Firebase business-data services are removed.
 
-Production tax submission remains fail-closed until certification. Stable API
-DNS, provisioned production infrastructure, backup/restore evidence, and staged
-mobile promotion remain launch gates.
+Production tax submission remains fail-closed until certification. Batch 8 now
+represents the production platform and release pipeline in code; applying it to
+pre-created projects and collecting DNS/TLS, restore, traffic, and staged mobile
+evidence remain launch gates.
 
 ## Package and runtime rules
 
@@ -105,18 +106,32 @@ Do not set the local marker flags manually and never run `supabase stop --all`.
   pagination/cursor checks are blocking.
 - CI covers all package verification, database integration/migration tests,
   Supabase lint, local-fixture Playwright journeys, Maestro Cloud login/tenant/
-  job/offline journeys, CodeQL, secret scanning, lockfile audits, conditional
-  Terraform validation/security scanning, SBOM generation, and container scans.
+  job/offline journeys, CodeQL, secret scanning, lockfile audits, Terraform
+  validation/security scanning, SBOM generation, and container scans.
 - GitHub Actions, Dockerfile bases, and local Compose images are pinned to
   immutable digests. Released Cloud Run images are resolved and keyless-signed
   by digest before deployment.
 - Operational procedures and sanitized environment templates are indexed under
   `docs/runbooks/README.md` and each environment-consuming package.
 
+## Batch 8 platform foundation
+
+- Shared Terraform modules and isolated dev/staging/prod roots cover APIs,
+  Artifact Registry, WIF/IAM, two-region fixed egress, Cloud Run services/jobs,
+  durable queues/DLQs, Scheduler, storage, DNSSEC/TLS/load balancing, Cloud
+  Armor, dashboards, alerts, and 30-day request SLOs.
+- A dedicated non-root migration image uses production-only Drizzle/PG
+  dependencies. The staged workflow builds/scans/signs once in staging,
+  preserves the exact digest in production, and gates migration, no-traffic
+  smoke, and 10/50/100 traffic.
+
 ## Remaining launch work
 
-- Batch 8 production Terraform, monitoring/SLOs, external DNS/TLS, IAM, and
-  launch evidence are not represented as complete by Batch 7.
+- Supply billed project IDs, the protected state bucket, domains, secret
+  versions, connection limits, notification channels, WIF/GitHub environment
+  configuration, and then apply the Terraform roots.
+- Capture live DNS/TLS, fixed-egress allowlist, migration/readiness, traffic,
+  alert/SLO, backup/restore, and rollback evidence.
 - Tax Authority certification and production enablement remain separate,
   explicit approvals.
 - Some older source-structure tests remain useful guards, but critical auth,

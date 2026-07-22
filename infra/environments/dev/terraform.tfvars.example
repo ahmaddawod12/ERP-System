@@ -1,0 +1,24 @@
+project_id                 = "REPLACE_WITH_DEV_PROJECT_ID"
+archive_bucket_name        = "REPLACE_WITH_GLOBALLY_UNIQUE_DEV_ARCHIVE_BUCKET"
+backup_bucket_name         = "REPLACE_WITH_GLOBALLY_UNIQUE_DEV_BACKUP_BUCKET"
+github_repository_owner_id = "129868177"
+github_deploy_workflow_ref = "ahmaddawod12/ERP-System/.github/workflows/cloudrun-deploy.yml@refs/heads/main"
+root_domain                 = "dev.example.com"
+website_hostname            = "app.dev.example.com"
+api_hostname                = "api.dev.example.com"
+tax_hostname                = "tax.dev.example.com"
+supabase_connection_limit   = 100
+recaptcha_site_key          = "REPLACE_WITH_PUBLIC_RECAPTCHA_SITE_KEY"
+
+# Runtime resources are a second-phase apply after secrets/images exist.
+enable_runtime = false
+enable_release_jobs = false
+image_digests  = {}
+secret_versions = {}
+
+# Before enable_runtime=true, supply immutable refs for all keys:
+# website, api, tax, pdf, email, archiver, migration.
+
+labels = {
+  cost-center = "engineering"
+}

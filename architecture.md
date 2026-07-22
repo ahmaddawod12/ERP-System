@@ -260,9 +260,13 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - `/healthz` is dependency-free process liveness. `/readyz` verifies the exact
   schema marker and RPC privilege matrix, both storage buckets, and all three
   mandatory Pub/Sub topics.
-- Production website/API backends sit behind Cloud Armor per-IP throttles for
-  auth and contact routes. Account-recovery responses are generic, and Auth/
+- Production website/API backends sit behind separate Cloud Armor policies and
+  per-IP throttles. Account-recovery responses are generic, and Auth/
   reCAPTCHA upstream bodies and deadlines are bounded.
+- Terraform owns authoritative DNS with DNSSEC, Google-managed TLS, one global
+  HTTPS load balancer, host routing for website/API/tax, and separate Cloud
+  Armor policies. Direct public Cloud Run ingress is disabled; PDF/email remain
+  internal and require the Pub/Sub push identity.
 
 ## Canonical Rules
 
@@ -353,9 +357,18 @@ the image entrypoint validates that marker. Tax remains disabled.
   and tenant behavior, runs Playwright and Maestro journeys, emits an SBOM, and
   blocks on CodeQL, secret, audit, and container findings outside the bounded
   exception policy.
-- Cloud Run release jobs build once, resolve the Artifact Registry digest,
-  keyless-sign that digest, and deploy the digest. Mutable tags are discovery
-  labels only.
+- Staging Cloud Run release jobs build each image once, scan it, resolve the
+  Artifact Registry digest, and keyless-sign that digest. Production refuses to
+  rebuild: it copies and verifies the same OCI manifest digest, then signs the
+  destination reference. Mutable tags are discovery labels only.
+- A dedicated migrator identity and numbered secret version run expand-only SQL
+  before tagged no-traffic revisions. An internal credential-free smoke job
+  validates candidate URLs, then separate approvals move 10%, 50%, and 100% of
+  traffic. Failed edge smoke restores the previously serving revisions.
+- Shared Terraform modules create explicit dev/staging/prod platforms with
+  isolated state prefixes, fixed two-region egress, connection-budget guards,
+  durable queues/DLQs, schedules, archive/backup buckets, monitoring services,
+  thirty-day SLOs, alerts, and GitHub WIF. Terraform never manages secret bytes.
 - Operational deployment, rollback, restore, replay, and reconciliation
   procedures live under `docs/runbooks/`.
 

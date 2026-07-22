@@ -59,6 +59,7 @@ export function RouteAccessGate({ children }: { children: ReactNode }) {
             {workspaces.map((workspace) => (
               <AppButton
                 key={workspace.companyId}
+                testID={`workspace-option-${workspace.companyId}`}
                 title={`${workspace.name} · ${workspace.role}`}
                 onPress={() => void selectWorkspace(workspace.companyId)}
               />
@@ -108,4 +109,3 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 });
-

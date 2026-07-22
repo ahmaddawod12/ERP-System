@@ -1,7 +1,7 @@
 {
   "name": "job-archiver",
   "version": "1.0.0",
-  "description": "Cloud Run Job for archiving old Firestore data to Cloud Storage (finished jobs & documents)",
+  "description": "Cloud Run Job for leased PostgreSQL archive segments in Cloud Storage",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",

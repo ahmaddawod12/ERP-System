@@ -32,6 +32,9 @@ npm --prefix cloudrun-tax start
 
 ## Configuration
 
+Start from [`.env.example`](./.env.example). Leave its complete authority block
+empty while submission is disabled; never commit credentials.
+
 | Variable | Default | Purpose |
 |---|---:|---|
 | `HOST` | `0.0.0.0` | Listen address. |
@@ -78,6 +81,8 @@ configuration. The HMAC callback secret must be at least 32 characters.
 
 Request bodies, authorization/cookie headers, credential fields, and query
 strings are excluded from structured request logs. No tax credentials or
+unknown-result reconciliation bypasses may be added; operators follow
+[`../docs/runbooks/TAX_RECONCILIATION.md`](../docs/runbooks/TAX_RECONCILIATION.md).
 invoice payloads may be added to log context. Malformed JSON, oversized bodies,
 and unsupported media types remain non-retryable 4xx responses rather than
 being converted into retryable service failures.

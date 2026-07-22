@@ -147,6 +147,7 @@ export function GlobalHeader() {
         ) : (
           <Pressable
             onPress={() => setMenuVisible(true)}
+            testID="global-menu"
             accessibilityRole="button"
             accessibilityLabel={t.menu}
             style={({ pressed }) => [

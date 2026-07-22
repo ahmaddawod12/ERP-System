@@ -1,19 +1,8 @@
 appId: ${MAESTRO_APP_ID}
+tags:
+  - core
+  - login
 ---
-- launchApp:
-    clearState: true
+- runFlow: subflows/authenticate.yaml
 - assertVisible:
-    id: "login-email"
-- tapOn:
-    id: "login-email"
-- inputText: ${MAESTRO_TEST_EMAIL}
-- tapOn:
-    id: "login-password"
-- inputText: ${MAESTRO_TEST_PASSWORD}
-- tapOn:
-    id: "login-submit"
-- waitForAnimationToEnd
-- assertVisible:
-    text: ".*"
-- assertNotVisible:
-    text: "Sign in"
+    id: "dashboard-screen"

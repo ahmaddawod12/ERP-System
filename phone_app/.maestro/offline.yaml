@@ -1,0 +1,17 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - core
+  - offline
+---
+- runFlow: subflows/authenticate.yaml
+- setAirplaneMode: enabled
+- assertVisible:
+    id: "dashboard-screen"
+- tapOn:
+    id: "global-menu"
+- tapOn: "Settings"
+- tapOn: "Pending Work.*"
+- assertVisible:
+    id: "pending-work-screen"
+- assertVisible: "Everything is synchronized|Queued on this device|Waiting to retry|Conflict needs review|Server rejected"
+- setAirplaneMode: disabled

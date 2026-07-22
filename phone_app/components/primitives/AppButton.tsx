@@ -31,6 +31,7 @@ export interface AppButtonProps {
   accessibilityLabel?: string;
   accessibilityHint?: string;
   accessibilityState?: AccessibilityState;
+  testID?: string;
   size?: ButtonSize;
   minHeight?: number;
   hitSlop?: number;
@@ -86,6 +87,7 @@ export default function AppButton({
   accessibilityLabel,
   accessibilityHint,
   accessibilityState,
+  testID,
   size = 'md',
   minHeight = 48,
   hitSlop = 8,
@@ -138,6 +140,7 @@ export default function AppButton({
       accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading }}
       accessibilityLabel={accessibilityLabel || title}
       accessibilityHint={accessibilityHint}
+      testID={testID}
       style={({ pressed }) => [
         styles.base,
         sizeStyle,

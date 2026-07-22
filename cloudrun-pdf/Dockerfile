@@ -1,5 +1,5 @@
 # Stage 1: Install dependencies and build shared packages + service
-FROM ghcr.io/puppeteer/puppeteer:24.40.0 AS build
+FROM ghcr.io/puppeteer/puppeteer:24.40.0@sha256:de1c985f0af848b07599cdb20ec0509b1a69927cf466b65cf56eb706cc4245fb AS build
 
 USER root
 WORKDIR /workspace
@@ -20,7 +20,7 @@ COPY cloudrun-pdf ./cloudrun-pdf
 RUN npm --prefix cloudrun-pdf run build
 
 # Stage 2: Production dependencies only
-FROM ghcr.io/puppeteer/puppeteer:24.40.0 AS deps
+FROM ghcr.io/puppeteer/puppeteer:24.40.0@sha256:de1c985f0af848b07599cdb20ec0509b1a69927cf466b65cf56eb706cc4245fb AS deps
 
 USER root
 WORKDIR /workspace
@@ -37,7 +37,7 @@ RUN npm --prefix packages/contracts prune --omit=dev \
  && npm --prefix cloudrun-pdf ci --omit=dev
 
 # Stage 3: Production image
-FROM ghcr.io/puppeteer/puppeteer:24.40.0
+FROM ghcr.io/puppeteer/puppeteer:24.40.0@sha256:de1c985f0af848b07599cdb20ec0509b1a69927cf466b65cf56eb706cc4245fb
 
 USER root
 

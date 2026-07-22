@@ -5,7 +5,8 @@ Pub/Sub messages contain only `deliveryId`; the worker claims canonical tenant,
 document, recipient, and storage state through lease-token SQL RPCs owned by the
 least-privilege `smart_job_email` login role.
 
-Required environment:
+Copy [`.env.example`](./.env.example) and inject real values out of band.
+Required production environment:
 
 ```text
 DATABASE_URL=postgresql://smart_job_email:...@.../postgres
@@ -23,7 +24,16 @@ SES_FROM_NAME=Smart-Job
 Credentials and secret values are populated out of band. The service never
 logs recipient addresses or database/storage credentials. A timeout without a
 definitive SES rejection becomes `delivery_unknown`; only an authorized manual
-retry can send again.
+retry can send again. Follow
+[`../docs/runbooks/EMAIL_DELIVERY_UNKNOWN.md`](../docs/runbooks/EMAIL_DELIVERY_UNKNOWN.md)
+before any resend decision.
+
+Build the shared contracts package first, then run:
+
+```bash
+npm --prefix cloudrun-email run typecheck
+npm --prefix cloudrun-email run test
+```
 
 For local full-stack development, `compose.local.yml` injects a marker-gated
 SES endpoint and non-production AWS credentials. The repository adapter

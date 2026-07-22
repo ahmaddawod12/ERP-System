@@ -1,0 +1,13 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - core
+  - job
+---
+- runFlow: subflows/authenticate.yaml
+- tapOn:
+    id: "dashboard-tab-jobMonitor"
+- tapOn:
+    id: "dashboard-action-job-monitor"
+- assertVisible: "Job Monitor"
+- tapOn: ${MAESTRO_TEST_JOB_TITLE}
+- assertVisible: "Job Details"

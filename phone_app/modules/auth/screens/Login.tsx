@@ -153,6 +153,7 @@ export default function Login() {
             </AppText>
 
             <AppInput
+              testID="login-email"
               value={email}
               onChangeText={setEmail}
               label={t.email}
@@ -166,6 +167,7 @@ export default function Login() {
             />
 
             <AppInput
+              testID="login-password"
               value={password}
               onChangeText={setPassword}
               label={t.password}
@@ -188,6 +190,7 @@ export default function Login() {
             />
 
             <AppButton
+              testID="login-submit"
               title={loading ? t.loading : t.login}
               iconLeft={!loading ? { library: 'material', name: 'login' } : undefined}
               onPress={handleEmailLogin}

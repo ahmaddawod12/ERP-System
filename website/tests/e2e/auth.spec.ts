@@ -1,112 +1,95 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-const TEST_EMAIL = process.env.E2E_TEST_EMAIL ?? "";
-const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD ?? "";
+const USING_LOCAL_FIXTURE = !process.env.PLAYWRIGHT_BASE_URL;
+const TEST_EMAIL = process.env.E2E_TEST_EMAIL
+  ?? (USING_LOCAL_FIXTURE ? "manager@example.test" : "");
+const TEST_PASSWORD = process.env.E2E_TEST_PASSWORD
+  ?? (USING_LOCAL_FIXTURE ? "fixture-password" : "");
 const HAS_TEST_CREDENTIALS = TEST_EMAIL.length > 0 && TEST_PASSWORD.length > 0;
 
 function requireTestCredentials(): void {
   test.skip(!HAS_TEST_CREDENTIALS, "E2E test credentials are not configured");
 }
 
+async function login(page: Page): Promise<void> {
+  requireTestCredentials();
+  await page.goto("/login");
+  await page.locator('input[type="email"], input[name="email"]').fill(TEST_EMAIL);
+  await page.locator('input[type="password"], input[name="password"]').fill(TEST_PASSWORD);
+  await page.locator('button[type="submit"]').click();
+  await page.waitForURL(/\/app\/c\/101$/, { timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Fixture HVAC" })).toBeVisible();
+}
+
 test.describe("Authentication flows", () => {
   test("login page renders and accepts credentials", async ({ page }) => {
     await page.goto("/login");
     await expect(page).toHaveTitle(/Smart-Job/);
-
-    const emailInput = page.locator('input[type="email"], input[name="email"]');
-    await expect(emailInput).toBeVisible();
-
-    const passwordInput = page.locator('input[type="password"], input[name="password"]');
-    await expect(passwordInput).toBeVisible();
-
-    const submitButton = page.locator('button[type="submit"]');
-    await expect(submitButton).toBeVisible();
+    await expect(page.locator('input[type="email"], input[name="email"]')).toBeVisible();
+    await expect(page.locator('input[type="password"], input[name="password"]')).toBeVisible();
+    await expect(page.locator('button[type="submit"]')).toBeVisible();
   });
 
-  test("login redirects to app on success", async ({ page }) => {
-    requireTestCredentials();
-    await page.goto("/login");
-
-    await page.locator('input[type="email"], input[name="email"]').fill(TEST_EMAIL);
-    await page.locator('input[type="password"], input[name="password"]').fill(TEST_PASSWORD);
-    await page.locator('button[type="submit"]').click();
-
-    await page.waitForURL(/\/app/, { timeout: 15_000 });
-    expect(page.url()).toContain("/app");
-  });
-
-  test("hard reload preserves session", async ({ page }) => {
-    requireTestCredentials();
-    await page.goto("/login");
-    await page.locator('input[type="email"], input[name="email"]').fill(TEST_EMAIL);
-    await page.locator('input[type="password"]').fill(TEST_PASSWORD);
-    await page.locator('button[type="submit"]').click();
-    await page.waitForURL(/\/app/);
+  test("login resolves the explicit tenant and preserves the opaque session", async ({ page }) => {
+    await login(page);
+    await expect(page).toHaveURL(/\/app\/c\/101$/);
 
     await page.reload();
-    await page.waitForURL(/\/app/);
-    expect(page.url()).toContain("/app");
+    await expect(page).toHaveURL(/\/app\/c\/101$/);
+    await expect(page.getByRole("heading", { name: "Fixture HVAC" })).toBeVisible();
   });
 
-  test("logout clears session and redirects to login", async ({ page }) => {
-    requireTestCredentials();
-    await page.goto("/login");
-    await page.locator('input[type="email"], input[name="email"]').fill(TEST_EMAIL);
-    await page.locator('input[type="password"]').fill(TEST_PASSWORD);
-    await page.locator('button[type="submit"]').click();
-    await page.waitForURL(/\/app/);
-
-    const logoutButton = page.locator("button", { hasText: /logout|sign out/i });
-    if (await logoutButton.isVisible()) {
-      await logoutButton.click();
-      await page.waitForURL(/\/login/, { timeout: 10_000 });
-    }
+  test("logout revokes the session and protects app routes", async ({ page }) => {
+    await login(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL(/\/login$/, { timeout: 10_000 });
 
     await page.goto("/app");
-    await page.waitForURL(/\/login/, { timeout: 10_000 });
+    await page.waitForURL(/\/login\?redirect=/, { timeout: 10_000 });
   });
 });
 
 test.describe("Workspace routing", () => {
-  test("unauthenticated access to /app redirects to login", async ({ page }) => {
+  test("unauthenticated app and tenant URLs redirect to login", async ({ page }) => {
     await page.goto("/app");
-    await page.waitForURL(/\/login/, { timeout: 10_000 });
+    await page.waitForURL(/\/login\?redirect=/, { timeout: 10_000 });
+
+    await page.goto("/app/c/99999");
+    await page.waitForURL(/\/login\?redirect=/, { timeout: 10_000 });
   });
 
-  test("forged tenant URL redirects to login when unauthenticated", async ({ page }) => {
+  test("an authenticated viewer cannot cross the explicit tenant boundary", async ({ page }) => {
+    await login(page);
     await page.goto("/app/c/99999");
-    await page.waitForURL(/\/login/, { timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: "Workspace not available" })).toBeVisible();
+    await expect(page.getByText(/not included in your current memberships/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Fixture HVAC" })).toHaveCount(0);
+    await expect(page.locator('meta[name="robots"]').first()).toHaveAttribute("content", /noindex/);
   });
 });
 
 test.describe("Security assertions", () => {
-  test("no Supabase access token in browser storage after login", async ({ page }) => {
-    requireTestCredentials();
-    await page.goto("/login");
-    await page.locator('input[type="email"]').fill(TEST_EMAIL);
-    await page.locator('input[type="password"]').fill(TEST_PASSWORD);
-    await page.locator('button[type="submit"]').click();
-    await page.waitForURL(/\/app/);
+  test("Supabase credentials never enter browser storage, cookies, or HTML", async ({ page }) => {
+    await login(page);
 
     const cookies = await page.context().cookies();
-    const tokenCookies = cookies.filter(
-      (c) => c.name.includes("access_token") || c.name.includes("__session_access"),
+    const forbiddenCookies = cookies.filter(
+      (cookie) => cookie.name.includes("access_token")
+        || cookie.name.includes("refresh_token")
+        || cookie.name.includes("__session_access"),
     );
-    expect(tokenCookies).toHaveLength(0);
+    expect(forbiddenCookies).toHaveLength(0);
+    expect(cookies.some((cookie) => cookie.name === "sj_web_session" && cookie.httpOnly)).toBe(true);
 
-    const localStorageDump = await page.evaluate(() => JSON.stringify(localStorage));
-    expect(localStorageDump).not.toContain("access_token");
-    expect(localStorageDump).not.toContain("refresh_token");
-
-    const sessionStorageDump = await page.evaluate(() => JSON.stringify(sessionStorage));
-    expect(sessionStorageDump).not.toContain("access_token");
-  });
-
-  test("no Supabase token in page HTML", async ({ page }) => {
-    await page.goto("/login");
-    const html = await page.content();
-    expect(html).not.toContain("sb_access_token");
-    expect(html).not.toContain("access_token");
-    expect(html).not.toContain("refresh_token");
+    const browserStorage = await page.evaluate(() => ({
+      local: JSON.stringify(localStorage),
+      session: JSON.stringify(sessionStorage),
+      html: document.documentElement.outerHTML,
+    }));
+    for (const value of Object.values(browserStorage)) {
+      expect(value).not.toContain("access_token");
+      expect(value).not.toContain("refresh_token");
+      expect(value).not.toContain("sb_access_token");
+    }
   });
 });

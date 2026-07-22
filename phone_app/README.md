@@ -192,7 +192,7 @@ eas build --platform android
 eas build --platform ios
 ```
 
-Production promotion and the legacy Edge retirement gate are defined in
+Production promotion and native rollback gates are defined in
 [`MOBILE_ROLLOUT.md`](./MOBILE_ROLLOUT.md).
 
 ## References

@@ -99,6 +99,7 @@ export default async function RootLayout({
     <html
       lang={initialLocale}
       dir={isRtl ? "rtl" : "ltr"}
+      data-scroll-behavior="smooth"
       className={initialTheme === "dark" ? "dark" : undefined}
       suppressHydrationWarning
     >

@@ -5,8 +5,8 @@ the common HTTP foundation, it now includes the least-privileged Postgres
 runtime adapter, Supabase JWKS verification, opaque website sessions, and the
 workspace/viewer/bootstrap/client/inventory/worker/job/document routes,
 durable PDF/email dispatch, and authoritative tax creation/submission. It
-remains a staged migration service and does not receive production traffic yet;
-tax submission is disabled for the initial platform launch.
+is the sole business-data trust boundary for website and mobile clients. Tax
+submission remains disabled for the initial platform launch.
 
 ## Build prerequisites
 
@@ -29,6 +29,10 @@ npm --prefix cloudrun-api start
 ```
 
 ## Configuration
+
+Start from [`.env.example`](./.env.example); it contains placeholders only.
+Production secrets are injected from Secret Manager and local-only marker
+variables are injected exclusively by the repository lifecycle script.
 
 | Variable | Default | Validation |
 |---|---:|---|

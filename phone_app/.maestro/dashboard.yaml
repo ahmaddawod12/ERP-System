@@ -1,7 +1,10 @@
 appId: ${MAESTRO_APP_ID}
+tags:
+  - core
+  - dashboard
 ---
-- launchApp:
-    clearState: false
-- waitForAnimationToEnd
+- runFlow: subflows/authenticate.yaml
 - assertVisible:
-    text: ".*Dashboard.*|.*Home.*|.*Overview.*"
+    id: "dashboard-screen"
+- assertVisible:
+    id: "global-menu"

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the July 21, 2026 Smart-Job ERP architecture after
+This document describes the July 22, 2026 Smart-Job ERP architecture after
 the completed Edge-to-Cloud-API cutover.
 
 ## Executive Summary
@@ -86,7 +86,7 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
 - SQL helper functions: counters/rate limits, invite and tax idempotency,
   inventory movement, batch picks, finished-job inventory consumption,
   client/inventory paged reads, lightweight counts, bounded upload cleanup,
-  sync-version bumps, legacy and API job creation/registration, and self-scoped
+  sync-version bumps, API job creation/registration, and self-scoped
   push-token writes are backend-only RPCs.
 - Privileged RPC implementations live in the `private` schema with `SECURITY DEFINER`; only narrow `smart_job_api`-executable wrappers are exposed to the Cloud Run API.
 - Jobs carry an opaque `entity_version`; API completion calls use
@@ -163,7 +163,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
   user company views are read-only, workers send only `/inventory/me` writes,
   and retry-stable Expo Crypto UUID keys plus opaque part/stock versions protect
   every operation.
-- MMKV backs preferences, legacy caches/drafts, and bounded encrypted query
+- MMKV backs preferences, bounded compatibility caches/drafts, and encrypted query
   snapshots. Supabase tokens and SQLCipher/file keys remain in SecureStore, and
   the durable field outbox is not stored in MMKV.
 - Mobile cache refresh drains paginated jobs/documents reads for the active
@@ -201,7 +201,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 
 ### Document generation
 
-- API/compatibility gateways publish opaque `{ taskId }` messages only.
+- The API publishes opaque `{ taskId }` messages only.
 - `cloudrun-pdf` verifies Google/Pub/Sub identity, claims canonical tenant,
   user, document, and request data through `smart_job_pdf` private RPCs, renders
   PDF output, writes through a server-only Supabase secret key, and finalizes
@@ -303,7 +303,6 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 
 - Protected writes to locked business collections stay backend-only.
 - Rate limiting, deduplication, and idempotency must happen before push/email/Pub/Sub side effects.
-- Firestore transactions must read before they write.
 - Inventory mutations must fail on negative resulting balances; they must not silently clamp stock underflow to zero.
 - Inventory movement mutations should be applied atomically through SQL helpers such as `apply_inventory_movement(...)` rather than client-visible read-modify-write sequences.
 - Multi-part inventory picks should use `apply_inventory_pick_batch(...)` so all movements commit or roll back together.
@@ -340,10 +339,25 @@ optional archiver ----------------+---------------------------------> fake GCS
 The adapter's persistent queue is a local substitute for Pub/Sub transport,
 not a different application contract: messages still contain only `taskId` or
 `deliveryId`, and workers load canonical state through private SQL RPCs. Local
-identity, internal HTTP routing, emulator endpoints, and the temporary
-archiver admin mode are rejected unless the repository marker is mounted.
+identity, internal HTTP routing, and emulator endpoints are rejected unless the
+repository marker is mounted. The removed archiver admin compatibility mode is
+rejected in every environment.
 Production-mode website cookies become insecure-loopback cookies only after
 the image entrypoint validates that marker. Tax remains disabled.
+
+### Build and release trust
+
+- Every external GitHub Action, Dockerfile base, and Compose image is pinned by
+  immutable digest and checked by `scripts/check-supply-chain-pins.mjs`.
+- CI builds and tests every independent package, exercises database migrations
+  and tenant behavior, runs Playwright and Maestro journeys, emits an SBOM, and
+  blocks on CodeQL, secret, audit, and container findings outside the bounded
+  exception policy.
+- Cloud Run release jobs build once, resolve the Artifact Registry digest,
+  keyless-sign that digest, and deploy the digest. Mutable tags are discovery
+  labels only.
+- Operational deployment, rollback, restore, replay, and reconciliation
+  procedures live under `docs/runbooks/`.
 
 ## Migration Direction
 

@@ -76,7 +76,7 @@ export default function DashboardShell({
     : [gradients.premium[0], palette.primary, palette.secondaryDark];
 
   return (
-    <View style={[styles.container, { backgroundColor: palette.background }]}> 
+    <View testID="dashboard-screen" style={[styles.container, { backgroundColor: palette.background }]}>
       <View
         pointerEvents="none"
         style={[
@@ -173,7 +173,10 @@ export default function DashboardShell({
               return (
                 <Pressable
                   key={tab.key}
+                  testID={`dashboard-tab-${tab.key}`}
                   onPress={() => onTabPress?.(tab.key)}
+                  accessibilityRole="tab"
+                  accessibilityLabel={tab.label}
                   style={[
                     styles.tabButton,
                     {

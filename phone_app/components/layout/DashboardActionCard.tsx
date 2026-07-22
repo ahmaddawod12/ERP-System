@@ -25,6 +25,7 @@ export interface DashboardActionCardProps {
   eyebrow?: string;
   ctaLabel?: string;
   onPress?: () => void;
+  testID?: string;
 }
 
 export default function DashboardActionCard({
@@ -37,6 +38,7 @@ export default function DashboardActionCard({
   eyebrow,
   ctaLabel = 'Open',
   onPress,
+  testID,
 }: DashboardActionCardProps) {
   const { isDarkMode } = useThemeContext();
   const palette = getColors(isDarkMode);
@@ -45,6 +47,7 @@ export default function DashboardActionCard({
   return (
     <AppCard
       onPress={onPress}
+      testID={testID}
       style={[
         styles.card,
         {

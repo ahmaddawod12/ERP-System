@@ -453,6 +453,7 @@ export default function ManagerHomepage() {
         {activeCards.length > 0 ? activeCards.map((card) => (
           <DashboardActionCard
             key={card.key}
+            testID={`dashboard-action-${card.key}`}
             title={card.title}
             description={card.description}
             icon={card.icon}

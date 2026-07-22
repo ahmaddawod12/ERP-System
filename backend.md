@@ -1,6 +1,6 @@
 # Backend
 
-This document summarizes the active backend boundaries as of July 21, 2026.
+This document summarizes the active backend boundaries as of July 22, 2026.
 
 ## Current Backend Reality
 
@@ -207,7 +207,7 @@ Primary ERP entities live in SQL, including:
 - tax workflow state
 - operational delivery, rate-limit, and archive tables
 
-### Firestore residual areas
+### Firebase residual services
 
 Firebase business-data services have been removed from the mobile and website
 clients. Messaging and Crashlytics remain for push notifications and native
@@ -348,6 +348,18 @@ supabase db lint --local --schema public,private --level warning
   never infer deletions from a fresh source query.
 - Keep archived month reads behind backend handlers with fixed bucket/path derivation.
 - Run `packages/db/perf/profiling.sql` on local/staging data before broad index changes, and verify advisor output with `EXPLAIN (analyze, buffers)`.
+
+## Verification and operations
+
+- CI runs every package's applicable tests, typecheck, lint, and build plus the
+  isolated database integration/migration suite and Supabase schema lint.
+- Behavioral Playwright and Maestro journeys supplement source-structure guards
+  for auth, tenant isolation, primary navigation, and offline safety.
+- CodeQL, secret scanning, exact lockfile audit policy, SBOM generation,
+  container scanning, and Terraform checks are blocking where applicable.
+- Released service images are immutable Artifact Registry digests with keyless
+  signatures. See `docs/runbooks/README.md` before any deployment, rollback,
+  replay, or unknown-outcome intervention.
 
 ## Runtime Note
 

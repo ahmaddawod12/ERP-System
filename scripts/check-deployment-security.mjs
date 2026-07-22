@@ -8,6 +8,25 @@ function requireMatch(source, expression, message) {
 }
 
 requireMatch(workflow, /configure-cloud-armor\.sh/, "Production deployment must configure Cloud Armor");
+requireMatch(workflow, /test "\$\{IMAGE_TAG\}" = "\$\{GITHUB_SHA\}"/, "Deployment input must match the selected commit SHA");
+requireMatch(workflow, /actions\/workflows\/ci\.yml\/runs\?head_sha=\$\{GITHUB_SHA\}/, "Deployment must require successful CI for the selected SHA");
+for (const image of ["API", "TAX", "PDF", "ARCHIVER"]) {
+  requireMatch(
+    workflow,
+    new RegExp(`cosign sign --yes "\\$\\{${image}_IMAGE_DIGEST\\}"`),
+    `${image} image digest must be keyless-signed`,
+  );
+  requireMatch(
+    workflow,
+    new RegExp(`cosign verify[\\s\\S]{0,400}"\\$\\{${image}_IMAGE_DIGEST\\}"`),
+    `${image} image signature must be verified before deployment`,
+  );
+  requireMatch(
+    workflow,
+    new RegExp(`--image "\\$\\{${image}_IMAGE_DIGEST\\}"`),
+    `${image} deployment must use the resolved digest`,
+  );
+}
 requireMatch(workflow, /--ingress=internal-and-cloud-load-balancing/, "Production API must reject direct internet ingress");
 requireMatch(workflow, /--tasks 1[\s\S]*--task-timeout 60m[\s\S]*--max-retries 2/, "Archiver must deploy as one 60-minute task with two retries");
 requireMatch(workflow, /ARCHIVER_QUERY_PAGE_SIZE=500/, "Archiver deployment must retain its page bound");

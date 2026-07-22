@@ -16,6 +16,7 @@ export interface AppCardProps {
   padding?: number;
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  testID?: string;
 }
 
 export default function AppCard({
@@ -29,6 +30,7 @@ export default function AppCard({
   padding = spacing.lg,
   accessibilityLabel,
   accessibilityHint,
+  testID,
 }: AppCardProps) {
   const { isDarkMode } = useThemeContext();
   const palette = getColors(isDarkMode);
@@ -58,6 +60,7 @@ export default function AppCard({
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         accessibilityHint={accessibilityHint}
+        testID={testID}
         style={({ pressed }) => [baseStyle, { opacity: pressed ? 0.94 : 1 }]}
       >
         <View style={contentStyle}>{children}</View>
@@ -66,7 +69,7 @@ export default function AppCard({
   }
 
   return (
-    <View style={baseStyle}>
+    <View style={baseStyle} testID={testID}>
       <View style={contentStyle}>{children}</View>
     </View>
   );

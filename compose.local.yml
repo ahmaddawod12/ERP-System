@@ -14,7 +14,7 @@ x-local-service: &local-service
 
 services:
   gcs-emulator:
-    image: fsouza/fake-gcs-server:1.55.0
+    image: fsouza/fake-gcs-server:1.55.0@sha256:2845d1504bb4a5a4fe54b16dd70e398814eb139af49b01b07839e016120ff123
     restart: unless-stopped
     environment:
       FAKE_GCS_SCHEME: http
@@ -35,7 +35,7 @@ services:
       retries: 20
 
   mailpit:
-    image: axllent/mailpit:v1.29.7
+    image: axllent/mailpit:v1.29.7@sha256:757f22b56c1da03570afdb3d259effe5091018008a81bbedc8158cee7e16fdbc
     restart: unless-stopped
     environment:
       MP_DATABASE: /data/mailpit.db
@@ -260,7 +260,7 @@ services:
       retries: 18
 
   db-role-bootstrap:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     profiles: ["bootstrap"]
     networks:
       - smart-job-local

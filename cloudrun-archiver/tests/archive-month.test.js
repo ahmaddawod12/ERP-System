@@ -59,5 +59,9 @@ test('archiver Docker and CI build shared packages from repo root context', () =
   assert.match(dockerfile, /npm --prefix packages\/db prune --omit=dev/);
   assert.match(dockerfile, /npm --prefix cloudrun-archiver ci --omit=dev/);
   assert.match(dockerfile, /USER node/);
-  assert.match(ci, /docker build -f cloudrun-archiver\/Dockerfile -t smart-job-cloudrun-archiver:ci \./);
+  assert.match(ci, /- name: archiver\s+dockerfile: cloudrun-archiver\/Dockerfile/);
+  assert.match(
+    ci,
+    /docker build -f \$\{\{ matrix\.dockerfile \}\} -t smart-job-\$\{\{ matrix\.name \}\}:ci \./,
+  );
 });

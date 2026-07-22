@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const managedFixture = !process.env.PLAYWRIGHT_BASE_URL;
+const websiteOrigin = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3100";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -8,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
+    baseURL: websiteOrigin,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -18,12 +21,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: process.env.CI
-    ? undefined
-    : {
-        command: "npm run dev",
-        url: "http://localhost:3000",
-        reuseExistingServer: true,
-        timeout: 60_000,
-      },
+  webServer: managedFixture
+    ? [
+        {
+          command: "node tests/e2e/fixture-backend.mjs",
+          url: "http://127.0.0.1:4100/healthz",
+          reuseExistingServer: false,
+          timeout: 30_000,
+        },
+        {
+          command: "node node_modules/next/dist/bin/next dev --hostname 127.0.0.1 --port 3100",
+          url: websiteOrigin,
+          reuseExistingServer: false,
+          timeout: 120_000,
+          env: {
+            BACKEND_API_BASE_URL: "http://127.0.0.1:4100",
+            BACKEND_API_TIMEOUT_MS: "3000",
+            WEBSITE_ORIGIN: websiteOrigin,
+          },
+        },
+      ]
+    : undefined,
 });

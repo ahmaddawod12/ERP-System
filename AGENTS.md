@@ -383,10 +383,13 @@ the deployed job.
 ### Repo-level CI scripts
 ```bash
 node scripts/check-no-ts-nocheck.mjs   # blocks CI; run before pushing
-node scripts/check-js-syntax.mjs scripts  # checks .js and .mjs repo scripts
+node scripts/check-js-syntax.mjs .        # checks .js, .cjs, and .mjs outside generated dirs
 node scripts/check-local-platform.mjs  # static Compose/container safeguards
 node scripts/check-deployment-security.mjs # Cloud Armor/archiver deploy safeguards
-node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
+node scripts/check-perf-budget.mjs     # blocking pagination/cursor/read-bound safeguards
+node scripts/check-maestro-flows.mjs   # required login/tenant/job/offline flows
+node scripts/check-supply-chain-pins.mjs # immutable Action/container inputs
+node scripts/check-npm-audit.mjs       # live audit + exact expiring exceptions
 ```
 
 ---
@@ -395,11 +398,16 @@ node scripts/check-perf-budget.mjs     # warnings only, exits 0 always
 
 All jobs run on every push/PR with **Node 22**. A top-level `concurrency` group with `cancel-in-progress: true` avoids redundant runs.
 
-The `repo_guards` job validates the local topology, and
-`local_platform_adapter` runs the durable adapter unit tests. Image CI builds
-both the standalone website and local adapter in addition to Cloud Run images.
+The `repo_guards` job validates the local topology and blocking source/config
+guards, and `local_platform_adapter` runs the durable adapter unit tests. Image
+CI builds and vulnerability-scans the standalone website, local adapter, and
+all Cloud Run images.
 
-- `repo_guards` → `check-no-ts-nocheck.mjs` + `check-js-syntax.mjs scripts`
+- `repo_guards` → syntax/tests + local/deployment/performance/Maestro/supply-chain guards
+- `lockfile_audit` → every independent npm lockfile + exact 30-day exception policy
+- `codeql` / `secret_scan` / `sbom` → SAST, repository secret scan, SPDX SBOM
+- `deno` → check/test every Deno source when present
+- `infrastructure_security` → Terraform fmt/validate, tflint, and Trivy when Batch 8 roots exist
 - `packages_contracts` → `npm ci` → typecheck → build
 - `packages_api_contracts` → builds `packages/contracts` → `npm ci` → typecheck → test
 - `packages_db` → builds `packages/contracts` → `npm ci` → typecheck → build → test
@@ -410,8 +418,10 @@ both the standalone website and local adapter in addition to Cloud Run images.
 - `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
 - `cloudrun_api` → builds all three local packages → `npm ci` → typecheck → test
 - `cloudrun_tax` → builds contracts packages → `npm ci` → typecheck → test
-- `perf_budget` → `continue-on-error: true` (never blocks)
-- `cloudrun_images` → Docker build (no push)
+- `integration_tests` → migration-upgrade verification, clean migrate, DB/API integration, Supabase lint
+- `website_e2e` → mandatory self-contained Playwright auth/tenant journeys
+- `mobile_e2e` → mandatory Maestro Cloud login/tenant/job/offline journeys
+- `cloudrun_images` → one Docker build per image + blocking HIGH/CRITICAL Trivy scan (no push)
 
 The Edge deploy workflow has been removed. All Edge functions and handlers
 under `supabase/functions/` and `supabase/handlers/` have been deleted.
@@ -443,32 +453,19 @@ SUPABASE_PUBLISHABLE_KEY=          # preferred server-side Auth key (sb_publisha
 BACKEND_API_BASE_URL=              # server-only Cloud Run API origin
 BACKEND_API_TIMEOUT_MS=12000       # optional; capped at 12 seconds
 WEBSITE_ORIGIN=                    # exact same-origin/CSRF origin
-WEBSITE_SESSION_SECRET=            # recovery state + transitional cookie signing
+WEBSITE_SESSION_SECRET=            # recovery/challenge signing; at least 32 chars
 CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
 RECAPTCHA_ENTERPRISE_PROJECT_ID=
 RECAPTCHA_ENTERPRISE_MIN_SCORE=0.7
 RECAPTCHA_ENTERPRISE_TIMEOUT_MS=8000
 NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
 
-# Transitional legacy website/Edge/Firebase routes only; remove after cutover.
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-ALLOW_FIREBASE_AUTH_FALLBACK=false
-SESSION_COOKIE_SECRET=
-BACKEND_PROJECT_ID=
-BACKEND_EDGE_FUNCTIONS_BASE_URL=   # optional; defaults to ${SUPABASE_URL}/functions/v1
-NEXT_PUBLIC_FIREBASE_*=
-FIREBASE_ADMIN_*=
-NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
-CLOUDRUN_PDF_URL=
 ```
 
 The opaque-session/SSR path must not expose a Supabase access or refresh token
-to browser JavaScript. Legacy anon/service-role variables above exist only for
-the remaining pre-cutover routes; new code uses publishable keys in public/Auth
-contexts and secret keys only in trusted server workloads.
+to browser JavaScript. The website has no Edge, Firebase, anon/service-role, or
+split legacy-cookie configuration. Secret keys exist only in trusted server
+workloads.
 
 ### `cloudrun-api/` env
 ```
@@ -509,22 +506,10 @@ SES_FROM_EMAIL=
 SES_FROM_NAME=Smart-Job
 ```
 
-### `supabase/.env`
-```
-CORS_ALLOWED_ORIGINS=http://localhost:3000,...   # empty = deny all (not allow all)
-SMART_JOB_PERSISTENCE_BACKEND=sql               # must be explicit; no implicit SQL mode
-DATABASE_URL=
-DATABASE_SSL_MODE=disable
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-ALLOW_FIREBASE_AUTH_FALLBACK=false
-JWT_SECRET=                                       # required for edge JWT verification
-TAX_SUBMISSION_MODE=disabled                      # disabled|sandbox|production; production launch stays disabled
-TAX_AUTH_URL=, TAX_TOKEN_URL=, TAX_CLIENT_ID=, TAX_CLIENT_SECRET=, ...
-APP_SCHEME=erpsystem
-DOCUMENTS_BUCKET=smart-job-company-files
-```
+There is no application `supabase/.env`: the Edge runtime has been removed.
+`supabase/config.toml` owns only the isolated local services and Auth templates;
+the lifecycle script generates ignored local credentials under
+`local-platform/.env.generated`.
 
 ### `phone_app/` env + native files
 ```

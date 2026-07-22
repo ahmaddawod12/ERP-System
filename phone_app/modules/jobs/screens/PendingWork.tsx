@@ -135,7 +135,7 @@ export default function PendingWork() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView testID="pending-work-screen" style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       <ScrollableContainer contentContainerStyle={styles.content}>
         <View style={styles.headingRow}>

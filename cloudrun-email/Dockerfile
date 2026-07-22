@@ -1,4 +1,4 @@
-FROM node:22-slim AS build
+FROM node:22.22.1-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS build
 
 WORKDIR /workspace
 
@@ -13,7 +13,7 @@ RUN npm --prefix packages/contracts ci \
  && npm --prefix cloudrun-email ci \
  && npm --prefix cloudrun-email run build
 
-FROM node:22-slim AS production-dependencies
+FROM node:22.22.1-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS production-dependencies
 
 WORKDIR /workspace
 
@@ -24,7 +24,7 @@ COPY cloudrun-email/package*.json ./cloudrun-email/
 RUN npm --prefix cloudrun-email ci --omit=dev \
  && npm cache clean --force
 
-FROM node:22-slim AS runtime
+FROM node:22.22.1-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS runtime
 
 WORKDIR /workspace/cloudrun-email
 

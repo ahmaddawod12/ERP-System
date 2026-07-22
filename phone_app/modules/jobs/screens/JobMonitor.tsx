@@ -89,7 +89,7 @@ const JobCard = memo(function JobCard({
   })();
 
   return (
-    <TouchableOpacity onPress={() => onPress(job)}>
+    <TouchableOpacity testID={`job-card-${job.id}`} onPress={() => onPress(job)}>
       <AppCard
         style={[
           styles.jobCard,

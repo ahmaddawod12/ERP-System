@@ -2,7 +2,7 @@
 
 This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
 
-It reflects the July 21, 2026 architecture after the completed Edge-to-Cloud-API
+It reflects the July 22, 2026 architecture after the completed Edge-to-Cloud-API
 cutover:
 
 - Supabase Auth for website and mobile sign-in
@@ -30,7 +30,7 @@ ERP-System/
 |-- packages/contracts/  Shared enums/constants/path helpers
 |-- packages/api-contracts/ Shared Zod HTTP contracts
 |-- packages/db/         PostgreSQL schema, migrations, access layer
-`-- supabase/            Backend gateway runtime and migration work area
+`-- supabase/            Local CLI configuration and Auth email templates
 ```
 
 ## 2. Prerequisites
@@ -130,6 +130,11 @@ npm --prefix cloudrun-email install
 npm --prefix cloudrun-archiver install
 ```
 
+Sanitized templates exist for every environment-consuming package:
+`website/.env.example`, `phone_app/.env.example`, `packages/db/.env.example`,
+and each `cloudrun-*/.env.example`. Copy them only into the package that owns
+the variables. Shared contracts packages require no environment file.
+
 Apply SQL migrations for the target database:
 
 ```bash
@@ -143,59 +148,36 @@ local Supabase database afterward before the normal Drizzle migration run.
 
 ## 5. Website Environment
 
-Create `website/.env.local` and configure:
+Copy `website/.env.example` to `website/.env.local` and replace every
+placeholder:
 
 ```dotenv
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-ALLOW_FIREBASE_AUTH_FALLBACK=false
-
-SESSION_COOKIE_SECRET=
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_AUTH_TIMEOUT_MS=8000
+BACKEND_API_BASE_URL=
+BACKEND_API_TIMEOUT_MS=12000
+WEBSITE_ORIGIN=
 WEBSITE_SESSION_SECRET=
 CONTACT_CHALLENGE_SECRET=          # optional; falls back to WEBSITE_SESSION_SECRET
-
-BACKEND_PROJECT_ID=
-BACKEND_EDGE_FUNCTIONS_BASE_URL=
-BACKEND_API_BASE_URL=              # server-only Cloud Run API base; HTTPS except local loopback
-BACKEND_API_TIMEOUT_MS=12000       # optional; maximum 12000
-WEBSITE_ORIGIN=http://localhost:3000
-
-NEXT_PUBLIC_FIREBASE_API_KEY=
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
-NEXT_PUBLIC_FIREBASE_APP_ID=
-
-FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON=
-FIREBASE_ADMIN_PROJECT_ID=
-FIREBASE_ADMIN_CLIENT_EMAIL=
-FIREBASE_ADMIN_PRIVATE_KEY=
-
+RECAPTCHA_ENTERPRISE_PROJECT_ID=
 NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
-CLOUDRUN_PDF_URL=
+RECAPTCHA_ENTERPRISE_MIN_SCORE=0.7
+RECAPTCHA_ENTERPRISE_TIMEOUT_MS=8000
 ```
 
 Notes:
 
-- Supabase variables are required for active web auth.
-- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment; it signs the website `__session` metadata payload.
-- Website server proxy auth uses two HttpOnly cookies: signed metadata in `__session`, bearer transport in `__session_access`.
-- Protected session validation requires both cookies; `__session` metadata alone is not enough to authorize backend proxy calls.
-- `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
-- If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
-- `BACKEND_API_BASE_URL` and `WEBSITE_ORIGIN` enable the new opaque-session
-  BFF entrypoints. The backend base is read only on the server, and mutation
-  Origin headers must exactly match `WEBSITE_ORIGIN`.
-- The opaque-session foundation uses `__Host-sj_web_session` in production
-  (`sj_web_session` on insecure localhost) plus the readable `sj_csrf`
-  double-submit cookie. It is not the active ERP client session until the
-  remaining website data slices are moved off browser bearer transport.
-- Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on the signed cookie-backed session plus in-memory auth transport state.
-- Firebase web/admin vars are still required where Firebase services remain in use.
+- `SUPABASE_URL` and the publishable key are server-only Auth configuration.
+- `BACKEND_API_BASE_URL` is an exact Cloud Run API origin; production requires
+  HTTPS. The browser never calls it directly.
+- `WEBSITE_ORIGIN` must exactly match mutation Origin headers.
+- `WEBSITE_SESSION_SECRET` contains at least 32 random characters and signs only
+  recovery/challenge state. The API owns encrypted opaque session credentials.
+- Production uses `__Host-sj_web_session` (HttpOnly) plus readable `sj_csrf` for
+  double-submit CSRF. Supabase credentials never enter browser JavaScript.
+- The website has no Firebase, Edge-function, anon-key, service-role, or split
+  legacy-cookie configuration.
 
 ## 6. Mobile Environment And Native Files
 
@@ -223,61 +205,21 @@ Notes:
 
 ## 7. Supabase Local Environment
 
-Create `supabase/.env` for local Supabase CLI configuration (used by the local Docker Desktop stack):
+`supabase/config.toml` owns only the isolated local Auth/Postgres/Storage stack
+and Auth email templates. No Edge runtime remains, so there is no application
+`supabase/.env` and no Edge CORS, service-role, JWT, Firebase fallback, tax, PDF,
+or archive dispatch configuration.
 
-```dotenv
-CORS_ALLOWED_ORIGINS=http://localhost:3000,https://your-website.example
+Use `scripts/local-platform.ps1` for the complete stack. It obtains the local
+Supabase publishable/secret values, generates dedicated database-role passwords
+and emulator tokens, and writes them only to ignored
+`local-platform/.env.generated`. Do not copy those values into package examples
+or set `SMART_JOB_LOCAL_PLATFORM*` / marker paths manually.
 
-SMART_JOB_PERSISTENCE_BACKEND=sql
-DATABASE_URL=
-DATABASE_SSL_MODE=disable
-DATABASE_SSL_REJECT_UNAUTHORIZED=true
-DATABASE_SSL_CA=
-DATABASE_MAX_CONNECTIONS=10
-DATABASE_CONNECT_TIMEOUT_MS=10000
-DATABASE_IDLE_TIMEOUT_MS=30000
-
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-ALLOW_FIREBASE_AUTH_FALLBACK=false
-GCP_SERVICE_ACCOUNT_EMAIL=
-GCP_SERVICE_ACCOUNT_PRIVATE_KEY=
-PUBSUB_VERIFICATION_TOKEN=
-CLOUD_RUN_PDF_SERVICE_URL=
-DOCUMENTS_BUCKET=smart-job-company-files
-ARCHIVE_BUCKET=
-
-TAX_SUBMISSION_MODE=disabled
-TAX_AUTH_URL=
-TAX_TOKEN_URL=
-TAX_APPROVAL_URL=
-TAX_CLIENT_ID=
-TAX_CLIENT_SECRET=
-TAX_SCOPE=
-TAX_CALLBACK_URL=
-APP_SCHEME=erpsystem
-```
-
-Rules:
-
-- Set `SMART_JOB_PERSISTENCE_BACKEND=sql` explicitly in real environments.
-- Do not rely on implicit SQL enablement when database settings are present.
-- Keep CORS origins aligned with website domains and local dev origins.
-- Do not use `*` for CORS when sending credentials; use explicit origins in `CORS_ALLOWED_ORIGINS`.
-- Keep `CORS_ALLOWED_ORIGINS` non-empty in real environments. Empty origin lists are treated as fail-closed.
-- Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
-- `JWT_SECRET` is required for edge JWT verification; the edge runtime throws at startup if it is missing.
-- `SUPABASE_SERVICE_ROLE_KEY` is required for service-role database access; the edge runtime throws at startup if it is missing.
-- Shared edge auth verification derives the expected JWT issuer/audience from the configured Supabase project and fails closed on empty `uid` claims.
-- Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
-- `GCP_SERVICE_ACCOUNT_EMAIL` / `GCP_SERVICE_ACCOUNT_PRIVATE_KEY` allow edge handlers to mint OIDC tokens for trusted `cloudrun-pdf` dispatch.
-- `cloudrun-pdf` should be configured with the same service-account identity material when you want it to verify the edge-signed bearer JWT path locally.
-- The same service account credentials are used by `fetchArchiveMonthV1` to read archive objects from `ARCHIVE_BUCKET` through backend-controlled bucket/path access.
-- `PUBSUB_VERIFICATION_TOKEN` should match the shared verification token expected by `cloudrun-pdf` when that hardening layer is enabled.
-- `CLOUD_RUN_PDF_SERVICE_URL` is required for preview/generate task dispatch from the edge runtime.
-- `DOCUMENTS_BUCKET` must be `smart-job-company-files` so transition-time signed document downloads use the same private bucket as `cloudrun-pdf`.
-- `ARCHIVE_BUCKET` is required if mobile or other clients need archived month retrieval through `fetchArchiveMonthV1`.
+For direct package development, use the loopback values in the relevant
+package's `.env.example`. Production uses current publishable/secret key formats
+only in the trusted workloads documented there; browser/mobile bundles never
+receive a Supabase secret key.
 
 ## 8. SQL Setup
 
@@ -533,8 +475,6 @@ npm --prefix cloudrun-api run test
 npm --prefix cloudrun-tax run test
 ```
 
-If you use emulators, keep local website origins in `CORS_ALLOWED_ORIGINS` and point client envs to emulator origins explicitly.
-
 The mobile notification module uses pinned `react-native-notify-kit` for the
 Notifee-compatible local API surface. Firebase Messaging still owns remote push
 delivery; iOS config therefore uses `handleRemoteNotifications: false`. Rebuild
@@ -546,8 +486,7 @@ sends it in both register and clear requests.
 
 ## 10. Cloud Run API And Tax Workflow
 
-Build and test the non-deployed foundations locally after their file
-dependencies:
+Build and test the services locally after their file dependencies:
 
 ```bash
 npm --prefix packages/contracts run build
@@ -575,8 +514,9 @@ removes it during cleanup; no runtime password is committed. `cloudrun-tax`
 uses separate `MAIN_API_AUDIENCE` and `TAX_GATEWAY_AUDIENCE` values: the first
 is used for its outbound main-API identity token and the second verifies tokens
 received by `/api/v1/tax/approval`. Configure both the main API and tax gateway
-with public Cloud Run ingress so Supabase bearer/session authentication and
-callback HMAC verification can run in the application handlers.
+behind their approved ingress. External website/mobile traffic reaches the API
+through the HTTPS load balancer; internal routes still require Google service
+identity. The tax callback endpoint additionally verifies its HMAC contract.
 
 Main API production configuration additionally requires all four Pub/Sub
 settings (`DOCUMENT_PUBSUB_PROJECT_ID`, `DOCUMENT_PREVIEW_TOPIC`,
@@ -585,9 +525,10 @@ identity settings. Keep `TAX_SUBMISSION_MODE=disabled` at platform launch.
 Sandbox/production modes additionally require exact `TAX_GATEWAY_URL` and
 `TAX_GATEWAY_AUDIENCE` service origins.
 
-The new API/tax Dockerfiles, Cloud Run service settings, IAM, Artifact Registry, OIDC/WIF, and
-environment rollout remain deployment-configuration changes and require the
-separate implementation checkpoint.
+The deployment workflow uses Workload Identity Federation, Artifact Registry,
+digest resolution, and keyless signing. Batch 8 Terraform remains the source of
+truth for production resource provisioning; do not treat the workflow alone as
+proof that IAM, networking, queues, DNS, or monitoring have been provisioned.
 
 ## 11. Cloud Run PDF Service
 
@@ -688,15 +629,17 @@ Preserve these invariants:
 
 ## 14. Supabase Migration Workspace
 
-The `supabase/` directory contains the in-repo backend runtime and migration hardening work.
+The `supabase/` directory contains local CLI configuration and Auth email
+templates. Application migrations and backend runtime code live under
+`packages/db/` and `cloudrun-api/` respectively.
 
 Use these docs when working there:
 
 - `backend.md`
 - `architecture.md`
 
-Cloud Run deployment/IAM workflow, Cloud Armor policy application, and
-Playwright E2E CI are implemented. Production deploy requires
+Cloud Run deployment, Cloud Armor policy application, and mandatory Playwright
+E2E CI are implemented. Production deploy requires
 `CLOUD_ARMOR_POLICY`, `WEBSITE_BACKEND_SERVICE`, and `API_BACKEND_SERVICE`; it
 attaches per-IP auth/contact throttles and restricts the API to load-balancer
 ingress instead of creating a bypassing direct domain mapping. The
@@ -707,12 +650,12 @@ Production tax submission
 remains disabled pending certification, and stable API DNS is a mobile-release
 gate.
 
-The `website_e2e` CI job runs only when the repository variable
-`RUN_WEBSITE_E2E` is set to `true`. Configure the repository secrets
-`E2E_BASE_URL`, `E2E_TEST_EMAIL`, and `E2E_TEST_PASSWORD` for a seeded,
-non-production test account before enabling it. Local Playwright runs still
-exercise unauthenticated flows when credentials are absent and skip only the
-authenticated scenarios.
+The `website_e2e` job always runs against a self-contained strict fixture API,
+so it needs no external credentials. It verifies authenticated login/reload/
+logout, unauthenticated redirects, exact tenant boundaries, and absence of
+Supabase credentials in browser-visible state. The mandatory `mobile_e2e` job
+uses Maestro Cloud and requires the repository configuration documented in
+`phone_app/MOBILE_ROLLOUT.md`.
 
 ## 15. Deployment Order
 
@@ -735,7 +678,14 @@ CI/CD evidence:
 - The Edge deploy workflow has been removed. All Supabase Edge functions and
   handlers have been deleted; mobile and website callers use the Cloud Run API
   exclusively.
-- Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
+- CI pins all external Actions and container bases by immutable digest, produces
+  an SBOM, audits every independent lockfile, and blocks on SAST, secret,
+  container, database, Playwright, and Maestro verification.
+- Cloud Run deployment requires the environment-scoped GCP WIF, service-account,
+  service, queue, bucket, and Cloud Armor variables referenced by
+  `.github/workflows/cloudrun-deploy.yml`. No long-lived GCP key is required.
+- Operational preflight, rollback, recovery, replay, and reconciliation steps
+  are indexed in `docs/runbooks/README.md`.
 
 ## 16. Post-Setup Checks
 
@@ -756,4 +706,6 @@ Verify:
 
 ## 17. Canonical Documentation Rule
 
-If setup or deployment guidance changes, update this file instead of creating another setup-only markdown file.
+Keep installation and topology guidance here. Keep task-specific operational
+procedures under `docs/runbooks/` and link them from this guide instead of
+duplicating commands in unrelated package READMEs.

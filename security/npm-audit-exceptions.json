@@ -18,21 +18,6 @@
       "resolution": "Upgrade to the first supported Next.js 16 patch that consumes PostCSS 8.5.10 or newer."
     },
     {
-      "workspace": "website",
-      "source": 1124066,
-      "advisory": "GHSA-f88m-g3jw-g9cj",
-      "package": "sharp",
-      "severity": "high",
-      "owner": "Web platform owner",
-      "reviewBy": "2026-08-21",
-      "reachability": "Next.js pins sharp 0.34.x as an optional dependency. The current website has no next/image imports or upload path that decodes caller-controlled images.",
-      "compensatingControls": [
-        "User uploads bypass the website image optimizer and use signed private Storage sessions.",
-        "Container scanning remains blocking and this exception expires after 30 days."
-      ],
-      "resolution": "Upgrade when Next.js officially supports sharp 0.35.0 or newer; do not force an unsupported native dependency override."
-    },
-    {
       "workspace": "phone_app",
       "source": 1119441,
       "advisory": "GHSA-w5hq-g745-h8pq",
@@ -61,21 +46,6 @@
         "Production installs omit development dependencies and the exception expires after 30 days."
       ],
       "resolution": "Upgrade when drizzle-kit removes @esbuild-kit or publishes a compatible patched dependency graph."
-    },
-    {
-      "workspace": "packages/db",
-      "source": 1120680,
-      "advisory": "GHSA-g7r4-m6w7-qqqr",
-      "package": "esbuild",
-      "severity": "low",
-      "owner": "Data platform owner",
-      "reviewBy": "2026-08-21",
-      "reachability": "The affected tsx/esbuild development-server behavior is not invoked by drizzle-kit; database scripts compile or migrate trusted local source without exposing an esbuild HTTP server.",
-      "compensatingControls": [
-        "Database tooling is not installed in runtime images.",
-        "CI executes migrations only against an isolated loopback Supabase database."
-      ],
-      "resolution": "Consume the next compatible drizzle-kit/tsx patch that moves beyond the affected esbuild range."
     }
   ]
 }

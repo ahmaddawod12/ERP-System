@@ -31,11 +31,14 @@ compatibility and a previously healthy native build, not a legacy data path.
    - secret `MAESTRO_CLOUD_API_KEY`
    - variable `MAESTRO_CLOUD_PROJECT_ID`
    - variable `MAESTRO_CLOUD_APP_BINARY_ID`
-   - variable `MAESTRO_APP_ID`
    - secret `MAESTRO_TEST_EMAIL`
    - secret `MAESTRO_TEST_PASSWORD`
    - variable `MAESTRO_TEST_WORKSPACE`
    - variable `MAESTRO_TEST_JOB_TITLE`
+
+   CI derives `MAESTRO_APP_ID` from the canonical Android package and iOS
+   bundle identifier (`erpsystem.app`) and fails in a dedicated preflight step
+   when any externally managed Maestro value is absent.
 
    The seeded user must have multiple workspaces and one job with the configured
    title. Offline mode is Android-only in Maestro and verifies that Pending Work

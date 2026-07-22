@@ -23,7 +23,7 @@ for (const [relativePath, markers] of required) {
     failures.push(`${relativePath}: required Maestro flow is missing`);
     continue;
   }
-  if (!source.startsWith('appId: ${MAESTRO_APP_ID}\n')) {
+  if (!/^appId: \$\{MAESTRO_APP_ID\}\r?\n/.test(source)) {
     failures.push(`${relativePath}: appId must come from MAESTRO_APP_ID`);
   }
   for (const marker of markers) {

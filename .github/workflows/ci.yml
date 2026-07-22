@@ -56,6 +56,7 @@ jobs:
   codeql:
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       security-events: write
       packages: read
@@ -499,6 +500,33 @@ jobs:
     environment: mobile-e2e
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate Maestro Cloud configuration
+        shell: bash
+        env:
+          MAESTRO_CLOUD_API_KEY: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
+          MAESTRO_CLOUD_PROJECT_ID: ${{ vars.MAESTRO_CLOUD_PROJECT_ID }}
+          MAESTRO_CLOUD_APP_BINARY_ID: ${{ vars.MAESTRO_CLOUD_APP_BINARY_ID }}
+          MAESTRO_TEST_WORKSPACE: ${{ vars.MAESTRO_TEST_WORKSPACE }}
+          MAESTRO_TEST_JOB_TITLE: ${{ vars.MAESTRO_TEST_JOB_TITLE }}
+          MAESTRO_TEST_EMAIL: ${{ secrets.MAESTRO_TEST_EMAIL }}
+          MAESTRO_TEST_PASSWORD: ${{ secrets.MAESTRO_TEST_PASSWORD }}
+        run: |
+          missing=0
+          for name in \
+            MAESTRO_CLOUD_API_KEY \
+            MAESTRO_CLOUD_PROJECT_ID \
+            MAESTRO_CLOUD_APP_BINARY_ID \
+            MAESTRO_TEST_WORKSPACE \
+            MAESTRO_TEST_JOB_TITLE \
+            MAESTRO_TEST_EMAIL \
+            MAESTRO_TEST_PASSWORD
+          do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name must be configured in the mobile-e2e GitHub environment"
+              missing=1
+            fi
+          done
+          exit "$missing"
       - name: Run mandatory Maestro login, tenant, job, and offline journeys
         uses: mobile-dev-inc/action-maestro-cloud@a988946a094437ff87f549b32b4d4c9af246c0d6 # v1
         with:
@@ -508,7 +536,7 @@ jobs:
           workspace: phone_app/.maestro
           timeout: 45
           env: |
-            MAESTRO_APP_ID=${{ vars.MAESTRO_APP_ID }}
+            MAESTRO_APP_ID=erpsystem.app
             MAESTRO_TEST_WORKSPACE=${{ vars.MAESTRO_TEST_WORKSPACE }}
             MAESTRO_TEST_JOB_TITLE=${{ vars.MAESTRO_TEST_JOB_TITLE }}
             MAESTRO_TEST_EMAIL=${{ secrets.MAESTRO_TEST_EMAIL }}

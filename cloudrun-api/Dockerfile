@@ -40,6 +40,13 @@ ENV HOST=0.0.0.0
 ENV PORT=8080
 ENV HOME=/tmp
 
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/* \
+            /usr/local/lib/node_modules/npm \
+            /usr/local/bin/npm \
+            /usr/local/bin/npx
+
 COPY --from=production-dependencies /workspace/packages /workspace/packages
 COPY --from=production-dependencies /workspace/cloudrun-api/node_modules ./node_modules
 COPY --from=build /workspace/cloudrun-api/dist ./dist

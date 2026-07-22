@@ -1,2 +1,3 @@
 /cloudrun-pdf/package.json whitespace=cr-at-eol
 /cloudrun-pdf/package-lock.json whitespace=cr-at-eol
+/website/package-lock.json whitespace=cr-at-eol

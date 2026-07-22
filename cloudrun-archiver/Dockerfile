@@ -36,6 +36,13 @@ WORKDIR /workspace/cloudrun-archiver
 
 ENV HOME=/tmp
 
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/* \
+            /usr/local/lib/node_modules/npm \
+            /usr/local/bin/npm \
+            /usr/local/bin/npx
+
 COPY --from=deps /workspace/packages /workspace/packages
 COPY --from=deps /workspace/cloudrun-archiver/node_modules ./node_modules
 COPY --from=build /workspace/cloudrun-archiver/dist ./dist

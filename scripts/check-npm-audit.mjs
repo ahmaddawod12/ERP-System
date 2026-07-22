@@ -20,6 +20,8 @@ const WORKSPACES = [
   'cloudrun-archiver',
   'local-platform/adapter',
 ];
+const NON_BLOCKING_SEVERITIES = new Set(['info', 'low']);
+const EXCEPTION_SEVERITIES = new Set(['moderate']);
 
 function fail(message) {
   process.stderr.write(`[NPM AUDIT] ${message}\n`);
@@ -51,6 +53,9 @@ for (const exception of register.exceptions) {
   if (!WORKSPACES.includes(exception.workspace)) throw new Error(`Unknown exception workspace: ${key}`);
   if (!Number.isSafeInteger(exception.source) || exception.source <= 0) throw new Error(`Invalid advisory source: ${key}`);
   if (!/^GHSA-[a-z0-9]{4}(?:-[a-z0-9]{4}){2}$/.test(exception.advisory)) throw new Error(`Invalid GHSA ID: ${key}`);
+  if (!EXCEPTION_SEVERITIES.has(exception.severity)) {
+    throw new Error(`Only moderate advisories may be excepted: ${key}`);
+  }
   if (!exception.package || !exception.owner || !exception.reachability || !exception.resolution) {
     throw new Error(`Incomplete npm audit exception: ${key}`);
   }
@@ -110,10 +115,12 @@ function auditWorkspace(workspace) {
   const visiting = new Set();
 
   function advisoryAllowed(advisory) {
+    if (NON_BLOCKING_SEVERITIES.has(advisory.severity)) return true;
     const key = `${workspace}:${advisory.source}`;
     const exception = exceptions.get(key);
     if (
       !exception
+      || vulnerabilities[advisory.name]?.isDirect
       || exception.package !== advisory.name
       || exception.severity !== advisory.severity
       || !advisory.url.endsWith(exception.advisory)
@@ -137,7 +144,7 @@ function auditWorkspace(workspace) {
   }
 
   for (const [name, vulnerability] of Object.entries(vulnerabilities)) {
-    if (!vulnerabilityAllowed(name)) {
+    if (!NON_BLOCKING_SEVERITIES.has(vulnerability.severity) && !vulnerabilityAllowed(name)) {
       unresolved.push(`${workspace}: ${name} (${vulnerability.severity}, ${vulnerability.range})`);
     }
   }

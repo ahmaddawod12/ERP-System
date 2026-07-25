@@ -4,6 +4,7 @@ const workflow = readFileSync(".github/workflows/cloudrun-deploy.yml", "utf8");
 const foundation = readFileSync("infra/modules/foundation/main.tf", "utf8");
 const runtime = readFileSync("infra/modules/runtime/main.tf", "utf8");
 const edge = readFileSync("infra/modules/edge/main.tf", "utf8");
+const observability = readFileSync("infra/modules/observability/main.tf", "utf8");
 const migrationImage = readFileSync("cloudrun-migrations/Dockerfile", "utf8");
 
 function requireMatch(source, expression, message) {
@@ -67,12 +68,28 @@ requireMatch(migrationJob, /DATABASE_URL\s+= var\.secret_ids\["migrator_database
 requireMatch(migrationJob, /DATABASE_SSL_MODE\s+= "require"/, "Migration connections must require TLS");
 requireMatch(migrationJob, /DATABASE_SSL_REJECT_UNAUTHORIZED\s+= "true"/, "Migration connections must verify database certificates");
 requireMatch(runtime, /tax-submissions\/drain[\s\S]{0,150}paused\s+= true/, "Tax submission scheduler must remain paused");
+requireMatch(runtime, /resource "google_pubsub_subscription" "dead_letter"/, "Every DLQ must retain messages through an inspection subscription");
 
 requireMatch(edge, /evaluatePreconfiguredWaf\('sqli-v33-stable'\)/, "Cloud Armor must enable the managed SQLi ruleset");
 requireMatch(edge, /evaluatePreconfiguredWaf\('xss-v33-stable'\)/, "Cloud Armor must enable the managed XSS ruleset");
 requireMatch(edge, /action\s+= "throttle"[\s\S]*exceed_action\s+= "deny\(429\)"[\s\S]*enforce_on_key\s+= "IP"/, "Cloud Armor must throttle abusive client IPs with HTTP 429");
+requireMatch(edge, /priority\s+= 1100[\s\S]*\/api\/auth\/[\s\S]*\/api\/v1\/auth\//, "Cloud Armor must apply a dedicated authentication-route throttle to website and API backends");
+requireMatch(edge, /priority\s+= 1110[\s\S]*\/api\/contact\/[\s\S]*\/api\/v1\/contact-requests/, "Cloud Armor must apply a dedicated contact-route throttle to website and API backends");
+requireMatch(edge, /sensitive_route_rate_limits\.auth\.count/, "Authentication throttles must use a separately tunable threshold");
+requireMatch(edge, /sensitive_route_rate_limits\.contact\.count/, "Contact throttles must use a separately tunable threshold");
 requireMatch(edge, /min_tls_version\s+= "TLS_1_2"/, "The public edge must enforce TLS 1.2 or newer");
 requireMatch(edge, /dnssec_config[\s\S]*state = "on"/, "Public DNS zones must enable DNSSEC");
+
+for (const field of [
+  "taxSubmissionFailure",
+  "taxCallbackFailure",
+  "archiveFailure",
+  "databasePoolSaturation",
+  "sessionRefreshFailure",
+]) {
+  requireMatch(observability, new RegExp(`jsonPayload\\.${field}=true`), `${field} must have a structured log metric`);
+}
+requireMatch(observability, /endswith\(key, "_dead_letter"\) \? 0 : 100/, "A single dead-letter message must trigger an alert");
 
 requireMatch(migrationImage, /USER node/, "Migration image must run as a non-root user");
 requireMatch(migrationImage, /CMD \["node", "migrate\.mjs"\]/, "Migration image must run the production migration entry point");

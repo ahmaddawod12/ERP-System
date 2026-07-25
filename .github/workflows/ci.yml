@@ -123,8 +123,10 @@ jobs:
             tflint --chdir="${root}" --config="${GITHUB_WORKSPACE}/infra/.tflint.hcl" --init
             tflint --chdir="${root}" --config="${GITHUB_WORKSPACE}/infra/.tflint.hcl"
           done
-          terraform -chdir=infra/modules/runtime init -backend=false -input=false
-          terraform -chdir=infra/modules/runtime test
+          for module in edge observability runtime; do
+            terraform -chdir="infra/modules/${module}" init -backend=false -input=false
+            terraform -chdir="infra/modules/${module}" test
+          done
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: config

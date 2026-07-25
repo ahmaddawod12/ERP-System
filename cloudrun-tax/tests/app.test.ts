@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Writable } from "node:stream";
 import { afterEach, describe, it } from "node:test";
 
 import type { FastifyInstance } from "fastify";
@@ -79,6 +80,31 @@ describe("service probes", () => {
 });
 
 describe("request boundary", () => {
+  it("emits a stable operational event when callback processing is unavailable", async () => {
+    let logs = "";
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        logs += String(chunk);
+        callback();
+      },
+    });
+    const app = buildApp({
+      config: { ...testConfig, logLevel: "info" },
+      logger: { level: "info", stream },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tax/callback",
+      payload: {},
+    });
+
+    assert.equal(response.statusCode, 503);
+    assert.match(logs, /"taxCallbackFailure":true/);
+    assert.doesNotMatch(logs, /credential|authorization/);
+  });
+
   it("replaces unsafe request IDs instead of reflecting them", async () => {
     const response = await createApp().inject({
       method: "GET",

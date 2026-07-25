@@ -47,8 +47,10 @@ The environment root then creates:
   paused tax drain;
 - authoritative DNS, DNSSEC, managed TLS, external HTTPS load balancing, and
   per-backend Cloud Armor policies;
-- thirty-day request SLOs, 5xx/backlog/scheduler alerts, and a platform
-  dashboard.
+- thirty-day request SLOs; service 5xx, scheduler, primary queue/DLQ, tax
+  submission/callback, archive failure, database-pool saturation, and session-
+  refresh alerts; and dedicated request, document, email, tax, archive, and
+  database/session dashboards.
 
 Every mounted secret must be entered in `secret_versions` using its container
 ID and an explicit numeric version. `latest` is rejected. `image_digests` must

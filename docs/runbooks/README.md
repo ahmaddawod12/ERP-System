@@ -14,6 +14,7 @@ verification evidence for every execution.
 - [`EMAIL_DELIVERY_UNKNOWN.md`](./EMAIL_DELIVERY_UNKNOWN.md) — ambiguous SES delivery
 - [`ARCHIVE_RESTORE.md`](./ARCHIVE_RESTORE.md) — verified archive retrieval/rehydration
 - [`../../phone_app/MOBILE_ROLLOUT.md`](../../phone_app/MOBILE_ROLLOUT.md) — native staged rollout
+- [`../launch/README.md`](../launch/README.md) — required production evidence and accessibility sign-off
 
 Global rules:
 

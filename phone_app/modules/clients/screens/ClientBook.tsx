@@ -17,13 +17,12 @@ import {
   Keyboard,
   ActivityIndicator,
   FlatList,
-  ScrollView,
   TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getColors, gradients, spacing, borderRadius, typography, shadows } from '../../../theme';
+import { getColors, gradients, spacing } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
@@ -31,7 +30,6 @@ import { useCache } from '../../../contexts/CacheContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
 import { AppInput, AppText, GlobalHeader } from '../../../components';
-import { DOC_TYPE, DOC_COLORS, getDocumentLabel } from '@smart-job/contracts';
 import {
   ClientCreateRequestSchema,
   ClientDeleteRequestSchema,
@@ -51,202 +49,14 @@ import { useClientsInfinite } from '../lib/use-clients-infinite';
 import { useClientMutations } from '../lib/use-client-mutations';
 import type { MobileClientSummary } from '../lib/client-list-model';
 import { StableClientActionKeys } from '../lib/client-action-keys';
-
-type Translations = {
-  title: string;
-  subtitle: string;
-  searchPlaceholder: string;
-  addClient: string;
-  editClient: string;
-  noClients: string;
-  noClientsDesc: string;
-  noResults: string;
-  noResultsDesc: string;
-  name: string;
-  phone: string;
-  email: string;
-  address: string;
-  city: string;
-  vatNumber: string;
-  save: string;
-  cancel: string;
-  delete: string;
-  deleteConfirm: string;
-  deleteMessage: string;
-  clientSaved: string;
-  clientUpdated: string;
-  clientDeleted: string;
-  required: string;
-  totalClients: string;
-  clientOptions: string;
-  finishedJobs: string;
-  documents: string;
-  editOrRemove: string;
-  noDataFound: string;
-  jobsFor: string;
-  docsFor: string;
-  jobTitle: string;
-  completedOn: string;
-  status: string;
-  docType: string;
-  docNumber: string;
-  amount: string;
-  createdOn: string;
-  close: string;
-  partsUsed: string;
-  loadingClients: string;
-  loadFailed: string;
-  refreshFailed: string;
-  retry: string;
-  loadMore: string;
-};
-
-const translateMap: Record<string, Translations> = {
-  en: {
-    title: 'Client Book',
-    subtitle: 'Manage your clients',
-    searchPlaceholder: 'Search clients...',
-    addClient: 'New Client',
-    editClient: 'Edit Client',
-    noClients: 'No clients yet',
-    noClientsDesc: 'Tap the + button to add your first client',
-    noResults: 'No clients found',
-    noResultsDesc: 'Try a different search term',
-    name: 'Client Name',
-    phone: 'Phone Number',
-    email: 'Email Address',
-    address: 'Address',
-    city: 'City',
-    vatNumber: 'VAT Number',
-    save: 'Save',
-    cancel: 'Cancel',
-    delete: 'Remove',
-    deleteConfirm: 'Remove Client',
-    deleteMessage: 'An unreferenced client is deleted. A client linked to jobs or documents is safely archived.',
-    clientSaved: 'Client saved successfully',
-    clientUpdated: 'Client updated successfully',
-    clientDeleted: 'Client removed successfully',
-    required: 'Client name is required',
-    totalClients: 'clients',
-    clientOptions: 'Client Options',
-    finishedJobs: 'Finished Jobs',
-    documents: 'Documents',
-    editOrRemove: 'Edit / Remove',
-    noDataFound: 'No data found for this month',
-    jobsFor: 'Finished Jobs for',
-    docsFor: 'Documents for',
-    jobTitle: 'Job Title',
-    completedOn: 'Completed',
-    status: 'Status',
-    docType: 'Type',
-    docNumber: 'Doc #',
-    amount: 'Amount',
-    createdOn: 'Created',
-    close: 'Close',
-    partsUsed: 'Parts Used',
-    loadingClients: 'Loading clients...',
-    loadFailed: 'Clients could not be loaded. Check your connection and try again.',
-    refreshFailed: 'Clients could not be refreshed. Saved results remain available.',
-    retry: 'Retry',
-    loadMore: 'Load more',
-  },
-  he: {
-    title: 'ספר לקוחות',
-    subtitle: 'ניהול הלקוחות שלך',
-    searchPlaceholder: 'חיפוש לקוחות...',
-    addClient: 'לקוח חדש',
-    editClient: 'עריכת לקוח',
-    noClients: 'אין לקוחות עדיין',
-    noClientsDesc: 'לחץ על כפתור + להוספת לקוח ראשון',
-    noResults: 'לא נמצאו לקוחות',
-    noResultsDesc: 'נסה מילת חיפוש אחרת',
-    name: 'שם לקוח',
-    phone: 'מספר טלפון',
-    email: 'כתובת אימייל',
-    address: 'כתובת',
-    city: 'עיר',
-    vatNumber: 'מספר עוסק מורשה',
-    save: 'שמור',
-    cancel: 'ביטול',
-    delete: 'הסר',
-    deleteConfirm: 'הסרת לקוח',
-    deleteMessage: 'לקוח ללא היסטוריה יימחק. לקוח המקושר לעבודות או למסמכים יועבר לארכיון.',
-    clientSaved: 'הלקוח נשמר בהצלחה',
-    clientUpdated: 'הלקוח עודכן בהצלחה',
-    clientDeleted: 'הלקוח הוסר בהצלחה',
-    required: 'שם לקוח נדרש',
-    totalClients: 'לקוחות',
-    clientOptions: 'אפשרויות לקוח',
-    finishedJobs: 'עבודות שהושלמו',
-    documents: 'מסמכים',
-    editOrRemove: 'עריכה / מחיקה',
-    noDataFound: 'לא נמצאו נתונים לחודש זה',
-    jobsFor: 'עבודות שהושלמו עבור',
-    docsFor: 'מסמכים עבור',
-    jobTitle: 'כותרת עבודה',
-    completedOn: 'הושלם',
-    status: 'סטטוס',
-    docType: 'סוג',
-    docNumber: 'מס\' מסמך',
-    amount: 'סכום',
-    createdOn: 'נוצר',
-    close: 'סגור',
-    partsUsed: 'חלקים שנעשה בהם שימוש',
-    loadingClients: 'טוען לקוחות...',
-    loadFailed: 'לא ניתן היה לטעון את הלקוחות. בדוק את החיבור ונסה שוב.',
-    refreshFailed: 'לא ניתן היה לרענן את הלקוחות. התוצאות השמורות נשארו זמינות.',
-    retry: 'נסה שוב',
-    loadMore: 'טען עוד',
-  },
-  ar: {
-    title: 'دفتر العملاء',
-    subtitle: 'إدارة عملائك',
-    searchPlaceholder: 'البحث عن عملاء...',
-    addClient: 'عميل جديد',
-    editClient: 'تعديل عميل',
-    noClients: 'لا يوجد عملاء بعد',
-    noClientsDesc: 'اضغط على زر + لإضافة أول عميل',
-    noResults: 'لم يتم العثور على عملاء',
-    noResultsDesc: 'جرب كلمة بحث مختلفة',
-    name: 'اسم العميل',
-    phone: 'رقم الهاتف',
-    email: 'البريد الإلكتروني',
-    address: 'العنوان',
-    city: 'المدينة',
-    vatNumber: 'رقم ضريبي',
-    save: 'حفظ',
-    cancel: 'إلغاء',
-    delete: 'إزالة',
-    deleteConfirm: 'إزالة العميل',
-    deleteMessage: 'سيتم حذف العميل غير المرتبط بسجل، وسيتم أرشفة العميل المرتبط بأعمال أو مستندات.',
-    clientSaved: 'تم حفظ العميل بنجاح',
-    clientUpdated: 'تم تحديث العميل بنجاح',
-    clientDeleted: 'تمت إزالة العميل بنجاح',
-    required: 'اسم العميل مطلوب',
-    totalClients: 'عملاء',
-    clientOptions: 'خيارات العميل',
-    finishedJobs: 'الأعمال المكتملة',
-    documents: 'المستندات',
-    editOrRemove: 'تعديل / حذف',
-    noDataFound: 'لا توجد بيانات لهذا الشهر',
-    jobsFor: 'الأعمال المكتملة لـ',
-    docsFor: 'المستندات لـ',
-    jobTitle: 'عنوان العمل',
-    completedOn: 'اكتمل',
-    status: 'الحالة',
-    docType: 'النوع',
-    docNumber: 'رقم المستند',
-    amount: 'المبلغ',
-    createdOn: 'تم الإنشاء',
-    close: 'إغلاق',
-    partsUsed: 'الأجزاء المستخدمة',
-    loadingClients: 'جارٍ تحميل العملاء...',
-    loadFailed: 'تعذر تحميل العملاء. تحقق من الاتصال وحاول مرة أخرى.',
-    refreshFailed: 'تعذر تحديث العملاء. ستبقى النتائج المحفوظة متاحة.',
-    retry: 'إعادة المحاولة',
-    loadMore: 'تحميل المزيد',
-  },
-};
+import { getClientBookCopy } from '../lib/client-book-copy';
+import { ClientCard, ClientHistoryCard } from '../components/ClientBookCards';
+import {
+  buildClientHistoryEntries,
+  formatClientHistoryMonth,
+  type ClientHistoryEntry,
+  type ClientHistoryView,
+} from '../lib/client-history-model';
 
 function mutationErrorMessage(error: unknown): string {
   return error instanceof Error && error.message
@@ -280,14 +90,14 @@ export default function ClientBook() {
   const [selectedClient, setSelectedClient] = useState<MobileClientSummary | null>(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showDataModal, setShowDataModal] = useState(false);
-  const [dataViewType, setDataViewType] = useState<'finishedJobs' | 'documents'>('finishedJobs');
-  const [dataItems, setDataItems] = useState<any[]>([]);
+  const [dataViewType, setDataViewType] = useState<ClientHistoryView>('finishedJobs');
+  const [dataItems, setDataItems] = useState<ClientHistoryEntry[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
 
   const isRTL = language === 'he' || language === 'ar';
 
-  const t = translateMap[language] || translateMap.en;
+  const t = getClientBookCopy(language);
 
   const clientFilters = useMemo(() => ({
     search: debouncedSearchQuery,
@@ -320,56 +130,6 @@ export default function ClientBook() {
 
   // --- Helpers ---
 
-  /** Format a Date to month/year display string */
-  const formatMonth = useCallback((date: Date) => {
-    const monthNames = language === 'en'
-      ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-      : language === 'he'
-        ? ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר']
-        : ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
-    return `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
-  }, [language]);
-
-  /** Format a date field (handles ISO strings and Firestore Timestamps) */
-  const formatDate = useCallback((dateInput: any) => {
-    if (!dateInput) return '—';
-    let d;
-    if (dateInput.toDate && typeof dateInput.toDate === 'function') {
-      d = dateInput.toDate();
-    } else {
-      d = new Date(dateInput);
-    }
-    if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString(language === 'he' ? 'he-IL' : language === 'ar' ? 'ar-SA' : 'en-US', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
-  }, [language]);
-
-  /** Get document type label */
-  const getDocTypeLabel = useCallback((type: string | number | undefined) => {
-    const numType = typeof type === 'string' ? parseInt(type, 10) : type;
-    if (numType === undefined || Number.isNaN(numType)) return `${type}`;
-    return getDocumentLabel(numType, language) || `${type}`;
-  }, [language]);
-
-  /** Get document type color */
-  const getDocTypeColor = useCallback((type: string | number | undefined) => {
-    const numType = typeof type === 'string' ? parseInt(type, 10) : type;
-    return DOC_COLORS[numType as keyof typeof DOC_COLORS] ?? colors.textSecondary;
-  }, [colors]);
-
-  /** Calculate total from income/items array */
-  const calculateTotal = useCallback((income: any) => {
-    if (!income || !Array.isArray(income)) return 0;
-    return income.reduce((sum, item) => {
-      const price = parseFloat(item.price) || 0;
-      const quantity = parseFloat(item.quantity) || 1;
-      return sum + (price * quantity);
-    }, 0);
-  }, []);
-
   // --- Form helpers ---
   const resetForm = () => {
     setFormData(emptyClientFormData());
@@ -397,39 +157,13 @@ export default function ClientBook() {
   };
 
   /** Fetch finished jobs or documents for the selected client & month */
-  const fetchClientData = useCallback(async (client: MobileClientSummary | null, type: 'finishedJobs' | 'documents', monthDate: Date) => {
+  const fetchClientData = useCallback(async (client: MobileClientSummary | null, type: ClientHistoryView, monthDate: Date) => {
     if (!client) return;
     setDataLoading(true);
     try {
       const allData = await getDataForMonth(monthDate, type);
 
-      // Filter by client — match on clientId (primary) or cname (fallback)
-      const clientIds = new Set(
-        [client.id, client.cid]
-          .filter((value) => value !== undefined && value !== null)
-          .map((value) => String(value)),
-      );
-      const normalizedClientName = client.name?.toLowerCase()?.trim();
-
-      const matched = (allData || []).filter(item => {
-        const itemClientId = item.cid ?? item.clientId;
-        if (itemClientId !== undefined && clientIds.has(String(itemClientId))) return true;
-        if (normalizedClientName && (item.cname || item.customerName)?.toLowerCase()?.trim() === normalizedClientName) return true;
-        return false;
-      });
-
-      // Sort by date descending
-      const dateField = type === 'documents' ? 'createdAt' : 'finishedAt';
-      matched.sort((a, b) => {
-        const getTime = (d: any) => {
-          if (!d) return 0;
-          if (d.toDate && typeof d.toDate === 'function') return d.toDate().getTime();
-          return new Date(d).getTime();
-        };
-        return getTime(b[dateField]) - getTime(a[dateField]);
-      });
-
-      setDataItems(matched);
+      setDataItems(buildClientHistoryEntries(allData ?? [], client, type));
     } catch (error) {
       logger.error('Error fetching client data', error);
       setDataItems([]);
@@ -439,7 +173,7 @@ export default function ClientBook() {
   }, [getDataForMonth]);
 
   /** Open data viewer modal (finished jobs or documents) */
-  const openDataViewer = useCallback((type: 'finishedJobs' | 'documents') => {
+  const openDataViewer = useCallback((type: ClientHistoryView) => {
     setDataViewType(type);
     setSelectedMonth(new Date());
     setDataItems([]);
@@ -552,157 +286,18 @@ export default function ClientBook() {
     );
   };
 
-  // --- Renderers ---
-
-  /** Render a single finished job card in the data viewer */
-  const renderJobItem = ({ item }: { item: any }) => (
-    <View style={[styles.dataCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.dataCardHeader}>
-        <View style={{ flex: 1 }}>
-          <AppText style={[styles.dataCardTitle, { color: colors.textPrimary }]} numberOfLines={2}>
-            {item.title || item.jobTitle || item.description || '—'}
-          </AppText>
-        </View>
-        {item.status && (
-          <View style={[styles.statusBadge, { backgroundColor: '#10B981' + '20' }]}>
-            <AppText style={[styles.statusBadgeText, { color: '#10B981' }]}>
-              {item.status}
-            </AppText>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.dataCardDetails}>
-        <View style={styles.dataDetailRow}>
-          <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
-          <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]}>
-            {t.completedOn}: {formatDate(item.finishedAt || item.completedAt)}
-          </AppText>
-        </View>
-        {item.location && (
-          <View style={styles.dataDetailRow}>
-            <Ionicons name="location-outline" size={14} color={colors.textSecondary} />
-            <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {item.location}
-            </AppText>
-          </View>
-        )}
-        {item.parts && Array.isArray(item.parts) && item.parts.length > 0 && (
-          <View style={styles.dataDetailRow}>
-            <Ionicons name="construct-outline" size={14} color={colors.textSecondary} />
-            <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {t.partsUsed}: {item.parts.map((p: any) => p.partName || p.name).filter(Boolean).join(', ')}
-            </AppText>
-          </View>
-        )}
-      </View>
-    </View>
+  // Presentation components keep list rendering separate from data orchestration.
+  const renderHistoryItem = ({ item }: { item: ClientHistoryEntry }) => (
+    <ClientHistoryCard colors={colors} copy={t} entry={item} language={language} />
   );
 
-  /** Render a single document card in the data viewer */
-  const renderCertItem = ({ item }: { item: any }) => {
-    const total = item.totals?.grandTotal ?? calculateTotal(item.income || item.items);
-    const typeColor = getDocTypeColor(item.type);
-    return (
-      <View style={[styles.dataCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <View style={styles.dataCardHeader}>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-              <View style={[styles.docTypeBadge, { backgroundColor: typeColor + '20' }]}>
-                <AppText style={[styles.docTypeBadgeText, { color: typeColor }]}>
-                  {getDocTypeLabel(item.type)}
-                </AppText>
-              </View>
-              {item.documentNumber && (
-                <AppText style={[styles.docNumberText, { color: colors.textSecondary }]}>
-                  #{item.documentNumber}
-                </AppText>
-              )}
-            </View>
-          </View>
-          {total > 0 && (
-            <AppText style={[styles.amountText, { color: colors.primary }]}>
-              ₪{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </AppText>
-          )}
-        </View>
-
-        <View style={styles.dataCardDetails}>
-          <View style={styles.dataDetailRow}>
-            <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
-            <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]}>
-              {t.createdOn}: {formatDate(item.createdAt)}
-            </AppText>
-          </View>
-          {item.cname && (
-            <View style={styles.dataDetailRow}>
-              <Ionicons name="person-outline" size={14} color={colors.textSecondary} />
-              <AppText style={[styles.dataDetailText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.cname}
-              </AppText>
-            </View>
-          )}
-        </View>
-      </View>
-    );
-  };
-
-  /** Render client card in main list */
   const renderClientCard = ({ item: client }: { item: MobileClientSummary }) => (
-    <TouchableOpacity
-      style={[styles.clientCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    <ClientCard
+      client={client}
+      colors={colors}
+      isRTL={isRTL}
       onPress={() => openClientOptions(client)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.clientCardRow}>
-        <View style={[styles.clientAvatar, { backgroundColor: colors.secondary + '15' }]}>
-          <MaterialCommunityIcons name="account" size={28} color={colors.secondary} />
-        </View>
-        <View style={styles.clientCardInfo}>
-          <View style={styles.clientNameRow}>
-            <AppText style={[styles.clientName, { color: colors.textPrimary }]} numberOfLines={1}>
-              {client.name}
-            </AppText>
-            <View style={[styles.idBadge, { backgroundColor: colors.secondary + '15' }]}>
-              <AppText style={[styles.idBadgeText, { color: colors.secondary }]}>#{client.cid ?? client.id}</AppText>
-            </View>
-          </View>
-          {client.phone ? (
-            <View style={styles.detailRow}>
-              <Ionicons name="call-outline" size={13} color={colors.textSecondary} />
-              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
-                {client.phone}
-              </AppText>
-            </View>
-          ) : null}
-          {client.email ? (
-            <View style={styles.detailRow}>
-              <Ionicons name="mail-outline" size={13} color={colors.textSecondary} />
-              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
-                {client.email}
-              </AppText>
-            </View>
-          ) : null}
-          {client.address || client.city ? (
-            <View style={styles.detailRow}>
-              <Ionicons name="location-outline" size={13} color={colors.textSecondary} />
-              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
-                {[client.address, client.city].filter(Boolean).join(', ')}
-              </AppText>
-            </View>
-          ) : null}
-          {client.vatNumber ? (
-            <View style={styles.detailRow}>
-              <MaterialCommunityIcons name="file-document-outline" size={13} color={colors.textSecondary} />
-              <AppText style={[styles.clientDetail, { color: colors.textSecondary }]} numberOfLines={1}>
-                {client.vatNumber}
-              </AppText>
-            </View>
-          ) : null}
-        </View>
-        <Feather name={isRTL ? 'chevron-left' : 'chevron-right'} size={20} color={colors.textLight} />
-      </View>
-    </TouchableOpacity>
+    />
   );
 
   const renderEmptyState = () => (
@@ -1005,7 +600,7 @@ export default function ClientBook() {
             <View style={styles.monthNavCenter}>
               <Ionicons name="calendar-outline" size={18} color={colors.primary} style={{ marginRight: spacing.xs }} />
               <AppText style={[styles.monthNavText, { color: colors.textPrimary }]}>
-                {formatMonth(selectedMonth)}
+                {formatClientHistoryMonth(selectedMonth, language)}
               </AppText>
             </View>
             <TouchableOpacity
@@ -1029,7 +624,7 @@ export default function ClientBook() {
           ) : (
             <FlatList
               data={dataItems}
-              renderItem={dataViewType === 'finishedJobs' ? renderJobItem : renderCertItem}
+              renderItem={renderHistoryItem}
               keyExtractor={(item, idx) => `data-${item.id || idx}`}
               contentContainerStyle={[
                 styles.dataListContent,

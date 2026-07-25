@@ -64,6 +64,7 @@ module "observability" {
     email   = var.primary_region
   }
   subscription_names    = module.runtime.subscription_names
+  job_names             = module.runtime.job_names
   notification_channels = var.notification_channels
   labels                = var.labels
 }

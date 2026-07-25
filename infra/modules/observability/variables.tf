@@ -29,6 +29,11 @@ variable "subscription_names" {
   type        = map(string)
 }
 
+variable "job_names" {
+  description = "Cloud Run Job names keyed by workload."
+  type        = map(string)
+}
+
 variable "slo_goal" {
   description = "Thirty-day successful-request target."
   type        = number

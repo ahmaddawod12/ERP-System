@@ -2,6 +2,14 @@
 
 ## Summary
 
+> Repository status (July 22, 2026): all implementation batches are represented
+> in source, tests, Terraform, CI, and runbooks. Production is intentionally not
+> marked launched: billed-project setup, live Terraform application, DNS/TLS,
+> seven-day soak, load/restore drills, staged native adoption, manual assistive-
+> technology review, legal approval, and tax certification require external
+> owners and signed evidence. The authoritative blank evidence record is
+> `docs/launch/LAUNCH_EVIDENCE_TEMPLATE.md`; an uncompleted gate blocks launch.
+
 Bring the current greenfield repository to production on:
 
 - GCP `europe-west3` for website, API, PDF, email worker, and archiver.

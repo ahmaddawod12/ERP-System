@@ -136,8 +136,10 @@ function ProfileServerSummary({
             <dt className="text-slate-500 dark:text-slate-400">VAT / business number</dt>
             <dd className="mt-1 font-mono font-medium text-slate-950 dark:text-white">
               {displayValue(businessProfile.vatNumber)}
+              <span className="mt-1 block font-sans text-xs font-normal text-slate-500 dark:text-slate-400">
+                Immutable after onboarding
+              </span>
             </dd>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Immutable after onboarding</p>
           </div>
           <div>
             <dt className="text-slate-500 dark:text-slate-400">Business phone</dt>

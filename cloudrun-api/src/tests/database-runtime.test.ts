@@ -122,6 +122,31 @@ test("pool configuration caps API instances at five connections", async () => {
   await Promise.all([cappedRuntime.close(), smallerRuntime.close()]);
 });
 
+test("pool saturation is reported without changing transaction behavior", async () => {
+  class SaturatedPool extends FakePool {
+    readonly totalCount = 5;
+    readonly idleCount = 0;
+    readonly waitingCount = 2;
+  }
+
+  const snapshots: unknown[] = [];
+  const runtime = createApiDatabaseRuntime({
+    pool: new SaturatedPool(),
+    onPoolSaturation: (snapshot) => snapshots.push(snapshot),
+  });
+
+  await runtime.withTransaction({ userId: USER_ID }, async () => "committed");
+
+  assert.deepEqual(snapshots, [{
+    reason: "capacity",
+    maxConnections: MAX_DATABASE_POOL_SIZE,
+    totalConnections: 5,
+    idleConnections: 0,
+    waitingRequests: 2,
+  }]);
+  await runtime.close();
+});
+
 test("runtime refuses migration, admin, and service-role database credentials", () => {
   for (const role of ["postgres", "service_role", "supabase_admin", "worker_role"]) {
     assert.throws(

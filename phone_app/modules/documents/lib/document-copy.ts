@@ -72,6 +72,12 @@ export function getDocumentTranslations(language: string, documentType: number) 
       finishedJobs: 'Finished Jobs',
       finishedJob: 'Job',
       selectFinishedJob: 'Load parts & quantities from a completed job',
+      recommended: 'Recommended',
+      preFilledData: 'Pre-filled data',
+      invoiceLinked: 'Invoice linked',
+      fullControl: 'Full control',
+      noInvoiceNeeded: 'No invoice needed',
+      fromInvoice: 'From Invoice',
     };
   }
 
@@ -141,6 +147,12 @@ export function getDocumentTranslations(language: string, documentType: number) 
       noProposals: 'לא נמצאו הצעות מחיר תואמות',
       proposalItems: 'פריטים',
       selected: 'נבחר',
+      recommended: 'מומלץ',
+      preFilledData: 'נתונים מוכנים',
+      invoiceLinked: 'מקושר לחשבונית',
+      fullControl: 'שליטה מלאה',
+      noInvoiceNeeded: 'ללא חשבונית',
+      fromInvoice: 'מהחשבונית',
     };
   }
 
@@ -209,5 +221,11 @@ export function getDocumentTranslations(language: string, documentType: number) 
     noProposals: 'لم يتم العثور على عروض أسعار مطابقة',
     proposalItems: 'عناصر',
     selected: 'محدد',
+    recommended: 'موصى به',
+    preFilledData: 'بيانات جاهزة',
+    invoiceLinked: 'مرتبط بالفاتورة',
+    fullControl: 'تحكم كامل',
+    noInvoiceNeeded: 'بدون فاتورة',
+    fromInvoice: 'من الفاتورة',
   };
 }

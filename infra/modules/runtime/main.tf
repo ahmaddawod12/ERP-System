@@ -678,6 +678,22 @@ resource "google_pubsub_subscription" "push" {
   ]
 }
 
+resource "google_pubsub_subscription" "dead_letter" {
+  for_each = var.enable_runtime ? google_pubsub_topic.dead_letter : {}
+
+  project                    = var.project_id
+  name                       = "${each.value.name}-inspect"
+  topic                      = each.value.id
+  ack_deadline_seconds       = 60
+  message_retention_duration = "1209600s"
+  retain_acked_messages      = true
+  labels                     = local.labels
+
+  expiration_policy {
+    ttl = ""
+  }
+}
+
 resource "google_pubsub_subscription_iam_member" "dead_letter_subscriber" {
   for_each = var.enable_runtime ? google_pubsub_subscription.push : {}
 

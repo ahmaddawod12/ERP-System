@@ -131,6 +131,16 @@ run "enabled_runtime_preserves_scaling_and_job_bounds" {
     condition     = google_cloud_scheduler_job.api_drain["tax"].paused
     error_message = "Tax submission drain must remain paused."
   }
+
+  assert {
+    condition     = length(google_pubsub_subscription.dead_letter) == 3
+    error_message = "Every durable worker queue must expose a retained dead-letter inspection subscription."
+  }
+
+  assert {
+    condition     = output.subscription_names["email_delivery_dead_letter"] == "smart-job-test-email-delivery-dlq-inspect"
+    error_message = "Dead-letter inspection subscriptions must be included in monitoring outputs."
+  }
 }
 
 run "release_job_bootstrap_precedes_services" {

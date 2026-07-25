@@ -617,11 +617,12 @@ Use these docs when working there:
 - `backend.md`
 - `architecture.md`
 
-Cloud Run deployment, Cloud Armor policy application, and mandatory Playwright
-E2E CI are implemented. Production deploy requires
-`CLOUD_ARMOR_POLICY`, `WEBSITE_BACKEND_SERVICE`, and `API_BACKEND_SERVICE`; it
-attaches per-IP auth/contact throttles and restricts the API to load-balancer
-ingress instead of creating a bypassing direct domain mapping. The
+Cloud Run deployment, Terraform-owned Cloud Armor policies, and mandatory
+Playwright E2E CI are implemented. Each website/API policy includes separate
+per-IP auth and contact throttles in addition to its managed WAF and global
+backend limit; there is no manual post-deploy policy script or policy-name
+secret to drift from Terraform. Cloud Run ingress prevents a bypassing direct
+domain mapping. The
 Edge-to-Cloud-API cutover is complete; all Supabase
 Edge functions and handlers have been deleted. Firebase Messaging and
 Crashlytics remain for push notifications and native crash reporting.

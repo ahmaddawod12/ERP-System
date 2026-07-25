@@ -16,7 +16,13 @@ output "topic_names" {
 }
 
 output "subscription_names" {
-  value = { for key, subscription in google_pubsub_subscription.push : key => subscription.name }
+  value = merge(
+    { for key, subscription in google_pubsub_subscription.push : key => subscription.name },
+    {
+      for key, subscription in google_pubsub_subscription.dead_letter :
+      "${key}_dead_letter" => subscription.name
+    },
+  )
 }
 
 output "database_connection_budget" {

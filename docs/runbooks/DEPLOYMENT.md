@@ -34,10 +34,11 @@ commit SHA as `image_tag`; it is only a discovery label.
    of the seven images only when that immutable SHA tag is absent, blocks on the
    vulnerability scan, signs each source digest, runs the migration job, creates
    no-traffic revisions, and runs the internal smoke job.
-2. Dispatch `10`, `50`, and `100` separately. Observe the platform dashboard,
-   SLO burn, 5xx rate, database connections, queue depth, and scheduler failures
-   between stages. A failed public smoke automatically restores the previously
-   serving revisions.
+2. Dispatch `10`, `50`, and `100` separately. Observe SLO burn, 5xx rate,
+   document/email queues and DLQs, tax submission/callback failures, archive
+   failures, database-pool saturation, session-refresh failures, and Scheduler
+   failures between stages. A failed public smoke automatically restores the
+   previously serving revisions.
 3. For production, use the same SHA. The protected environment approval is
    required. The workflow refuses to build, verifies the staging signatures,
    copies the exact OCI manifest digest to the production registry, signs it
@@ -68,3 +69,7 @@ For every deployed service or job:
 
 If a verification fails, stop promotion and use `ROLLBACK.md`. Do not mask a
 schema incompatibility by weakening readiness or database permissions.
+
+Attach the completed private copy of
+`../launch/LAUNCH_EVIDENCE_TEMPLATE.md` to the protected-environment approval.
+Repository checks are not a substitute for the live evidence in that record.

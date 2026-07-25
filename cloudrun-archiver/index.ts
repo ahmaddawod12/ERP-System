@@ -51,7 +51,11 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<void> 
 if (require.main === module) {
   main().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${JSON.stringify({ severity: 'ERROR', message })}\n`);
+    process.stderr.write(`${JSON.stringify({
+      severity: 'ERROR',
+      archiveFailure: true,
+      message,
+    })}\n`);
     process.exitCode = 1;
   });
 }

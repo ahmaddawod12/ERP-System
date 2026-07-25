@@ -2,7 +2,7 @@ import type { FastifyError, FastifyInstance } from "fastify";
 
 import { apiFailure } from "./envelope.js";
 import { AppError } from "./errors.js";
-import { safeErrorIdentity } from "./logging.js";
+import { requestPath, safeErrorIdentity } from "./logging.js";
 
 interface ValidationIssue {
   readonly instancePath?: string;
@@ -95,6 +95,40 @@ function normalizeError(error: unknown): AppError {
   });
 }
 
+const DATABASE_POOL_ERROR_CODES = new Set(["53300", "P2024"]);
+const DATABASE_POOL_MESSAGE = /remaining connection slots|too many (?:database )?connections|connection pool[^\r\n]{0,80}(?:full|timeout|timed out)/i;
+
+function isDatabasePoolSaturation(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    const code = Reflect.get(current, "code");
+    if (typeof code === "string" && DATABASE_POOL_ERROR_CODES.has(code)) return true;
+    if (DATABASE_POOL_MESSAGE.test(current.message)) return true;
+    current = Reflect.get(current, "cause");
+  }
+  return false;
+}
+
+export function operationalFailureFields(
+  error: unknown,
+  method: string,
+  url: string,
+): Record<string, true> {
+  const path = requestPath(url);
+  return {
+    ...(method === "POST" && path === "/internal/v1/tax-submissions/drain"
+      ? { taxSubmissionFailure: true as const }
+      : {}),
+    ...(method === "POST" && path === "/internal/v1/tax/callback"
+      ? { taxCallbackFailure: true as const }
+      : {}),
+    ...(method === "GET" && path === "/api/v1/auth/web-sessions/current"
+      ? { sessionRefreshFailure: true as const }
+      : {}),
+    ...(isDatabasePoolSaturation(error) ? { databasePoolSaturation: true as const } : {}),
+  };
+}
+
 export function registerHttpHandlers(app: FastifyInstance): void {
   app.setNotFoundHandler((request, reply) => {
     const error = new AppError({
@@ -111,7 +145,11 @@ export function registerHttpHandlers(app: FastifyInstance): void {
 
     if (normalized.statusCode >= 500) {
       request.log.error(
-        { ...safeErrorIdentity(error), errorCode: normalized.code },
+        {
+          ...safeErrorIdentity(error),
+          errorCode: normalized.code,
+          ...operationalFailureFields(error, request.method, request.url),
+        },
         "request failed",
       );
     } else {

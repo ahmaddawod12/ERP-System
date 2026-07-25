@@ -108,11 +108,16 @@ Do not set the local marker flags manually and never run `supabase stop --all`.
   Supabase lint, local-fixture Playwright journeys, Maestro Cloud login/tenant/
   job/offline journeys, CodeQL, secret scanning, lockfile audits, Terraform
   validation/security scanning, SBOM generation, and container scans.
+- Playwright runs WCAG 2.2 A/AA Axe checks across login and every core tenant
+  route, plus keyboard skip-link and modal focus/inertness behavior.
 - GitHub Actions, Dockerfile bases, and local Compose images are pinned to
   immutable digests. Released Cloud Run images are resolved and keyless-signed
   by digest before deployment.
 - Operational procedures and sanitized environment templates are indexed under
   `docs/runbooks/README.md` and each environment-consuming package.
+- The largest mobile document, client, job, and inventory screens are bounded
+  orchestration layers backed by separate copy/model, API/state, form, style,
+  and presentation modules with regression budgets.
 
 ## Batch 8 platform foundation
 
@@ -132,13 +137,15 @@ Do not set the local marker flags manually and never run `supabase stop --all`.
   configuration, and then apply the Terraform roots.
 - Capture live DNS/TLS, fixed-egress allowlist, migration/readiness, traffic,
   alert/SLO, backup/restore, and rollback evidence.
+- Complete and sign the manual website keyboard/screen-reader and native
+  VoiceOver/TalkBack review in `docs/launch/`, plus the staging soak, load test,
+  and native rollout (or evidence-backed greenfield waiver).
 - Tax Authority certification and production enablement remain separate,
   explicit approvals.
 - Some older source-structure tests remain useful guards, but critical auth,
   tenant, database, worker, and offline paths also have behavioral coverage.
-- Mobile screen decomposition and broader strict-TypeScript adoption remain
-  maintainability opportunities; do not combine them with launch fixes unless
-  required.
+- Broader strict-TypeScript adoption outside the packages already migrated
+  remains a maintainability opportunity.
 
 For installation and deployment details use `SETUP.md`; for ownership and
 invariants use `architecture.md` and `backend.md`.

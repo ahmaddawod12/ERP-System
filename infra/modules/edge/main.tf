@@ -5,24 +5,63 @@ locals {
     managed-by  = "terraform"
   })
 
-  public_backends = {
+  sensitive_route_rules = {
     website = {
-      hostname   = var.hostnames.website
-      location   = var.primary_region
-      service    = lookup(var.service_names, "website", "")
-      rate_limit = var.rate_limits_per_minute.website
+      auth = {
+        priority    = 1100
+        description = "Authentication and account-recovery IP throttle"
+        expression  = "request.method == 'POST' && (request.path.matches('^/api/auth/(login|register|forgot-password|reset-password)$') || request.path.matches('^/api/onboarding/(business-registration|invitation)$') || request.path.matches('^/api/workers/invitation$'))"
+        count       = var.sensitive_route_rate_limits.auth.count
+        interval    = var.sensitive_route_rate_limits.auth.interval_seconds
+      }
+      contact = {
+        priority    = 1110
+        description = "Contact challenge and submission IP throttle"
+        expression  = "request.path.matches('^/api/contact/(challenge|request)$')"
+        count       = var.sensitive_route_rate_limits.contact.count
+        interval    = var.sensitive_route_rate_limits.contact.interval_seconds
+      }
     }
     api = {
-      hostname   = var.hostnames.api
-      location   = var.primary_region
-      service    = lookup(var.service_names, "api", "")
-      rate_limit = var.rate_limits_per_minute.api
+      auth = {
+        priority    = 1100
+        description = "Authentication and invitation IP throttle"
+        expression  = "request.method == 'POST' && (request.path.matches('^/api/v1/auth/(web-sessions|business-registration|invitations/redeem)$') || request.path.matches('^/api/v1/companies/[^/]+/invitations$'))"
+        count       = var.sensitive_route_rate_limits.auth.count
+        interval    = var.sensitive_route_rate_limits.auth.interval_seconds
+      }
+      contact = {
+        priority    = 1110
+        description = "Contact request IP throttle"
+        expression  = "request.method == 'POST' && request.path.matches('^/api/v1/contact-requests$')"
+        count       = var.sensitive_route_rate_limits.contact.count
+        interval    = var.sensitive_route_rate_limits.contact.interval_seconds
+      }
+    }
+    tax = {}
+  }
+
+  public_backends = {
+    website = {
+      hostname        = var.hostnames.website
+      location        = var.primary_region
+      service         = lookup(var.service_names, "website", "")
+      rate_limit      = var.rate_limits_per_minute.website
+      sensitive_rules = local.sensitive_route_rules.website
+    }
+    api = {
+      hostname        = var.hostnames.api
+      location        = var.primary_region
+      service         = lookup(var.service_names, "api", "")
+      rate_limit      = var.rate_limits_per_minute.api
+      sensitive_rules = local.sensitive_route_rules.api
     }
     tax = {
-      hostname   = var.hostnames.tax
-      location   = var.tax_region
-      service    = lookup(var.service_names, "tax", "")
-      rate_limit = var.rate_limits_per_minute.tax
+      hostname        = var.hostnames.tax
+      location        = var.tax_region
+      service         = lookup(var.service_names, "tax", "")
+      rate_limit      = var.rate_limits_per_minute.tax
+      sensitive_rules = local.sensitive_route_rules.tax
     }
   }
 }
@@ -120,6 +159,34 @@ resource "google_compute_security_policy" "backend" {
     match {
       expr {
         expression = "evaluatePreconfiguredWaf('sqli-v33-stable')"
+      }
+    }
+  }
+
+  dynamic "rule" {
+    for_each = each.value.sensitive_rules
+    iterator = sensitive_rule
+
+    content {
+      action      = "throttle"
+      priority    = sensitive_rule.value.priority
+      description = sensitive_rule.value.description
+
+      match {
+        expr {
+          expression = sensitive_rule.value.expression
+        }
+      }
+
+      rate_limit_options {
+        conform_action = "allow"
+        exceed_action  = "deny(429)"
+        enforce_on_key = "IP"
+
+        rate_limit_threshold {
+          count        = sensitive_rule.value.count
+          interval_sec = sensitive_rule.value.interval
+        }
       }
     }
   }

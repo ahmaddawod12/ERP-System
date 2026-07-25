@@ -26,7 +26,21 @@ import { createApiReadinessCheck } from "./readiness.js";
 export async function startServer(): Promise<void> {
   const config = loadConfig();
   const runtimeConfig = loadApiRuntimeConfig();
-  const database = createApiDatabaseRuntime({ config: runtimeConfig.database });
+  let lastPoolSaturationLogAt = 0;
+  const database = createApiDatabaseRuntime({
+    config: runtimeConfig.database,
+    onPoolSaturation(snapshot) {
+      const now = Date.now();
+      if (now - lastPoolSaturationLogAt < 60_000) return;
+      lastPoolSaturationLogAt = now;
+      process.stderr.write(`${JSON.stringify({
+        severity: "WARNING",
+        databasePoolSaturation: true,
+        message: "API database pool is saturated",
+        ...snapshot,
+      })}\n`);
+    },
+  });
   const jwtVerifier = createSupabaseJwtVerifier({
     issuer: runtimeConfig.supabaseJwt.issuer,
     audiences: runtimeConfig.supabaseJwt.audiences,

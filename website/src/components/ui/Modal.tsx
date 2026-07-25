@@ -102,12 +102,7 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
     };
 
     document.addEventListener("keydown", onKeyDown);
-    const focusFrame = window.requestAnimationFrame(() => {
-      (getFocusableElements()[0] ?? dialogRef.current)?.focus();
-    });
-
     return () => {
-      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = bodyOverflow;
       document.body.style.paddingInlineEnd = bodyPaddingInlineEnd;
@@ -127,6 +122,28 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
       });
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || portalElement === null) return;
+
+    // The portal element is committed in a render after the modal-open effect.
+    // Focus only after that commit so dialogRef is populated reliably.
+    const focusFrame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      if (dialog === null) return;
+      const firstFocusable = dialog.querySelector<HTMLElement>([
+        "a[href]",
+        "button:not([disabled])",
+        "input:not([disabled])",
+        "select:not([disabled])",
+        "textarea:not([disabled])",
+        "[tabindex]:not([tabindex='-1'])",
+      ].join(","));
+      (firstFocusable ?? dialog).focus();
+    });
+
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [open, portalElement]);
 
   if (!open || !portalElement) return null;
 

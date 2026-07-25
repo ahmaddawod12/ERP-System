@@ -32,8 +32,19 @@ export interface DatabasePoolClient extends DatabaseQueryable {
 }
 
 export interface DatabasePool extends DatabaseQueryable {
+  readonly totalCount?: number;
+  readonly idleCount?: number;
+  readonly waitingCount?: number;
   connect(): Promise<DatabasePoolClient>;
   end(): Promise<void>;
+}
+
+export interface DatabasePoolSaturationSnapshot {
+  readonly reason: "capacity" | "connection_error";
+  readonly maxConnections: number;
+  readonly totalConnections?: number;
+  readonly idleConnections?: number;
+  readonly waitingRequests?: number;
 }
 
 export interface TransactionTimeouts {
@@ -72,6 +83,7 @@ export interface CreateApiDatabaseRuntimeOptions {
   readonly config?: DatabaseRuntimeConfig;
   readonly pool?: DatabasePool;
   readonly poolFactory?: (config: PoolConfig) => DatabasePool;
+  readonly onPoolSaturation?: (snapshot: DatabasePoolSaturationSnapshot) => void;
 }
 
 export class DatabaseConfigurationError extends Error {
@@ -109,6 +121,15 @@ function wrapPoolClient(client: PoolClient): DatabasePoolClient {
 function createPgPool(config: PoolConfig): DatabasePool {
   const pool = new Pool(config);
   return {
+    get totalCount(): number {
+      return pool.totalCount;
+    },
+    get idleCount(): number {
+      return pool.idleCount;
+    },
+    get waitingCount(): number {
+      return pool.waitingCount;
+    },
     async connect(): Promise<DatabasePoolClient> {
       return wrapPoolClient(await pool.connect());
     },
@@ -233,12 +254,18 @@ function resolveTimeouts(overrides?: Partial<TransactionTimeouts>): TransactionT
 class PostgresApiDatabaseRuntime implements WebSessionDatabaseRuntime {
   readonly maxConnections: number;
   readonly #pool: DatabasePool;
+  readonly #onPoolSaturation: CreateApiDatabaseRuntimeOptions["onPoolSaturation"];
   #closed = false;
   #closePromise: Promise<void> | undefined;
 
-  constructor(pool: DatabasePool, maxConnections: number) {
+  constructor(
+    pool: DatabasePool,
+    maxConnections: number,
+    onPoolSaturation?: CreateApiDatabaseRuntimeOptions["onPoolSaturation"],
+  ) {
     this.#pool = pool;
     this.maxConnections = maxConnections;
+    this.#onPoolSaturation = onPoolSaturation;
   }
 
   async checkReadiness(): Promise<void> {
@@ -268,7 +295,7 @@ class PostgresApiDatabaseRuntime implements WebSessionDatabaseRuntime {
       throw new TypeError("userId must be a UUID.");
     }
     const timeouts = resolveTimeouts(context.timeouts);
-    const client = await this.#pool.connect();
+    const client = await this.#connectClient();
     let transactionStarted = false;
     let discardClient = false;
 
@@ -308,7 +335,7 @@ class PostgresApiDatabaseRuntime implements WebSessionDatabaseRuntime {
     work: (transaction: DatabaseQueryable) => Promise<T>,
   ): Promise<T> {
     this.#assertOpen();
-    const client = await this.#pool.connect();
+    const client = await this.#connectClient();
     let transactionStarted = false;
     let discardClient = false;
 
@@ -338,6 +365,48 @@ class PostgresApiDatabaseRuntime implements WebSessionDatabaseRuntime {
   #assertOpen(): void {
     if (this.#closed) throw new DatabaseRuntimeClosedError();
   }
+
+  async #connectClient(): Promise<DatabasePoolClient> {
+    const atCapacity = this.#pool.idleCount === 0
+      && this.#pool.totalCount !== undefined
+      && this.#pool.totalCount >= this.maxConnections;
+    if (atCapacity || (this.#pool.waitingCount ?? 0) > 0) {
+      this.#reportPoolSaturation("capacity");
+    }
+    try {
+      return await this.#pool.connect();
+    } catch (error) {
+      const code = error instanceof Error ? Reflect.get(error, "code") : undefined;
+      const message = error instanceof Error ? error.message : "";
+      if (
+        code === "53300"
+        || /remaining connection slots|too many (?:database )?connections|connection pool[^\r\n]{0,80}(?:full|timeout|timed out)/i.test(message)
+      ) {
+        this.#reportPoolSaturation("connection_error");
+      }
+      throw error;
+    }
+  }
+
+  #reportPoolSaturation(reason: DatabasePoolSaturationSnapshot["reason"]): void {
+    try {
+      this.#onPoolSaturation?.({
+        reason,
+        maxConnections: this.maxConnections,
+        ...(this.#pool.totalCount === undefined
+          ? {}
+          : { totalConnections: this.#pool.totalCount }),
+        ...(this.#pool.idleCount === undefined
+          ? {}
+          : { idleConnections: this.#pool.idleCount }),
+        ...(this.#pool.waitingCount === undefined
+          ? {}
+          : { waitingRequests: this.#pool.waitingCount }),
+      });
+    } catch {
+      // Telemetry must never change transaction behavior.
+    }
+  }
 }
 
 export function createApiDatabaseRuntime(
@@ -352,6 +421,7 @@ export function createApiDatabaseRuntime(
     return new PostgresApiDatabaseRuntime(
       options.pool,
       resolvePoolSize(injectedMax),
+      options.onPoolSaturation,
     );
   }
 
@@ -369,5 +439,5 @@ export function createApiDatabaseRuntime(
     ssl: options.config.ssl,
   };
   const pool = (options.poolFactory ?? createPgPool)(poolConfig);
-  return new PostgresApiDatabaseRuntime(pool, maxConnections);
+  return new PostgresApiDatabaseRuntime(pool, maxConnections, options.onPoolSaturation);
 }

@@ -34,11 +34,11 @@ function sendJson(response, status, payload) {
   response.end(body);
 }
 
-function success(response, status, data) {
+function success(response, status, data, meta = {}) {
   sendJson(response, status, {
     ok: true,
     data,
-    meta: { requestId: crypto.randomUUID() },
+    meta: { requestId: crypto.randomUUID(), ...meta },
   });
 }
 
@@ -131,6 +131,60 @@ const server = createServer(async (request, response) => {
         pendingDocumentTasks: 0,
       },
       capabilities: { taxSubmissionMode: "disabled" },
+    });
+    return;
+  }
+
+  if (
+    request.method === "GET"
+    && /^\/api\/v1\/companies\/101\/(jobs|clients|documents|workers|inventory(?:\/me)?)$/.test(url.pathname)
+  ) {
+    if (!hasSession(request)) {
+      failure(response, 401, "WEB_SESSION_INVALID", "The website session is invalid.");
+      return;
+    }
+    success(response, 200, { items: [], nextCursor: null }, { nextCursor: null });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/me/profile") {
+    if (!hasSession(request)) {
+      failure(response, 401, "WEB_SESSION_INVALID", "The website session is invalid.");
+      return;
+    }
+    success(response, 200, {
+      uid: viewer.uid,
+      email: viewer.email,
+      displayName: viewer.displayName,
+      phoneNumber: "+972501234567",
+      systemRole: null,
+      companyId: 101,
+      updatedAt: UPDATED_AT,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/companies/101/profile") {
+    if (!hasSession(request)) {
+      failure(response, 401, "WEB_SESSION_INVALID", "The website session is invalid.");
+      return;
+    }
+    success(response, 200, {
+      companyId: 101,
+      heName: null,
+      enName: workspace.name,
+      vatNumber: "515555555",
+      businessType: "Field service",
+      city: "Tel Aviv",
+      address: "1 Fixture Street",
+      businessEmail: viewer.email,
+      businessPhone: "+97235555555",
+      businessFax: null,
+      accountantName: null,
+      accountantEmail: null,
+      accountantPhone: null,
+      entityVersion: "fixture-company-v1",
+      updatedAt: UPDATED_AT,
     });
     return;
   }

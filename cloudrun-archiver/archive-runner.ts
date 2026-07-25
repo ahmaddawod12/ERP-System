@@ -428,7 +428,11 @@ export async function runMonthlyArchives(input: {
     } catch (error) {
       const message = safeError(error);
       failures.push({ publicCompanyId: company.publicCompanyId, message });
-      logger.error('Company archive failed', { publicCompanyId: company.publicCompanyId, message });
+      logger.error('Company archive failed', {
+        archiveFailure: true,
+        publicCompanyId: company.publicCompanyId,
+        message,
+      });
     }
   });
 

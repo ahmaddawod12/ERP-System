@@ -137,6 +137,17 @@ export function registerInternalTaxSubmissionRoutes(
           request.log.warn({ err: error }, "approved tax PDF remains in the document outbox");
         }
       }
+      if (submissionUnknown > 0) {
+        request.log.error(
+          { taxSubmissionFailure: true, submissionUnknown },
+          "tax submissions require manual reconciliation",
+        );
+      } else if (deferred > 0) {
+        request.log.warn(
+          { taxSubmissionDeferred: true, deferred },
+          "tax submissions were deferred before sending",
+        );
+      }
       return apiSuccess(request.id, resultSchema.parse({
         claimed: submissions.length,
         processed,

@@ -140,15 +140,29 @@ export function buildApp({ config, logger, dependencies }: BuildAppOptions): Fas
   });
 
   app.addHook("onResponse", async (request, reply) => {
+    const path = requestPath(request.url);
     request.log.info(
       {
         method: request.method,
-        path: requestPath(request.url),
+        path,
         statusCode: reply.statusCode,
         durationMs: reply.elapsedTime,
       },
       "request completed",
     );
+    if (reply.statusCode >= 500 && request.method === "POST") {
+      if (path === "/api/v1/tax/callback") {
+        request.log.error(
+          { taxCallbackFailure: true, statusCode: reply.statusCode },
+          "tax callback failed",
+        );
+      } else if (path === "/api/v1/tax/approval") {
+        request.log.error(
+          { taxSubmissionFailure: true, statusCode: reply.statusCode },
+          "tax approval failed",
+        );
+      }
+    }
   });
 
   app.get("/healthz", async (request) =>

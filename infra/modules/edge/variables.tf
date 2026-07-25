@@ -68,6 +68,40 @@ variable "rate_limits_per_minute" {
   }
 }
 
+variable "sensitive_route_rate_limits" {
+  description = "Per-client-IP thresholds for authentication and contact routes."
+  type = object({
+    auth = object({
+      count            = number
+      interval_seconds = number
+    })
+    contact = object({
+      count            = number
+      interval_seconds = number
+    })
+  })
+  default = {
+    auth = {
+      count            = 30
+      interval_seconds = 60
+    }
+    contact = {
+      count            = 20
+      interval_seconds = 300
+    }
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for limit in values(var.sensitive_route_rate_limits) : [
+        limit.count >= 1 && limit.count == floor(limit.count),
+        limit.interval_seconds >= 1 && limit.interval_seconds <= 3600 && limit.interval_seconds == floor(limit.interval_seconds),
+      ]
+    ]))
+    error_message = "Sensitive-route counts must be positive integers and intervals must be whole seconds from 1 through 3600."
+  }
+}
+
 variable "labels" {
   type    = map(string)
   default = {}

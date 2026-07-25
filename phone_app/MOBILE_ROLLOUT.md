@@ -83,3 +83,18 @@ longer use it.
 Close the rollout only after 99% of active installations are on the release (or
 newer), the observation window is complete, and incident/support queues show no
 release-linked regression.
+
+## Greenfield adoption waiver
+
+The launch plan assumes there is no live production customer data. That alone
+does not prove there are no previously distributed binaries. The 99% adoption
+and 30-day zero-legacy-traffic retirement gate may be marked not applicable
+only when the release owner signs evidence that no production installation was
+ever distributed with a legacy Edge business-data path and traffic telemetry
+shows no such callers.
+
+If any legacy production installation or business request exists, the waiver
+is invalid: restore a compatible legacy bridge, keep v1 API fields backward
+compatible, reach 99% supported-version adoption, then observe 30 consecutive
+days of zero legacy business traffic before retirement. Record the decision in
+`docs/launch/LAUNCH_EVIDENCE_TEMPLATE.md`; absence of evidence blocks launch.

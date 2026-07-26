@@ -146,7 +146,7 @@ test("signed downloads stay on the configured private bucket path", async () => 
 });
 
 test("local signed URLs validate against the internal origin and return the public loopback origin", async () => {
-  const internalBaseUrl = new URL("http://supabase_kong_smart-job-erp-local:8000/");
+  const internalBaseUrl = new URL("http://smart-job-supabase-gateway:8000/");
   const publicBaseUrl = new URL("http://127.0.0.1:55321/");
   const expectedPath = `/storage/v1/object/upload/sign/${BUCKET_ID}/${attachment.objectPath}`;
   const storage = createCompanyFileStorage({

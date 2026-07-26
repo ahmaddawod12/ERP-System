@@ -341,7 +341,7 @@ test("auth configuration permits local Supabase but rejects unsafe remote issuer
     issuer: "http://127.0.0.1:55321/auth/v1",
     audiences: AUDIENCE,
     jwksUrl: new URL(
-      "http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json",
+      "http://smart-job-supabase-gateway:8000/auth/v1/.well-known/jwks.json",
     ),
     jwks: staticEs256Jwks,
   });

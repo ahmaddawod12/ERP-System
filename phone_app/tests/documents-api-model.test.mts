@@ -194,6 +194,46 @@ test('non-tax document mutations normalize legacy form data into strict API cont
   assert.deepEqual(generated, preview);
 });
 
+test('receipt mutations send structured payment metadata and reject card secrets', () => {
+  const base = {
+    documentType: 'receipt',
+    companyId: '17',
+    documentData: {
+      client: { name: 'Dana' },
+      items: [{ description: 'Service', quantity: 1, price: 100 }],
+      language: 'en',
+      date: '2026-07-26',
+    },
+  } as const;
+  const credit = buildDocumentGenerateRequest({
+    ...base,
+    documentData: {
+      ...base.documentData,
+      paymentMethod: 'credit',
+      paymentDetails: {
+        last4: '4242',
+        authorizationReference: 'AUTH-123456',
+      },
+    },
+  });
+  assert.deepEqual(credit.documentData.paymentDetails, {
+    last4: '4242',
+    authorizationReference: 'AUTH-123456',
+  });
+
+  assert.throws(() => buildDocumentGenerateRequest({
+    ...base,
+    documentData: {
+      ...base.documentData,
+      paymentMethod: 'credit',
+      paymentDetails: {
+        last4: '4242',
+        authorizationReference: '4111 1111 1111 1111',
+      },
+    },
+  }), /payment card number/i);
+});
+
 test('tax invoice type 305 cannot enter generic preview or generate requests', () => {
   const taxParams = {
     documentType: 'taxInvoice',

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FLOW_ROOT = resolve(ROOT, 'phone_app', '.maestro');
+const RELEASE_FLOW_ROOT = resolve(ROOT, 'phone_app', '.maestro-release');
 const required = new Map([
   ['login.yaml', ['subflows/authenticate.yaml', 'dashboard-screen']],
   ['tenant-switch.yaml', ['Select a company', 'MAESTRO_TEST_WORKSPACE', 'dashboard-screen']],
@@ -34,9 +35,33 @@ for (const [relativePath, markers] of required) {
   }
 }
 
+const releaseFlowPath = resolve(RELEASE_FLOW_ROOT, 'reconciliation.yaml');
+let releaseFlow = '';
+try {
+  releaseFlow = readFileSync(releaseFlowPath, 'utf8');
+} catch {
+  failures.push('.maestro-release/reconciliation.yaml: required release flow is missing');
+}
+for (const marker of [
+  'MAESTRO_RELEASE_JOB_ID',
+  'MAESTRO_SECOND_USER_EMAIL',
+  'setAirplaneMode: enabled',
+  'stopApp',
+  'setAirplaneMode: disabled',
+  'Everything is synchronized',
+  'MAESTRO_RELEASE_JOB_TITLE',
+]) {
+  if (!releaseFlow.includes(marker)) {
+    failures.push(`.maestro-release/reconciliation.yaml: missing ${marker}`);
+  }
+}
+if (/(?:password|api[-_]?key)\s*:\s*(?!\$\{)/i.test(releaseFlow)) {
+  failures.push('.maestro-release/reconciliation.yaml: credentials must never be embedded in a flow');
+}
+
 if (failures.length > 0) {
   for (const failure of failures) process.stderr.write(`[MAESTRO] ${failure}\n`);
   process.exit(1);
 }
 
-process.stdout.write(`[MAESTRO] Validated ${required.size} required login, tenant, job, and offline flow files.\n`);
+process.stdout.write(`[MAESTRO] Validated ${required.size} PR flows and the release reconciliation flow.\n`);

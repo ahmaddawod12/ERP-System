@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { cloudLoggingTraceFields } from "@smart-job/observability";
 
 import Fastify, {
   LogController,
@@ -125,6 +126,7 @@ export function buildApp({ config, logger, dependencies }: BuildAppOptions): Fas
             };
           },
         },
+        mixin: () => cloudLoggingTraceFields(),
       } satisfies NonNullable<FastifyServerOptions["logger"]>),
     genReqId(request) {
       return requestIdFromHeader(request.headers[REQUEST_ID_HEADER]) ?? randomUUID();
@@ -168,10 +170,35 @@ export function buildApp({ config, logger, dependencies }: BuildAppOptions): Fas
   app.get("/healthz", async (request) =>
     success(request.id, { status: "ok" as const, service: "cloudrun-tax" as const }),
   );
-
-  app.get("/readyz", async (request) =>
-    success(request.id, { status: "ready" as const, service: "cloudrun-tax" as const }),
+  app.get("/health", async (request) =>
+    success(request.id, { status: "ok" as const, service: "cloudrun-tax" as const }),
   );
+
+  app.get("/readyz", async (request, reply) => {
+    const ready = config.taxSubmissionMode === "disabled"
+      || (
+        config.authority !== undefined
+        && config.callback !== undefined
+        && config.mainApi !== undefined
+        && config.taxGatewayAudience.length > 0
+        && config.taxApprovalCallerServiceAccount.length > 0
+      );
+    if (!ready) {
+      return reply.code(503).send(
+        failure(
+          request.id,
+          "NOT_READY",
+          "Tax gateway configuration is unavailable.",
+          true,
+        ),
+      );
+    }
+    return success(request.id, {
+      status: "ready" as const,
+      service: "cloudrun-tax" as const,
+      submissionMode: config.taxSubmissionMode,
+    });
+  });
 
   app.post("/api/v1/tax/callback", async (request, reply) => {
     const callbackAuthenticator = dependencies?.callbackAuthenticator;

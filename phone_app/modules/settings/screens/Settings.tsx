@@ -13,7 +13,7 @@ import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { getColors, shadows, spacing, borderRadius, typography, gradients } from '../../../theme';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { useCacheLifecycle } from '../../../contexts/CacheContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useOutbox } from '../../../contexts/OutboxContext';
 import { AppButton, AppText, GlobalHeader, ScrollableContainer } from '../../../components';
@@ -27,7 +27,7 @@ export default function Settings() {
   const router = useRouter();
   const { language, setLanguage } = useLanguageContext();
   const { isDarkMode, themePreference, setThemePreference } = useThemeContext();
-  const { clearCache, profile, getUserRole } = useCache();
+  const { clearCache, profile, getUserRole } = useCacheLifecycle();
   const { user, signOut: signOutSession } = useSession();
   const { operations: pendingOperations } = useOutbox();
   const colors = getColors(isDarkMode);
@@ -343,6 +343,7 @@ export default function Settings() {
         {/* Logout Button */}
         <AppButton
           title={t.logout}
+          testID="settings-logout"
           variant="destructive"
           iconLeft={{ name: 'log-out-outline' }}
           size="lg"

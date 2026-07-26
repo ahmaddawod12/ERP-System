@@ -27,6 +27,7 @@ import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { AppText, GlobalHeader, ScrollableContainer } from '../../../components';
 import { DOC_TYPE, DOC_COLORS, DOC_GRADIENTS, DOC_ICONS, getDocumentLabel } from '@smart-job/contracts';
+import { containsLikelyPaymentCardNumber } from '@smart-job/api-contracts';
 import { safeJsonParse } from '../../../utils/helpers';
 import type { AppDocument } from '../../../types';
 import { useAlert } from '../../../contexts/AlertContext';
@@ -175,6 +176,17 @@ export default function ViewDocument() {
     return method ? methods[method] || method : '';
   };
 
+  const formatPaymentDetails = () => {
+    const details = document?.paymentDetails ?? document?.documentData?.paymentDetails;
+    if (details && 'last4' in details) {
+      return `•••• ${details.last4} · ${details.authorizationReference}`;
+    }
+    if (details && 'reference' in details) return details.reference;
+    const legacy = document?.paymentInfo ?? document?.documentData?.paymentInfo;
+    if (!legacy) return '';
+    return containsLikelyPaymentCardNumber(legacy) ? t.paymentDetailsRedacted : legacy;
+  };
+
   const openDocumentPdf = async () => {
     if (!document) return;
     try {
@@ -320,11 +332,11 @@ export default function ViewDocument() {
                 {getPaymentMethodLabel(document.paymentMethod || document.documentData?.paymentMethod)}
               </AppText>
             </View>
-            {(document.paymentInfo || document.documentData?.paymentInfo) && (
+            {formatPaymentDetails() && (
               <View style={styles.infoRow}>
                 <AppText style={[styles.infoLabel, { color: colors.textSecondary }]}>{t.paymentInfo}</AppText>
                 <AppText style={[styles.infoValue, { color: colors.textPrimary }]}>
-                  {document.paymentInfo || document.documentData?.paymentInfo}
+                  {formatPaymentDetails()}
                 </AppText>
               </View>
             )}
@@ -491,6 +503,7 @@ function getTranslations(language: string) {
       paymentDetails: 'Payment Details',
       paymentMethod: 'Payment Method',
       paymentInfo: 'Payment Reference',
+      paymentDetailsRedacted: 'Legacy payment details hidden for security',
       invoiceReference: 'Invoice Reference',
       paymentCash: 'Cash',
       paymentCredit: 'Credit Card',
@@ -525,6 +538,7 @@ function getTranslations(language: string) {
       paymentDetails: 'פרטי תשלום',
       paymentMethod: 'אמצעי תשלום',
       paymentInfo: 'פרטי תשלום',
+      paymentDetailsRedacted: 'פרטי תשלום ישנים הוסתרו מטעמי אבטחה',
       invoiceReference: 'מספר חשבונית',
       paymentCash: 'מזומן',
       paymentCredit: 'כרטיס אשראי',
@@ -559,6 +573,7 @@ function getTranslations(language: string) {
       paymentDetails: 'تفاصيل الدفع',
       paymentMethod: 'طريقة الدفع',
       paymentInfo: 'مرجع الدفع',
+      paymentDetailsRedacted: 'تم إخفاء تفاصيل الدفع القديمة لأسباب أمنية',
       invoiceReference: 'مرجع الفاتورة',
       paymentCash: 'نقدي',
       paymentCredit: 'بطاقة ائتمان',

@@ -28,7 +28,12 @@ import { getColors } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useDocumentHistoryCache,
+  useInventoryCache,
+} from '../../../contexts/CacheContext';
 import { GlobalHeader, ScrollableContainer } from '../../../components';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -61,18 +66,22 @@ export default function CreateDocument() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const { uid } = useAuth();
-  const { 
-    getCompanyId: getCachedCompanyId, 
-    documents: cachedDocuments,
+  const {
+    getCompanyId: getCachedCompanyId,
     profile,
-    clients: cachedClients,
-    inventory: cachedInventory,
-    companyInventory: cachedCompanyInventory,
     getUserRole,
+  } = useCacheLifecycle();
+  const { documents: cachedDocuments } = useDocumentHistoryCache();
+  const {
+    clients: cachedClients,
     addClient,
     updateClient,
     fetchClients,
-  } = useCache();
+  } = useDirectoryCache();
+  const {
+    inventory: cachedInventory,
+    companyInventory: cachedCompanyInventory,
+  } = useInventoryCache();
   const colors = getColors(isDarkMode);
   
   // Refs for iOS freeze fix
@@ -123,7 +132,9 @@ export default function CreateDocument() {
     clientVatNumber: '',
     // Receipt specific
     paymentMethod: '',
-    paymentInfo: '', // Payment reference/details (check number, transfer ref, etc.)
+    paymentReference: '',
+    creditLast4: '',
+    creditAuthorizationReference: '',
     invoiceReference: '',
     // Common
     documentDate: new Date().toISOString().split('T')[0],
@@ -459,6 +470,14 @@ export default function CreateDocument() {
       showValidationError(t.paymentMethodRequired);
       return false;
     }
+    if (
+      formData.paymentMethod === 'credit'
+      && (!/^[0-9]{4}$/.test(formData.creditLast4)
+        || !formData.creditAuthorizationReference.trim())
+    ) {
+      showValidationError(t.creditDetailsRequired);
+      return false;
+    }
 
     // Customer name required
     if (!formData.customerName.trim()) {
@@ -663,9 +682,20 @@ export default function CreateDocument() {
 
     // Add payment method, payment info, and invoice reference for receipt
     if (config.requiresPaymentMethod) {
+      if (!formData.paymentMethod) {
+        throw new Error('A payment method is required');
+      }
       docData.paymentMethod = formData.paymentMethod;
-      if (formData.paymentInfo.trim()) {
-        docData.paymentInfo = formData.paymentInfo;
+      if (formData.paymentMethod === 'credit') {
+        docData.paymentDetails = {
+          last4: formData.creditLast4,
+          authorizationReference: formData.creditAuthorizationReference.trim(),
+        };
+      } else if (
+        formData.paymentMethod !== 'cash'
+        && formData.paymentReference.trim()
+      ) {
+        docData.paymentDetails = { reference: formData.paymentReference.trim() };
       }
       if (receiptMode === 'auto' && selectedInvoice) {
         docData.invoiceReference = formData.invoiceReference || String(selectedInvoice.documentNumber || '');

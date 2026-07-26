@@ -41,6 +41,16 @@ variable "backup_retention_days" {
   type        = number
 }
 
+variable "lock_backup_retention" {
+  type    = bool
+  default = false
+}
+
+variable "backup_restore_drill_verified" {
+  type    = bool
+  default = false
+}
+
 variable "github_repository_owner_id" {
   description = "Immutable numeric GitHub owner ID, not the owner login."
   type        = string
@@ -66,6 +76,22 @@ variable "enable_release_jobs" {
   description = "Create migration/smoke jobs after their image and migrator secret exist."
   type        = bool
   default     = false
+}
+
+variable "email_ses_federation" {
+  description = "Enable only after the AWS federation stack and staging send/failover tests pass."
+  type = object({
+    enabled                          = bool
+    role_arn                         = string
+    oidc_audience                    = string
+    google_service_account_unique_id = string
+  })
+  default = {
+    enabled                          = false
+    role_arn                         = ""
+    oidc_audience                    = ""
+    google_service_account_unique_id = ""
+  }
 }
 
 variable "image_digests" {
@@ -156,6 +182,11 @@ variable "notification_channels" {
   description = "Existing Monitoring notification-channel resource names."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = !var.enable_runtime || length(var.notification_channels) > 0
+    error_message = "At least one Monitoring notification channel is required when runtime infrastructure is enabled."
+  }
 }
 
 variable "artifact_registry_reader_members" {

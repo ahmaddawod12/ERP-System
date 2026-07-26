@@ -225,38 +225,6 @@ export function getEnabledModulesForTier(tier?: string | null) {
   };
 }
 
-export const paths = {
-  userProfile: (uid: string) => `users/${uid}/data/profile`,
-  userCache: (uid: string) => `users/${uid}/data/cache`,
-  userInventory: (uid: string) => `users/${uid}/data/inventory`,
-
-  companyRoot: (companyId: string) => `companies/${companyId}`,
-  businessInfo: (companyId: string) => `companies/${companyId}/data/business_info`,
-  subscription: (companyId: string) => `companies/${companyId}/data/subscription`,
-  companyInventory: (companyId: string) => `companies/${companyId}/data/inventory`,
-  companyCache: (companyId: string) => `companies/${companyId}/data/cache`,
-  worker: (companyId: string, wid: string) => `companies/${companyId}/workers/${wid}`,
-  workers: (companyId: string) => `companies/${companyId}/workers`,
-  manager: (companyId: string, mid: string) => `companies/${companyId}/managers/${mid}`,
-  managers: (companyId: string) => `companies/${companyId}/managers`,
-  client: (companyId: string, clientId: string) => `companies/${companyId}/clients/${clientId}`,
-  clients: (companyId: string) => `companies/${companyId}/clients`,
-  job: (companyId: string, jobId: string) => `companies/${companyId}/jobs/${jobId}`,
-  jobs: (companyId: string) => `companies/${companyId}/jobs`,
-  document: (companyId: string, docId: string) => `companies/${companyId}/documents/${docId}`,
-  documents: (companyId: string) => `companies/${companyId}/documents`,
-  invite: (companyId: string, inviteId: string) => `companies/${companyId}/invites/${inviteId}`,
-
-  counterWnext: (companyId: string) => `companies/${companyId}/counters/wnext`,
-  counterMnext: (companyId: string) => `companies/${companyId}/counters/mnext`,
-  counterCnext: (companyId: string) => `companies/${companyId}/counters/cnext`,
-  counterJnext: (companyId: string) => `companies/${companyId}/counters/jnext`,
-
-  upgradeRequest: (id: string) => `upgrade_requests/${id}`,
-  contactRequest: (id: string) => `contact_requests/${id}`,
-  documentTask: (id: string) => `documentTasks/${id}`,
-};
-
 export function resolveCompanyScope(companyId?: string | null): string {
   const normalized = String(companyId || '').trim();
   if (!normalized) {

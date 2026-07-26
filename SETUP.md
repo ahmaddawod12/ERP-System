@@ -101,6 +101,8 @@ npm --prefix packages/api-contracts install
 npm --prefix packages/api-contracts run build
 npm --prefix packages/db install
 npm --prefix packages/db run build
+npm --prefix packages/observability install
+npm --prefix packages/observability run build
 npm --prefix website install
 npm --prefix phone_app install
 npm --prefix cloudrun-api install
@@ -108,12 +110,16 @@ npm --prefix cloudrun-tax install
 npm --prefix cloudrun-pdf install
 npm --prefix cloudrun-email install
 npm --prefix cloudrun-archiver install
+npm --prefix cloudrun-backup install
 ```
 
 Sanitized templates exist for every environment-consuming package:
 `website/.env.example`, `phone_app/.env.example`, `packages/db/.env.example`,
 and each `cloudrun-*/.env.example`. Copy them only into the package that owns
-the variables. Shared contracts packages require no environment file.
+the variables. Shared contracts and observability packages require no
+environment file. Serving workloads preload
+`@smart-job/observability/register`; telemetry stays off unless
+`OTEL_ENABLED=true`.
 
 Apply SQL migrations for the target database:
 
@@ -163,10 +169,14 @@ Notes:
 
 The mobile app still requires Firebase native app registration for the installed services it uses.
 
-Place these files in `phone_app/`:
+For EAS, create file-secret variables in each `development`, `preview`, and
+`production` environment:
 
-- `google-services.json`
-- `GoogleService-Info.plist`
+- `GOOGLE_SERVICES_JSON` containing `google-services.json`
+- `GOOGLE_SERVICE_INFO_PLIST` containing `GoogleService-Info.plist`
+
+For local prebuilds only, place the two ignored files directly in `phone_app/`.
+They must remain untracked.
 
 Configure mobile envs as needed:
 
@@ -343,9 +353,9 @@ readiness. It never writes a credential to a tracked file; the runtime file is
 | Website | `http://127.0.0.1:3000` |
 | Main API | `http://127.0.0.1:58081` |
 | Tax gateway (submission disabled) | `http://127.0.0.1:58082` |
-| PDF health endpoint | `http://127.0.0.1:58083/health` |
+| PDF readiness endpoint | `http://127.0.0.1:58083/readyz` |
 | Local adapter | `http://127.0.0.1:58084/readyz` |
-| Email health endpoint | `http://127.0.0.1:58085/health` |
+| Email readiness endpoint | `http://127.0.0.1:58085/readyz` |
 | Mailpit UI | `http://127.0.0.1:58025` |
 | Fake GCS | `http://127.0.0.1:58080` |
 | Supabase API / Studio | `http://127.0.0.1:55321` / `http://127.0.0.1:55323` |

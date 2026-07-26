@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import { AppError } from "../http/errors.js";
@@ -12,6 +14,7 @@ const DEFAULT_METADATA_TOKEN_URL =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const DEFAULT_GCS_API_BASE_URL = "https://storage.googleapis.com";
 const ARCHIVE_READ_TIMEOUT_MS = 12_000;
+const ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
 
 export interface ArchiveContent {
   readonly items: readonly Record<string, unknown>[];
@@ -19,13 +22,11 @@ export interface ArchiveContent {
 
 export interface ArchiveStorage {
   checkReadiness?(): Promise<void>;
-  readArchiveJson(
-    companyStorageId: string,
-    archiveKey: string,
-  ): Promise<ArchiveContent | null>;
-  readArchiveJsonByPath(
+  readVerifiedArchiveJsonByPath(
     companyStorageId: string,
     objectPath: string,
+    storageGeneration: string,
+    checksum: string,
   ): Promise<ArchiveContent | null>;
 }
 
@@ -39,14 +40,6 @@ export interface CreateArchiveStorageOptions {
 interface CachedAccessToken {
   readonly value: string;
   readonly refreshAt: number;
-}
-
-function archiveObjectPath(companyStorageId: string, archiveKey: string): string {
-  const normalizedKey = archiveKey.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(normalizedKey)) {
-    throw new TypeError("Archive key is invalid");
-  }
-  return `companies/${companyStorageId}/archives/${normalizedKey}.json`;
 }
 
 function requireCompanyArchiveObjectPath(
@@ -120,9 +113,31 @@ export function createArchiveStorage(options: CreateArchiveStorageOptions): Arch
     return inflightToken;
   }
 
-  async function readObject(objectPath: string): Promise<ArchiveContent | null> {
+  async function readObject(
+    objectPath: string,
+    storageGeneration: string,
+    expectedChecksum: string,
+  ): Promise<ArchiveContent | null> {
+    if (!/^[1-9][0-9]*$/.test(storageGeneration)) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The archive ledger contains an invalid object generation.",
+      });
+    }
+    if (!/^[0-9a-f]{64}$/.test(expectedChecksum)) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The archive ledger contains an invalid checksum.",
+      });
+    }
     const encodedObject = encodeURIComponent(objectPath);
-    const url = `${gcsBase}/storage/v1/b/${encodeURIComponent(options.bucket)}/o/${encodedObject}?alt=media`;
+    const url = new URL(
+      `${gcsBase}/storage/v1/b/${encodeURIComponent(options.bucket)}/o/${encodedObject}`,
+    );
+    url.searchParams.set("alt", "media");
+    url.searchParams.set("generation", storageGeneration);
     const token = await getAccessToken();
     let response: Response;
     try {
@@ -139,17 +154,57 @@ export function createArchiveStorage(options: CreateArchiveStorageOptions): Arch
         cause,
       });
     }
-    if (response.status === 404) return null;
+    if (response.status === 404 || response.status === 410) return null;
     if (!response.ok) {
       throw new AppError({
         statusCode: 503,
-        code: "ARCHIVE_READ_FAILED",
-        message: `Archive retrieval failed (${response.status}).`,
+        code: "ARCHIVE_OBJECT_UNAVAILABLE",
+        message: "The exact archived object is temporarily unavailable.",
         retryable: true,
       });
     }
-    const payload = await response.json().catch(() => null);
-    if (!Array.isArray(payload)) return null;
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > ARCHIVE_MAX_BYTES) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The archived object exceeds the verified segment limit.",
+      });
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength > ARCHIVE_MAX_BYTES) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The archived object exceeds the verified segment limit.",
+      });
+    }
+    const actualChecksum = createHash("sha256").update(bytes).digest("hex");
+    if (actualChecksum !== expectedChecksum) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The archived object does not match its integrity ledger.",
+      });
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(bytes.toString("utf8"));
+    } catch (cause) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The verified archived object is not valid JSON.",
+        cause,
+      });
+    }
+    if (!Array.isArray(payload)) {
+      throw new AppError({
+        statusCode: 409,
+        code: "ARCHIVE_INTEGRITY_FAILURE",
+        message: "The verified archived object has an invalid shape.",
+      });
+    }
     return { items: payload as Record<string, unknown>[] };
   }
 
@@ -167,12 +222,17 @@ export function createArchiveStorage(options: CreateArchiveStorageOptions): Arch
       if (!response.ok) throw new Error(`Archive bucket readiness failed (${response.status})`);
     },
 
-    readArchiveJson(companyStorageId, archiveKey) {
-      return readObject(archiveObjectPath(companyStorageId, archiveKey));
-    },
-
-    readArchiveJsonByPath(companyStorageId, rawObjectPath) {
-      return readObject(requireCompanyArchiveObjectPath(companyStorageId, rawObjectPath));
+    readVerifiedArchiveJsonByPath(
+      companyStorageId,
+      rawObjectPath,
+      storageGeneration,
+      checksum,
+    ) {
+      return readObject(
+        requireCompanyArchiveObjectPath(companyStorageId, rawObjectPath),
+        storageGeneration,
+        checksum,
+      );
     },
   };
 }

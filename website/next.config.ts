@@ -34,7 +34,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https://*.googleusercontent.com https://www.gstatic.com https://www.google.com https://www.recaptcha.net",
               "font-src 'self'",
-              "connect-src 'self' https://*.supabase.co https://www.google.com https://www.gstatic.com https://www.recaptcha.net",
+              "connect-src 'self' https://www.google.com https://www.gstatic.com https://www.recaptcha.net",
               "frame-src 'self' https://www.google.com https://www.recaptcha.net",
               "frame-ancestors 'none'",
               "base-uri 'self'",

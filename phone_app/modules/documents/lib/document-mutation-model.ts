@@ -107,6 +107,9 @@ function normalizedCandidate(params: DocumentTaskParams): unknown {
         : String(documentData.date ?? ''),
       ...(notes ? { notes } : {}),
       ...(paymentMethod ? { paymentMethod } : {}),
+      ...(documentData.paymentDetails !== undefined
+        ? { paymentDetails: documentData.paymentDetails }
+        : {}),
       ...(documentData.paymentInfo !== undefined && documentData.paymentInfo !== ''
         ? { paymentInfo: documentData.paymentInfo }
         : {}),

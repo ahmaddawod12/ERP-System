@@ -18,6 +18,7 @@ const WORKSPACES = [
   'cloudrun-pdf',
   'cloudrun-email',
   'cloudrun-archiver',
+  'cloudrun-backup',
   'local-platform/adapter',
 ];
 const NON_BLOCKING_SEVERITIES = new Set(['info', 'low']);

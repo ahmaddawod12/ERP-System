@@ -1,55 +1,163 @@
 /**
- * useArchiveQuery.ts
- *
- * Custom hook that provides archive-aware month and date-range data queries.
- * Extracted from CacheContext to give it a single, focused responsibility:
- * resolving historical data across the three cache tiers:
- *
- *   Tier 1 (0–90 days)  — MMKV local in-memory cache
- *   Tier 2 (90-180 days) - backend/archive query (5-min MMKV TTL layer)
- *   Tier 3 (180+ days)  — Cloud Storage JSON archives
+ * Resolves historical jobs and documents across the in-memory cache, bounded
+ * live API pages, and immutable archive segments. Every result reports whether
+ * the requested range is complete; callers must never present a partial page
+ * set as complete history.
  */
 
 import { useCallback } from 'react';
+
+import type { AppDocument, HistoricalQueryResult, Job } from '../types';
 import {
-  mmkvHelpers,
-  CACHE_KEYS,
-  CACHE_EXPIRY_MS,
   ARCHIVE_BOUNDARY_MS,
+  CACHE_EXPIRY_MS,
+  CACHE_KEYS,
   TIER2_CACHE_TTL_MS,
   getCacheStartDate,
+  mmkvHelpers,
 } from '../contexts/mmkv-storage';
-import { fetchCompanyDocuments, fetchCompanyJobs } from '../utils/read-model';
-import { downloadArchiveRun, findArchiveRun } from '../lib/api/archives';
+import {
+  fetchCompanyDocumentsPage,
+  fetchCompanyJobsPage,
+} from '../utils/read-model';
+import {
+  loadArchivePeriod,
+  type HistoricalArchiveRecord,
+} from '../lib/history/archive-period';
+import {
+  mapArchivedDocument,
+  mapArchivedJob,
+} from '../lib/history/historical-records';
 import { logger } from '../utils/logger';
 
-const ARCHIVE_READ_LIMIT = 1_000;
-
-// ─── Internal helper ─────────────────────────────────────────────────────────
-
-function normalizeTimestamp(value: any): number {
-  if (!value) return 0;
-  if (value instanceof Date) return value.getTime();
-  if (typeof value?.toDate === 'function') return value.toDate().getTime();
-  return new Date(value).getTime();
-}
-
-function isWithinRange(value: any, startMs: number, endMs: number, inclusiveEnd = true): boolean {
-  const timestamp = normalizeTimestamp(value);
-  return inclusiveEnd
-    ? timestamp >= startMs && timestamp <= endMs
-    : timestamp >= startMs && timestamp < endMs;
-}
-
-// ─── Hook ────────────────────────────────────────────────────────────────────
+export type HistoricalDataType = 'finishedJobs' | 'documents' | 'pendingJobs';
+export type HistoricalRecord = Job | AppDocument;
 
 export interface ArchiveQueryDeps {
   getUserRole: () => string | null;
   getUid: () => string | null;
   getCompanyId: () => string | null;
-  jobs: any[];
-  companyJobs: any[];
-  documents: any[];
+  jobs: readonly Job[];
+  companyJobs: readonly Job[];
+  documents: readonly AppDocument[];
+}
+
+interface TimedHistoricalCache {
+  readonly fetchedAt: number;
+  readonly result: HistoricalQueryResult<HistoricalRecord>;
+}
+
+function timestamp(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'string' || typeof value === 'number') {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+  if (typeof value === 'object' && value !== null && 'toDate' in value) {
+    const toDate = (value as { readonly toDate?: unknown }).toDate;
+    if (typeof toDate === 'function') {
+      const time = (toDate as () => Date)().getTime();
+      return Number.isFinite(time) ? time : 0;
+    }
+  }
+  return 0;
+}
+
+function itemDate(item: HistoricalRecord, dataType: HistoricalDataType): number {
+  if (dataType === 'documents') return timestamp((item as AppDocument).createdAt);
+  if (dataType === 'pendingJobs') return timestamp((item as Job).createdAt);
+  return timestamp((item as Job).finishedAt);
+}
+
+function inRange(
+  items: readonly HistoricalRecord[],
+  dataType: HistoricalDataType,
+  startMs: number,
+  endMs: number,
+): HistoricalRecord[] {
+  return items.filter((item) => {
+    const value = itemDate(item, dataType);
+    return value >= startMs && value <= endMs;
+  });
+}
+
+function mergeUnique(
+  ...collections: readonly (readonly HistoricalRecord[])[]
+): HistoricalRecord[] {
+  const seen = new Set<string>();
+  const merged: HistoricalRecord[] = [];
+  for (const collection of collections) {
+    for (const item of collection) {
+      const prefix = 'type' in item ? 'document' : 'job';
+      const id = `${prefix}:${item.id}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
+function mapArchiveRecord(record: HistoricalArchiveRecord): HistoricalRecord {
+  return 'documentId' in record
+    ? mapArchivedDocument(record)
+    : mapArchivedJob(record);
+}
+
+async function readLiveHistory(input: {
+  readonly companyId: string;
+  readonly dataType: HistoricalDataType;
+  readonly start: Date;
+  readonly end: Date;
+}): Promise<HistoricalQueryResult<HistoricalRecord>> {
+  const items: HistoricalRecord[] = [];
+  let afterCursor: string | null = null;
+  const seenCursors = new Set<string>();
+
+  try {
+    do {
+      const page: {
+        readonly items: readonly HistoricalRecord[];
+        readonly nextCursor: string | null;
+      } = input.dataType === 'documents'
+        ? await fetchCompanyDocumentsPage(input.companyId, {
+            pageSize: 200,
+            dateFrom: input.start.toISOString(),
+            dateTo: input.end.toISOString(),
+            afterCursor,
+          })
+        : await fetchCompanyJobsPage(input.companyId, {
+            pageSize: 200,
+            status: input.dataType === 'pendingJobs'
+              ? ['pending', 'waiting']
+              : 'finished',
+            dateField: input.dataType === 'pendingJobs' ? 'createdAt' : 'finishedAt',
+            dateFrom: input.start.toISOString(),
+            dateTo: input.end.toISOString(),
+            afterCursor,
+          });
+
+      items.push(...page.items);
+      const nextCursor: string | null = page.nextCursor;
+      if (!nextCursor) {
+        return { items, complete: true, nextCursor: null, source: 'live' };
+      }
+      if (seenCursors.has(nextCursor)) {
+        return { items, complete: false, nextCursor, source: 'live' };
+      }
+      seenCursors.add(nextCursor);
+      afterCursor = nextCursor;
+    } while (afterCursor);
+  } catch (error) {
+    logger.warn('Historical live pagination stopped before completion', {
+      fetchedCount: items.length,
+      dataType: input.dataType,
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return { items, complete: false, nextCursor: afterCursor, source: 'live' };
+  }
+
+  return { items, complete: true, nextCursor: null, source: 'live' };
 }
 
 export function useArchiveQuery({
@@ -60,281 +168,205 @@ export function useArchiveQuery({
   companyJobs,
   documents,
 }: ArchiveQueryDeps) {
-
-  /**
-   * Download a single archive month through the backend so role filtering
-   * happens server-side before archived data reaches the device.
-   */
   const fetchFromArchive = useCallback(async (
     companyId: string,
     year: number,
     month: number,
-    dataType: string,
-  ): Promise<any[]> => {
-    const suffix = dataType === 'finishedJobs' ? 'j' : 'd';
-    const archiveKey = `${year}-${month}-${suffix}`;
-    const mmkvCacheKey = `archive_${companyId}_${archiveKey}`;
-
-    const cached = mmkvHelpers.getObject<any[]>(mmkvCacheKey);
-    if (cached !== null) {
-      logger.debug(`Archive ${archiveKey} loaded from local cache (${(cached as any[]).length} docs)`);
-      return cached;
+    dataType: Exclude<HistoricalDataType, 'pendingJobs'>,
+    signal?: AbortSignal,
+  ): Promise<HistoricalQueryResult<HistoricalRecord>> => {
+    const numericCompanyId = Number(companyId);
+    const uid = getUid();
+    if (!Number.isSafeInteger(numericCompanyId) || numericCompanyId <= 0 || !uid) {
+      return { items: [], complete: false, nextCursor: null, source: 'archive' };
     }
 
-    logger.debug(`Fetching archive ${archiveKey} through backend`);
-
     try {
-      const numericCompanyId = Number(companyId);
-      if (!Number.isSafeInteger(numericCompanyId) || numericCompanyId <= 0) {
-        return [];
-      }
-      const uid = getUid();
-      if (!uid) return [];
-
-      const archiveDataType = dataType === 'finishedJobs' ? 'jobs' : 'documents';
-      const run = await findArchiveRun({
+      const result = await loadArchivePeriod({
         uid,
         companyId: numericCompanyId,
-        archiveKey,
-        dataType: archiveDataType,
+        dataType: dataType === 'finishedJobs' ? 'jobs' : 'documents',
+        year,
+        month,
+        signal,
       });
-      if (!run) return [];
-      const result = await downloadArchiveRun({
-        uid,
-        companyId: numericCompanyId,
-        archiveRunId: run.archiveRunId,
-      });
-
-      const docs = Array.isArray(result?.items) ? result.items : [];
-      logger.debug(`Fetched archive ${archiveKey}: ${docs.length} docs`);
-      mmkvHelpers.setObject(mmkvCacheKey, docs);
-      return docs;
+      return { ...result, items: result.items.map(mapArchiveRecord) };
     } catch (error) {
-      const message = (error as Error)?.message || '';
-      if (message.includes('not-found') || message.includes('invalid') || message.includes('ARCHIVE_NOT_FOUND')) {
-        logger.debug(`No archive found for ${archiveKey} or archive unavailable`);
-        return [];
-      }
-      logger.warn(`Error fetching archive ${archiveKey}:`, error);
-      return [];
+      if (signal?.aborted) throw error;
+      logger.warn('Archive period could not be loaded', {
+        year,
+        month,
+        dataType,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      });
+      return { items: [], complete: false, nextCursor: null, source: 'archive' };
     }
   }, [getUid]);
 
-  /**
-   * Get data for a specific calendar month using 3-tier smart caching.
-   */
   const getDataForMonth = useCallback(async (
     monthDate: Date,
-    dataType: string,
-  ): Promise<any[]> => {
-    const role = getUserRole();
+    dataType: Exclude<HistoricalDataType, 'pendingJobs'>,
+  ): Promise<HistoricalQueryResult<HistoricalRecord>> => {
     const uid = getUid();
     const companyId = getCompanyId();
-    if (!companyId || !uid) return [];
-    const safeRole = role || '';
+    if (!companyId || !uid) {
+      return { items: [], complete: false, nextCursor: null, source: 'cache' };
+    }
 
+    const role = getUserRole() ?? '';
     const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
     const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59, 999);
-    const now = new Date();
-    const cacheStartDate = new Date(now.getTime() - CACHE_EXPIRY_MS);
-    const monthStartMs = monthStart.getTime();
-    const monthEndMs = monthEnd.getTime();
-    const cacheStartMs = cacheStartDate.getTime();
+    const now = Date.now();
+    const cacheStartMs = now - CACHE_EXPIRY_MS;
+    const localItems: readonly HistoricalRecord[] = dataType === 'documents'
+      ? documents
+      : (role === 'manager' ? companyJobs : jobs).filter((job) => job.status === 'finished');
+    const localRangeItems = inRange(localItems, dataType, monthStart.getTime(), monthEnd.getTime());
 
-    let cachedData: any[] = [];
-    if (dataType === 'finishedJobs') {
-      const allJobs = safeRole === 'manager' ? companyJobs : jobs;
-      cachedData = allJobs.filter((j: any) => j.status === 'finished');
-    } else if (dataType === 'documents') {
-      cachedData = documents;
+    if (monthStart.getTime() >= cacheStartMs) {
+      return { items: localRangeItems, complete: true, nextCursor: null, source: 'cache' };
     }
 
-    // Tier 1: fully within 90-day cache
-    if (monthStartMs >= cacheStartMs && monthEndMs <= now.getTime()) {
-      const dateField = dataType === 'documents' ? 'createdAt' : 'finishedAt';
-      return cachedData.filter((item: any) => {
-        const d = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-        return d >= monthStartMs && d <= monthEndMs;
-      });
-    }
-
-    // Tier 1 partial: month straddles the cache boundary
-    if (monthEndMs >= cacheStartMs && monthStartMs < cacheStartMs) {
-      const dateField = dataType === 'documents' ? 'createdAt' : 'finishedAt';
-      const cachedPart = cachedData.filter((item: any) => {
-        const d = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-        return d >= cacheStartMs && d <= monthEndMs;
-      });
-
-      try {
-        if (dataType === 'finishedJobs') {
-          const jobsData = await fetchCompanyJobs(companyId, {
-              limit: ARCHIVE_READ_LIMIT,
-              status: 'finished',
-              dateField: 'finishedAt',
-              dateFrom: new Date(monthStartMs).toISOString(),
-              dateTo: new Date(cacheStartMs - 1).toISOString(),
-            });
-          return [...cachedPart, ...jobsData];
-        } else {
-          const documentsData = await fetchCompanyDocuments(companyId, {
-            limit: ARCHIVE_READ_LIMIT,
-            dateField: 'createdAt',
-            dateFrom: new Date(monthStartMs).toISOString(),
-            dateTo: new Date(cacheStartMs - 1).toISOString(),
-          });
-          return [...cachedPart, ...documentsData];
-        }
-      } catch (error) {
-        logger.error('Error fetching partial month data:', error);
-        return cachedPart;
-      }
-    }
-
-    // Tier 2 / Tier 3: month is fully outside the 90-day cache
     const tier2Key = `${CACHE_KEYS.TIER2_CACHE_PREFIX}${dataType}_${monthDate.getFullYear()}_${monthDate.getMonth() + 1}`;
-    const tier2 = mmkvHelpers.getObject<{ _ts: number; data: any[] }>(tier2Key);
-    if (tier2 && tier2._ts && (Date.now() - tier2._ts) < TIER2_CACHE_TTL_MS) {
-      return tier2.data;
+    const cached = mmkvHelpers.getObject<TimedHistoricalCache>(tier2Key);
+    if (cached && Date.now() - cached.fetchedAt < TIER2_CACHE_TTL_MS) {
+      return cached.result;
     }
 
-    try {
-      let backendData: any[] = [];
-      if (dataType === 'finishedJobs') {
-        backendData = await fetchCompanyJobs(companyId, {
-            limit: ARCHIVE_READ_LIMIT,
-            status: 'finished',
-            dateField: 'finishedAt',
-            dateFrom: new Date(monthStartMs).toISOString(),
-            dateTo: new Date(monthEndMs).toISOString(),
-          });
-      } else {
-        backendData = await fetchCompanyDocuments(companyId, {
-          limit: ARCHIVE_READ_LIMIT,
-          dateField: 'createdAt',
-          dateFrom: new Date(monthStartMs).toISOString(),
-          dateTo: new Date(monthEndMs).toISOString(),
-        });
+    const liveEnd = new Date(Math.min(monthEnd.getTime(), cacheStartMs - 1));
+    const live = await readLiveHistory({
+      companyId,
+      dataType,
+      start: monthStart,
+      end: liveEnd,
+    });
+    const combinedLive = mergeUnique(localRangeItems, live.items);
+    if (!live.complete || live.items.length > 0) {
+      const result: HistoricalQueryResult<HistoricalRecord> = {
+        items: combinedLive,
+        complete: live.complete,
+        nextCursor: live.nextCursor,
+        source: localRangeItems.length > 0 ? 'mixed' : 'live',
+      };
+      if (result.complete) {
+        mmkvHelpers.setObject(tier2Key, { fetchedAt: Date.now(), result });
       }
-
-      if (backendData.length > 0) {
-        mmkvHelpers.setObject(tier2Key, { data: backendData, _ts: Date.now() });
-        return backendData;
-      }
-
-      // Backend returned nothing — check Storage archives for old months
-      const archiveBoundary = new Date(now.getTime() - ARCHIVE_BOUNDARY_MS);
-      if (monthEnd.getTime() < archiveBoundary.getTime()) {
-        const archived = await fetchFromArchive(companyId, monthDate.getFullYear(), monthDate.getMonth() + 1, dataType);
-        if (archived && archived.length > 0) return archived;
-      }
-
-      return [];
-    } catch (error) {
-      logger.error('Error fetching month data:', error);
-      return [];
+      return result;
     }
-  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
 
-  /**
-   * Get data for an arbitrary date range with smart caching.
-   * Used for "Last 7 days", "Last month" dashboard filters.
-   */
+    if (monthEnd.getTime() < now - ARCHIVE_BOUNDARY_MS) {
+      const archived = await fetchFromArchive(
+        companyId,
+        monthDate.getFullYear(),
+        monthDate.getMonth() + 1,
+        dataType,
+      );
+      const result: HistoricalQueryResult<HistoricalRecord> = {
+        ...archived,
+        items: mergeUnique(localRangeItems, archived.items),
+        source: localRangeItems.length > 0 ? 'mixed' : archived.source,
+      };
+      return result;
+    }
+
+    return { items: combinedLive, complete: true, nextCursor: null, source: 'live' };
+  }, [
+    companyJobs,
+    documents,
+    fetchFromArchive,
+    getCompanyId,
+    getUid,
+    getUserRole,
+    jobs,
+  ]);
+
   const getDataForDateRange = useCallback(async (
     startDate: Date,
     endDate: Date,
-    dataType: string,
-  ): Promise<any[]> => {
+    dataType: HistoricalDataType,
+  ): Promise<HistoricalQueryResult<HistoricalRecord>> => {
     const role = getUserRole();
     const uid = getUid();
     const companyId = getCompanyId();
-    if (!companyId || !uid || !role) return [];
-    const safeRole = role;
-    const startMs = startDate.getTime();
-    const endMs = endDate.getTime();
+    if (!companyId || !uid || !role) {
+      return { items: [], complete: false, nextCursor: null, source: 'cache' };
+    }
+
     const cacheStartMs = getCacheStartDate().getTime();
+    const localItems: readonly HistoricalRecord[] = dataType === 'documents'
+      ? documents
+      : (role === 'manager' ? companyJobs : jobs).filter((job) => (
+          dataType === 'finishedJobs'
+            ? job.status === 'finished'
+            : job.status === 'pending' || job.status === 'waiting'
+        ));
+    const localRangeItems = inRange(localItems, dataType, startDate.getTime(), endDate.getTime());
 
-    let cachedData: any[] = [];
-    if (dataType === 'finishedJobs') {
-      const allJobs = safeRole === 'manager' ? companyJobs : jobs;
-      cachedData = allJobs.filter((j: any) => j.status === 'finished');
-    } else if (dataType === 'documents') {
-      cachedData = documents;
-    } else if (dataType === 'pendingJobs') {
-      const allJobs = safeRole === 'manager' ? companyJobs : jobs;
-      cachedData = allJobs.filter((j: any) => j.status === 'pending' || j.status === 'waiting');
+    if (startDate.getTime() >= cacheStartMs) {
+      return { items: localRangeItems, complete: true, nextCursor: null, source: 'cache' };
     }
 
-    const dateField = dataType === 'documents' ? 'createdAt' :
-                      dataType === 'pendingJobs' ? 'createdAt' : 'finishedAt';
-
-    if (startMs >= cacheStartMs) {
-      return cachedData.filter((item: any) => {
-        const d = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-        return d >= startMs && d <= endMs;
-      });
-    }
-
-    const cachedPortion = cachedData.filter((item: any) => {
-      const d = item[dateField] ? new Date(item[dateField]).getTime() : 0;
-      return d >= cacheStartMs && d <= endMs;
+    const live = await readLiveHistory({
+      companyId,
+      dataType,
+      start: startDate,
+      end: new Date(Math.min(endDate.getTime(), cacheStartMs - 1)),
     });
-
-    try {
-      let backendData: any[] = [];
-      if (dataType === 'finishedJobs') {
-        backendData = await fetchCompanyJobs(companyId, {
-            limit: ARCHIVE_READ_LIMIT,
-            status: 'finished',
-            dateField: 'finishedAt',
-            dateFrom: new Date(startMs).toISOString(),
-            dateTo: new Date(cacheStartMs - 1).toISOString(),
-          });
-      } else if (dataType === 'documents') {
-        backendData = await fetchCompanyDocuments(companyId, {
-          limit: ARCHIVE_READ_LIMIT,
-          dateField: 'createdAt',
-          dateFrom: new Date(startMs).toISOString(),
-          dateTo: new Date(cacheStartMs - 1).toISOString(),
-        });
-      } else if (dataType === 'pendingJobs') {
-        backendData = await fetchCompanyJobs(companyId, {
-            limit: ARCHIVE_READ_LIMIT,
-            status: ['pending', 'waiting'],
-            dateField: 'createdAt',
-            dateFrom: new Date(startMs).toISOString(),
-            dateTo: new Date(cacheStartMs - 1).toISOString(),
-          });
-      }
-
-      if (backendData.length === 0 && dataType !== 'pendingJobs') {
-        const archiveBoundary = new Date(Date.now() - ARCHIVE_BOUNDARY_MS);
-        if (startMs < archiveBoundary.getTime()) {
-          const archiveCheckEnd = new Date(Math.min(archiveBoundary.getTime(), cacheStartMs));
-          const archivedDocs: any[] = [];
-          let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-          while (cursor < archiveCheckEnd) {
-            const archived = await fetchFromArchive(companyId, cursor.getFullYear(), cursor.getMonth() + 1, dataType);
-            if (archived && archived.length > 0) {
-              const dField = dataType === 'documents' ? 'createdAt' : 'finishedAt';
-              let filtered = archived.filter((item: any) => {
-                const d = item[dField] ? new Date(item[dField]).getTime() : 0;
-                return d >= startMs && d <= endMs;
-              });
-              archivedDocs.push(...filtered);
-            }
-            cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-          }
-          if (archivedDocs.length > 0) return [...cachedPortion, ...archivedDocs];
-        }
-      }
-
-      return [...cachedPortion, ...backendData];
-    } catch (error) {
-      logger.error('Error fetching data for date range:', error);
-      return cachedPortion;
+    if (!live.complete || live.items.length > 0 || dataType === 'pendingJobs') {
+      return {
+        items: mergeUnique(localRangeItems, live.items),
+        complete: live.complete,
+        nextCursor: live.nextCursor,
+        source: localRangeItems.length > 0 ? 'mixed' : 'live',
+      };
     }
-  }, [getUserRole, getUid, getCompanyId, jobs, companyJobs, documents, fetchFromArchive]);
+
+    const archiveBoundaryMs = Date.now() - ARCHIVE_BOUNDARY_MS;
+    if (startDate.getTime() >= archiveBoundaryMs) {
+      return {
+        items: mergeUnique(localRangeItems, live.items),
+        complete: true,
+        nextCursor: null,
+        source: localRangeItems.length > 0 ? 'mixed' : 'live',
+      };
+    }
+
+    const archivedItems: HistoricalRecord[] = [];
+    let complete = true;
+    let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const archiveEnd = Math.min(endDate.getTime(), archiveBoundaryMs);
+    while (cursor.getTime() <= archiveEnd) {
+      const archiveResult = await fetchFromArchive(
+        companyId,
+        cursor.getFullYear(),
+        cursor.getMonth() + 1,
+        dataType,
+      );
+      archivedItems.push(...inRange(
+        archiveResult.items,
+        dataType,
+        startDate.getTime(),
+        endDate.getTime(),
+      ));
+      complete = complete && archiveResult.complete;
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+
+    return {
+      items: mergeUnique(localRangeItems, archivedItems),
+      complete,
+      nextCursor: null,
+      source: localRangeItems.length > 0 ? 'mixed' : 'archive',
+    };
+  }, [
+    companyJobs,
+    documents,
+    fetchFromArchive,
+    getCompanyId,
+    getUid,
+    getUserRole,
+    jobs,
+  ]);
 
   return { fetchFromArchive, getDataForMonth, getDataForDateRange };
 }

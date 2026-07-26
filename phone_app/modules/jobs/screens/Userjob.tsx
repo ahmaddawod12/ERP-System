@@ -17,10 +17,16 @@ import {
 } from '../lib/jobs-api';
 import { getColors } from '../../../theme';
 import { AppText, GlobalHeader, ViewJobDetails, DateFilter, ScrollableContainer, ClientSelectorModal } from '../../../components';
+import { HistoricalResultsNotice } from '../../../components/domain/HistoricalResultsNotice';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useDocumentHistoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { useOutbox } from '../../../contexts/OutboxContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -78,24 +84,21 @@ export default function Userjob() {
     synchronizeOperation,
     refresh: refreshOutbox,
   } = useOutbox();
+  const { profile, getUid, getCompanyId, getUserRole } = useCacheLifecycle();
   const {
-    profile,
     jobs: cachedJobs,
     companyJobs: cachedCompanyJobs,
-    clients: cachedClients,
-    getUid,
-    getCompanyId,
-    getUserRole,
     removeJob,
-    getDataForDateRange,
-    isWithinCacheRange,
-    fetchClients,
-  } = useCache();
+  } = useJobsCache();
+  const { clients: cachedClients, fetchClients } = useDirectoryCache();
+  const { getDataForDateRange, isWithinCacheRange } =
+    useDocumentHistoryCache();
   const colors = getColors(isDarkMode);
 
   // ─── State ──────────────────────────────────────────────────────
   const [jobs, setJobs] = useState<UserJobRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [historyComplete, setHistoryComplete] = useState(true);
   const hasInitialLoadedRef = useRef(false);
   const [isOnline, setIsOnline] = useState(true);
   const [pendingJobCount, setPendingJobCount] = useState(0);
@@ -283,13 +286,15 @@ export default function Userjob() {
 
       // Beyond 90 days - fetch from archive/backend.
       if (dateFilter.startDate < ninetyDaysAgo) {
-        const olderJobs = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs') as UserJobRecord[];
-        const filtered = olderJobs
+        const history = await getDataForDateRange(dateFilter.startDate, dateFilter.endDate, 'finishedJobs');
+        const filtered = (history.items as UserJobRecord[])
           .sort((a, b) => getDateLikeTime(b.finishedAt) - getDateLikeTime(a.finishedAt));
+        setHistoryComplete(history.complete);
         setJobs(filtered);
         setLoading(false);
         return;
       }
+      setHistoryComplete(true);
 
       // Recent data — use cache
       let jobsList: UserJobRecord[] = [];
@@ -523,6 +528,7 @@ export default function Userjob() {
       )}
 
       {/* Job List */}
+      <HistoricalResultsNotice complete={historyComplete} />
       <ScrollableContainer
         style={styles.content}
         contentContainerStyle={{

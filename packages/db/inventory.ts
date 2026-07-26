@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   getDb,
@@ -106,7 +107,7 @@ function requireNumericId(value: unknown, fieldName: string): number {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric < 0) {
     const error = new Error(`${fieldName} is required`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   return numeric;
@@ -116,7 +117,7 @@ function requireFiniteNonNegative(value: unknown, fieldName: string): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
     const error = new Error(`${fieldName} must be a non-negative finite number`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   return numeric;
@@ -126,12 +127,12 @@ function normalizePartName(value: unknown, fieldName = 'partName'): string {
   const normalized = typeof value === 'string' ? value.trim() : '';
   if (!normalized) {
     const error = new Error(`${fieldName} is required`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   if (normalized.length > 120) {
     const error = new Error(`${fieldName} exceeds 120 characters`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   return normalized;
@@ -173,7 +174,7 @@ async function getMemberInventoryLocation(
   const membership = membershipRows[0] || null;
   if (!membership) {
     const error = new Error('Target user membership not found');
-    (error as any).code = 'not-found';
+    setDatabaseErrorCode(error, 'not-found');
     throw error;
   }
 
@@ -189,7 +190,7 @@ async function getMemberInventoryLocation(
   const location = locationRows[0] || null;
   if (!location) {
     const error = new Error('Member inventory location not found');
-    (error as any).code = 'failed-precondition';
+    setDatabaseErrorCode(error, 'failed-precondition');
     throw error;
   }
 
@@ -341,13 +342,13 @@ async function addCompanyInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
     const location = await getCompanyInventoryLocation(tx, company.id);
     if (!location) {
       const error = new Error('Company inventory location not found');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -399,14 +400,14 @@ async function updateCompanyInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const part = await getCompanyInventoryPart(tx, company.id, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -441,14 +442,14 @@ async function toggleCompanyInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const part = await getCompanyInventoryPart(tx, company.id, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -472,14 +473,14 @@ async function removeCompanyInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const part = await getCompanyInventoryPart(tx, company.id, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -510,7 +511,7 @@ async function addUserInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -557,7 +558,7 @@ async function updateUserInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -565,7 +566,7 @@ async function updateUserInventoryPart(
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -594,7 +595,7 @@ async function toggleUserInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -602,7 +603,7 @@ async function toggleUserInventoryPart(
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -626,7 +627,7 @@ async function removeUserInventoryPart(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -634,7 +635,7 @@ async function removeUserInventoryPart(
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -664,7 +665,7 @@ async function replaceUserInventoryParts(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -688,7 +689,7 @@ async function replaceUserInventoryParts(
     for (const rawPart of desiredParts) {
       if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) {
         const error = new Error('parts must contain objects only');
-        (error as any).code = 'invalid-argument';
+        setDatabaseErrorCode(error, 'invalid-argument');
         throw error;
       }
       normalizedEntries.push({
@@ -791,7 +792,7 @@ async function pickCompanyParts(input: PickInventoryInput, options: DatabaseOpti
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -800,14 +801,14 @@ async function pickCompanyParts(input: PickInventoryInput, options: DatabaseOpti
     const actorMembership = await findActiveMembership(tx, input.createdByUserId, company.id);
     if (!companyLocation) {
       const error = new Error('Company inventory location not found');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
     const picks = Array.isArray(input.partsToPick) ? input.partsToPick : [];
     if (picks.length === 0) {
       const error = new Error('partsToPick array is required');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
@@ -818,7 +819,7 @@ async function pickCompanyParts(input: PickInventoryInput, options: DatabaseOpti
         const numeric = Number(pick.quantity);
         if (!Number.isFinite(numeric) || numeric <= 0) {
           const error = new Error('picked quantity must be a positive finite number');
-          (error as any).code = 'invalid-argument';
+          setDatabaseErrorCode(error, 'invalid-argument');
           throw error;
         }
         return numeric;
@@ -860,7 +861,7 @@ async function pickCompanyParts(input: PickInventoryInput, options: DatabaseOpti
     }
     if (insufficientParts.length > 0) {
       const error = new Error(`Insufficient stock for parts: ${insufficientParts.map((part) => `${part.name} (need ${part.requested}, have ${part.available})`).join(', ')}`);
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "releaseSha": "<exact-40-character-release-sha>",
+  "imageDigests": {
+    "website": "<sha256:digest>",
+    "api": "<sha256:digest>",
+    "tax": "<sha256:digest>",
+    "pdf": "<sha256:digest>",
+    "email": "<sha256:digest>",
+    "archiver": "<sha256:digest>",
+    "backup": "<sha256:digest>",
+    "migration": "<sha256:digest>"
+  },
+  "gates": [
+    { "id": "terraform", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "dns_tls_armor", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "egress_secrets_iam", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "migrations_and_readiness", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "signed_images", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "pitr_and_backup_restore", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "", "measurements": { "rpoMinutes": null, "rtoMinutes": null } },
+    { "id": "load_test", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "staging_soak", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "", "measurements": { "days": 0 } },
+    { "id": "website_accessibility", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "mobile_accessibility", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "playwright_matrix", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "maestro_matrix", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "ses_delivery", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "tax_disabled", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "", "measurements": { "mode": "disabled" } },
+    { "id": "legal_privacy_retention", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "notification_delivery", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "cloud_run_10", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "cloud_run_50", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "cloud_run_100", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "native_10_24h", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "native_50_48h", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" },
+    { "id": "native_100", "status": "NOT_RUN", "owner": "", "evidence": "", "completedAt": "" }
+  ],
+  "approval": {
+    "status": "BLOCKED",
+    "owner": "",
+    "evidence": ""
+  }
+}

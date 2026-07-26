@@ -53,7 +53,7 @@ export function assertArchiverRuntimeConfig(
       throw new Error('Local archiver requires the canonical GCS emulator endpoint');
     }
     if (
-      databaseUrl.hostname !== 'supabase_db_smart-job-erp-local'
+      databaseUrl.hostname !== 'smart-job-supabase-db'
       || (databaseUrl.port !== '' && databaseUrl.port !== '5432')
     ) {
       throw new Error('Local archiver access is restricted to the repository-owned Supabase database');

@@ -5,6 +5,7 @@ WORKDIR /workspace
 COPY packages/contracts ./packages/contracts
 COPY packages/api-contracts ./packages/api-contracts
 COPY packages/db ./packages/db
+COPY packages/observability ./packages/observability
 COPY cloudrun-api ./cloudrun-api
 
 RUN npm --prefix packages/contracts ci \
@@ -13,6 +14,8 @@ RUN npm --prefix packages/contracts ci \
  && npm --prefix packages/api-contracts run build \
  && npm --prefix packages/db ci \
  && npm --prefix packages/db run build \
+ && npm --prefix packages/observability ci \
+ && npm --prefix packages/observability run build \
  && npm --prefix cloudrun-api ci \
  && npm --prefix cloudrun-api run build
 
@@ -23,11 +26,13 @@ WORKDIR /workspace
 COPY --from=build /workspace/packages/contracts ./packages/contracts
 COPY --from=build /workspace/packages/api-contracts ./packages/api-contracts
 COPY --from=build /workspace/packages/db ./packages/db
+COPY --from=build /workspace/packages/observability ./packages/observability
 COPY cloudrun-api/package*.json ./cloudrun-api/
 
 RUN npm --prefix packages/contracts prune --omit=dev \
  && npm --prefix packages/api-contracts prune --omit=dev \
  && npm --prefix packages/db prune --omit=dev \
+ && npm --prefix packages/observability prune --omit=dev \
  && npm --prefix cloudrun-api ci --omit=dev \
  && npm cache clean --force
 
@@ -54,4 +59,4 @@ COPY --from=build /workspace/cloudrun-api/package.json ./package.json
 
 USER node
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "--import", "@smart-job/observability/register", "dist/server.js"]

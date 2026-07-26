@@ -28,7 +28,23 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
 import { auth } from '../lib/auth/transport';
 import { useAppStateListener } from '../hooks/useAppStateListener';
-import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
+import type {
+  AppDocument,
+  CacheLifecycleValue,
+  CacheVersions,
+  Client,
+  DirectoryCacheValue,
+  DocumentHistoryCacheValue,
+  InventoryCacheValue,
+  InventoryPart,
+  Job,
+  JobsCacheValue,
+  Maybe,
+  RoleTitle,
+  Subscription,
+  UserProfile,
+  Worker,
+} from '../types';
 import { safeJsonParse } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import {
@@ -65,17 +81,35 @@ import {
 import { roleUsesScopedJobAccess } from './job-membership';
 import { getNextCompanySyncPollIntervalMs } from './company-sync-poll';
 
-// Create context
-const CacheContext = createContext<CacheContextValue | null>(null);
+const CacheLifecycleContext = createContext<CacheLifecycleValue | null>(null);
+const JobsCacheContext = createContext<JobsCacheValue | null>(null);
+const DirectoryCacheContext = createContext<DirectoryCacheValue | null>(null);
+const InventoryCacheContext = createContext<InventoryCacheValue | null>(null);
+const DocumentHistoryCacheContext =
+  createContext<DocumentHistoryCacheValue | null>(null);
 
-// Custom hook to use cache
-export const useCache = (): CacheContextValue => {
-  const context = useContext(CacheContext);
-  if (!context) {
-    throw new Error('useCache must be used within a CacheProvider');
-  }
-  return context;
-};
+function requiredContext<T>(value: T | null, hookName: string): T {
+  if (!value) throw new Error(`${hookName} must be used within CacheProvider`);
+  return value;
+}
+
+export const useCacheLifecycle = (): CacheLifecycleValue =>
+  requiredContext(useContext(CacheLifecycleContext), 'useCacheLifecycle');
+
+export const useJobsCache = (): JobsCacheValue =>
+  requiredContext(useContext(JobsCacheContext), 'useJobsCache');
+
+export const useDirectoryCache = (): DirectoryCacheValue =>
+  requiredContext(useContext(DirectoryCacheContext), 'useDirectoryCache');
+
+export const useInventoryCache = (): InventoryCacheValue =>
+  requiredContext(useContext(InventoryCacheContext), 'useInventoryCache');
+
+export const useDocumentHistoryCache = (): DocumentHistoryCacheValue =>
+  requiredContext(
+    useContext(DocumentHistoryCacheContext),
+    'useDocumentHistoryCache',
+  );
 
 export function CacheProvider({ children }: { children: ReactNode }) {
   // State
@@ -1135,7 +1169,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * Add document
    * manager/user/basic adds document ? Company cache, increment document version
    */
-  const addDocument = useCallback(async (document: any) => {
+  const addDocument = useCallback(async (document: AppDocument) => {
     if (!document.id) {
       logger.error('Cannot add document without ID');
       return;
@@ -1206,78 +1240,96 @@ export function CacheProvider({ children }: { children: ReactNode }) {
 
   // Context value — memoized to avoid unnecessary re-renders of consumers
   // that don't depend on the changed state slice.
-  const value = useMemo<CacheContextValue>(() => ({
-    // State
+  const lifecycleValue = useMemo<CacheLifecycleValue>(() => ({
     isInitialized,
     isLoading,
     profile,
-    inventory,
-    jobs,
-    workers,
-    companyJobs,
-    documents,
-    clients,
     subscription,
-    companyInventory,
-    
-    // Getters (primary)
     getUid,
     getUserRole,
     getCompanyId,
-    
-    // Initialization
     initializeCache,
     clearCache,
-    
-    // Jobs (unified)
+    refreshCache,
+  }), [
+    isInitialized,
+    isLoading,
+    profile,
+    subscription,
+    getUid,
+    getUserRole,
+    getCompanyId,
+    initializeCache,
+    clearCache,
+    refreshCache,
+  ]);
+
+  const jobsValue = useMemo<JobsCacheValue>(() => ({
+    jobs,
+    companyJobs,
     addJob,
     updateJob,
     removeJob,
     acceptJob,
-    
-    // Manager specific
+  }), [jobs, companyJobs, addJob, updateJob, removeJob, acceptJob]);
+
+  const directoryValue = useMemo<DirectoryCacheValue>(() => ({
+    workers,
+    clients,
     updateWorkers,
     addWorker,
     editWorker,
     deleteWorker,
-    
-    // Business
-    addDocument,
-    
-    // Clients
     fetchClients,
     addClient,
     updateClient,
     deleteClient,
-    
-    // Smart date filtering (use these in JobMonitor and DocumentHistory)
+  }), [
+    workers,
+    clients,
+    updateWorkers,
+    addWorker,
+    editWorker,
+    deleteWorker,
+    fetchClients,
+    addClient,
+    updateClient,
+    deleteClient,
+  ]);
+
+  const inventoryValue = useMemo<InventoryCacheValue>(() => ({
+    inventory,
+    companyInventory,
+  }), [inventory, companyInventory]);
+
+  const documentHistoryValue = useMemo<DocumentHistoryCacheValue>(() => ({
+    documents,
+    addDocument,
     getDataForMonth,
     getDataForDateRange,
     fetchFromArchive,
     isWithinCacheRange,
     getCacheStartDate,
-    
-    // Utilities
-    refreshCache,
-    // Direct storage access (for special cases)
-    storage: mmkvHelpers,
   }), [
-    isInitialized, isLoading, profile, inventory, jobs, workers,
-    companyJobs, documents, clients, subscription, companyInventory,
-    getUid, getUserRole, getCompanyId,
-    initializeCache, clearCache,
-    addJob, updateJob, removeJob, acceptJob,
-    updateWorkers, addWorker, editWorker, deleteWorker,
+    documents,
     addDocument,
-    fetchClients, addClient, updateClient, deleteClient,
-    getDataForMonth, getDataForDateRange, fetchFromArchive,
-    refreshCache,
+    getDataForMonth,
+    getDataForDateRange,
+    fetchFromArchive,
   ]);
 
   return (
-    <CacheContext.Provider value={value}>
-      {children}
-    </CacheContext.Provider>
+    <CacheLifecycleContext.Provider value={lifecycleValue}>
+      <JobsCacheContext.Provider value={jobsValue}>
+        <DirectoryCacheContext.Provider value={directoryValue}>
+          <InventoryCacheContext.Provider value={inventoryValue}>
+            <DocumentHistoryCacheContext.Provider value={documentHistoryValue}>
+              {children}
+            </DocumentHistoryCacheContext.Provider>
+          </InventoryCacheContext.Provider>
+        </DirectoryCacheContext.Provider>
+      </JobsCacheContext.Provider>
+    </CacheLifecycleContext.Provider>
   );
 }
 

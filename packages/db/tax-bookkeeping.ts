@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { sql } from 'drizzle-orm';
 import { DOC_TYPE } from '@smart-job/contracts';
 import { getDb, type DatabaseOptions } from './client';
@@ -90,7 +91,7 @@ async function reserveTaxInvoiceSubmission(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -111,7 +112,7 @@ async function reserveTaxInvoiceSubmission(
       const lockedAtMs = existing.locked_at ? new Date(String(existing.locked_at)).getTime() : 0;
       if (existing.status === 'in_progress' && lockedAtMs && Date.now() - lockedAtMs < staleAfterMs) {
         const error = new Error('Invoice submission with this idempotency key is already in progress');
-        (error as any).code = 'already-exists';
+        setDatabaseErrorCode(error, 'already-exists');
         throw error;
       }
     }
@@ -128,7 +129,7 @@ async function reserveTaxInvoiceSubmission(
     const documentNumber = Number(row?.allocated_value);
     if (!Number.isInteger(documentNumber) || documentNumber < 1) {
       const error = new Error('Failed to allocate tax invoice number');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -259,7 +260,7 @@ async function updateTaxInvoiceIdempotency(
   const companyId = Number(input.companyId);
   if (!Number.isInteger(companyId) || companyId < 1) {
     const error = new Error('Company ID is required');
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   const payload = Object.prototype.hasOwnProperty.call(input, 'resultPayload')

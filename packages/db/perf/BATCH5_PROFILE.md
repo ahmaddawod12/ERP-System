@@ -2,8 +2,10 @@
 
 Measured on 2026-07-21 against the repository-owned local Supabase PostgreSQL
 stack. The profiler creates one tenant inside a transaction, inserts 100,000
-jobs, 50,000 documents, and 20,000 inventory parts, warms each query once,
-runs it 20 times, and rolls the fixtures back.
+jobs, 50,000 documents, 20,000 inventory parts, and a deliberately extreme
+1,200-segment archive month, warms each query once, runs it 20 times, and rolls
+the fixtures back. The archive fixture protects the mobile/API pagination path
+from regressing to the removed 1,000-item assumption.
 
 Targets are p95 below 300 ms for list queries and below 500 ms for search.
 

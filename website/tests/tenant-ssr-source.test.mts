@@ -15,7 +15,7 @@ const workspaceClient = readFileSync(
   "utf8",
 );
 const middleware = readFileSync(
-  new URL("../proxy.ts", import.meta.url),
+  new URL("../src/proxy.ts", import.meta.url),
   "utf8",
 );
 const opaqueLogout = readFileSync(
@@ -51,7 +51,7 @@ test("workspace selection sends zero memberships to onboarding and auto-selects 
 
 test("proxy recognizes opaque sessions on all app routes", () => {
   assert.match(middleware, /request\.cookies\.get\(webSessionCookieName\(\)\)/);
-  assert.match(middleware, /if \(isOpaqueSessionToken\(opaqueToken\)\)/);
+  assert.match(middleware, /if \(!isOpaqueSessionToken\(opaqueToken\)\)/);
   assert.doesNotMatch(middleware, /hasValidRevocationCheckedSession/);
   assert.doesNotMatch(middleware, /isOpaqueSessionAppRoute/);
 });

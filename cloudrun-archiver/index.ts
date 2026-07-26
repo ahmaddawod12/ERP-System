@@ -1,5 +1,9 @@
 import { Storage } from '@google-cloud/storage';
 import { closeDb } from '@smart-job/db';
+import {
+  cloudLoggingTraceFields,
+  withTaskSpan,
+} from '@smart-job/observability';
 
 import { readArchiveRunnerConfig, runMonthlyArchives } from './archive-runner';
 import { assertArchiverRuntimeConfig } from './local-platform';
@@ -10,6 +14,7 @@ function structuredLogger() {
     const payload: Record<string, unknown> = {
       severity,
       message: typeof message === 'string' ? message : 'cloudrun-archiver event',
+      ...cloudLoggingTraceFields(),
     };
     if (typeof message !== 'string') payload.value = message;
     if (fields.length === 1 && fields[0] && typeof fields[0] === 'object') {
@@ -29,6 +34,10 @@ function structuredLogger() {
 }
 
 export async function main(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  return withTaskSpan(
+    'archive.monthly',
+    { 'app.operation': 'archive.monthly' },
+    async () => {
   const logger = structuredLogger();
   assertArchiverRuntimeConfig(env);
   const config = readArchiveRunnerConfig(env);
@@ -46,6 +55,8 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<void> 
   } finally {
     await closeDb();
   }
+    },
+  );
 }
 
 if (require.main === module) {

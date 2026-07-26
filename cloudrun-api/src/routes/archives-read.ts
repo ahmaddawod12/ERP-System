@@ -131,7 +131,37 @@ function filterArchiveItems(
   }
   if (workspace.memberNo === null) return [];
   const memberNo = String(workspace.memberNo);
-  return items.filter((item) => String(item.wid ?? "") === memberNo);
+  return items.filter((item) => {
+    const assignee = item.assignee;
+    const canonicalMemberNo = assignee !== null
+      && typeof assignee === "object"
+      && !Array.isArray(assignee)
+      ? (assignee as Record<string, unknown>).memberNo
+      : undefined;
+    return String(canonicalMemberNo ?? item.wid ?? "") === memberNo;
+  });
+}
+
+async function readVerifiedArchive(
+  storage: ArchiveStorage,
+  companyStorageId: string,
+  record: Awaited<ReturnType<typeof readArchiveDownloadRecord>>,
+) {
+  const content = await storage.readVerifiedArchiveJsonByPath(
+    companyStorageId,
+    record.objectPath,
+    record.storageGeneration,
+    record.checksum,
+  );
+  if (content === null) {
+    throw new AppError({
+      statusCode: 503,
+      code: "ARCHIVE_OBJECT_UNAVAILABLE",
+      message: "The exact archived object is temporarily unavailable.",
+      retryable: true,
+    });
+  }
+  return content;
 }
 
 export function registerArchiveReadRoutes(
@@ -170,6 +200,8 @@ export function registerArchiveReadRoutes(
           return readArchivesPage(transaction, {
             internalCompanyId: tenant.internalCompanyId,
             ...(dataType === undefined ? {} : { dataType }),
+            ...(query.year === undefined ? {} : { year: query.year }),
+            ...(query.month === undefined ? {} : { month: query.month }),
             ...(query.pageSize === undefined ? {} : { pageSize: query.pageSize }),
             ...(cursor === undefined ? {} : { cursor }),
           });
@@ -226,16 +258,23 @@ export function registerArchiveReadRoutes(
       });
 
       const storage = requireArchiveStorage(services.archiveStorage);
-      const content = await storage.readArchiveJsonByPath(
-        String(params.companyId),
-        result.record.objectPath,
-      );
-      if (content === null) {
-        throw new AppError({
-          statusCode: 404,
-          code: "ARCHIVE_FILE_NOT_FOUND",
-          message: "The archive file was not found.",
-        });
+      let content;
+      try {
+        content = await readVerifiedArchive(
+          storage,
+          String(params.companyId),
+          result.record,
+        );
+      } catch (error) {
+        if (error instanceof AppError && error.code === "ARCHIVE_INTEGRITY_FAILURE") {
+          request.log.error({
+            archiveIntegrityFailure: true,
+            archiveRunId: result.record.archiveRunId,
+            dataType: result.record.dataType,
+            storageGeneration: result.record.storageGeneration,
+          }, "archive integrity verification failed");
+        }
+        throw error;
       }
       return apiSuccess(request.id, ArchiveRunDownloadSchema.parse({
         archiveRunId: result.record.archiveRunId,
@@ -271,6 +310,7 @@ export function registerArchiveReadRoutes(
             401: ApiFailureResponseSchema,
             403: ApiFailureResponseSchema,
             404: ApiFailureResponseSchema,
+            409: ApiFailureResponseSchema,
             503: ApiFailureResponseSchema,
           },
         },
@@ -281,7 +321,7 @@ export function registerArchiveReadRoutes(
         const params = companyParamsSchema.parse(request.params);
         const query = ArchiveContentQuerySchema.parse(request.query);
 
-        const workspace = await services.database.withTransaction(
+        const period = await services.database.withTransaction(
           { userId: auth.userId },
           async (transaction) => {
             const tenant = await resolveTenantContext(transaction, auth.userId, params.companyId);
@@ -289,16 +329,51 @@ export function registerArchiveReadRoutes(
               ? "jobs"
               : "documents";
             assertArchiveTypeAccess(tenant.workspace, dataType);
-            return tenant.workspace;
+            const summaries = [];
+            let cursor: string | undefined;
+            do {
+              const page = await readArchivesPage(transaction, {
+                internalCompanyId: tenant.internalCompanyId,
+                dataType,
+                year: query.year,
+                month: query.month,
+                pageSize: 200,
+                ...(cursor === undefined ? {} : { cursor }),
+              });
+              summaries.push(...page.items);
+              cursor = page.nextCursor ?? undefined;
+            } while (cursor !== undefined);
+            const readySummaries = summaries
+              .filter((run) => (
+                run.status === "uploaded_not_deleted" || run.status === "deleted"
+              ))
+              .sort((left, right) => left.segment - right.segment);
+            const records = [];
+            for (const summary of readySummaries) {
+              records.push(await readArchiveDownloadRecord(
+                transaction,
+                tenant.internalCompanyId,
+                summary.archiveRunId,
+              ));
+            }
+            return {
+              workspace: tenant.workspace,
+              records,
+              hadRuns: summaries.length > 0,
+            };
           },
         ).catch((error: unknown) => {
           throw mapDatabaseError(error);
         });
 
-        const suffix = query.dataType === "finishedJobs" ? "j" : "d";
-        const archiveKey = `${query.year}-${query.month}-${suffix}`;
-        const content = await archiveStorage.readArchiveJson(String(params.companyId), archiveKey);
-        if (content === null) {
+        if (period.records.length === 0 && period.hadRuns) {
+          throw new AppError({
+            statusCode: 409,
+            code: "ARCHIVE_NOT_READY",
+            message: "The requested archive period is not ready.",
+          });
+        }
+        if (period.records.length === 0) {
           throw new AppError({
             statusCode: 404,
             code: "ARCHIVE_NOT_FOUND",
@@ -306,17 +381,39 @@ export function registerArchiveReadRoutes(
             retryable: false,
           });
         }
+        const items: Record<string, unknown>[] = [];
+        for (const record of period.records) {
+          const content = await readVerifiedArchive(
+            archiveStorage,
+            String(params.companyId),
+            record,
+          );
+          items.push(...content.items);
+        }
 
         const result = ArchiveContentResponseSchema.parse({
           year: query.year,
           month: query.month,
           dataType: query.dataType,
           items: filterArchiveItems(
-            workspace,
+            period.workspace,
             query.dataType === "finishedJobs" ? "jobs" : "documents",
-            content.items,
+            items,
           ),
         });
+        reply.header("deprecation", "true");
+        reply.header("sunset", "Sun, 31 Jan 2027 23:59:59 GMT");
+        reply.header(
+          "link",
+          `</api/v1/companies/${params.companyId}/archives?dataType=${
+            query.dataType === "finishedJobs" ? "jobs" : "documents"
+          }&year=${query.year}&month=${query.month}>; rel="successor-version"`,
+        );
+        request.log.info({
+          legacyArchiveContent: true,
+          dataType: query.dataType,
+          segmentCount: period.records.length,
+        }, "legacy archive content endpoint used");
         return apiSuccess(request.id, result);
       },
     );

@@ -10,7 +10,6 @@ import {
 import { requestApi } from './client';
 
 const ARCHIVE_PAGE_SIZE = 200;
-const MAX_ARCHIVE_LOOKUP_PAGES = 5;
 
 function companyArchivesPath(companyId: number): string {
   if (!Number.isSafeInteger(companyId) || companyId <= 0) {
@@ -23,6 +22,8 @@ export function fetchArchiveRunsPage(input: {
   readonly uid: string;
   readonly companyId: number;
   readonly dataType: ArchiveDataType;
+  readonly year?: number;
+  readonly month?: number;
   readonly afterCursor?: string | null;
   readonly signal?: AbortSignal;
 }): Promise<ArchiveListPage> {
@@ -30,6 +31,8 @@ export function fetchArchiveRunsPage(input: {
     dataType: input.dataType,
     pageSize: String(ARCHIVE_PAGE_SIZE),
   });
+  if (input.year !== undefined) params.set('year', String(input.year));
+  if (input.month !== undefined) params.set('month', String(input.month));
   if (input.afterCursor) params.set('afterCursor', input.afterCursor);
   return requestApi(
     `${companyArchivesPath(input.companyId)}?${params.toString()}`,
@@ -61,26 +64,39 @@ export function downloadArchiveRun(input: {
   );
 }
 
-export async function findArchiveRun(input: {
+export async function fetchArchivePeriodRuns(input: {
   readonly uid: string;
   readonly companyId: number;
-  readonly archiveKey: string;
   readonly dataType: ArchiveDataType;
+  readonly year: number;
+  readonly month: number;
   readonly signal?: AbortSignal;
-}): Promise<ArchiveRunSummary | null> {
+}): Promise<readonly ArchiveRunSummary[]> {
+  if (!Number.isInteger(input.year) || input.year < 2000 || input.year > 2100) {
+    throw new Error('A valid archive year is required');
+  }
+  if (!Number.isInteger(input.month) || input.month < 1 || input.month > 12) {
+    throw new Error('A valid archive month is required');
+  }
+
   let afterCursor: string | null = null;
-  for (let pageNumber = 0; pageNumber < MAX_ARCHIVE_LOOKUP_PAGES; pageNumber += 1) {
+  const runs: ArchiveRunSummary[] = [];
+  do {
     const page = await fetchArchiveRunsPage({
       uid: input.uid,
       companyId: input.companyId,
       dataType: input.dataType,
+      year: input.year,
+      month: input.month,
       afterCursor,
       signal: input.signal,
     });
-    const match = page.items.find((item) => item.archiveKey === input.archiveKey);
-    if (match) return match;
-    if (!page.nextCursor) return null;
+    runs.push(...page.items);
     afterCursor = page.nextCursor;
-  }
-  return null;
+  } while (afterCursor);
+
+  return runs.sort((left, right) =>
+    left.segment - right.segment
+    || left.createdAt.localeCompare(right.createdAt)
+    || left.archiveRunId.localeCompare(right.archiveRunId));
 }

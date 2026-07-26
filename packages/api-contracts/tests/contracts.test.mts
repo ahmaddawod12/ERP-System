@@ -28,6 +28,7 @@ import {
   DocumentDownloadAccessSchema,
   DocumentDeleteRequestSchema,
   DocumentDeleteResultSchema,
+  DocumentDataInputSchema,
   DocumentGenerateRequestSchema,
   DocumentListPageSchema,
   DocumentListQuerySchema,
@@ -88,6 +89,7 @@ import {
   WorkerUpdateRequestSchema,
   WebSessionCreatedSchema,
   WebSessionCurrentSchema,
+  containsLikelyPaymentCardNumber,
   WebSessionRevokedSchema,
   WorkspaceSummarySchema,
   createApiResponseSchema,
@@ -516,9 +518,13 @@ test("archive contracts expose opaque run IDs without storage paths", () => {
     archiveKey: "2026-1-j",
     dataType: "jobs",
     status: "deleted",
+    periodStart: "2026-01-01T00:00:00.000Z",
+    periodEnd: "2026-02-01T00:00:00.000Z",
+    segment: 1,
     docCount: 10,
     deletedCount: 10,
     checksum: "b".repeat(64),
+    storageGeneration: "123456789",
     createdAt: "2026-07-13T12:00:00.000Z",
     completedAt: "2026-07-13T12:01:00.000Z",
   };
@@ -530,6 +536,19 @@ test("archive contracts expose opaque run IDs without storage paths", () => {
     items: [{ ...run, storagePath: "companies/42/archives/2026-1-j.json" }],
     nextCursor: null,
   }).success, false);
+  assert.equal(ArchiveListQuerySchema.safeParse({
+    dataType: "jobs",
+    year: 2026,
+  }).success, false);
+  assert.deepEqual(ArchiveListQuerySchema.parse({
+    dataType: "jobs",
+    year: "2026",
+    month: "1",
+  }), {
+    dataType: "jobs",
+    year: 2026,
+    month: 1,
+  });
   assert.equal(ArchiveRunDownloadSchema.safeParse({
     archiveRunId: run.archiveRunId,
     archiveKey: run.archiveKey,
@@ -1214,4 +1233,86 @@ test("document contracts keep filters bounded and storage paths private", () => 
     documentCode: document.documentCode,
     disposition: "deleted",
   }).success, true);
+});
+
+test("receipt payment metadata is canonical and rejects card secrets", () => {
+  const base = {
+    client: { name: "Example Client" },
+    items: [{ description: "Field service", quantity: 1, price: 100 }],
+    language: "en",
+    date: "2026-07-26",
+  };
+
+  for (const paymentMethod of ["transfer", "check", "bit", "paybox"]) {
+    const parsed = DocumentDataInputSchema.parse({
+      ...base,
+      paymentMethod,
+      paymentDetails: { reference: "AUTH-123456" },
+    });
+    assert.deepEqual(parsed.paymentDetails, { reference: "AUTH-123456" });
+  }
+  assert.equal(DocumentDataInputSchema.safeParse({
+    ...base,
+    paymentMethod: "cash",
+  }).success, true);
+  assert.equal(DocumentDataInputSchema.safeParse({
+    ...base,
+    paymentMethod: "cash",
+    paymentDetails: { reference: "front desk" },
+  }).success, false);
+
+  const credit = DocumentDataInputSchema.parse({
+    ...base,
+    paymentMethod: "credit",
+    paymentDetails: {
+      last4: "4242",
+      authorizationReference: "AUTH-123456",
+    },
+  });
+  assert.deepEqual(credit.paymentDetails, {
+    last4: "4242",
+    authorizationReference: "AUTH-123456",
+  });
+  assert.equal(DocumentDataInputSchema.safeParse({
+    ...base,
+    paymentMethod: "credit",
+    paymentDetails: {
+      last4: "4242",
+      authorizationReference: "AUTH-123456",
+      cvv: "123",
+    },
+  }).success, false);
+  assert.equal(DocumentDataInputSchema.safeParse({
+    ...base,
+    paymentMethod: "credit",
+    paymentDetails: {
+      last4: "4242",
+      authorizationReference: "4242 4242 4242 4242",
+    },
+  }).success, false);
+  assert.equal(containsLikelyPaymentCardNumber("4111-1111-1111-1111"), true);
+  assert.equal(containsLikelyPaymentCardNumber("authorization 123456"), false);
+
+  const legacyReference = DocumentDataInputSchema.parse({
+    ...base,
+    paymentMethod: "transfer",
+    paymentInfo: "BANK-42",
+  });
+  assert.equal("paymentInfo" in legacyReference, false);
+  assert.deepEqual(legacyReference.paymentDetails, { reference: "BANK-42" });
+
+  const legacyCredit = DocumentDataInputSchema.parse({
+    ...base,
+    paymentMethod: "credit",
+    paymentInfo: "4242, AUTH-42",
+  });
+  assert.deepEqual(legacyCredit.paymentDetails, {
+    last4: "4242",
+    authorizationReference: "AUTH-42",
+  });
+  assert.equal(DocumentDataInputSchema.safeParse({
+    ...base,
+    paymentMethod: "credit",
+    paymentInfo: "only 4242",
+  }).success, false);
 });

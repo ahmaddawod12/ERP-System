@@ -16,7 +16,11 @@ import { persistPdfBeforeFinalize } from './pdf-storage-workflow';
 import { createPubSubVerifier } from './pubsub-auth';
 import { registerGenerateRoute } from './routes/generate';
 import { registerPreviewRoute } from './routes/preview';
-import { closeSharedSqlPool, isSharedSqlStoreEnabled } from './sql-store';
+import {
+  checkSharedSqlReadiness,
+  closeSharedSqlPool,
+  isSharedSqlStoreEnabled,
+} from './sql-store';
 import {
   buildGeneratedDocumentObjectPath,
   buildPreviewObjectPath,
@@ -95,7 +99,6 @@ const {
   getBrowser,
   acquireTab,
   releaseTab,
-  getStats: getBrowserPoolStats,
   getGeneration: getBrowserGeneration,
 } = browserPool;
 const verifyPubSubRequest = createPubSubVerifier({
@@ -240,21 +243,37 @@ registerGenerateRoute(app, {
   isTransientProcessingError,
 });
 
-app.get('/health', async (_request, response) => {
-  const browserStats = getBrowserPoolStats();
-  const status = browserStats.hasBrowser && !browserStats.browserConnected
-    ? 'degraded'
-    : 'healthy';
-  response.status(200).json({
-    status,
-    service: 'pdf-service',
-    hasBrowser: browserStats.hasBrowser,
-    browserConnected: browserStats.browserConnected,
-    activeTabs: browserStats.activeTabs,
-    maxConcurrentTabs: MAX_CONCURRENT_TABS,
-    queuedWaiters: browserStats.queuedWaiters,
-    maxTabWaiters: MAX_TAB_WAITERS,
-  });
+const liveness = (_request: express.Request, response: express.Response) => {
+  response.status(200).json({ status: 'ok', service: 'pdf-service' });
+};
+app.get('/healthz', liveness);
+app.get('/health', liveness);
+app.get('/readyz', async (_request, response) => {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      Promise.all([
+        getBrowser().then((browser) => {
+          if (!browser.connected) throw new Error('Chromium is unavailable');
+        }),
+        checkSharedSqlReadiness(),
+        companyFileStorage.checkReadiness(),
+      ]),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('PDF readiness timed out')), 5_000);
+        timeout.unref();
+      }),
+    ]);
+    response.status(200).json({ status: 'ready', service: 'pdf-service' });
+  } catch (error) {
+    console.warn('PDF readiness failed', {
+      readinessFailure: true,
+      errorType: error instanceof Error ? error.name : 'UnknownError',
+    });
+    response.status(503).json({ status: 'unavailable', service: 'pdf-service' });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 });
 
 const PORT = process.env.PORT || 8080;

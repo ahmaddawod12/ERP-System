@@ -10,7 +10,7 @@ const localEnvironment = {
   SMART_JOB_LOCAL_PLATFORM: 'true',
   LOCAL_PLATFORM_MARKER_PATH: '/run/secrets/smart_job_local_platform',
   STORAGE_EMULATOR_HOST: 'http://gcs-emulator:4443',
-  DATABASE_URL: 'postgresql://smart_job_archiver:password@supabase_db_smart-job-erp-local:5432/postgres',
+  DATABASE_URL: 'postgresql://smart_job_archiver:password@smart-job-supabase-db:5432/postgres',
   DATABASE_SSL_MODE: 'disable',
   DATABASE_MAX_CONNECTIONS: '1',
 };
@@ -45,7 +45,7 @@ describe('local archiver safeguards', () => {
     assert.throws(
       () => assertArchiverRuntimeConfig({
         ...localEnvironment,
-        DATABASE_URL: 'postgresql://postgres:postgres@supabase_db_smart-job-erp-local:5432/postgres',
+        DATABASE_URL: 'postgresql://postgres:postgres@smart-job-supabase-db:5432/postgres',
       }, marker),
       /smart_job_archiver/,
     );
@@ -54,9 +54,9 @@ describe('local archiver safeguards', () => {
   it('allows the internal Supabase cleanup endpoint only with the marker', () => {
     const config = readUploadCleanupConfig({
       ...localEnvironment,
-      SUPABASE_URL: 'http://supabase_kong_smart-job-erp-local:8000',
+      SUPABASE_URL: 'http://smart-job-supabase-gateway:8000',
       SUPABASE_SECRET_KEY: 'sb_secret_local_test_only',
     }, { readLocalMarker: marker });
-    assert.equal(config.supabaseOrigin, 'http://supabase_kong_smart-job-erp-local:8000');
+    assert.equal(config.supabaseOrigin, 'http://smart-job-supabase-gateway:8000');
   });
 });

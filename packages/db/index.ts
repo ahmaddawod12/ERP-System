@@ -8,6 +8,7 @@ export * from './company-sync-state';
 export * from './config';
 export * from './document-tasks';
 export * from './documents';
+export * from './errors';
 export * from './inventory';
 export * from './jobs';
 export * from './membership';

@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq } from 'drizzle-orm';
 import { getDb, type DatabaseOptions } from './client';
 import { companyProfiles } from './schema';
@@ -56,7 +57,7 @@ async function updateCompanyBusinessInfo(
 
     if (Object.prototype.hasOwnProperty.call(changes, 'vat_number')) {
       const error = new Error('vat_number is immutable after onboarding');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -64,7 +65,7 @@ async function updateCompanyBusinessInfo(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -75,7 +76,7 @@ async function updateCompanyBusinessInfo(
       .limit(1);
     if (!existingRows[0]) {
       const error = new Error('Business info not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 

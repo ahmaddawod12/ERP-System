@@ -1,4 +1,5 @@
 import swagger from "@fastify/swagger";
+import { cloudLoggingTraceFields } from "@smart-job/observability";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import {
   jsonSchemaTransform,
@@ -89,6 +90,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
               };
             },
           },
+          mixin: () => cloudLoggingTraceFields(),
         } satisfies NonNullable<FastifyServerOptions["logger"]>;
 
   const app = Fastify({

@@ -12,7 +12,7 @@ export const DEFAULT_TRANSACTION_TIMEOUTS = Object.freeze({
 });
 
 const API_DATABASE_ROLE = "smart_job_api";
-export const EXPECTED_DATABASE_SCHEMA_VERSION = "batch5-2026-07-21";
+export const EXPECTED_DATABASE_SCHEMA_VERSION = "batch6-2026-07-26";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DatabaseQueryResult<Row extends QueryResultRow = QueryResultRow> {

@@ -76,6 +76,29 @@ variable "backup_retention_days" {
   }
 }
 
+variable "lock_backup_retention" {
+  description = "Irreversibly lock the backup retention policy only after a successful restore drill."
+  type        = bool
+  default     = false
+}
+
+variable "backup_restore_drill_verified" {
+  description = "Explicit evidence gate required before locking backup retention."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.lock_backup_retention || var.backup_restore_drill_verified
+    error_message = "Backup retention cannot be locked before a successful restore drill is recorded."
+  }
+}
+
+variable "enable_static_ses_credentials" {
+  description = "Create and grant legacy SES access-key secrets until workload federation has passed cutover tests."
+  type        = bool
+  default     = true
+}
+
 variable "github_repository" {
   description = "GitHub repository in owner/name form."
   type        = string

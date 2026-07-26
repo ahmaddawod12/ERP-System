@@ -739,6 +739,43 @@ if (!databaseUrl) {
       });
     });
 
+    it('creates a passwordless read-only logical-backup role', async () => {
+      await withClient(async (client) => {
+        const result = await client.query(
+          `SELECT role.rolcanlogin,
+                  role.rolsuper,
+                  role.rolcreatedb,
+                  role.rolcreaterole,
+                  role.rolreplication,
+                  role.rolbypassrls,
+                  pg_has_role('smart_job_backup', 'pg_read_all_data', 'MEMBER') AS read_all_data,
+                  has_database_privilege(
+                    'smart_job_backup', current_database(), 'CONNECT'
+                  ) AS database_connect,
+                  has_table_privilege(
+                    'smart_job_backup', 'public.jobs', 'SELECT'
+                  ) AS jobs_read,
+                  has_table_privilege(
+                    'smart_job_backup', 'public.jobs', 'UPDATE'
+                  ) AS jobs_write
+           FROM pg_catalog.pg_roles AS role
+           WHERE role.rolname = 'smart_job_backup'`,
+        );
+        assert.deepEqual(result.rows[0], {
+          rolcanlogin: false,
+          rolsuper: false,
+          rolcreatedb: false,
+          rolcreaterole: false,
+          rolreplication: false,
+          rolbypassrls: false,
+          read_all_data: true,
+          database_connect: true,
+          jobs_read: true,
+          jobs_write: false,
+        });
+      });
+    });
+
     it('exposes only the intended API RPCs to the runtime role', async () => {
       await withClient(async (client) => {
         const apiFunctions = await client.query(
@@ -3121,7 +3158,7 @@ if (!databaseUrl) {
         await client.query('SET LOCAL ROLE smart_job_api');
         const readiness = await client.query(
           `SELECT
-             private.check_api_readiness('batch5-2026-07-21') AS exact_version,
+             private.check_api_readiness('batch6-2026-07-26') AS exact_version,
              private.check_api_readiness('stale-version') AS stale_version`,
         );
         assert.deepEqual(readiness.rows[0], {
@@ -3141,8 +3178,10 @@ if (!databaseUrl) {
              has_table_privilege(role_name, 'private.tax_submissions', 'SELECT,INSERT,UPDATE,DELETE') AS tax_table_access,
              has_function_privilege(role_name, 'private.claim_pdf_document_task(text,uuid,integer)', 'EXECUTE') AS pdf_claim,
              has_function_privilege(role_name, 'private.claim_email_delivery(uuid,uuid,integer)', 'EXECUTE') AS email_claim,
-              has_function_privilege(role_name, 'private.claim_archive_run_lease(uuid,text,text,timestamptz,timestamptz,timestamptz,uuid,integer)', 'EXECUTE') AS archive_claim,
-              has_function_privilege(role_name, 'private.list_archiver_candidates(timestamptz,integer)', 'EXECUTE') AS archive_candidates,
+             has_function_privilege(role_name, 'private.claim_archive_run_lease(uuid,text,text,timestamptz,timestamptz,timestamptz,uuid,integer)', 'EXECUTE') AS archive_claim,
+             has_function_privilege(role_name, 'private.list_archiver_candidates(timestamptz,integer)', 'EXECUTE') AS archive_candidates,
+             has_function_privilege(role_name, 'private.list_api_company_archives_v2(uuid,character varying,timestamptz,timestamptz,integer,timestamptz,uuid)', 'EXECUTE') AS archive_api_list,
+             has_function_privilege(role_name, 'private.get_api_company_archive_run(uuid,uuid)', 'EXECUTE') AS archive_api_exact,
              has_function_privilege(role_name, 'private.create_api_tax_invoice(uuid,jsonb,timestamptz)', 'EXECUTE') AS tax_create
            FROM unnest($1::text[]) AS role_name
            ORDER BY role_name`,
@@ -3156,8 +3195,123 @@ if (!databaseUrl) {
           assert.equal(row.email_claim, row.role_name === 'smart_job_email');
           assert.equal(row.archive_claim, row.role_name === 'smart_job_archiver');
           assert.equal(row.archive_candidates, row.role_name === 'smart_job_archiver');
+          assert.equal(row.archive_api_list, row.role_name === 'smart_job_api');
+          assert.equal(row.archive_api_exact, row.role_name === 'smart_job_api');
           assert.equal(row.tax_create, row.role_name === 'smart_job_api');
         }
+      });
+    });
+
+    it('authorizes archive period and exact-run RPCs without cross-tenant leakage', async () => {
+      await withTransaction(async (client) => {
+        const userId = randomUUID();
+        const companyId = randomUUID();
+        const membershipId = randomUUID();
+        const otherUserId = randomUUID();
+        const otherCompanyId = randomUUID();
+        const otherMembershipId = randomUUID();
+        const runId = randomUUID();
+        const otherRunId = randomUUID();
+        await insertWorkflowCompany(client, {
+          userId,
+          companyId,
+          membershipId,
+          publicCompanyId: publicCompanyBase + 948,
+        });
+        await client.query(
+          'INSERT INTO public.app_users (id, email) VALUES ($1, $2)',
+          [otherUserId, `other-archive-${otherUserId}@example.invalid`],
+        );
+        await client.query(
+          `INSERT INTO public.companies (
+             id, public_company_id, account_type, status, created_by_user_id
+           ) VALUES ($1, $2, 'business', 'active', $3)`,
+          [otherCompanyId, publicCompanyBase + 949, otherUserId],
+        );
+        await client.query(
+          'INSERT INTO public.company_sync_state (company_id) VALUES ($1)',
+          [otherCompanyId],
+        );
+        await client.query(
+          `INSERT INTO public.company_subscriptions (
+             company_id, tier, status, enabled_modules
+           ) VALUES ($1, 'Team', 'active', '{"jobs":true}'::jsonb)`,
+          [otherCompanyId],
+        );
+        await client.query(
+          `INSERT INTO public.company_memberships (
+             id, company_id, user_id, member_no, role, status
+           ) VALUES ($1, $2, $3, 1, 'manager', 'active')`,
+          [otherMembershipId, otherCompanyId, otherUserId],
+        );
+        await client.query(
+          `INSERT INTO public.archive_runs (
+             id, company_id, archive_key, data_type, status,
+             period_start, period_end, snapshot_at, segment,
+             doc_count, deleted_count, delete_cursor,
+             storage_path, checksum, storage_generation, completed_at
+           ) VALUES
+             (
+               $1, $2, '2026-01-j-s000001', 'jobs', 'deleted',
+               '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z',
+               '2026-02-01T00:00:00Z', 1, 1, 1, 1,
+               $3, $4, 11, pg_catalog.clock_timestamp()
+             ),
+             (
+               $5, $6, '2026-01-j-s000001', 'jobs', 'deleted',
+               '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z',
+               '2026-02-01T00:00:00Z', 1, 1, 1, 1,
+               $7, $4, 12, pg_catalog.clock_timestamp()
+             )`,
+          [
+            runId,
+            companyId,
+            `companies/${publicCompanyBase + 948}/archives/2026-01-j-s000001.json`,
+            'a'.repeat(64),
+            otherRunId,
+            otherCompanyId,
+            `companies/${publicCompanyBase + 949}/archives/2026-01-j-s000001.json`,
+          ],
+        );
+
+        await client.query('SET LOCAL ROLE smart_job_api');
+        await client.query(
+          'SELECT private.set_api_request_context($1::uuid, 12000, 5000, 12000)',
+          [userId],
+        );
+        const listed = await client.query(
+          `SELECT id, period_start, period_end, segment, storage_generation
+           FROM private.list_api_company_archives_v2(
+             $1, 'jobs', '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z',
+             50, NULL, NULL
+           )`,
+          [companyId],
+        );
+        assert.equal(listed.rowCount, 1);
+        assert.equal(listed.rows[0].id, runId);
+        assert.equal(listed.rows[0].segment, 1);
+
+        const exact = await client.query(
+          'SELECT id, storage_path, storage_generation FROM private.get_api_company_archive_run($1, $2)',
+          [companyId, runId],
+        );
+        assert.equal(exact.rowCount, 1);
+        assert.equal(exact.rows[0].id, runId);
+
+        await client.query('SAVEPOINT cross_tenant_archive');
+        await assert.rejects(
+          client.query(
+            'SELECT * FROM private.get_api_company_archive_run($1, $2)',
+            [otherCompanyId, otherRunId],
+          ),
+          /COMPANY_ACCESS_DENIED/,
+        );
+        await client.query('ROLLBACK TO SAVEPOINT cross_tenant_archive');
+        const directRows = await client.query(
+          'SELECT id FROM public.archive_runs WHERE company_id = $1',
+          [otherCompanyId],
+        );
+        assert.equal(directRows.rowCount, 0);
       });
     });
 

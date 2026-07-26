@@ -292,7 +292,7 @@ function parseDatabaseUrl(
     parsed.hostname.toLowerCase(),
   );
   const isLocalPlatformDatabase = allowLocalPlatformDatabase
-    && parsed.hostname === "supabase_db_smart-job-erp-local"
+    && parsed.hostname === "smart-job-supabase-db"
     && (parsed.port === "5432" || parsed.port === "");
   if (sslMode === "disable" && !isLoopback && !isLocalPlatformDatabase) {
     throw new RuntimeConfigError([
@@ -430,7 +430,7 @@ export function loadApiRuntimeConfig(
       supabaseServiceUrl,
       "SUPABASE_INTERNAL_URL",
       "/",
-      "supabase_kong_smart-job-erp-local",
+      "smart-job-supabase-gateway",
     );
     if (supabaseServiceUrl.port !== "8000") {
       throw new RuntimeConfigError([
@@ -448,7 +448,7 @@ export function loadApiRuntimeConfig(
     jwksUrl,
     "SUPABASE_JWKS_URL",
     "/auth/v1/.well-known/jwks.json",
-    verifiedLocalPlatform ? "supabase_kong_smart-job-erp-local" : undefined,
+    verifiedLocalPlatform ? "smart-job-supabase-gateway" : undefined,
   );
   if (verifiedLocalPlatform && jwksUrl.port !== "8000") {
     throw new RuntimeConfigError([

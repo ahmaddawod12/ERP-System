@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq } from 'drizzle-orm';
 import { getDb, type DatabaseOptions } from './client';
 import { getUserProfileByFirebaseUid } from './access';
@@ -42,7 +43,7 @@ async function updateUserProfile(input: UserProfileInput, options: DatabaseOptio
     const profile = await getUserProfileByFirebaseUid(input.uid, { db: tx });
     if (!profile) {
       const error = new Error('User profile not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -86,7 +87,7 @@ async function updateUserPushToken(input: PushTokenInput, options: DatabaseOptio
 
   if (!rows[0]) {
     const error = new Error('User profile not found');
-    (error as any).code = 'not-found';
+    setDatabaseErrorCode(error, 'not-found');
     throw error;
   }
 
@@ -109,7 +110,7 @@ async function clearUserPushToken(input: ClearPushTokenInput, options: DatabaseO
 
   if (!rows[0]) {
     const error = new Error('User profile not found');
-    (error as any).code = 'not-found';
+    setDatabaseErrorCode(error, 'not-found');
     throw error;
   }
 

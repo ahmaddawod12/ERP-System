@@ -16,7 +16,11 @@ import { AppButton, AppCard, AppText, AppInput, SearchInput, LoadingSpinner, Glo
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { fetchCompanyWorkers } from '../../../utils/read-model';
 import type { Worker, Client } from '../../../types';
 import { logger } from '../../../utils/logger';
@@ -126,18 +130,16 @@ export default function CreateJob() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
+  const { getCompanyId, getUid, profile } = useCacheLifecycle();
+  const { addJob } = useJobsCache();
   const {
-    getCompanyId,
-    getUid,
-    profile,
     workers: cachedWorkersList,
-    addJob,
     updateWorkers,
     clients: cachedClients,
     addClient,
     updateClient,
     fetchClients,
-  } = useCache();
+  } = useDirectoryCache();
   const themeColors = getColors(isDarkMode);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<string | null>(null);

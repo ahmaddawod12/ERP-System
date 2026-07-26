@@ -1,4 +1,5 @@
 import { DOC_TYPE, DOC_COLORS, DOC_GRADIENTS, DOC_ICONS } from '@smart-job/contracts';
+import type { DocumentPaymentMethod } from '@smart-job/api-contracts';
 
 export const DOCUMENT_CONFIGS = {
   [DOC_TYPE.TAX_INVOICE]: {
@@ -57,7 +58,10 @@ export const DOCUMENT_CONFIGS = {
   },
 } as const;
 
-export function getPaymentMethods(language: string) {
+export function getPaymentMethods(language: string): Array<{
+  readonly id: DocumentPaymentMethod;
+  readonly label: string;
+}> {
   return [
     { id: 'cash', label: language === 'en' ? 'Cash' : language === 'he' ? 'מזומן' : 'نقدي' },
     { id: 'credit', label: language === 'en' ? 'Credit Card' : language === 'he' ? 'כרטיס אשראי' : 'بطاقة ائتمان' },

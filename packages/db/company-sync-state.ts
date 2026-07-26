@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq, sql } from 'drizzle-orm';
 import { getDb, type DatabaseOptions } from './client';
 import { resolveCompanyByPublicId } from './membership';
@@ -146,7 +147,7 @@ async function initializeCompanySyncState(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -198,7 +199,7 @@ async function bumpCompanySyncState(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 

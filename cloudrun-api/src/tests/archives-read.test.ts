@@ -20,15 +20,19 @@ const secondId = "52c18673-0090-4628-8960-524047673d8c";
 const thirdId = "5cb6b24c-d028-480b-a7a2-5f50a8013ab6";
 
 function archiveRow(id: string, archiveKey: string, createdAt: string) {
+  const [year, month] = archiveKey.split("-").map(Number);
   return {
     id,
     archive_key: archiveKey,
     data_type: "jobs",
     status: "deleted",
+    period_start: new Date(Date.UTC(year!, month! - 1, 1)),
+    period_end: new Date(Date.UTC(year!, month!, 1)),
+    segment: 1,
     doc_count: 5,
     deleted_count: 5,
-    storage_path: `companies/42/archives/${archiveKey}.json`,
     checksum: "a".repeat(64),
+    storage_generation: "123456789",
     created_at: new Date(createdAt),
     completed_at: new Date(createdAt),
   };
@@ -69,8 +73,8 @@ test("archive rows normalize pg dates and paginate with the archive UUID", async
     pageSize: 2,
     cursor: first.nextCursor,
   });
-  assert.equal(calls[1]?.[3], "2026-07-02T12:00:00.000Z");
-  assert.equal(calls[1]?.[4], secondId);
+  assert.equal(calls[1]?.[5], "2026-07-02T12:00:00.000Z");
+  assert.equal(calls[1]?.[6], secondId);
 });
 
 test("archive cursors reject malformed JSON instead of leaking a SyntaxError", async () => {
@@ -86,6 +90,26 @@ test("archive cursors reject malformed JSON instead of leaking a SyntaxError", a
       && "code" in error
       && error.code === "INVALID_CURSOR",
   );
+});
+
+test("archive period filters are sent to the private RPC as UTC month bounds", async () => {
+  const calls: unknown[][] = [];
+  const transaction: DatabaseQueryable = {
+    async query<Row extends QueryResultRow>(_text: string, values?: readonly unknown[]) {
+      calls.push([...(values ?? [])]);
+      return { rowCount: 0, rows: [] as Row[] };
+    },
+  };
+
+  await readArchivesPage(transaction, {
+    internalCompanyId: companyId,
+    dataType: "documents",
+    year: 2026,
+    month: 2,
+  });
+
+  assert.equal((calls[0]?.[2] as Date).toISOString(), "2026-02-01T00:00:00.000Z");
+  assert.equal((calls[0]?.[3] as Date).toISOString(), "2026-03-01T00:00:00.000Z");
 });
 
 test("exact archive downloads use the recorded path and filter worker rows server-side", async (context) => {
@@ -119,10 +143,14 @@ test("exact archive downloads use the recorded path and filter worker rows serve
             archive_key: runId === documentRunId ? "2026-6-d" : "2026-6-j",
             data_type: runId === documentRunId ? "documents" : "jobs",
             status: "deleted",
+            period_start: new Date("2026-06-01T00:00:00.000Z"),
+            period_end: new Date("2026-07-01T00:00:00.000Z"),
+            segment: 1,
             storage_path: runId === documentRunId
               ? "companies/42/archives/2026-6-d.json"
               : objectPath,
             checksum: "a".repeat(64),
+            storage_generation: "123456789",
           }] as unknown as Row[],
         };
       }
@@ -147,9 +175,10 @@ test("exact archive downloads use the recorded path and filter worker rows serve
   };
   const readPaths: string[] = [];
   const archiveStorage: ArchiveStorage = {
-    async readArchiveJson() { return null; },
-    async readArchiveJsonByPath(companyStorageId, path) {
+    async readVerifiedArchiveJsonByPath(companyStorageId, path, generation, checksum) {
       assert.equal(companyStorageId, "42");
+      assert.equal(generation, "123456789");
+      assert.equal(checksum, "a".repeat(64));
       readPaths.push(path);
       return { items: [{ id: 1, wid: "7" }, { id: 2, wid: "8" }] };
     },

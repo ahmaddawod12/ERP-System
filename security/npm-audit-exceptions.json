@@ -3,21 +3,6 @@
   "recordedAt": "2026-07-22",
   "exceptions": [
     {
-      "workspace": "website",
-      "source": 1117015,
-      "advisory": "GHSA-qx2v-qp2m-jg93",
-      "package": "postcss",
-      "severity": "moderate",
-      "owner": "Web platform owner",
-      "reviewBy": "2026-08-21",
-      "reachability": "Next.js pins PostCSS 8.4.31 internally. The website processes repository-owned styles only and never parses or re-embeds user-supplied CSS.",
-      "compensatingControls": [
-        "Content is rendered through React and no user-controlled CSS reaches PostCSS.",
-        "The lockfile audit fails when this exception expires or Next.js stops producing the finding."
-      ],
-      "resolution": "Upgrade to the first supported Next.js 16 patch that consumes PostCSS 8.5.10 or newer."
-    },
-    {
       "workspace": "phone_app",
       "source": 1119441,
       "advisory": "GHSA-w5hq-g745-h8pq",

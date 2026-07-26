@@ -73,7 +73,11 @@ describe("service probes", () => {
     assert.match(response.headers["x-request-id"] as string, /^[0-9a-f-]{36}$/);
     assert.deepEqual(body, {
       ok: true,
-      data: { status: "ready", service: "cloudrun-tax" },
+      data: {
+        status: "ready",
+        service: "cloudrun-tax",
+        submissionMode: "disabled",
+      },
       meta: { requestId: response.headers["x-request-id"] },
     });
   });

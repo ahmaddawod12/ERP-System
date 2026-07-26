@@ -3,12 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "analyze:bundle": "node scripts/check-bundle-budget.mjs --write-baseline",
+    "check:bundle-budget": "node scripts/check-bundle-budget.mjs",
     "start": "next start",
     "lint": "eslint .",
+    "postinstall": "node scripts/patch-minimatch-brace-expansion.mjs",
     "test": "node --test --experimental-strip-types tests/*.test.mts",
+    "test:coverage": "node --test --experimental-strip-types --experimental-test-coverage --test-coverage-include=src/**/*.ts --test-coverage-include=src/**/*.tsx --test-coverage-lines=85 --test-coverage-branches=70 --test-coverage-functions=75 tests/*.test.mts",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit --pretty false"
   },
@@ -19,7 +26,7 @@
     "clsx": "^2.1.1",
     "jose": "^4.15.9",
     "lucide-react": "^0.574.0",
-    "next": "16.2.11",
+    "next": "16.2.12",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-hook-form": "^7.71.1",
@@ -31,15 +38,17 @@
     "@axe-core/playwright": "4.12.1",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "22.20.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9",
-    "eslint-config-next": "16.2.11",
+    "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
   "overrides": {
+    "brace-expansion": "5.0.8",
+    "postcss": "8.5.23",
     "sharp": "0.35.3"
   }
 }

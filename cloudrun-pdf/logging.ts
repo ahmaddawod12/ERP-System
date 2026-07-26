@@ -31,6 +31,7 @@ function writeStructuredLog(
   const payload: Record<string, unknown> = {
     severity,
     message: typeof firstArg === 'string' ? firstArg : fallbackMessage,
+    ...cloudLoggingTraceFields(),
   };
 
   const fields: Record<string, unknown> = {};
@@ -71,3 +72,4 @@ export function installStructuredLogging(serviceName: string): void {
   console.warn = (firstArg, ...restArgs) => writeStructuredLog('WARNING', `${serviceName} warning`, firstArg, restArgs);
   console.error = (firstArg, ...restArgs) => writeStructuredLog('ERROR', `${serviceName} error`, firstArg, restArgs);
 }
+import { cloudLoggingTraceFields } from '@smart-job/observability';

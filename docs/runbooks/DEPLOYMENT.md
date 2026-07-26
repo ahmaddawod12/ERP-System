@@ -18,6 +18,12 @@
    Scheduler callers, IAM allowlists, archive bucket, DNS/TLS, and service
    audiences exist for the target environment.
 6. For launch releases, explicitly verify `TAX_SUBMISSION_MODE=disabled`.
+7. For the email worker, verify static mode supplies both
+   `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. In federated mode, verify
+   the AWS role ARN, dedicated audience, immutable Google service-account
+   unique ID, and absence of both static-key mounts. Never configure
+   `AWS_SES_ENDPOINT` or `SUPABASE_PUBLIC_URL` outside the marker-verified local
+   platform.
 
 For a brand-new environment, follow the staged Terraform bootstrap in
 `infra/README.md`: foundation first, migration/smoke jobs second, migration

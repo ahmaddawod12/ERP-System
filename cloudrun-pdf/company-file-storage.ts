@@ -35,6 +35,7 @@ export type OptionalImage = {
 };
 
 export interface CompanyFileStorage {
+  checkReadiness(): Promise<void>;
   storePdfCreateOnly(objectPath: string, bytes: Buffer, metadata?: PdfMetadata): Promise<StoredPdfResult>;
   createSignedDownloadUrl(objectPath: string, expiresInSeconds: number): Promise<string>;
   removeObject(objectPath: string): Promise<void>;
@@ -175,7 +176,7 @@ function validateStorageConfiguration(options: CompanyFileStorageOptions): void 
     && ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(options.baseUrl.hostname.toLowerCase());
   const isVerifiedLocalService = options.verifiedLocalPlatform === true
     && options.baseUrl.protocol === 'http:'
-    && options.baseUrl.hostname === 'supabase_kong_smart-job-erp-local'
+    && options.baseUrl.hostname === 'smart-job-supabase-gateway'
     && options.baseUrl.port === '8000';
   if (!isHttps && !isLoopbackHttp && !isVerifiedLocalService) {
     throw new TypeError('SUPABASE_URL must use HTTPS, except for loopback local development');
@@ -265,6 +266,17 @@ export function createCompanyFileStorage(options: CompanyFileStorageOptions): Co
   };
 
   return {
+    async checkReadiness() {
+      const result = await client.storage.getBucket(bucketId);
+      if (result.error || result.data?.id !== bucketId || result.data.public) {
+        throw storageError(
+          'storage_unavailable',
+          'Private company-file storage is unavailable',
+          result.error,
+        );
+      }
+    },
+
     async storePdfCreateOnly(rawObjectPath, bytes, metadata = {}) {
       const objectPath = normalizeObjectPath(rawObjectPath);
       if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > MAX_COMPANY_FILE_BYTES) {

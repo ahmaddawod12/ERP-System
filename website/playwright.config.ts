@@ -2,6 +2,28 @@ import { defineConfig, devices } from "@playwright/test";
 
 const managedFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const websiteOrigin = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3100";
+const fullReleaseMatrix = process.env.PLAYWRIGHT_FULL_MATRIX === "true";
+
+const releaseProjects = fullReleaseMatrix
+  ? [
+      {
+        name: "firefox-desktop",
+        use: { ...devices["Desktop Firefox"] },
+      },
+      {
+        name: "webkit-desktop",
+        use: { ...devices["Desktop Safari"] },
+      },
+      {
+        name: "android",
+        use: { ...devices["Pixel 5"] },
+      },
+      {
+        name: "iphone",
+        use: { ...devices["iPhone 13"] },
+      },
+    ]
+  : [];
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -17,9 +39,14 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
+      name: "chromium-desktop",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "chromium-mobile",
+      use: { ...devices["Pixel 5"] },
+    },
+    ...releaseProjects,
   ],
   webServer: managedFixture
     ? [

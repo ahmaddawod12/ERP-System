@@ -44,6 +44,20 @@ async function applyMigration(name) {
   }
 }
 
+async function expectMigrationFailure(name, pattern) {
+  const sql = (await readFile(path.join(migrationsRoot, name), 'utf8'))
+    .replaceAll('--> statement-breakpoint', '');
+  await client.query('BEGIN');
+  try {
+    await client.query(sql);
+    await client.query('ROLLBACK');
+    assert.fail(`Migration ${name} unexpectedly accepted an unmappable archive key`);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    assert.match(String(error?.message ?? error), pattern);
+  }
+}
+
 async function schemaFingerprint() {
   const result = await client.query(`
     WITH catalog AS (
@@ -93,6 +107,56 @@ try {
   );
 
   for (const name of files.filter((file) => Number(file.slice(0, 4)) >= 26)) {
+    if (name.startsWith('0033_')) {
+      await client.query(`
+        INSERT INTO public.app_users (id, email)
+        VALUES ('archive-upgrade-user', 'archive-upgrade@example.test');
+        INSERT INTO public.companies (
+          id, public_company_id, account_type, status, created_by_user_id
+        ) VALUES (
+          '11111111-1111-4111-8111-111111111111',
+          900001,
+          'solo',
+          'active',
+          'archive-upgrade-user'
+        );
+        INSERT INTO public.archive_runs (
+          id, company_id, archive_key, data_type, status, snapshot_at, segment
+        ) VALUES
+          (
+            '22222222-2222-4222-8222-222222222222',
+            '11111111-1111-4111-8111-111111111111',
+            '2026-1-j',
+            'jobs',
+            'pending',
+            '2026-02-01T00:00:00Z',
+            1
+          ),
+          (
+            '33333333-3333-4333-8333-333333333333',
+            '11111111-1111-4111-8111-111111111111',
+            '2026-02-d-s000007',
+            'documents',
+            'pending',
+            '2026-03-01T00:00:00Z',
+            1
+          ),
+          (
+            '44444444-4444-4444-8444-444444444444',
+            '11111111-1111-4111-8111-111111111111',
+            'unknown-period-key',
+            'jobs',
+            'pending',
+            '2026-03-01T00:00:00Z',
+            1
+          )
+      `);
+      await expectMigrationFailure(name, /ARCHIVE_PERIOD_BACKFILL_UNKNOWN_KEY/);
+      await client.query(`
+        DELETE FROM public.archive_runs
+        WHERE id = '44444444-4444-4444-8444-444444444444'
+      `);
+    }
     await applyMigration(name);
   }
   const verification = await client.query(`
@@ -110,13 +174,39 @@ try {
       ) AS email_rpc_present,
       pg_catalog.has_function_privilege(
         'smart_job_api', 'private.create_api_tax_invoice(uuid,jsonb,timestamptz)', 'EXECUTE'
-      ) AS tax_rpc_present
+      ) AS tax_rpc_present,
+      pg_catalog.has_function_privilege(
+        'smart_job_api',
+        'private.list_api_company_archives_v2(uuid,character varying,timestamptz,timestamptz,integer,timestamptz,uuid)',
+        'EXECUTE'
+      ) AS archive_list_v2_present,
+      pg_catalog.has_function_privilege(
+        'smart_job_api', 'private.get_api_company_archive_run(uuid,uuid)', 'EXECUTE'
+      ) AS archive_exact_present,
+      (
+        SELECT run.period_start = '2026-01-01T00:00:00Z'::timestamptz
+          AND run.period_end = '2026-02-01T00:00:00Z'::timestamptz
+          AND run.segment = 1
+        FROM public.archive_runs AS run
+        WHERE run.id = '22222222-2222-4222-8222-222222222222'
+      ) AS legacy_archive_backfilled,
+      (
+        SELECT run.period_start = '2026-02-01T00:00:00Z'::timestamptz
+          AND run.period_end = '2026-03-01T00:00:00Z'::timestamptz
+          AND run.segment = 7
+        FROM public.archive_runs AS run
+        WHERE run.id = '33333333-3333-4333-8333-333333333333'
+      ) AS segmented_archive_backfilled
   `);
   assert.deepEqual(verification.rows[0], {
     requested_by_present: true,
     pdf_rpc_present: true,
     email_rpc_present: true,
     tax_rpc_present: true,
+    archive_list_v2_present: true,
+    archive_exact_present: true,
+    legacy_archive_backfilled: true,
+    segmented_archive_backfilled: true,
   });
   process.stdout.write('Verified no-op 0025 baseline and upgrade path from 0024 through latest migration.\n');
 } finally {

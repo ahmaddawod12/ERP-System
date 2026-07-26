@@ -64,7 +64,7 @@ function formatCentsToAmount(cents: number): string {
 function generateDocumentHTML(documentData: NormalizedDocumentData): string {
   const { 
     type, client, items, company, language = 'he', documentNumber, date, notes, logoUrl, 
-    invoiceReference, paymentMethod,
+    invoiceReference, paymentMethod, paymentDetails,
     confirmationNumber, // Tax Authority confirmation number (מספר הקצאה) for tax invoices
   } = documentData;
   
@@ -79,6 +79,11 @@ function generateDocumentHTML(documentData: NormalizedDocumentData): string {
   const isPriceProposal = numericType === DOC_TYPE.PRICE_PROPOSAL;
   const isTaxInvoice = numericType === DOC_TYPE.TAX_INVOICE;
   const isReturnCertificate = numericType === DOC_TYPE.RETURN_CERTIFICATE;
+  const paymentDetailsText = paymentDetails
+    ? 'last4' in paymentDetails
+      ? `•••• ${paymentDetails.last4} · ${paymentDetails.authorizationReference}`
+      : paymentDetails.reference
+    : '';
   const isRefund = numericType === DOC_TYPE.REFUND;
   const isReceipt = numericType === DOC_TYPE.RECEIPT;
   const isDeliveryNote = numericType === DOC_TYPE.DELIVERY_NOTE;
@@ -606,17 +611,22 @@ function generateDocumentHTML(documentData: NormalizedDocumentData): string {
       </div>
     </div>
     
-    ${isReceipt && invoiceReference ? `
+    ${isReceipt && (invoiceReference || paymentMethod) ? `
     <!-- Receipt Invoice Reference -->
     <div class="receipt-reference" style="margin: 15px 0; padding: 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;">
       <div class="info-row">
         <span class="label" style="font-weight: bold;">עבור חשבונית מספר:</span>
-        <span class="value" style="font-size: 14px; font-weight: bold;">${sanitizeInput(invoiceReference)}</span>
+        <span class="value" style="font-size: 14px; font-weight: bold;">${sanitizeInput(invoiceReference || '')}</span>
       </div>
       ${paymentMethod ? `
       <div class="info-row" style="margin-top: 8px;">
         <span class="label" style="font-weight: bold;">${t.paymentMethod}:</span>
         <span class="value">${sanitizeInput(paymentMethod)}</span>
+      </div>` : ''}
+      ${paymentDetailsText ? `
+      <div class="info-row" style="margin-top: 8px;">
+        <span class="label" style="font-weight: bold;">${t.paymentMethod}:</span>
+        <span class="value">${sanitizeInput(paymentDetailsText)}</span>
       </div>` : ''}
     </div>` : ''}
     

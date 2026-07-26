@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { borderRadius, getColors, spacing } from '../../theme';
-import { useCache } from '../../contexts/CacheContext';
+import { useCacheLifecycle } from '../../contexts/CacheContext';
 import { useSession } from '../../contexts/SessionContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import AppButton from '../primitives/AppButton';
@@ -105,7 +105,7 @@ export default function ViewJobDetails({
   onImagePress,
   isDarkMode,
 }: ViewJobDetailsProps) {
-  const { getCompanyId } = useCache();
+  const { getCompanyId } = useCacheLifecycle();
   const { user } = useSession();
   const themeContext = useThemeContext();
   const darkMode = typeof isDarkMode === 'boolean' ? isDarkMode : themeContext.isDarkMode;

@@ -7,7 +7,13 @@ import { getColors } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useDocumentHistoryCache,
+  useInventoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { GlobalHeader, LoadingOverlay } from '../../../components';
 import TaxInvoiceJobList, { type TaxInvoiceJob } from '../components/TaxInvoiceJobList';
 import TaxInvoiceFormModal from '../components/TaxInvoiceFormModal';
@@ -44,15 +50,17 @@ export default function GenerateTaxInvoice() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { 
-    getCompanyId: getCachedCompanyId, 
-    companyJobs,
+  const {
+    getCompanyId: getCachedCompanyId,
     getUserRole,
-    clients: cachedClients,
-    documents: cachedDocuments,
+  } = useCacheLifecycle();
+  const { companyJobs } = useJobsCache();
+  const { clients: cachedClients } = useDirectoryCache();
+  const { documents: cachedDocuments } = useDocumentHistoryCache();
+  const {
     inventory: cachedInventory,
     companyInventory: cachedCompanyInventory,
-  } = useCache();
+  } = useInventoryCache();
   const colors = getColors(isDarkMode);
   const cachedCompanyFinishedJobs = useMemo(
     () => (companyJobs || []).filter(job => job.status === 'finished'),

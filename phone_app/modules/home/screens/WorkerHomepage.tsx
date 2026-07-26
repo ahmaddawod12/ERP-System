@@ -241,6 +241,7 @@ export default function WorkerHomepage() {
           cards.map((card) => (
             <DashboardActionCard
               key={card.key}
+              testID={`dashboard-action-${card.key}`}
               title={card.title}
               description={card.description}
               icon={card.icon}

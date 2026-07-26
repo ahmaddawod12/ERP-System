@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import {
   getDb,
@@ -206,14 +207,14 @@ async function createCompanyInvite(input: CreateInviteInput, options: DatabaseOp
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const creatorMembership = await findActiveMembership(tx, input.createdByUserId, company.id);
     if (!creatorMembership) {
       const error = new Error('Creator is not an active company member');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
 
@@ -255,7 +256,7 @@ async function joinCompanyWithInvite(input: JoinInviteInput, options: DatabaseOp
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -277,14 +278,14 @@ async function joinCompanyWithInvite(input: JoinInviteInput, options: DatabaseOp
     const invite = inviteResult.rows?.[0] as Record<string, unknown> | undefined;
     if (!invite) {
       const error = new Error('Invalid invite code');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
     const inviteExpiresAt = invite.expires_at ? new Date(String(invite.expires_at)) : null;
     if (inviteExpiresAt && inviteExpiresAt.getTime() < now.getTime()) {
       const error = new Error('Invite code has expired');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -293,7 +294,7 @@ async function joinCompanyWithInvite(input: JoinInviteInput, options: DatabaseOp
       const existingCompanyId = String(existingMembership.public_company_id || '');
       if (existingCompanyId !== String(company.publicCompanyId)) {
         const error = new Error('User already belongs to another company');
-        (error as any).code = 'already-exists';
+        setDatabaseErrorCode(error, 'already-exists');
         throw error;
       }
 
@@ -306,13 +307,13 @@ async function joinCompanyWithInvite(input: JoinInviteInput, options: DatabaseOp
       }
 
       const error = new Error('User already belongs to this company');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
     if (String(invite.status || 'active') !== 'active') {
       const error = new Error('Invite code is not active');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -320,14 +321,14 @@ async function joinCompanyWithInvite(input: JoinInviteInput, options: DatabaseOp
     const inputEmail = String(input.email || '').trim().toLowerCase();
     if (invitedEmail && invitedEmail !== inputEmail) {
       const error = new Error('Invite is restricted to a different email');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
 
     const candidateRole = String(invite.target_role || input.requestedRole || 'worker').trim().toLowerCase();
     if (!['manager', 'worker', 'user', 'basic'].includes(candidateRole)) {
       const error = new Error('Invite target role is invalid');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
     const resolvedRole = candidateRole as MembershipRole;
@@ -385,7 +386,7 @@ async function createManagedWorkerMembership(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -394,7 +395,7 @@ async function createManagedWorkerMembership(
     const existingMembership = await findActiveMembership(tx, input.uid, company.id);
     if (existingMembership) {
       const error = new Error('User already belongs to this company');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
@@ -442,7 +443,7 @@ async function updateManagedWorkerMembership(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -462,7 +463,7 @@ async function updateManagedWorkerMembership(
     const membership = membershipRows[0] || null;
     if (!membership) {
       const error = new Error('Worker membership not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -504,7 +505,7 @@ async function deleteManagedWorkerMembership(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -523,7 +524,7 @@ async function deleteManagedWorkerMembership(
     const membership = membershipRows[0] || null;
     if (!membership) {
       const error = new Error('Worker membership not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 

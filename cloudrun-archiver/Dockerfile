@@ -5,12 +5,15 @@ WORKDIR /workspace
 
 COPY packages/contracts ./packages/contracts
 COPY packages/db ./packages/db
+COPY packages/observability ./packages/observability
 COPY cloudrun-archiver ./cloudrun-archiver
 
 RUN npm --prefix packages/contracts ci
 RUN npm --prefix packages/contracts run build
 RUN npm --prefix packages/db ci
 RUN npm --prefix packages/db run build
+RUN npm --prefix packages/observability ci
+RUN npm --prefix packages/observability run build
 RUN npm --prefix cloudrun-archiver ci
 RUN npm --prefix cloudrun-archiver run build
 
@@ -21,10 +24,12 @@ WORKDIR /workspace
 
 COPY --from=build /workspace/packages/contracts ./packages/contracts
 COPY --from=build /workspace/packages/db ./packages/db
+COPY --from=build /workspace/packages/observability ./packages/observability
 COPY --from=build /workspace/cloudrun-archiver/package*.json ./cloudrun-archiver/
 
 RUN npm --prefix packages/contracts prune --omit=dev \
  && npm --prefix packages/db prune --omit=dev \
+ && npm --prefix packages/observability prune --omit=dev \
  && npm --prefix cloudrun-archiver ci --omit=dev \
  && npm cache clean --force
 
@@ -49,4 +54,4 @@ COPY --from=build /workspace/cloudrun-archiver/dist ./dist
 
 USER node
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "--import", "@smart-job/observability/register", "dist/index.js"]

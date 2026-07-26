@@ -27,8 +27,8 @@ test('archive reads resolve and download an exact database archive run', () => {
   assert.match(archiveApi, /ArchiveListPageSchema/);
   assert.match(archiveApi, /ArchiveRunDownloadSchema/);
   assert.match(archiveApi, /archiveRunId[\s\S]*\/download/);
-  assert.match(archiveHook, /findArchiveRun/);
-  assert.match(archiveHook, /downloadArchiveRun/);
+  assert.match(archiveHook, /loadArchivePeriod/);
+  assert.match(archiveApi, /fetchArchivePeriodRuns/);
   assert.doesNotMatch(archiveHook, /archives\/content/);
   assert.doesNotMatch(archiveHook, /filterJobsByMembership/);
 });

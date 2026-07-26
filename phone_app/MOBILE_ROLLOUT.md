@@ -19,8 +19,12 @@ compatibility and a previously healthy native build, not a legacy data path.
 2. Produce fresh Android and iOS binaries. NotifyKit, Messaging, Crashlytics,
    SecureStore, SQLCipher/SQLite, and other native dependencies cannot be added
    or changed by an Expo OTA update.
-3. Inject `.env.example` values through the EAS environment and inject
-   `google-services.json` / `GoogleService-Info.plist` through build secrets.
+3. Inject `.env.example` values through the matching EAS environment and set
+   `GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICE_INFO_PLIST` as EAS file-secret
+   variables containing `google-services.json` / `GoogleService-Info.plist`.
+   Confirm Firebase API keys are restricted to the exact Android package plus
+   signing certificate or iOS bundle identifier, and rotate any unrestricted
+   key before approving the build.
    Confirm the API origin is stable HTTPS and matches the release environment.
 4. Confirm the API and worker image digests, database migrations, Supabase
    Storage, FCM/APNs, Crashlytics, Pub/Sub, email, archive, and tax-disabled

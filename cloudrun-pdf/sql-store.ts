@@ -43,6 +43,22 @@ export async function runSharedSqlQuery<Row extends QueryResultRow = QueryResult
   return activePool.query<Row>(queryText, values);
 }
 
+export async function checkSharedSqlReadiness(): Promise<void> {
+  const result = await runSharedSqlQuery<{ ready: boolean }>(
+    `SELECT
+      current_user = 'smart_job_pdf'
+      AND has_function_privilege(
+        current_user,
+        'private.claim_document_task(uuid,uuid,integer)',
+        'EXECUTE'
+      ) AS ready`,
+    [],
+  );
+  if (result?.rows[0]?.ready !== true) {
+    throw new Error('PDF database privileges are unavailable');
+  }
+}
+
 function isLoopback(hostname: string): boolean {
   return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname.toLowerCase());
 }
@@ -83,7 +99,7 @@ export function resolveSqlPoolConfig(
     throw new Error('DATABASE_SSL_MODE must be disable or require');
   }
   const isLocalPlatformDatabase = verifiedLocalPlatform
-    && databaseUrl.hostname === 'supabase_db_smart-job-erp-local'
+    && databaseUrl.hostname === 'smart-job-supabase-db'
     && (databaseUrl.port === '5432' || databaseUrl.port === '');
   if (sslMode === 'disable' && !isLoopback(databaseUrl.hostname) && !isLocalPlatformDatabase) {
     throw new Error('DATABASE_SSL_MODE=disable is allowed only for a loopback database');

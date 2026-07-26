@@ -98,7 +98,7 @@ function parseSupabaseOrigin(rawValue: string, verifiedLocalPlatform = false): s
   }
   const localService = verifiedLocalPlatform
     && parsed.protocol === 'http:'
-    && parsed.hostname === 'supabase_kong_smart-job-erp-local'
+    && parsed.hostname === 'smart-job-supabase-gateway'
     && parsed.port === '8000';
   if (
     parsed.protocol !== 'https:'

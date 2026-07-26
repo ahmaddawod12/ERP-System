@@ -19,9 +19,10 @@ must be recovered separately.
 
 ## Routine controls
 
-1. Enable a PITR retention window that meets the approved RPO and verify backup
-   health daily. Keep a periodic encrypted logical export in a separate failure
-   domain when policy requires it.
+1. Enable managed Supabase PITR with a window that meets the approved RPO and
+   verify it daily. The `cloudrun-backup` image supplements PITR with a daily
+   PostgreSQL 17 custom-format export and a resumable 15-minute inventory of
+   every version in the private Supabase Storage bucket.
 2. Enable retention/versioning policies appropriate to the private file and
    archive buckets. Alert on unauthorized deletion and retention-policy changes.
 3. Record custom database role definitions separately. Restored managed backups
@@ -29,6 +30,37 @@ must be recovered separately.
 4. Run a quarterly isolated restore drill. Capture start/end time, selected
    recovery point, row/object counts, migration fingerprint, workflow state,
    application smoke tests, measured RPO/RTO, and cleanup approval.
+
+The Storage job writes changed source versions create-only under
+`storage/objects/`, immutable per-run inventories under `storage/manifests/`,
+and immutable sequence checkpoints under
+`state/storage-inventory-checkpoints/`. Delete markers are recorded but never
+propagated to recovery objects. Logical exports and their manifests live under
+`database/exports/` and `database/manifests/`. Every manifest records the raw
+SHA-256 and exact GCS generation.
+
+The backup bucket uses a customer-managed encryption key. Leave
+`lock_backup_retention=false` until a successful restore drill is recorded;
+Terraform rejects a lock unless `backup_restore_drill_verified=true`.
+
+## Restore verifier
+
+Build the image/package, select an immutable manifest object, and verify every
+referenced generation and checksum:
+
+```powershell
+$env:BACKUP_BUCKET = "approved-backup-bucket"
+$env:BACKUP_MANIFEST_OBJECT = "storage/manifests/2026-07-26/run-id.json"
+npm --prefix cloudrun-backup run build
+npm --prefix cloudrun-backup run restore:verify
+```
+
+For a database restore, also set `RESTORE_TARGET_DATABASE_URL` to an isolated
+database whose name contains `restore`, `recovery`, `drill`, or `test`, and set
+`RESTORE_TARGET_ISOLATED=true`. Remote targets additionally require a
+non-production `RESTORE_TARGET_PROJECT_ID`. The verifier uses the exact
+recorded generation, validates size and SHA-256 first, and refuses a
+production-like target.
 
 ## Incident restore
 

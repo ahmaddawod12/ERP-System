@@ -14,9 +14,7 @@ test('mobile native Firebase modules are isolated from Supabase auth', () => {
   const packageJson = JSON.parse(readProjectFile('package.json')) as {
     dependencies?: Record<string, string>;
   };
-  const appJson = JSON.parse(readProjectFile('app.json')) as {
-    expo?: { plugins?: unknown[] };
-  };
+  const appConfig = readProjectFile('app.config.ts');
 
   assert.match(authTransport, /supabase-client/);
   assert.doesNotMatch(authTransport, /@react-native-firebase/);
@@ -24,7 +22,7 @@ test('mobile native Firebase modules are isolated from Supabase auth', () => {
   assert.match(crashlytics, /@react-native-firebase\/crashlytics/);
   assert.equal(packageJson.dependencies?.['@react-native-firebase/storage'], undefined);
   assert.equal(typeof packageJson.dependencies?.['@react-native-firebase/crashlytics'], 'string');
-  assert.equal(appJson.expo?.plugins?.includes('@react-native-firebase/crashlytics'), true);
+  assert.match(appConfig, /"@react-native-firebase\/crashlytics"/);
   assert.equal(fs.existsSync(path.resolve(process.cwd(), 'firebase.ts')), false);
 });
 

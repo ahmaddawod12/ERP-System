@@ -2,6 +2,9 @@
   "name": "@smart-job/db",
   "version": "0.1.0",
   "description": "Shared Postgres schema and access helpers for Smart-Job ERP",
+  "engines": {
+    "node": "22.x"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -36,7 +39,7 @@
     "pg": "^8.16.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "22.20.1",
     "@types/pg": "^8.16.0",
     "drizzle-kit": "^0.31.4",
     "typescript": "^5.9.2"

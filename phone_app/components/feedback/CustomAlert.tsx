@@ -226,6 +226,7 @@ export default function CustomAlert({
               {resolvedButtons.map((button, index) => (
                 <AppButton
                   key={`${button.text || 'btn'}-${index}`}
+                  testID={`alert-button-${index}`}
                   title={button.text || 'OK'}
                   variant={resolveVariant(button.style)}
                   size="sm"

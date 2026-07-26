@@ -3,16 +3,21 @@ import { loadConfig } from "./config.js";
 import { EmailDeliveryStore } from "./database.js";
 import { createPubSubAuthorizer } from "./pubsub-auth.js";
 import { SesDocumentSender } from "./ses.js";
-import { createDocumentDownloadUrl } from "./storage.js";
+import { checkStorageConfiguration, createDocumentDownloadUrl } from "./storage.js";
 
 const config = loadConfig();
 const store = new EmailDeliveryStore(config.database);
+const sender = new SesDocumentSender(config.ses);
 const app = buildApp({
   config,
   store,
   authorize: createPubSubAuthorizer(config.pubsub),
   signDownload: (objectPath) => createDocumentDownloadUrl(config.storage, objectPath),
-  sender: new SesDocumentSender(config.ses),
+  sender,
+  checkReadiness: async () => {
+    checkStorageConfiguration(config.storage);
+    await Promise.all([store.checkReadiness(), sender.checkReadiness()]);
+  },
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

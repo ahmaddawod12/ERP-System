@@ -59,6 +59,16 @@ locals {
       ])
       documentation = "Inspect the leased archive run and immutable object metadata. Resume from the recorded lease/checksum state instead of starting an overlapping export."
     }
+    backup_failures = {
+      display_name  = "Recovery backup failures or RPO breaches"
+      resource_type = "cloud_run_job"
+      filter = join(" AND ", [
+        "resource.type=\"cloud_run_job\"",
+        "(resource.labels.job_name=\"${lookup(var.job_names, "backup-storage", "")}\" OR resource.labels.job_name=\"${lookup(var.job_names, "backup-database", "")}\")",
+        "(jsonPayload.backupFailure=true OR jsonPayload.backupRpoBreached=true)",
+      ])
+      documentation = "Inspect the immutable backup manifest and checkpoint. Resume the Storage inventory or logical export; do not delete existing recovery objects or weaken checksum verification."
+    }
     database_pool_saturation = {
       display_name  = "API database pool saturation"
       resource_type = "cloud_run_revision"
@@ -489,6 +499,31 @@ resource "google_monitoring_dashboard" "platform" {
                 timeSeriesQuery = {
                   timeSeriesFilter = {
                     filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.operational_failure[key].name}\" AND resource.type=\"cloud_run_revision\""
+                    aggregation = {
+                      alignmentPeriod  = "300s"
+                      perSeriesAligner = "ALIGN_SUM"
+                    }
+                  }
+                }
+              }]
+              yAxis = { label = "events/5m", scale = "LINEAR" }
+            }
+          }
+        },
+        {
+          xPos   = 0
+          yPos   = 12
+          width  = 6
+          height = 4
+          widget = {
+            title = "Backup failures and RPO breaches"
+            xyChart = {
+              dataSets = [{
+                plotType   = "LINE"
+                targetAxis = "Y1"
+                timeSeriesQuery = {
+                  timeSeriesFilter = {
+                    filter = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.operational_failure["backup_failures"].name}\" AND resource.type=\"cloud_run_job\""
                     aggregation = {
                       alignmentPeriod  = "300s"
                       perSeriesAligner = "ALIGN_SUM"

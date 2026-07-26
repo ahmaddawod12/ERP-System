@@ -232,6 +232,27 @@
       "when": 1784652875072,
       "tag": "0032_batch5_readiness_search",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1785062498269,
+      "tag": "0033_archive_period_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785064533671,
+      "tag": "0034_receipt_payment_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1785068291000,
+      "tag": "0035_backup_runtime_role",
+      "breakpoints": true
     }
   ]
 }

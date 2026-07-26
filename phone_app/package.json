@@ -2,6 +2,9 @@
   "name": "cooling-inventory-mobile",
   "version": "1.0.0",
   "main": "expo-router/entry",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -9,6 +12,7 @@
     "web": "expo start --web",
     "doctor": "expo-doctor",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types tests/*.test.mts",
+    "test:coverage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-strip-types --experimental-test-coverage --test-coverage-include=modules/**/*.ts --test-coverage-include=contexts/**/*.ts --test-coverage-include=lib/**/*.ts --test-coverage-lines=90 --test-coverage-branches=68 --test-coverage-functions=90 tests/*.test.mts",
     "typecheck": "tsc --noEmit --pretty false"
   },
   "dependencies": {
@@ -27,7 +31,7 @@
     "expo-camera": "~57.0.3",
     "expo-constants": "~57.0.3",
     "expo-crypto": "~57.0.1",
-    "expo-dev-client": "~57.0.8",
+    "expo-dev-client": "~57.0.9",
     "expo-device": "~57.0.1",
     "expo-file-system": "~57.0.0",
     "expo-font": "~57.0.0",
@@ -42,7 +46,7 @@
     "expo-splash-screen": "~57.0.5",
     "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
-    "expo-updates": "~57.0.9",
+    "expo-updates": "~57.0.10",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
@@ -61,14 +65,15 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",
-    "@types/node": "^22.20.1",
+    "@types/node": "22.20.1",
     "@types/react": "~19.2.10",
     "babel-preset-expo": "~57.0.0",
     "expo-doctor": "1.20.0",
     "typescript": "~6.0.3"
   },
   "overrides": {
-    "postcss": "^8.5.10"
+    "brace-expansion": "5.0.8",
+    "postcss": "8.5.23"
   },
   "private": true
 }

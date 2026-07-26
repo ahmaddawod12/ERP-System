@@ -18,9 +18,15 @@ const envSchema = z.object({
   SUPABASE_STORAGE_BUCKET: z.literal("smart-job-company-files").default("smart-job-company-files"),
   SIGNED_DOWNLOAD_TTL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
   AWS_REGION: z.string().trim().regex(/^eu-[a-z]+-\d+$/),
+  AWS_SES_CREDENTIAL_MODE: z.enum(["static", "federated"]).default("static"),
   AWS_SES_ENDPOINT: z.string().trim().url().optional(),
   AWS_ACCESS_KEY_ID: z.string().trim().min(3).max(128).optional(),
   AWS_SECRET_ACCESS_KEY: z.string().trim().min(16).max(256).optional(),
+  AWS_SES_ROLE_ARN: z.string().trim()
+    .regex(/^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9+=,.@_/-]{1,512}$/)
+    .optional(),
+  AWS_SES_OIDC_AUDIENCE: z.string().trim().min(8).max(256).optional(),
+  AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID: z.string().trim().regex(/^[0-9]{10,32}$/).optional(),
   SES_FROM_EMAIL: z.string().trim().email().max(320),
   SES_FROM_NAME: z.string().trim().min(1).max(100).default("Smart-Job"),
   EMAIL_SEND_LEASE_SECONDS: z.coerce.number().int().min(10).max(300).default(60),
@@ -67,9 +73,13 @@ export function loadConfig(
     SUPABASE_STORAGE_BUCKET: environment.SUPABASE_STORAGE_BUCKET,
     SIGNED_DOWNLOAD_TTL_SECONDS: environment.SIGNED_DOWNLOAD_TTL_SECONDS,
     AWS_REGION: environment.AWS_REGION,
+    AWS_SES_CREDENTIAL_MODE: environment.AWS_SES_CREDENTIAL_MODE,
     AWS_SES_ENDPOINT: environment.AWS_SES_ENDPOINT,
     AWS_ACCESS_KEY_ID: environment.AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY: environment.AWS_SECRET_ACCESS_KEY,
+    AWS_SES_ROLE_ARN: environment.AWS_SES_ROLE_ARN,
+    AWS_SES_OIDC_AUDIENCE: environment.AWS_SES_OIDC_AUDIENCE,
+    AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID: environment.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID,
     SES_FROM_EMAIL: environment.SES_FROM_EMAIL,
     SES_FROM_NAME: environment.SES_FROM_NAME,
     EMAIL_SEND_LEASE_SECONDS: environment.EMAIL_SEND_LEASE_SECONDS,
@@ -97,7 +107,7 @@ export function loadConfig(
     throw new TypeError("Production DATABASE_URL must authenticate as smart_job_email");
   }
   const isLocalPlatformDatabase = verifiedLocalPlatform
-    && databaseUrl.hostname === "supabase_db_smart-job-erp-local"
+    && databaseUrl.hostname === "smart-job-supabase-db"
     && (databaseUrl.port === "5432" || databaseUrl.port === "");
   if (parsed.DATABASE_SSL_MODE === "disable" && !isLoopbackDatabase && !isLocalPlatformDatabase) {
     throw new TypeError("DATABASE_SSL_MODE=disable is allowed only for a loopback database");
@@ -106,7 +116,7 @@ export function loadConfig(
   const supabaseUrl = safeServiceUrl(
     parsed.SUPABASE_URL,
     "SUPABASE_URL",
-    verifiedLocalPlatform ? "supabase_kong_smart-job-erp-local" : undefined,
+    verifiedLocalPlatform ? "smart-job-supabase-gateway" : undefined,
   );
   if (!supabaseUrl) throw new TypeError("SUPABASE_URL is required");
   if (verifiedLocalPlatform && supabaseUrl.port !== "8000") {
@@ -137,13 +147,42 @@ export function loadConfig(
     verifiedLocalPlatform ? "local-platform-adapter" : undefined,
     "/ses",
   );
+  const hasAccessKeyId = parsed.AWS_ACCESS_KEY_ID !== undefined;
+  const hasSecretAccessKey = parsed.AWS_SECRET_ACCESS_KEY !== undefined;
+  if (hasAccessKeyId !== hasSecretAccessKey) {
+    throw new TypeError(
+      "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be configured together",
+    );
+  }
+  const hasCompleteFederation = parsed.AWS_SES_ROLE_ARN !== undefined
+    && parsed.AWS_SES_OIDC_AUDIENCE !== undefined
+    && parsed.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID !== undefined;
+  if (parsed.AWS_SES_CREDENTIAL_MODE === "federated") {
+    if (!hasCompleteFederation) {
+      throw new TypeError(
+        "Federated SES requires AWS_SES_ROLE_ARN, AWS_SES_OIDC_AUDIENCE, and AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID",
+      );
+    }
+    if (hasAccessKeyId || hasSecretAccessKey) {
+      throw new TypeError("Static AWS credentials are forbidden in federated SES mode");
+    }
+    if (verifiedLocalPlatform) {
+      throw new TypeError("The verified local platform must use static fake SES credentials");
+    }
+  } else if (
+    parsed.AWS_SES_ROLE_ARN !== undefined
+    || parsed.AWS_SES_OIDC_AUDIENCE !== undefined
+    || parsed.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID !== undefined
+  ) {
+    throw new TypeError("Federation settings require AWS_SES_CREDENTIAL_MODE=federated");
+  }
   if (verifiedLocalPlatform) {
     if (
       publicSupabaseUrl === undefined
       || sesEndpoint === undefined
       || sesEndpoint.port !== "8090"
-      || parsed.AWS_ACCESS_KEY_ID === undefined
-      || parsed.AWS_SECRET_ACCESS_KEY === undefined
+      || !hasAccessKeyId
+      || !hasSecretAccessKey
     ) {
       throw new TypeError(
         "Local email requires public Supabase, SES adapter, and local AWS credential settings",
@@ -152,10 +191,8 @@ export function loadConfig(
   } else if (
     parsed.SUPABASE_PUBLIC_URL !== undefined
     || parsed.AWS_SES_ENDPOINT !== undefined
-    || parsed.AWS_ACCESS_KEY_ID !== undefined
-    || parsed.AWS_SECRET_ACCESS_KEY !== undefined
   ) {
-    throw new TypeError("Local email provider settings are forbidden outside the local platform");
+    throw new TypeError("Email provider emulator settings are forbidden outside the local platform");
   }
 
   return {
@@ -183,6 +220,16 @@ export function loadConfig(
       region: parsed.AWS_REGION,
       fromEmail: parsed.SES_FROM_EMAIL,
       fromName: parsed.SES_FROM_NAME,
+      credentialMode: parsed.AWS_SES_CREDENTIAL_MODE,
+      ...(parsed.AWS_SES_CREDENTIAL_MODE === "federated"
+        ? {
+            federation: {
+              roleArn: parsed.AWS_SES_ROLE_ARN!,
+              audience: parsed.AWS_SES_OIDC_AUDIENCE!,
+              subject: parsed.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID!,
+            },
+          }
+        : {}),
       ...(sesEndpoint === undefined
         ? {}
         : {

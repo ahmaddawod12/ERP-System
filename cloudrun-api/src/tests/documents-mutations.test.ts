@@ -222,3 +222,17 @@ test("document migration owns totals, counters, versions, and dispatch leases", 
   assert.match(migration, /GRANT EXECUTE ON FUNCTION private\.create_api_document_generation_task[\s\S]*TO smart_job_api/);
   assert.doesNotMatch(migration, /GRANT (?:INSERT|UPDATE|DELETE) ON public\.(?:documents|document_tasks) TO smart_job_api/i);
 });
+
+test("database rejects unsafe receipt payment payloads before insertion", () => {
+  const migration = readFileSync(
+    new URL("../../../packages/db/migrations/0034_receipt_payment_metadata.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /documents_payment_metadata_guard/);
+  assert.match(migration, /PAYMENT_METADATA_PAN_FORBIDDEN/);
+  assert.match(migration, /PAYMENT_METADATA_CASH_DETAILS_FORBIDDEN/);
+  assert.match(migration, /key\.name NOT IN \('last4', 'authorizationReference'\)/);
+  assert.match(migration, /key\.name <> 'reference'/);
+  assert.match(migration, /NEW\.payload \? 'paymentInfo'/);
+  assert.doesNotMatch(migration, /RAISE NOTICE|payload\s*[:=]/i);
+});

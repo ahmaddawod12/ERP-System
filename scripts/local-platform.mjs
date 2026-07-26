@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { assertSupportedNodeVersion } from "./node-version.mjs";
+
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const composeFile = join(repositoryRoot, "compose.local.yml");
 const runtimeEnvFile = join(repositoryRoot, "local-platform", ".env.generated");
@@ -12,6 +14,10 @@ const supabaseConfig = join(repositoryRoot, "supabase", "config.toml");
 const localNetwork = "smart-job-local";
 const projectId = "smart-job-erp-local";
 const expectedMarker = "smart-job-erp-local-platform-v1";
+const supabaseNetworkAliases = Object.freeze({
+  database: "smart-job-supabase-db",
+  gateway: "smart-job-supabase-gateway",
+});
 
 function fail(message) {
   process.stderr.write(`Local platform: ${message}\n`);
@@ -76,6 +82,11 @@ function requireDockerDaemon() {
 }
 
 function requireTooling() {
+  try {
+    assertSupportedNodeVersion();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "Node 22.x is required");
+  }
   run("node", ["--version"], { capture: true });
   run("npm", ["--version"], { capture: true });
   run("supabase", ["--version"], { capture: true });
@@ -108,28 +119,76 @@ function ensureNetwork() {
 function startSupabase() {
   process.stdout.write("Starting the repository-owned Supabase CLI stack...\n");
   run("supabase", ["start", "--network-id", localNetwork], { capture: true });
-  for (const container of [
-    `supabase_db_${projectId}`,
-    `supabase_kong_${projectId}`,
-  ]) {
-    const attached = run("docker", [
-      "inspect",
-      container,
-      "--format",
-      `{{with index .NetworkSettings.Networks \"${localNetwork}\"}}{{.NetworkID}}{{end}}`,
-    ], { capture: true });
-    if (!String(attached.stdout || "").trim()) {
-      run("docker", ["network", "connect", localNetwork, container], { capture: true });
-      const verified = run("docker", [
+  ensureSupabaseNetworkAlias("5432/tcp", supabaseNetworkAliases.database);
+  ensureSupabaseNetworkAlias("8000/tcp", supabaseNetworkAliases.gateway);
+}
+
+function resolveSupabaseContainer(exposedPort) {
+  const candidates = run("docker", [
+    "ps",
+    "--filter",
+    `network=${localNetwork}`,
+    "--format",
+    "{{.ID}}",
+  ], { capture: true });
+  const matches = String(candidates.stdout || "")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .filter((containerId) => {
+      const inspected = run("docker", [
         "inspect",
-        container,
+        containerId,
         "--format",
-        `{{with index .NetworkSettings.Networks \"${localNetwork}\"}}{{.NetworkID}}{{end}}`,
+        "{{json .}}",
       ], { capture: true });
-      if (!String(verified.stdout || "").trim()) {
-        fail(`${container} is not attached to ${localNetwork}`);
+      try {
+        const metadata = JSON.parse(String(inspected.stdout || "").trim());
+        const config = metadata.Config || {};
+        const labels = config.Labels || {};
+        const belongsToProject =
+          Object.values(labels).some((value) => String(value) === projectId)
+          || String(metadata.Name || "").includes(projectId);
+        return belongsToProject && Object.hasOwn(config.ExposedPorts || {}, exposedPort);
+      } catch {
+        fail(`Docker returned invalid metadata for local container ${containerId}`);
       }
-    }
+    });
+  if (matches.length !== 1) {
+    fail(`expected one ${projectId} container exposing ${exposedPort}, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+function ensureSupabaseNetworkAlias(exposedPort, alias) {
+  const containerId = resolveSupabaseContainer(exposedPort);
+  const inspected = run("docker", [
+    "inspect",
+    containerId,
+    "--format",
+    `{{json (index .NetworkSettings.Networks "${localNetwork}").Aliases}}`,
+  ], { capture: true });
+  let aliases;
+  try {
+    aliases = JSON.parse(String(inspected.stdout || "").trim());
+  } catch {
+    fail(`Docker returned invalid ${localNetwork} aliases for ${containerId}`);
+  }
+  if (Array.isArray(aliases) && aliases.includes(alias)) return;
+
+  // Supabase may attach the container before this script can assign a stable
+  // repository-owned alias. Reattach only this validated project container.
+  run("docker", ["network", "disconnect", localNetwork, containerId], { capture: true });
+  run("docker", ["network", "connect", "--alias", alias, localNetwork, containerId], { capture: true });
+  const verified = run("docker", [
+    "inspect",
+    containerId,
+    "--format",
+    `{{json (index .NetworkSettings.Networks "${localNetwork}").Aliases}}`,
+  ], { capture: true });
+  const verifiedAliases = JSON.parse(String(verified.stdout || "").trim());
+  if (!Array.isArray(verifiedAliases) || !verifiedAliases.includes(alias)) {
+    fail(`${containerId} does not expose the required ${localNetwork} alias ${alias}`);
   }
 }
 

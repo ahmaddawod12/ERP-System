@@ -217,6 +217,7 @@ export default function PendingWork() {
                   <View style={styles.actions}>
                     <AppButton
                       title="Retry"
+                      testID={`pending-work-retry-${operation.id}`}
                       size="sm"
                       loading={busy}
                       disabled={syncing || Boolean(activeOperationId)}
@@ -226,6 +227,7 @@ export default function PendingWork() {
                     />
                     <AppButton
                       title="Discard"
+                      testID={`pending-work-discard-${operation.id}`}
                       size="sm"
                       variant="destructive"
                       disabled={syncing || Boolean(activeOperationId)}

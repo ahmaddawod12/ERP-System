@@ -5,6 +5,8 @@ module "runtime" {
   environment               = local.environment
   name_prefix               = local.name_prefix
   enable_runtime            = var.enable_runtime
+  enable_otel               = true
+  email_ses_federation      = var.email_ses_federation
   enable_release_jobs       = var.enable_release_jobs
   primary_region            = var.primary_region
   tax_region                = var.tax_region
@@ -15,6 +17,7 @@ module "runtime" {
   secret_ids                = module.foundation.secret_ids
   secret_versions           = var.secret_versions
   archive_bucket_name       = module.foundation.archive_bucket_name
+  backup_bucket_name        = module.foundation.backup_bucket_name
   image_digests             = var.image_digests
   image_registry_prefix     = module.foundation.artifact_registry_prefix
   website_origin            = "https://${var.website_hostname}"

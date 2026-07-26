@@ -1,0 +1,30 @@
+/** Domain export surface. Definitions remain dependency-ordered in _definitions.ts. */
+export {
+  RoleSchema,
+  AccountTypeSchema,
+  RegistrationModeSchema,
+  TierSchema,
+  SubscriptionStatusSchema,
+  JobStatusSchema,
+  JobCreateStatusSchema,
+  JobUpdateStatusSchema,
+  DocTypeSchema,
+  RequestIdSchema,
+  CursorSchema,
+  EntityVersionSchema,
+  ApiErrorSchema,
+  ApiSuccessMetaSchema,
+  ApiErrorMetaSchema,
+  createApiSuccessResponseSchema,
+  ApiFailureResponseSchema,
+  createApiResponseSchema,
+  CursorPageSchema,
+  createCursorPageSchema,
+} from './_definitions.js';
+export type {
+  Cursor,
+  EntityVersion,
+  ApiError,
+  ApiResponse,
+  CursorPage,
+} from './_definitions.js';

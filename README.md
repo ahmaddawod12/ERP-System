@@ -32,9 +32,11 @@ no root npm workspace.
 | `cloudrun-pdf/` | Leased PDF preview/generation worker |
 | `cloudrun-email/` | Durable SES document-email worker |
 | `cloudrun-archiver/` | Leased monthly archive Cloud Run Job |
+| `cloudrun-backup/` | Resumable Storage-version and PostgreSQL 17 recovery backup job |
 | `packages/contracts/` | Shared canonical enums and constants |
 | `packages/api-contracts/` | Shared Zod HTTP contracts |
 | `packages/db/` | Drizzle schema, migrations, SQL access, and profiling |
+| `packages/observability/` | Redacted OpenTelemetry bootstrap and trace helpers |
 
 ## Local platform
 
@@ -67,6 +69,10 @@ npm --prefix packages/api-contracts install
 npm --prefix packages/api-contracts run build
 npm --prefix packages/db install
 npm --prefix packages/db run build
+npm --prefix packages/observability install
+npm --prefix packages/observability run build
+npm --prefix cloudrun-backup install
+npm --prefix cloudrun-backup test
 ```
 
 Install each remaining package independently with `npm --prefix <path> install`.
@@ -74,10 +80,15 @@ Apply Drizzle migrations before starting API or worker processes.
 
 ## Verification and release integrity
 
-CI runs every package test/typecheck/build, website lint/build, Expo Doctor,
+CI runs blocking package coverage floors, typecheck/build, website lint/build
+and per-route gzip budgets, Expo Doctor,
 database migration/integration tests, Supabase lint, Playwright, Maestro Cloud,
 CodeQL, secret scanning, the npm audit policy, validation/security scanning for
 all three Terraform roots, SBOM generation, and blocking container scans.
+Pull requests exercise Chromium desktop and mobile profiles. The nightly and
+release workflow adds Firefox, WebKit, Android-sized and iPhone-sized profiles,
+a disposable mobile mutation/offline/restart/reconciliation journey, and a
+newer Supabase CLI against a separately named compatibility stack.
 
 Repository guards:
 

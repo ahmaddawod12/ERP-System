@@ -17,6 +17,9 @@ module "foundation" {
   backup_bucket_name               = var.backup_bucket_name
   archive_retention_days           = var.archive_retention_days
   backup_retention_days            = var.backup_retention_days
+  lock_backup_retention            = var.lock_backup_retention
+  backup_restore_drill_verified    = var.backup_restore_drill_verified
+  enable_static_ses_credentials    = !var.email_ses_federation.enabled
   github_repository                = "ahmaddawod12/ERP-System"
   github_repository_owner_id       = var.github_repository_owner_id
   github_deploy_workflow_ref       = var.github_deploy_workflow_ref

@@ -219,6 +219,8 @@ export function mapDocumentDetail(detail: DocumentDetail): DocumentHistoryRecord
   return {
     ...mapDocumentSummary(detail),
     taxSubmissionStatus: detail.taxSubmissionStatus,
+    paymentMethod: detail.paymentMethod ?? undefined,
+    paymentDetails: detail.paymentDetails ?? undefined,
   };
 }
 

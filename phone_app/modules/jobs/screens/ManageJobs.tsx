@@ -20,7 +20,11 @@ import {
   spacing,
 } from '../../../theme';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import {
@@ -108,12 +112,14 @@ const JobCard = memo(function JobCard({
           <View style={styles.waitingActions}>
             <AppButton
               title={t.accept}
+              testID={`manage-job-accept-${job.id}`}
               iconLeft={{ name: 'checkmark-circle-outline' }}
               onPress={() => onAccept(job)}
               style={styles.actionButton}
             />
             <AppButton
               title={t.deny}
+              testID={`manage-job-deny-${job.id}`}
               variant="destructive"
               iconLeft={{ name: 'close-circle-outline' }}
               onPress={() => onDeny(job)}
@@ -253,14 +259,9 @@ export default function ManageJobs() {
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
   const insets = useSafeAreaInsets();
-  const {
-    companyJobs,
-    workers,
-    getCompanyId,
-    getUid,
-    acceptJob,
-    updateJob,
-  } = useCache();
+  const { getCompanyId, getUid } = useCacheLifecycle();
+  const { companyJobs, acceptJob, updateJob } = useJobsCache();
+  const { workers } = useDirectoryCache();
 
   const cachedPendingJobs = useMemo(
     () => (companyJobs || []).filter(j => String(j.status) === 'pending' || String(j.status) === 'waiting'),

@@ -16,7 +16,11 @@ import { AppText, SearchInput, LoadingSpinner, GlobalHeader, ViewJobDetails } fr
 import { useScrollHandler } from '../../../contexts/HeaderContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { fetchCompanyWorkers, fetchUserInventoryParts } from '../../../utils/read-model';
 import { ROUTES } from '../../../navigation/routes';
 import type { Job, Worker, InventoryPart } from '../../../types';
@@ -190,12 +194,9 @@ export default function WorkersMonitor() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const { scrollProps } = useScrollHandler();
-  const {
-    getCompanyId,
-    workers: cachedWorkersList,
-    companyJobs,
-    updateWorkers,
-  } = useCache();
+  const { getCompanyId } = useCacheLifecycle();
+  const { workers: cachedWorkersList, updateWorkers } = useDirectoryCache();
+  const { companyJobs } = useJobsCache();
   const cachedPendingJobs = useMemo(
     () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
     [companyJobs]

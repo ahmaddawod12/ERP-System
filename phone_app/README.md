@@ -172,8 +172,10 @@ npm run doctor
 
 ## Native Requirements
 
-- `google-services.json`
-- `GoogleService-Info.plist`
+- EAS file-secret variable `GOOGLE_SERVICES_JSON` containing
+  `google-services.json`
+- EAS file-secret variable `GOOGLE_SERVICE_INFO_PLIST` containing
+  `GoogleService-Info.plist`
 - APNs / Firebase Cloud Messaging project configuration if push notifications are enabled for the environment
 - `react-native-notify-kit` is a native, New-Architecture-only dependency.
   Expo Go is not supported; validate notifications in an EAS development or
@@ -188,9 +190,14 @@ npm run doctor
 ## Build
 
 ```bash
-eas build --platform android
-eas build --platform ios
+eas build --profile development --platform android
+eas build --profile preview --platform ios
+eas build --profile production --platform all
 ```
+
+The `development`, `preview`, and `production` build profiles bind to matching
+EAS environments. For local prebuilds, place both ignored native files in
+`phone_app/`; EAS builds fail before prebuild when either file secret is absent.
 
 Production promotion and native rollback gates are defined in
 [`MOBILE_ROLLOUT.md`](./MOBILE_ROLLOUT.md).

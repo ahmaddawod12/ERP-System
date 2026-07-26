@@ -5,7 +5,7 @@ import {
   Noto_Sans_Hebrew,
   Noto_Sans_Arabic,
 } from "next/font/google";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { AppProviders } from "@/components/providers/app-providers";
 import { locales, rtlLocales, type Locale } from "@/lib/i18n/translations";
 import type { Theme } from "@/components/providers/theme-provider";
@@ -91,6 +91,8 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const cookieStore = await cookies();
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get("x-nonce") ?? undefined;
   const initialLocale = resolveLocale(cookieStore.get("sj_locale")?.value);
   const initialTheme = resolveTheme(cookieStore.get("sj_theme")?.value);
   const isRtl = rtlLocales.includes(initialLocale);
@@ -104,7 +106,11 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: preferenceBootstrapScript }} />
+        <script
+          nonce={nonce}
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{ __html: preferenceBootstrapScript }}
+        />
       </head>
       <body
         className={`${sans.variable} ${mono.variable} ${hebrew.variable} ${arabic.variable} min-h-screen bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100`}

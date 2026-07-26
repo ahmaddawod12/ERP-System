@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { sql } from 'drizzle-orm';
 import { getDb, type DatabaseOptions } from './client';
 import { documentTasks } from './schema';
@@ -84,7 +85,7 @@ function isActiveTaskConstraintError(error: unknown): boolean {
 function createActiveTaskConflictError(input: DocumentTaskLockInput): Error {
   const taskLabel = String(input?.taskType || 'document').trim() || 'document';
   const error = new Error(`Another ${taskLabel} task is already in progress for this document type. Please wait a few seconds and try again.`);
-  (error as any).code = 'failed-precondition';
+  setDatabaseErrorCode(error, 'failed-precondition');
   return error;
 }
 
@@ -130,7 +131,7 @@ async function createDocumentTask(
       const company = await resolveCompanyByPublicId(tx, input.companyId);
       if (!company) {
         const error = new Error('Company not found');
-        (error as any).code = 'not-found';
+        setDatabaseErrorCode(error, 'not-found');
         throw error;
       }
 

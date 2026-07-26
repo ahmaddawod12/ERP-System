@@ -8,6 +8,7 @@ locals {
   required_services = toset([
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "cloudkms.googleapis.com",
     "cloudscheduler.googleapis.com",
     "cloudtrace.googleapis.com",
     "clouderrorreporting.googleapis.com",
@@ -24,6 +25,7 @@ locals {
     "serviceusage.googleapis.com",
     "sts.googleapis.com",
     "storage.googleapis.com",
+    "telemetry.googleapis.com",
   ])
 
   service_account_ids = toset([
@@ -34,33 +36,38 @@ locals {
     "pdf",
     "email",
     "archiver",
+    "backup",
     "migrator",
     "scheduler",
     "smoke",
     "pubsub-push",
   ])
 
-  secret_ids = {
-    api_database_url            = "${var.name_prefix}-api-database-url"
-    archiver_database_url       = "${var.name_prefix}-archiver-database-url"
-    aws_access_key_id           = "${var.name_prefix}-aws-access-key-id"
-    aws_secret_access_key       = "${var.name_prefix}-aws-secret-access-key"
-    contact_challenge_secret    = "${var.name_prefix}-contact-challenge-secret"
-    email_database_url          = "${var.name_prefix}-email-database-url"
-    migrator_database_url       = "${var.name_prefix}-migrator-database-url"
-    pdf_database_url            = "${var.name_prefix}-pdf-database-url"
-    ses_from_email              = "${var.name_prefix}-ses-from-email"
-    supabase_publishable_key    = "${var.name_prefix}-supabase-publishable-key"
-    supabase_secret_key         = "${var.name_prefix}-supabase-secret-key"
-    supabase_url                = "${var.name_prefix}-supabase-url"
-    tax_authority_approval_url  = "${var.name_prefix}-tax-authority-approval-url"
-    tax_authority_client_id     = "${var.name_prefix}-tax-authority-client-id"
-    tax_authority_client_secret = "${var.name_prefix}-tax-authority-client-secret"
-    tax_authority_token_url     = "${var.name_prefix}-tax-authority-token-url"
-    tax_callback_hmac_secret    = "${var.name_prefix}-tax-callback-hmac-secret"
-    web_session_encryption_key  = "${var.name_prefix}-web-session-encryption-key"
-    website_session_secret      = "${var.name_prefix}-website-session-secret"
-  }
+  secret_ids = merge({
+    api_database_url              = "${var.name_prefix}-api-database-url"
+    archiver_database_url         = "${var.name_prefix}-archiver-database-url"
+    backup_database_url           = "${var.name_prefix}-backup-database-url"
+    contact_challenge_secret      = "${var.name_prefix}-contact-challenge-secret"
+    email_database_url            = "${var.name_prefix}-email-database-url"
+    migrator_database_url         = "${var.name_prefix}-migrator-database-url"
+    pdf_database_url              = "${var.name_prefix}-pdf-database-url"
+    ses_from_email                = "${var.name_prefix}-ses-from-email"
+    supabase_publishable_key      = "${var.name_prefix}-supabase-publishable-key"
+    supabase_s3_access_key_id     = "${var.name_prefix}-supabase-s3-access-key-id"
+    supabase_s3_secret_access_key = "${var.name_prefix}-supabase-s3-secret-access-key"
+    supabase_secret_key           = "${var.name_prefix}-supabase-secret-key"
+    supabase_url                  = "${var.name_prefix}-supabase-url"
+    tax_authority_approval_url    = "${var.name_prefix}-tax-authority-approval-url"
+    tax_authority_client_id       = "${var.name_prefix}-tax-authority-client-id"
+    tax_authority_client_secret   = "${var.name_prefix}-tax-authority-client-secret"
+    tax_authority_token_url       = "${var.name_prefix}-tax-authority-token-url"
+    tax_callback_hmac_secret      = "${var.name_prefix}-tax-callback-hmac-secret"
+    web_session_encryption_key    = "${var.name_prefix}-web-session-encryption-key"
+    website_session_secret        = "${var.name_prefix}-website-session-secret"
+    }, var.enable_static_ses_credentials ? {
+    aws_access_key_id     = "${var.name_prefix}-aws-access-key-id"
+    aws_secret_access_key = "${var.name_prefix}-aws-secret-access-key"
+  } : {})
 
   secret_accessors = {
     website = toset([
@@ -81,17 +88,24 @@ locals {
       "supabase_secret_key",
       "supabase_url",
     ])
-    email = toset([
-      "aws_access_key_id",
-      "aws_secret_access_key",
+    email = setunion(toset([
       "email_database_url",
       "ses_from_email",
       "supabase_secret_key",
       "supabase_url",
-    ])
+      ]), var.enable_static_ses_credentials ? toset([
+      "aws_access_key_id",
+      "aws_secret_access_key",
+    ]) : toset([]))
     archiver = toset([
       "archiver_database_url",
       "supabase_secret_key",
+      "supabase_url",
+    ])
+    backup = toset([
+      "backup_database_url",
+      "supabase_s3_access_key_id",
+      "supabase_s3_secret_access_key",
       "supabase_url",
     ])
     migrator = toset(["migrator_database_url"])
@@ -115,6 +129,7 @@ locals {
     "pdf",
     "email",
     "archiver",
+    "backup",
     "migrator",
     "smoke",
   ])
@@ -320,12 +335,49 @@ resource "google_storage_bucket" "backup" {
     enabled = true
   }
 
-  retention_policy {
-    retention_period = var.backup_retention_days * 86400
-    is_locked        = false
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.backup.id
   }
 
+  retention_policy {
+    retention_period = var.backup_retention_days * 86400
+    is_locked        = var.lock_backup_retention
+  }
+
+  depends_on = [
+    google_kms_crypto_key_iam_member.storage_backup,
+    google_project_service.required,
+  ]
+}
+
+resource "google_kms_key_ring" "backup" {
+  project  = var.project_id
+  name     = "${var.name_prefix}-backup"
+  location = var.primary_region
+
   depends_on = [google_project_service.required]
+}
+
+resource "google_kms_crypto_key" "backup" {
+  name            = "${var.name_prefix}-backup"
+  key_ring        = google_kms_key_ring.backup.id
+  rotation_period = "7776000s"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+data "google_storage_project_service_account" "current" {
+  project = var.project_id
+
+  depends_on = [google_project_service.required["storage.googleapis.com"]]
+}
+
+resource "google_kms_crypto_key_iam_member" "storage_backup" {
+  crypto_key_id = google_kms_crypto_key.backup.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${data.google_storage_project_service_account.current.email_address}"
 }
 
 resource "google_storage_bucket_iam_member" "archiver_object_create" {
@@ -346,6 +398,18 @@ resource "google_storage_bucket_iam_member" "api_archive_reads" {
   member = "serviceAccount:${google_service_account.platform["api"].email}"
 }
 
+resource "google_storage_bucket_iam_member" "backup_object_create" {
+  bucket = google_storage_bucket.backup.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.platform["backup"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "backup_object_verify" {
+  bucket = google_storage_bucket.backup.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.platform["backup"].email}"
+}
+
 resource "google_project_iam_member" "runtime_log_writer" {
   for_each = local.telemetry_service_accounts
 
@@ -362,19 +426,19 @@ resource "google_project_iam_member" "runtime_metric_writer" {
   member  = "serviceAccount:${google_service_account.platform[each.value].email}"
 }
 
-resource "google_project_iam_member" "runtime_trace_agent" {
+resource "google_project_iam_member" "runtime_trace_writer" {
   for_each = local.telemetry_service_accounts
 
   project = var.project_id
-  role    = "roles/cloudtrace.agent"
+  role    = "roles/telemetry.tracesWriter"
   member  = "serviceAccount:${google_service_account.platform[each.value].email}"
 }
 
-resource "google_project_iam_member" "runtime_error_writer" {
+resource "google_project_iam_member" "runtime_service_usage_consumer" {
   for_each = local.telemetry_service_accounts
 
   project = var.project_id
-  role    = "roles/errorreporting.writer"
+  role    = "roles/serviceusage.serviceUsageConsumer"
   member  = "serviceAccount:${google_service_account.platform[each.value].email}"
 }
 

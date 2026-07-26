@@ -14,7 +14,12 @@ import { TimePicker, PhotoPicker, SignaturePad, GlobalHeader, ScrollableContaine
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDirectoryCache,
+  useInventoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { useOutbox } from '../../../contexts/OutboxContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -55,7 +60,15 @@ export default function FillJob() {
     refresh: refreshOutbox,
   } = useOutbox();
   const insets = useSafeAreaInsets();
-  const { getCompanyId, profile, addJob, inventory: cachedInventory, clients: cachedClients, addClient, updateClient, fetchClients } = useCache();
+  const { getCompanyId, profile } = useCacheLifecycle();
+  const { addJob } = useJobsCache();
+  const { inventory: cachedInventory } = useInventoryCache();
+  const {
+    clients: cachedClients,
+    addClient,
+    updateClient,
+    fetchClients,
+  } = useDirectoryCache();
   const colors = getColors(isDarkMode);
 
   // Determine if we're in user mode or worker mode

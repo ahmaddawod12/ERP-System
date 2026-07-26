@@ -7,7 +7,7 @@ import Login from '../auth/screens/Login';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useLanguageContext } from '../../contexts/LanguageContext';
-import { useCache } from '../../contexts/CacheContext';
+import { useCacheLifecycle } from '../../contexts/CacheContext';
 import { useAlert } from '../../contexts/AlertContext';
 import { useTenant } from '../../contexts/TenantContext';
 import { AppText } from '../../components';
@@ -26,7 +26,7 @@ export default function App() {
   const [authInitialized, setAuthInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const { language } = useLanguageContext();
-  const { initializeCache } = useCache();
+  const { initializeCache } = useCacheLifecycle();
   const { workspace } = useTenant();
   const workspaceCompanyId = workspace?.companyId ?? null;
   const workspaceRole = workspace?.role ?? null;

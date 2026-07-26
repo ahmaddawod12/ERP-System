@@ -331,7 +331,7 @@ export default function Workerjob() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View testID="worker-jobs-screen" style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
 
       {/* Offline Banner */}
@@ -395,6 +395,7 @@ export default function Workerjob() {
           jobs.map((job) => (
             <TouchableOpacity
               key={job.id}
+              testID={`worker-job-${job.id}`}
               style={[styles.jobCard, { backgroundColor: colors.surface }]}
               onPress={() => setSelectedJobDetails(job)}
               activeOpacity={0.7}
@@ -416,6 +417,7 @@ export default function Workerjob() {
                 <View style={styles.actionIcons}>
                   {canCompleteJob(job) && (
                     <TouchableOpacity
+                      testID={`worker-job-complete-${job.id}`}
                       style={[styles.iconButton, styles.receiveIconButton]}
                       onPress={(e) => { e.stopPropagation(); handleFillDetails(job); }}
                       activeOpacity={0.7}

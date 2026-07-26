@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import { useCache } from '../../contexts/CacheContext';
+import { useCacheLifecycle } from '../../contexts/CacheContext';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { getColors } from '../../theme';
 import { isSubscriptionActive, isModuleEnabled, hasRoleAccess } from './index';
@@ -31,7 +31,7 @@ export function withGate<P extends Record<string, any>>(
   const { module: moduleName, roles, roleModules } = options;
 
   return function GatedScreenWrapper(props: P) {
-    const { profile, subscription, isLoading } = useCache();
+    const { profile, subscription, isLoading } = useCacheLifecycle();
     const { isDarkMode } = useThemeContext();
     const colors = getColors(isDarkMode);
 

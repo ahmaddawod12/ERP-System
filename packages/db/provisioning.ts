@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq, sql } from 'drizzle-orm';
 import {
   getDb,
@@ -96,7 +97,7 @@ async function createWorkspaceRegistration(
 
     if (existingMembership) {
       const error = new Error('User is already registered with a company');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 

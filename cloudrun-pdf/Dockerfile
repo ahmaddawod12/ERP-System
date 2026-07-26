@@ -12,12 +12,15 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 COPY --from=node22-runtime /usr/local/bin/node /usr/local/bin/node
 COPY packages/contracts ./packages/contracts
 COPY packages/api-contracts ./packages/api-contracts
+COPY packages/observability ./packages/observability
 COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
 RUN npm --prefix packages/contracts ci
 RUN npm --prefix packages/contracts run build
 RUN npm --prefix packages/api-contracts ci
 RUN npm --prefix packages/api-contracts run build
+RUN npm --prefix packages/observability ci
+RUN npm --prefix packages/observability run build
 RUN npm --prefix cloudrun-pdf ci
 
 COPY cloudrun-pdf ./cloudrun-pdf
@@ -35,10 +38,12 @@ COPY --from=node22-runtime /usr/local/bin/node /usr/local/bin/node
 # Copy the built contract packages so the file: symlinks stay valid.
 COPY --from=build /workspace/packages/contracts ./packages/contracts
 COPY --from=build /workspace/packages/api-contracts ./packages/api-contracts
+COPY --from=build /workspace/packages/observability ./packages/observability
 COPY cloudrun-pdf/package*.json ./cloudrun-pdf/
 
 RUN npm --prefix packages/contracts prune --omit=dev \
  && npm --prefix packages/api-contracts prune --omit=dev \
+ && npm --prefix packages/observability prune --omit=dev \
  && npm --prefix cloudrun-pdf ci --omit=dev
 
 # Stage 3: Production image
@@ -80,10 +85,10 @@ ENV PORT=8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:8080/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://localhost:8080/healthz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"
 
 # Run as non-root user (puppeteer image already has pptruser)
 USER pptruser
 
 # Start the server
-CMD ["node", "dist/index.js"]
+CMD ["node", "--import", "@smart-job/observability/register", "dist/index.js"]

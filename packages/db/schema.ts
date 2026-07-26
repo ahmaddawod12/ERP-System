@@ -771,6 +771,8 @@ const archiveRuns = pgTable('archive_runs', {
   archiveKey: varchar('archive_key', { length: 64 }).notNull(),
   dataType: varchar('data_type', { length: 32 }).notNull(),
   status: archiveStatusEnum('status').notNull().default('pending'),
+  periodStart: timestamp('period_start', { withTimezone: true }).notNull(),
+  periodEnd: timestamp('period_end', { withTimezone: true }).notNull(),
   snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull(),
   segment: integer('segment').notNull().default(1),
   docCount: integer('doc_count').notNull().default(0),
@@ -786,9 +788,46 @@ const archiveRuns = pgTable('archive_runs', {
   completedAt: timestamp('completed_at', { withTimezone: true }),
 }, (table) => ({
   companyArchiveTypeUnique: uniqueIndex('archive_runs_company_archive_type_unique').on(table.companyId, table.archiveKey, table.dataType),
+  companyTypePeriodSegmentUnique: uniqueIndex('archive_runs_company_type_period_segment_unique')
+    .on(table.companyId, table.dataType, table.periodStart, table.segment),
+  companyTypePeriodCursorIdx: index('archive_runs_company_type_period_cursor_idx')
+    .on(table.companyId, table.dataType, table.periodStart, table.createdAt, table.id),
   companyTypeSnapshotIdx: index('archive_runs_company_type_snapshot_idx')
     .on(table.companyId, table.dataType, table.snapshotAt, table.segment),
   segmentPositive: check('archive_runs_segment_positive_check', sql`${table.segment} > 0`),
+  periodValid: check(
+    'archive_runs_period_check',
+    sql`${table.periodStart} = (
+        pg_catalog.date_trunc('month', ${table.periodStart} AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+      )
+      AND ${table.periodEnd} = ${table.periodStart} + INTERVAL '1 month'`,
+  ),
+  keyPeriodValid: check(
+    'archive_runs_key_period_check',
+    sql`CASE
+      WHEN ${table.archiveKey} ~ '^[0-9]{4}-(0?[1-9]|1[0-2])-[jd]$' THEN
+        pg_catalog.split_part(${table.archiveKey}, '-', 1)::INTEGER
+          = pg_catalog.extract(YEAR FROM ${table.periodStart} AT TIME ZONE 'UTC')::INTEGER
+        AND pg_catalog.split_part(${table.archiveKey}, '-', 2)::INTEGER
+          = pg_catalog.extract(MONTH FROM ${table.periodStart} AT TIME ZONE 'UTC')::INTEGER
+        AND (
+          (${table.dataType} = 'jobs' AND ${table.archiveKey} ~ '-j$')
+          OR (${table.dataType} = 'documents' AND ${table.archiveKey} ~ '-d$')
+        )
+        AND ${table.segment} = 1
+      WHEN ${table.archiveKey} ~ '^[0-9]{4}-(0[1-9]|1[0-2])-[jd]-s[0-9]{6}$' THEN
+        pg_catalog.split_part(${table.archiveKey}, '-', 1)::INTEGER
+          = pg_catalog.extract(YEAR FROM ${table.periodStart} AT TIME ZONE 'UTC')::INTEGER
+        AND pg_catalog.split_part(${table.archiveKey}, '-', 2)::INTEGER
+          = pg_catalog.extract(MONTH FROM ${table.periodStart} AT TIME ZONE 'UTC')::INTEGER
+        AND (
+          (${table.dataType} = 'jobs' AND ${table.archiveKey} ~ '-j-s[0-9]{6}$')
+          OR (${table.dataType} = 'documents' AND ${table.archiveKey} ~ '-d-s[0-9]{6}$')
+        )
+        AND pg_catalog.split_part(${table.archiveKey}, '-s', 2)::INTEGER = ${table.segment}
+      ELSE false
+    END`,
+  ),
   countsValid: check(
     'archive_runs_counts_check',
     sql`${table.docCount} >= 0 AND ${table.deletedCount} >= 0 AND ${table.deleteCursor} >= 0

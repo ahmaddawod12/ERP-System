@@ -87,7 +87,7 @@ test('storage configuration requires a server-only secret key and canonical priv
 });
 
 test('marker-gated local storage uses internal transport and public loopback signed URLs', async () => {
-  const internalBaseUrl = new URL('http://supabase_kong_smart-job-erp-local:8000/');
+  const internalBaseUrl = new URL('http://smart-job-supabase-gateway:8000/');
   const publicBaseUrl = new URL('http://127.0.0.1:55321/');
   const config = resolveCompanyFileStorageConfig({
     SMART_JOB_DEPLOYMENT_ENV: 'local',

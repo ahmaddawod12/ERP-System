@@ -21,7 +21,7 @@ import type { SupportConversationSummary, SupportMessage } from '@smart-job/api-
 
 import { AppInput, AppText, GlobalHeader } from '../../../components';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { useCacheLifecycle } from '../../../contexts/CacheContext';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
@@ -118,7 +118,7 @@ export default function DevInbox() {
   const { isDarkMode } = useThemeContext();
   const { user, status: sessionStatus, signOut: signOutSession } = useSession();
   const { workspace, status: tenantStatus } = useTenant();
-  const { clearCache } = useCache();
+  const { clearCache } = useCacheLifecycle();
   const alert = useAlert();
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;

@@ -26,7 +26,7 @@ import { getColors, gradients, spacing } from '../../../theme';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import { useDocumentHistoryCache } from '../../../contexts/CacheContext';
 import { useSession } from '../../../contexts/SessionContext';
 import { useTenant } from '../../../contexts/TenantContext';
 import { AppInput, AppText, GlobalHeader } from '../../../components';
@@ -38,6 +38,7 @@ import {
 import { randomUUID } from 'expo-crypto';
 import { logger } from '../../../utils/logger';
 import AccessibleModal from '../../../components/feedback/AccessibleModal';
+import { HistoricalResultsNotice } from '../../../components/domain/HistoricalResultsNotice';
 import ClientFormModalContent from '../components/ClientFormModalContent';
 import {
   clientFormDataFromSummary,
@@ -72,7 +73,7 @@ export default function ClientBook() {
   const colors = getColors(isDarkMode);
   const { user } = useSession();
   const { workspace, status: tenantStatus } = useTenant();
-  const { getDataForMonth } = useCache();
+  const { getDataForMonth } = useDocumentHistoryCache();
   const { createMutation, updateMutation, removeMutation } = useClientMutations({
     uid: user?.id ?? null,
     companyId: workspace?.companyId ?? null,
@@ -93,6 +94,7 @@ export default function ClientBook() {
   const [dataViewType, setDataViewType] = useState<ClientHistoryView>('finishedJobs');
   const [dataItems, setDataItems] = useState<ClientHistoryEntry[]>([]);
   const [dataLoading, setDataLoading] = useState(false);
+  const [dataComplete, setDataComplete] = useState(true);
   const [selectedMonth, setSelectedMonth] = useState(new Date());
 
   const isRTL = language === 'he' || language === 'ar';
@@ -161,12 +163,13 @@ export default function ClientBook() {
     if (!client) return;
     setDataLoading(true);
     try {
-      const allData = await getDataForMonth(monthDate, type);
-
-      setDataItems(buildClientHistoryEntries(allData ?? [], client, type));
+      const result = await getDataForMonth(monthDate, type);
+      setDataItems(buildClientHistoryEntries(result.items, client, type));
+      setDataComplete(result.complete);
     } catch (error) {
       logger.error('Error fetching client data', error);
       setDataItems([]);
+      setDataComplete(false);
     } finally {
       setDataLoading(false);
     }
@@ -177,6 +180,7 @@ export default function ClientBook() {
     setDataViewType(type);
     setSelectedMonth(new Date());
     setDataItems([]);
+    setDataComplete(true);
     setShowOptionsModal(false);
     setShowDataModal(true);
     // Fetch data for current month
@@ -617,6 +621,7 @@ export default function ClientBook() {
           </View>
 
           {/* Data List */}
+          <HistoricalResultsNotice complete={dataComplete} />
           {dataLoading ? (
             <View style={styles.dataLoadingContainer}>
               <ActivityIndicator size="large" color={dataViewType === 'finishedJobs' ? '#10B981' : '#3B82F6'} />

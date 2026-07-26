@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import {
   getDb,
@@ -614,7 +615,7 @@ async function createJob(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -636,7 +637,7 @@ async function createJob(
     const createdByMembership = await findActiveMembership(tx, input.createdByUserId, company.id);
     if (!createdByMembership) {
       const error = new Error('Creator is not an active company member');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
 
@@ -645,12 +646,12 @@ async function createJob(
     const clientRow = input.cid ? await getClientByNo(tx, company.id, input.cid) : null;
     if (input.wid && !assignedMembership) {
       const error = new Error('Assigned worker not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
     if (input.cid && !clientRow) {
       const error = new Error('Client not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -747,14 +748,14 @@ async function updateJob(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const jobRow = await getJobRowByNo(tx, company.id, input.jobId);
     if (!jobRow) {
       const error = new Error('Job not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -770,7 +771,7 @@ async function updateJob(
     if (Object.prototype.hasOwnProperty.call(input, 'status') && input.status) {
       if (!isValidStatusTransition(jobRow.status, input.status)) {
         const error = new Error(`Invalid status transition from ${jobRow.status || 'pending'} to ${input.status}`);
-        (error as any).code = 'failed-precondition';
+        setDatabaseErrorCode(error, 'failed-precondition');
         throw error;
       }
       updateData.status = input.status;
@@ -781,7 +782,7 @@ async function updateJob(
       const clientRow = input.cid ? await getClientByNo(tx, company.id, input.cid) : null;
       if (input.cid && !clientRow) {
         const error = new Error('Client not found');
-        (error as any).code = 'not-found';
+        setDatabaseErrorCode(error, 'not-found');
         throw error;
       }
       updateData.clientId = clientRow?.id || null;
@@ -795,7 +796,7 @@ async function updateJob(
       const assignedMembership = input.wid ? await getMembershipByMemberNo(tx, company.id, input.wid) : null;
       if (input.wid && !assignedMembership) {
         const error = new Error('Assigned worker not found');
-        (error as any).code = 'not-found';
+        setDatabaseErrorCode(error, 'not-found');
         throw error;
       }
       updateData.assignedMembershipId = assignedMembership?.membershipId || null;
@@ -848,19 +849,19 @@ async function deleteJob(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const jobRow = await getJobRowByNo(tx, company.id, input.jobId);
     if (!jobRow) {
       const error = new Error('Job not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
     if (jobRow.isCert === true) {
       const error = new Error('Cannot delete a job that has a generated document (isCert=true)');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -893,19 +894,19 @@ async function acceptJob(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const jobRow = await getJobRowByNo(tx, company.id, input.jobId);
     if (!jobRow) {
       const error = new Error('Job not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
     if (jobRow.status && !['pending', 'waiting'].includes(jobRow.status)) {
       const error = new Error(`Cannot accept job with status "${jobRow.status}". Expected: pending, waiting`);
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 

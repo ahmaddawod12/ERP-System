@@ -7,12 +7,15 @@ function readRepoFile(...segments: string[]) {
   return fs.readFileSync(path.resolve(process.cwd(), '..', ...segments), 'utf8');
 }
 
-test('large mobile reads use bounded Cloud API cursor windows', () => {
-  const source = readRepoFile('phone_app', 'utils', 'read-model.ts');
+test('historical mobile reads paginate to completion and expose partial state', () => {
+  const source = readRepoFile('phone_app', 'hooks', 'useArchiveQuery.ts');
+  const archiveApi = readRepoFile('phone_app', 'lib', 'api', 'archives.ts');
 
-  assert.match(source, /fetchCursorWindow/);
-  assert.match(source, /MAX_CURSOR_WINDOW_PAGES = 5/);
-  assert.match(source, /MAX_CURSOR_WINDOW_ITEMS = 1_000/);
+  assert.match(source, /HistoricalQueryResult/);
+  assert.match(source, /complete:\s*false/);
+  assert.match(source, /do \{[\s\S]*afterCursor[\s\S]*\} while \(afterCursor\)/);
+  assert.match(archiveApi, /do \{[\s\S]*afterCursor[\s\S]*\} while \(afterCursor\)/);
+  assert.doesNotMatch(source, /ARCHIVE_READ_LIMIT|1_000/);
 });
 
 test('mobile initial cache does not bootstrap broad job/document collections', () => {
@@ -62,6 +65,9 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
     '0030_post_tax_metadata_sync.sql',
     '0031_batch5_archive_hardening.sql',
     '0032_batch5_readiness_search.sql',
+    '0033_archive_period_authority.sql',
+    '0034_receipt_payment_metadata.sql',
+    '0035_backup_runtime_role.sql',
   ]);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);

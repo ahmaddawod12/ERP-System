@@ -285,6 +285,7 @@ test("document detail returns authoritative tax and email workflow state", async
         tax_authority_status: "submitted",
         generation_status: "pending",
         storage_path: null,
+        payload: {},
         email_delivery_status: "queued",
         tax_submission_status: "submitted",
       }],
@@ -304,6 +305,8 @@ test("document detail returns authoritative tax and email workflow state", async
   assert.equal(response.json().data.taxSubmissionStatus, "submitted");
   assert.equal(response.json().data.emailDeliveryStatus, "queued");
   assert.equal(response.json().data.hasFile, false);
+  assert.equal(response.json().data.paymentMethod, null);
+  assert.equal(response.json().data.paymentDetails, null);
 });
 
 test("document cursors are canonical and malformed values fail closed", () => {

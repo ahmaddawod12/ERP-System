@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, eq } from 'drizzle-orm';
 import {
   getDb,
@@ -129,7 +130,7 @@ async function createClient(input: CreateClientInput, options: DatabaseOptions =
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -189,14 +190,14 @@ async function updateClient(input: UpdateClientInput, options: DatabaseOptions =
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const clientNo = Number(input.clientId);
     if (!Number.isInteger(clientNo) || clientNo < 1) {
       const error = new Error('Client not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -211,7 +212,7 @@ async function updateClient(input: UpdateClientInput, options: DatabaseOptions =
     const existing = existingRows[0] || null;
     if (!existing) {
       const error = new Error('Client not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -236,14 +237,14 @@ async function deleteClient(input: DeleteClientInput, options: DatabaseOptions =
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const clientNo = Number(input.clientId);
     if (!Number.isInteger(clientNo) || clientNo < 1) {
       const error = new Error('Client not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -258,7 +259,7 @@ async function deleteClient(input: DeleteClientInput, options: DatabaseOptions =
     const existing = existingRows[0] || null;
     if (!existing) {
       const error = new Error('Client not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -268,7 +269,7 @@ async function deleteClient(input: DeleteClientInput, options: DatabaseOptions =
     ]);
     if ((jobReference && jobReference.length > 0) || (documentReference && documentReference.length > 0)) {
       const error = new Error('Client is referenced by jobs or documents and cannot be deleted');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 

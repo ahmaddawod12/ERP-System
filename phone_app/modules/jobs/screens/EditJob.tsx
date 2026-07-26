@@ -17,7 +17,10 @@ import { AppText, AppInput, GlobalHeader, ScrollableContainer } from '../../../c
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
 import { useAlert } from '../../../contexts/AlertContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { safeJsonParse } from '../../../utils/helpers';
 import type { Job } from '../../../types';
 import { logger } from '../../../utils/logger';
@@ -28,7 +31,8 @@ export default function EditJob() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const alert = useAlert();
-  const { getCompanyId, getUid, updateJob } = useCache();
+  const { getCompanyId, getUid } = useCacheLifecycle();
+  const { updateJob } = useJobsCache();
   const colors = getColors(isDarkMode);
 
   const job = safeJsonParse(params.job) as Job | null;

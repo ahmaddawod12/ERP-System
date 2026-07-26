@@ -2,6 +2,11 @@
  * POST /generate - Pub/Sub push endpoint for generate tasks
  */
 import type { Express, RequestHandler } from 'express';
+import {
+  withExtractedTraceContext,
+  withTaskSpan,
+} from '@smart-job/observability';
+import { logPoisonMessage } from './pubsub-envelope';
 
 type DocumentDispatchMessage = { readonly taskId: string };
 
@@ -17,7 +22,8 @@ export function registerGenerateRoute(app: Express, deps: {
   app.post('/generate', deps.verifyPubSubRequest, async (req, res) => {
   try {
     if (!req.body || !req.body.message || !req.body.message.data) {
-      return res.status(200).send('Invalid Pub/Sub message format — not retryable');
+      logPoisonMessage(req, 'generate');
+      return res.status(400).json({ error: 'invalid_pubsub_message' });
     }
 
     let messageData;
@@ -27,11 +33,20 @@ export function registerGenerateRoute(app: Express, deps: {
         Buffer.from(req.body.message.data, 'base64').toString(),
       ));
     } catch (parseError) {
-      return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
+      logPoisonMessage(req, 'generate');
+      return res.status(400).json({ error: 'invalid_pubsub_message' });
     }
     
+    const traceAttributes = req.body.message.attributes
+      && typeof req.body.message.attributes === 'object'
+      ? req.body.message.attributes as Record<string, string>
+      : {};
     console.log('Received generate task:', messageData.taskId);
-    await deps.processGenerateTask(messageData);
+    await withExtractedTraceContext(traceAttributes, () => withTaskSpan(
+      'pdf.generate',
+      { 'app.operation': 'pdf.generate' },
+      () => deps.processGenerateTask(messageData),
+    ));
     res.status(200).send('OK');
     
   } catch (error) {

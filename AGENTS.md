@@ -241,18 +241,20 @@ Smart-Job ERP — multi-tenant field-service platform.
 | `cloudrun-pdf/` | PDF generation service | Node 22 |
 | `cloudrun-email/` | Durable SES document-email worker | Node 22 |
 | `cloudrun-archiver/` | Monthly archive batch job | Node 22 |
+| `cloudrun-backup/` | Automated recovery backup/restore verifier | Node 22 |
 | `cloudrun-migrations/` | Dedicated migration and internal smoke image | Node 22 / Cloud Run Jobs |
 | `packages/contracts/` | Shared enums/constants (`@smart-job/contracts`) | Node |
 | `packages/api-contracts/` | Shared Zod HTTP contracts (`@smart-job/api-contracts`) | Node 22 |
 | `packages/db/` | Drizzle ORM schema + migrations (`@smart-job/db`) | Node 22 |
+| `packages/observability/` | Redacted OpenTelemetry bootstrap/helpers | Node 22 |
 
 ---
 
 ## Build order
 
-Build `packages/contracts` first. Build `packages/api-contracts` and
-`packages/db` next; `cloudrun-api` needs all three and `cloudrun-tax` needs the
-two contracts packages.
+Build `packages/contracts` first. Build `packages/api-contracts`, `packages/db`,
+and `packages/observability` next; Cloud Run services that preload telemetry
+need the observability build in addition to their domain packages.
 `contracts` compiled output (`index.js`) must exist before any package that imports it.
 `api-contracts` must be built before either new Fastify service; `db` must also
 be built before `cloudrun-api`.
@@ -264,6 +266,8 @@ npm --prefix packages/api-contracts install
 npm --prefix packages/api-contracts run build
 npm --prefix packages/db install
 npm --prefix packages/db run build
+npm --prefix packages/observability install
+npm --prefix packages/observability run build
 npm --prefix packages/db run db:migrate   # apply latest SQL migrations first
 npm --prefix website install
 npm --prefix phone_app install

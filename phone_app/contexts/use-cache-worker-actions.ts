@@ -1,8 +1,9 @@
 import { useCallback } from 'react';
 import { CACHE_KEYS } from './mmkv-storage';
+import type { Worker } from '../types';
 
 interface WorkerActionsParams {
-  workers: Record<string, any>;
+  workers: Record<string, Worker>;
   getUserRole: () => string | null;
   getCompanyId: () => string | null;
   saveToLocalCache: (key: string, value: unknown) => void;
@@ -14,11 +15,11 @@ export function useCacheWorkerActions({
   getCompanyId,
   saveToLocalCache,
 }: WorkerActionsParams) {
-  const updateWorkers = useCallback(async (newWorkers: any) => {
+  const updateWorkers = useCallback(async (newWorkers: Record<string, Worker> | Worker[]) => {
     saveToLocalCache(CACHE_KEYS.WORKERS, newWorkers);
   }, [saveToLocalCache]);
 
-  const addWorker = useCallback(async (wid: string, workerData: any) => {
+  const addWorker = useCallback(async (wid: string, workerData: Worker) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     if (role !== 'manager' || !companyId) {
@@ -39,7 +40,7 @@ export function useCacheWorkerActions({
     });
   }, [getCompanyId, getUserRole, saveToLocalCache, workers]);
 
-  const editWorker = useCallback(async (wid: string, updates: any) => {
+  const editWorker = useCallback(async (wid: string, updates: Partial<Worker>) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     if (role !== 'manager' || !companyId) {
@@ -51,7 +52,9 @@ export function useCacheWorkerActions({
       throw new Error('Worker not found in cache');
     }
 
-    const { password, ...safeUpdates } = updates || {};
+    const { password: _password, ...safeUpdates } = updates as Partial<Worker> & {
+      password?: unknown;
+    };
     saveToLocalCache(CACHE_KEYS.WORKERS, {
       ...workers,
       [wid]: {

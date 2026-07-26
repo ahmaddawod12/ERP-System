@@ -385,6 +385,7 @@ export default function FillJobForm({
       />
       <AppButton
       title={jobData.signature ? t.changeSignature || 'Change Signature' : t.addSignature}
+      testID="fill-job-signature"
       iconLeft={{ name: 'create-outline' }}
       onPress={() => setShowSignature(true)}
       variant={jobData.signature ? 'secondary' : 'primary'}
@@ -412,6 +413,7 @@ export default function FillJobForm({
       
       <AppButton
       title={t.submit}
+      testID="fill-job-submit"
       style={[styles.button, styles.submitButton]}
       onPress={handleSubmit}
       disabled={submitting || !outboxReady || (mode === 'worker' && !editingJob?.entityVersion)}

@@ -1,12 +1,13 @@
 # Smart-Job ERP — Project Summary
 
-Last updated: July 22, 2026.
+Last updated: July 26, 2026.
 
 ## Current state
 
 Smart-Job is a multi-tenant field-service ERP with a Next.js website, an Expo
 mobile app, a modular Cloud Run API, private PDF/email workers, a stateless tax
-gateway, a monthly archive job, and a PostgreSQL/Supabase foundation.
+  gateway, a monthly archive job, an automated recovery-backup job, and a
+  PostgreSQL/Supabase foundation.
 
 The Edge-to-Cloud-API cutover is complete. `cloudrun-api` is the only
 business-data boundary used by clients; all Supabase Edge functions and handlers
@@ -22,12 +23,12 @@ evidence remain launch gates.
 
 - There is no root npm workspace. Install and run each package independently.
 - Use Node 22 in CI and deployment.
-- Build `packages/contracts` first, then `packages/api-contracts` and
-  `packages/db`, before building their consumers.
+- Build `packages/contracts` first, then `packages/api-contracts`,
+  `packages/db`, and `packages/observability`, before building their consumers.
 - Keep the phone app on Expo 57's supported React/React DOM `19.2.3` pair.
 - Drizzle migrations under `packages/db/migrations` are authoritative;
   `supabase/migrations` is intentionally disabled.
-- The migration chain currently runs through `0032`.
+- The migration chain currently runs through `0035`.
 
 ## Trust and data ownership
 
@@ -36,13 +37,16 @@ evidence remain launch gates.
   sessions, idempotency, upload sessions, and durable workflow state.
 - Numeric `companyId` is the public tenant scope. The API resolves it to an
   internal UUID before scoped SQL work.
-- `smart_job_api`, `smart_job_pdf`, `smart_job_email`, and
-  `smart_job_archiver` are separate least-privileged runtime roles. Their
-  passwords are never stored in migrations or source.
+- `smart_job_api`, `smart_job_pdf`, `smart_job_email`,
+  `smart_job_archiver`, and `smart_job_backup` are separate runtime roles.
+  Their passwords are never stored in migrations or source.
 - Private Supabase Storage owns active job attachments, previews, branding, and
   generated PDFs. GCS owns immutable archive record/ID segments.
 - Pub/Sub messages contain opaque `taskId` or `deliveryId` values only. Workers
   lease and load canonical state from private SQL RPCs.
+- W3C trace context travels in HTTP headers and Pub/Sub attributes. Redacted
+  OpenTelemetry spans and Cloud Logging trace fields correlate API, tax, PDF,
+  email, archive, and backup work without recording business payloads.
 
 ## Website
 
@@ -129,6 +133,10 @@ Do not set the local marker flags manually and never run `supabase stop --all`.
   dependencies. The staged workflow builds/scans/signs once in staging,
   preserves the exact digest in production, and gates migration, no-traffic
   smoke, and 10/50/100 traffic.
+- The signed backup image inventories versioned Supabase Storage every
+  15 minutes, writes daily PostgreSQL 17 custom exports, stores immutable
+  checksum/generation manifests in a CMEK-protected versioned GCS bucket, and
+  includes a production-refusing isolated restore verifier.
 
 ## Remaining launch work
 

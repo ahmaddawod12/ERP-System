@@ -2,6 +2,7 @@ import {
   DocumentDispatchMessageSchema,
   EmailDispatchMessageSchema,
 } from "@smart-job/api-contracts";
+import { injectTraceContext } from "@smart-job/observability";
 import { z } from "zod";
 
 import type { DocumentTaskPublisher } from "./dispatch.js";
@@ -145,7 +146,11 @@ export function createPubSubDocumentTaskPublisher(
         body: JSON.stringify({
           messages: [{
             data: Buffer.from(JSON.stringify(payload), "utf8").toString("base64"),
-            attributes: { taskType },
+            attributes: {
+              taskType,
+              schemaVersion: "v1",
+              ...injectTraceContext(),
+            },
           }],
         }),
         signal: AbortSignal.timeout(5_000),
@@ -184,6 +189,10 @@ export function createPubSubEmailDeliveryPublisher(
         body: JSON.stringify({
           messages: [{
             data: Buffer.from(JSON.stringify(payload), "utf8").toString("base64"),
+            attributes: {
+              schemaVersion: "v1",
+              ...injectTraceContext(),
+            },
           }],
         }),
         signal: AbortSignal.timeout(5_000),

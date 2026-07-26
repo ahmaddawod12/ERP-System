@@ -531,7 +531,13 @@ export default function CreateDocumentForm({
       formData.paymentMethod === method.id && styles.paymentMethodButtonActive,
       { borderColor: formData.paymentMethod === method.id ? colors.primary : colors.border }
       ]}
-      onPress={() => setFormData({ ...formData, paymentMethod: method.id })}
+      onPress={() => setFormData({
+        ...formData,
+        paymentMethod: method.id,
+        paymentReference: '',
+        creditLast4: '',
+        creditAuthorizationReference: '',
+      })}
       >
       <AppText style={[
       styles.paymentMethodText,
@@ -544,23 +550,62 @@ export default function CreateDocumentForm({
       </View>
       </View>
       
-      {/* Payment Info/Reference - shows relevant placeholder based on payment method */}
+      {/* Structured payment references. Full card numbers and security codes are never accepted. */}
+      {formData.paymentMethod === 'credit' ? (
+      <>
+      <View style={styles.inputGroup}>
+      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+      {t.creditLast4} <AppText style={styles.requiredStar}>*</AppText>
+      </AppText>
+      <AppInput
+      inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+      value={formData.creditLast4}
+      onChangeText={(text) => setFormData({
+        ...formData,
+        creditLast4: text.replace(/[^0-9]/g, '').slice(0, 4),
+      })}
+      keyboardType="number-pad"
+      maxLength={4}
+      placeholder={t.creditLast4Placeholder}
+      accessibilityLabel={t.creditLast4}
+      />
+      </View>
+      <View style={styles.inputGroup}>
+      <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
+      {t.authorizationReference} <AppText style={styles.requiredStar}>*</AppText>
+      </AppText>
+      <AppInput
+      inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
+      value={formData.creditAuthorizationReference}
+      onChangeText={(text) => setFormData({ ...formData, creditAuthorizationReference: text.slice(0, 128) })}
+      maxLength={128}
+      placeholder={t.authorizationReferencePlaceholder}
+      accessibilityLabel={t.authorizationReference}
+      />
+      </View>
+      <AppText accessibilityRole="text" style={[styles.optionalText, { color: colors.warning }]}>
+      {t.paymentSecurityWarning}
+      </AppText>
+      </>
+      ) : formData.paymentMethod && formData.paymentMethod !== 'cash' ? (
       <View style={styles.inputGroup}>
       <AppText style={[styles.inputLabel, { color: colors.textPrimary }]}>
       {t.paymentInfo} <AppText style={styles.optionalText}>({t.optional})</AppText>
       </AppText>
       <AppInput
       inputStyle={[styles.input, { backgroundColor: colors.backgroundLight, color: colors.textPrimary, borderColor: colors.border }]}
-      value={formData.paymentInfo}
-      onChangeText={(text) => setFormData({ ...formData, paymentInfo: text })}
+      value={formData.paymentReference}
+      onChangeText={(text) => setFormData({ ...formData, paymentReference: text.slice(0, 128) })}
+      maxLength={128}
       placeholder={
       formData.paymentMethod === 'check' ? t.paymentInfoCheckPlaceholder :
       formData.paymentMethod === 'transfer' ? t.paymentInfoTransferPlaceholder :
-      formData.paymentMethod === 'credit' ? t.paymentInfoCreditPlaceholder :
       t.paymentInfoPlaceholder
       }
+      accessibilityLabel={t.paymentInfo}
       />
       </View>
+      ) : null}
       </View>
       )}
       

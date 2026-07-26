@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { sql } from 'drizzle-orm';
 import { getDb, type DatabaseOptions } from './client';
 import { resolveCompanyByPublicId } from './membership';
@@ -108,14 +109,14 @@ async function createTaxOauthSession(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const authId = String(input.authId || '').trim();
     if (!authId) {
       const error = new Error('Authorization session ID is required');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
@@ -192,12 +193,12 @@ async function consumeTaxOauthSession(
     }
     if (String(session.state || '') !== String(input.state || '')) {
       const error = new Error('Authorization state mismatch');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
     if (String(session.status || '') !== 'pending') {
       const error = new Error('Authorization session already used');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
@@ -207,7 +208,7 @@ async function consumeTaxOauthSession(
     );
     if (expiresAt && expiresAt.getTime() < now.getTime()) {
       const error = new Error('Authorization session expired');
-      (error as any).code = 'deadline-exceeded';
+      setDatabaseErrorCode(error, 'deadline-exceeded');
       throw error;
     }
 
@@ -276,7 +277,7 @@ async function upsertTaxAuthorityTokens(input: TaxTokenInput, options: DatabaseO
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -316,7 +317,7 @@ async function finalizeTaxAuthorityTokenRefresh(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 

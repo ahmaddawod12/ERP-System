@@ -1,3 +1,4 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   getDb,
@@ -218,13 +219,13 @@ function buildDocumentRowValues(
 
   if (!Number.isInteger(documentType)) {
     const error = new Error('Document type is required');
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
 
   if (!Number.isInteger(documentNumber) || documentNumber < 1) {
     const error = new Error('Document number is required');
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
 
@@ -609,14 +610,14 @@ async function createOrUpdateDocumentRecord(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const documentCode = coerceTrimmedString(input.documentId || input.record?.documentId);
     if (!documentCode) {
       const error = new Error('Document ID is required');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
@@ -631,7 +632,7 @@ async function createOrUpdateDocumentRecord(
     const existing = existingRows[0] || null;
     if (input.createOnly && existing) {
       const error = new Error('Document already exists');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
@@ -710,20 +711,20 @@ async function deleteDocumentRecord(
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const documentRecord = await getDocumentRecordById(input.companyId, input.documentId, { db: tx });
     if (!documentRecord) {
       const error = new Error('Document not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     if (Number(documentRecord.documentType) === 305 && documentRecord.taxAuthorityResponseData) {
       const error = new Error('Cannot delete a Tax Authority approved invoice');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 

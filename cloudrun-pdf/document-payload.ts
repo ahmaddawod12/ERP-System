@@ -1,3 +1,8 @@
+import type {
+  DocumentPaymentDetails,
+  DocumentPaymentMethod,
+} from '@smart-job/api-contracts' with { 'resolution-mode': 'import' };
+
 type UnknownRecord = Record<string, unknown>;
 
 export type NormalizedDocumentClient = {
@@ -30,8 +35,8 @@ export type NormalizedDocumentData = UnknownRecord & {
   language: string;
   date: string | null;
   notes: string | null;
-  paymentMethod: string | null;
-  paymentInfo: unknown;
+  paymentMethod: DocumentPaymentMethod | null;
+  paymentDetails: DocumentPaymentDetails | null;
   invoiceReference: string | null;
   jobsData: unknown[] | null;
   priceProposalId: string | null;
@@ -57,6 +62,81 @@ function coerceTrimmedString(value: unknown): string {
 function coerceOptionalString(value: unknown): string | null {
   const trimmed = coerceTrimmedString(value);
   return trimmed || null;
+}
+
+const PAYMENT_METHODS = new Set<DocumentPaymentMethod>([
+  'cash', 'credit', 'transfer', 'check', 'bit', 'paybox',
+]);
+
+function normalizePaymentMethod(value: unknown): DocumentPaymentMethod | null {
+  return typeof value === 'string' && PAYMENT_METHODS.has(value as DocumentPaymentMethod)
+    ? value as DocumentPaymentMethod
+    : null;
+}
+
+function luhnValid(value: string): boolean {
+  let sum = 0;
+  let double = false;
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    let digit = Number(value[index]);
+    if (double) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
+
+function containsLikelyPaymentCardNumber(value: string): boolean {
+  return (value.match(/(?:[0-9][ -]?){13,19}/g) ?? []).some((candidate) => {
+    const digits = candidate.replace(/[^0-9]/g, '');
+    return digits.length >= 13 && digits.length <= 19 && luhnValid(digits);
+  });
+}
+
+function structuredPaymentDetails(value: unknown): DocumentPaymentDetails | null {
+  const details = asRecord(value);
+  const keys = Object.keys(details);
+  if (
+    keys.length === 2
+    && keys.includes('last4')
+    && keys.includes('authorizationReference')
+    && typeof details.last4 === 'string'
+    && /^[0-9]{4}$/.test(details.last4)
+    && typeof details.authorizationReference === 'string'
+    && details.authorizationReference.trim().length > 0
+    && details.authorizationReference.trim().length <= 128
+  ) {
+    return {
+      last4: details.last4,
+      authorizationReference: details.authorizationReference.trim(),
+    };
+  }
+  if (
+    keys.length === 1
+    && keys[0] === 'reference'
+    && typeof details.reference === 'string'
+    && details.reference.trim().length > 0
+    && details.reference.trim().length <= 128
+  ) {
+    return { reference: details.reference.trim() };
+  }
+  return null;
+}
+
+function legacyPaymentDetails(
+  method: DocumentPaymentMethod,
+  value: unknown,
+): DocumentPaymentDetails | null {
+  if (typeof value !== 'string' || method === 'cash') return null;
+  const trimmed = value.trim();
+  if (!trimmed || containsLikelyPaymentCardNumber(trimmed)) return null;
+  if (method !== 'credit') return { reference: trimmed.slice(0, 128) };
+  const match = trimmed.match(/^\s*(?:last\s*4\s*[:=-]?\s*)?([0-9]{4})\s*[,;|/\\-]\s*(.+)$/i);
+  if (!match?.[1] || !match[2] || match[2].trim().length > 128) return null;
+  return { last4: match[1], authorizationReference: match[2].trim() };
 }
 
 function roundCurrency(value: unknown): number {
@@ -111,14 +191,37 @@ function normalizeDocumentData(
   fallbackDocumentNumber?: unknown,
 ): NormalizedDocumentData {
   const documentData = asRecord(value);
+  const {
+    paymentInfo: _legacyPaymentInfo,
+    paymentDetails: _rawPaymentDetails,
+    cvv: _cvv,
+    cvc: _cvc,
+    securityCode: _securityCode,
+    security_code: _securityCodeSnake,
+    ...safeDocumentData
+  } = documentData;
   const normalizedClient = normalizeDocumentClient(documentData.client);
   const normalizedDocumentNumber = documentData.documentNumber ?? fallbackDocumentNumber ?? null;
   const totals = asRecord(documentData.totals);
   const items = Array.isArray(documentData.items)
     ? documentData.items.map(asRecord)
     : [];
+  const paymentMethod = normalizePaymentMethod(documentData.paymentMethod);
+  const structuredDetails = structuredPaymentDetails(documentData.paymentDetails);
+  const paymentDetails = paymentMethod === null || paymentMethod === 'cash'
+    ? null
+    : structuredDetails
+      ? structuredDetails
+      : typeof documentData.paymentInfo === 'string'
+        ? legacyPaymentDetails(paymentMethod, documentData.paymentInfo)
+        : null;
+  const paymentReference = paymentDetails && (
+    'reference' in paymentDetails
+      ? paymentDetails.reference
+      : paymentDetails.authorizationReference
+  );
   return {
-    ...documentData,
+    ...safeDocumentData,
     type: documentData.type || documentType,
     client: normalizedClient,
     company: asRecord(documentData.company),
@@ -127,8 +230,10 @@ function normalizeDocumentData(
     language: coerceTrimmedString(documentData.language) || 'he',
     date: coerceOptionalString(documentData.date),
     notes: coerceOptionalString(documentData.notes),
-    paymentMethod: coerceOptionalString(documentData.paymentMethod),
-    paymentInfo: documentData.paymentInfo ?? null,
+    paymentMethod,
+    paymentDetails: paymentReference && containsLikelyPaymentCardNumber(paymentReference)
+      ? null
+      : paymentDetails,
     invoiceReference: coerceOptionalString(documentData.invoiceReference),
     jobsData: Array.isArray(documentData.jobsData) ? documentData.jobsData : null,
     priceProposalId: coerceOptionalString(documentData.priceProposalId),
@@ -225,7 +330,7 @@ function buildStoredDocumentRecord({
     language: normalizedDocumentData.language,
     date: normalizedDocumentData.date,
     paymentMethod: normalizedDocumentData.paymentMethod,
-    paymentInfo: normalizedDocumentData.paymentInfo,
+    paymentDetails: normalizedDocumentData.paymentDetails,
     invoiceReference: normalizedDocumentData.invoiceReference,
     createdByUid: uid,
     createdAt: normalizedCreatedAt,

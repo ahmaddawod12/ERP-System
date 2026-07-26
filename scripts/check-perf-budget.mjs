@@ -49,22 +49,34 @@ function walkCode(relativeDirectory) {
   return results;
 }
 
-const contractPath = 'packages/api-contracts/src/index.ts';
-for (const domain of ['JOB', 'CLIENT', 'WORKER', 'INVENTORY', 'DOCUMENT']) {
+const contractDefinitionsPath = 'packages/api-contracts/src/_definitions.ts';
+const contractDomainPaths = {
+  JOB: 'packages/api-contracts/src/jobs.ts',
+  CLIENT: 'packages/api-contracts/src/clients.ts',
+  WORKER: 'packages/api-contracts/src/workers-invitations.ts',
+  INVENTORY: 'packages/api-contracts/src/inventory.ts',
+  DOCUMENT: 'packages/api-contracts/src/documents-tax.ts',
+};
+for (const [domain, domainPath] of Object.entries(contractDomainPaths)) {
   requirePattern(
-    contractPath,
+    contractDefinitionsPath,
     new RegExp(`export const DEFAULT_${domain}_PAGE_SIZE = 50;`),
     `${domain.toLowerCase()} default page size must remain 50`,
   );
   requirePattern(
-    contractPath,
+    contractDefinitionsPath,
     new RegExp(`export const MAX_${domain}_PAGE_SIZE = 200;`),
     `${domain.toLowerCase()} maximum page size must remain 200`,
   );
   requirePattern(
-    contractPath,
+    contractDefinitionsPath,
     new RegExp(`pageSize:[\\s\\S]{0,120}max\\(MAX_${domain}_PAGE_SIZE\\)`),
     `${domain.toLowerCase()} query validation must enforce its maximum page size`,
+  );
+  requirePattern(
+    domainPath,
+    new RegExp(`DEFAULT_${domain}_PAGE_SIZE,[\\s\\S]{0,80}MAX_${domain}_PAGE_SIZE`),
+    `${domain.toLowerCase()} domain module must preserve the public pagination exports`,
   );
 }
 
@@ -102,25 +114,25 @@ for (const domain of ['clients', 'documents', 'inventory', 'jobs', 'workers']) {
   );
 }
 
-for (const relativePath of [
-  'phone_app/utils/read-model.ts',
-  'phone_app/contexts/cache-fetchers.ts',
-]) {
-  requirePattern(
-    relativePath,
-    /const MAX_CURSOR_WINDOW_PAGES = 5;/,
-    'legacy aggregate windows must remain capped at five API pages',
-  );
-  requirePattern(
-    relativePath,
-    /for \(let i = 0; i < MAX_CURSOR_WINDOW_PAGES; i\+\+\)/,
-    'aggregate reads must enforce the page-count cap in the loop',
-  );
-}
 requirePattern(
-  'phone_app/utils/read-model.ts',
-  /const MAX_CURSOR_WINDOW_ITEMS = 1_000;/,
-  'legacy aggregate reads must remain capped at 1,000 items',
+  'phone_app/hooks/useArchiveQuery.ts',
+  /HistoricalQueryResult/,
+  'historical reads must return explicit completeness metadata',
+);
+requirePattern(
+  'phone_app/hooks/useArchiveQuery.ts',
+  /do \{[\s\S]*afterCursor[\s\S]*\} while \(afterCursor\)/,
+  'historical live reads must follow opaque cursors until completion',
+);
+requirePattern(
+  'phone_app/lib/api/archives.ts',
+  /do \{[\s\S]*afterCursor[\s\S]*\} while \(afterCursor\)/,
+  'archive metadata period reads must follow every opaque cursor',
+);
+rejectPattern(
+  'phone_app/hooks/useArchiveQuery.ts',
+  /ARCHIVE_READ_LIMIT|1_000/,
+  'historical reads must not silently cap results',
 );
 
 requirePattern(

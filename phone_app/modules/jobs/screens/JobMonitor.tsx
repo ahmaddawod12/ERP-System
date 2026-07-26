@@ -14,11 +14,16 @@ import { StatusBar } from 'expo-status-bar';
 import { auth } from '../../../lib/auth/transport';
 import { colors, gradients, getColors } from '../../../theme';
 import { AppCard, AppEmptyState, AppText, SearchInput, ViewJobDetails, GlobalHeader, DateFilter, ScreenHeroCard } from '../../../components';
+import { HistoricalResultsNotice } from '../../../components/domain/HistoricalResultsNotice';
 import { useScrollHandler } from '../../../contexts/HeaderContext';
 import type { DateFilterRange } from '../../../components/forms/DateFilter';
 import { useLanguageContext } from '../../../contexts/LanguageContext';
 import { useThemeContext } from '../../../contexts/ThemeContext';
-import { useCache } from '../../../contexts/CacheContext';
+import {
+  useCacheLifecycle,
+  useDocumentHistoryCache,
+  useJobsCache,
+} from '../../../contexts/CacheContext';
 import { ROUTES } from '../../../navigation/routes';
 import type { Job } from '../../../types';
 import { logger } from '../../../utils/logger';
@@ -154,12 +159,10 @@ export default function JobMonitor() {
   const { language } = useLanguageContext();
   const { isDarkMode } = useThemeContext();
   const { scrollProps } = useScrollHandler();
-  const {
-    getCompanyId,
-    companyJobs,
-    getDataForDateRange,
-    isWithinCacheRange,
-  } = useCache();
+  const { getCompanyId } = useCacheLifecycle();
+  const { companyJobs } = useJobsCache();
+  const { getDataForDateRange, isWithinCacheRange } =
+    useDocumentHistoryCache();
   const cachedPendingJobs = useMemo(
     () => (companyJobs || []).filter(j => j.status === 'pending' || j.status === 'waiting'),
     [companyJobs]
@@ -170,6 +173,7 @@ export default function JobMonitor() {
   );
   const themeColors = getColors(isDarkMode);
   const [loading, setLoading] = useState(true);
+  const [historyComplete, setHistoryComplete] = useState(true);
   const [jobs, setJobs] = useState<{
     pending: Job[];
     waiting: Job[];
@@ -420,12 +424,15 @@ export default function JobMonitor() {
         } else {
           // Date range extends beyond cache - use smart filtering.
           logger.debug('[BACKEND READ] JobMonitor fetching older finished jobs');
-          finishedJobsData = await getDataForDateRange(
+          const history = await getDataForDateRange(
             dateFilter.startDate,
             dateFilter.endDate,
             'finishedJobs'
           );
+          finishedJobsData = history.items as Job[];
+          setHistoryComplete(history.complete);
         }
+        if (isStartInCache) setHistoryComplete(true);
 
         const finishedJobsList = (finishedJobsData as Job[])
           .map((job) => ({
@@ -550,6 +557,7 @@ export default function JobMonitor() {
         renderItem={renderItem}
         ListHeaderComponent={
           <View>
+            <HistoricalResultsNotice complete={historyComplete} />
             <ScreenHeroCard
               title={t.title}
               subtitle={t.subtitle}

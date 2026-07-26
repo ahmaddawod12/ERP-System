@@ -43,7 +43,12 @@ function dependencies(overrides: Partial<EmailWorkerDependencies> = {}): EmailWo
         bucket: "smart-job-company-files",
         signedUrlTtlSeconds: 300,
       },
-      ses: { region: "eu-central-1", fromEmail: "documents@example.test", fromName: "Smart-Job" },
+      ses: {
+        region: "eu-central-1",
+        fromEmail: "documents@example.test",
+        fromName: "Smart-Job",
+        credentialMode: "static",
+      },
       sendLeaseSeconds: 60,
     },
     authorize: async () => true,
@@ -54,6 +59,7 @@ function dependencies(overrides: Partial<EmailWorkerDependencies> = {}): EmailWo
     },
     signDownload: async () => "https://storage.example.test/signed-document",
     sender: { send: async () => "ses-message-1" },
+    checkReadiness: async () => undefined,
     ...overrides,
   };
 }
@@ -102,8 +108,50 @@ test("email worker accepts only opaque delivery ids and completes one canonical 
       recipientEmail: "attacker@example.test",
     }),
   });
-  assert.equal(forged.statusCode, 204);
+  assert.equal(forged.statusCode, 400);
   assert.equal(events.length, 3, "forged authority fields must be rejected before claim");
+});
+
+test("healthz is process-only and readyz fails closed without dependency readiness", async (context) => {
+  const { checkReadiness: _checkReadiness, ...withoutReadiness } = dependencies();
+  const app = buildApp(withoutReadiness);
+  context.after(() => app.close());
+  const health = await app.inject({ method: "GET", url: "/healthz" });
+  const alias = await app.inject({ method: "GET", url: "/health" });
+  const readiness = await app.inject({ method: "GET", url: "/readyz" });
+  assert.equal(health.statusCode, 200);
+  assert.equal(alias.statusCode, 200);
+  assert.equal(readiness.statusCode, 503);
+  assert.doesNotMatch(readiness.body, /database|storage|ses|credential/i);
+});
+
+test("authenticated poison messages return non-2xx for Pub/Sub retry and DLQ", async (context) => {
+  let claims = 0;
+  const app = buildApp(dependencies({
+    store: {
+      claim: async () => { claims += 1; return null; },
+      complete: async () => undefined,
+      resolveFailure: async () => undefined,
+    },
+  }));
+  context.after(() => app.close());
+  const response = await app.inject({
+    method: "POST",
+    url: "/deliver",
+    headers: {
+      "x-goog-pubsub-topic": "projects/example/topics/email-delivery",
+    },
+    payload: {
+      deliveryAttempt: 3,
+      message: {
+        data: Buffer.from("{not-json", "utf8").toString("base64"),
+        attributes: { schemaVersion: "v1" },
+      },
+    },
+  });
+  assert.equal(response.statusCode, 400);
+  assert.equal(claims, 0);
+  assert.doesNotMatch(response.body, /not-json|data/i);
 });
 
 test("ambiguous SES failure becomes delivery_unknown without automatic resend", async (context) => {

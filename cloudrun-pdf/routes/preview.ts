@@ -2,6 +2,11 @@
  * POST /preview - Pub/Sub push endpoint for preview tasks
  */
 import type { Express, RequestHandler } from 'express';
+import {
+  withExtractedTraceContext,
+  withTaskSpan,
+} from '@smart-job/observability';
+import { logPoisonMessage } from './pubsub-envelope';
 
 type DocumentDispatchMessage = { readonly taskId: string };
 
@@ -17,7 +22,8 @@ export function registerPreviewRoute(app: Express, deps: {
   app.post('/preview', deps.verifyPubSubRequest, async (req, res) => {
   try {
     if (!req.body || !req.body.message || !req.body.message.data) {
-      return res.status(200).send('Invalid Pub/Sub message format — not retryable');
+      logPoisonMessage(req, 'preview');
+      return res.status(400).json({ error: 'invalid_pubsub_message' });
     }
 
     let messageData;
@@ -27,11 +33,20 @@ export function registerPreviewRoute(app: Express, deps: {
         Buffer.from(req.body.message.data, 'base64').toString(),
       ));
     } catch (parseError) {
-      return res.status(200).send('Invalid Pub/Sub message payload — not retryable');
+      logPoisonMessage(req, 'preview');
+      return res.status(400).json({ error: 'invalid_pubsub_message' });
     }
     
+    const traceAttributes = req.body.message.attributes
+      && typeof req.body.message.attributes === 'object'
+      ? req.body.message.attributes as Record<string, string>
+      : {};
     console.log('Received preview task:', messageData.taskId);
-    await deps.processPreviewTask(messageData);
+    await withExtractedTraceContext(traceAttributes, () => withTaskSpan(
+      'pdf.preview',
+      { 'app.operation': 'pdf.preview' },
+      () => deps.processPreviewTask(messageData),
+    ));
     res.status(200).send('OK');
     
   } catch (error) {

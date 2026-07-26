@@ -39,6 +39,7 @@ jobs:
   release_preflight:
     name: Verify immutable release identity and successful CI
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require the selected commit on the protected release ref
@@ -60,6 +61,13 @@ jobs:
             "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=completed&per_page=100" \
             --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
           test "${SUCCESS_COUNT}" -gt 0
+      - name: Require production launch evidence for the exact release
+        if: inputs.environment == 'production'
+        env:
+          LAUNCH_EVIDENCE_JSON: ${{ vars.PRODUCTION_LAUNCH_EVIDENCE_JSON }}
+          RELEASE_SHA: ${{ inputs.image_tag }}
+          RELEASE_STAGE: ${{ inputs.promotion_stage }}
+        run: node scripts/check-launch-evidence.mjs
 
   prepare_release:
     name: Prepare signed ${{ matrix.name }} release image
@@ -88,6 +96,9 @@ jobs:
           - name: archiver
             repository: cloudrun-archiver
             dockerfile: cloudrun-archiver/Dockerfile
+          - name: backup
+            repository: cloudrun-backup
+            dockerfile: cloudrun-backup/Dockerfile
           - name: migration
             repository: cloudrun-migrations
             dockerfile: cloudrun-migrations/Dockerfile
@@ -281,6 +292,8 @@ jobs:
             repository: cloudrun-email
           - name: archiver
             repository: cloudrun-archiver
+          - name: backup
+            repository: cloudrun-backup
           - name: migration
             repository: cloudrun-migrations
     steps:
@@ -386,7 +399,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in website api tax pdf email archiver migration; do
+          for name in website api tax pdf email archiver backup migration; do
             test -f "release/${name}.digest"
             grep -Eq '@sha256:[0-9a-f]{64}$' "release/${name}.digest"
           done
@@ -431,7 +444,7 @@ jobs:
         run: |
           set -euo pipefail
           declare -A IMAGE
-          for name in website api tax pdf email archiver migration; do
+          for name in website api tax pdf email archiver backup migration; do
             IMAGE["${name}"]="$(cat "release/${name}.digest")"
           done
           CANDIDATE_TAG="candidate-${IMAGE_TAG:0:8}"
@@ -457,6 +470,10 @@ jobs:
 
           gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-archiver" \
             --image "${IMAGE[archiver]}" --region "${GCP_REGION}" --quiet
+          gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-backup-storage" \
+            --image "${IMAGE[backup]}" --region "${GCP_REGION}" --quiet
+          gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-backup-database" \
+            --image "${IMAGE[backup]}" --region "${GCP_REGION}" --quiet
           gcloud run jobs update "${CLOUD_RUN_NAME_PREFIX}-smoke" \
             --image "${IMAGE[migration]}" --region "${GCP_REGION}" --quiet
 
@@ -501,8 +518,8 @@ jobs:
           add_smoke_target website "${GCP_REGION}" "/"
           add_smoke_target api "${GCP_REGION}" "/readyz"
           add_smoke_target tax "${GCP_TAX_REGION}" "/readyz"
-          add_smoke_target pdf "${GCP_REGION}" "/health"
-          add_smoke_target email "${GCP_REGION}" "/health"
+          add_smoke_target pdf "${GCP_REGION}" "/readyz"
+          add_smoke_target email "${GCP_REGION}" "/readyz"
 
           gcloud run jobs execute "${CLOUD_RUN_NAME_PREFIX}-smoke" \
             --region "${GCP_REGION}" \

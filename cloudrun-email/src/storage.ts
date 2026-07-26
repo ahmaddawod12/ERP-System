@@ -1,5 +1,15 @@
 import type { EmailWorkerConfig } from "./config.js";
 
+export function checkStorageConfiguration(config: EmailWorkerConfig["storage"]): void {
+  if (
+    config.bucket !== "smart-job-company-files"
+    || !config.secretKey.startsWith("sb_secret_")
+    || !["http:", "https:"].includes(config.baseUrl.protocol)
+  ) {
+    throw new Error("Email storage configuration is unavailable");
+  }
+}
+
 function encodeObjectPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }

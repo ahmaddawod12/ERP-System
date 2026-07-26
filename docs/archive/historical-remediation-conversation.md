@@ -1,4 +1,10 @@
-# Audit project production readiness
+# Archived production-readiness planning conversation
+
+> Historical record only. This document is not an active runbook, source of
+> truth, or launch checklist. See the current architecture, setup, runbooks,
+> and launch evidence under the repository documentation instead.
+
+## Original conversation
 
 > Review this entire project as a senior software engineer performing a production-readiness audit.
 >

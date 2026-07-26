@@ -1,7 +1,12 @@
-import { SendEmailCommand, SESClient } from "@aws-sdk/client-ses";
+import {
+  GetAccountSendingEnabledCommand,
+  SendEmailCommand,
+  SESClient,
+} from "@aws-sdk/client-ses";
 
 import type { EmailWorkerConfig } from "./config.js";
 import type { CanonicalEmailDelivery } from "./database.js";
+import { createFederatedCredentialProvider } from "./aws-federation.js";
 
 export type SesFailureOutcome = "queued" | "failed" | "delivery_unknown";
 
@@ -39,17 +44,32 @@ export function safeSesError(error: unknown): string {
 export class SesDocumentSender {
   readonly #client: SESClient;
   readonly #config: EmailWorkerConfig["ses"];
+  #readinessExpiresAt = 0;
 
   constructor(
     config: EmailWorkerConfig["ses"],
     client = new SESClient({
       region: config.region,
       ...(config.endpoint === undefined ? {} : { endpoint: config.endpoint.href }),
-      ...(config.credentials === undefined ? {} : { credentials: config.credentials }),
+      ...(config.federation !== undefined
+        ? { credentials: createFederatedCredentialProvider(config.federation, config.region) }
+        : config.credentials === undefined
+          ? {}
+          : { credentials: config.credentials }),
     }),
   ) {
     this.#config = config;
     this.#client = client;
+  }
+
+  async checkReadiness(): Promise<void> {
+    const now = Date.now();
+    if (this.#readinessExpiresAt > now) return;
+    const result = await this.#client.send(new GetAccountSendingEnabledCommand({}));
+    if (result.Enabled !== true) {
+      throw new Error("SES account sending is not enabled");
+    }
+    this.#readinessExpiresAt = now + 60_000;
   }
 
   async send(delivery: CanonicalEmailDelivery, downloadUrl: string): Promise<string> {

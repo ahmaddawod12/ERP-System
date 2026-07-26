@@ -40,9 +40,17 @@ committed `.env` file.
   identity before any certification-controlled enablement.
 - **AWS SES:** verify the exact sender identity, region, least-privilege policy,
   and a non-customer test delivery. Do not automatically replay
-  `delivery_unknown` rows after rotation.
+  `delivery_unknown` rows after rotation. For federation cutover, apply the
+  separate AWS stack, validate Google token issuer/audience/subject plus STS
+  expiry in staging, then enable `email_ses_federation`. Confirm the Cloud Run
+  revision no longer mounts `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`
+  before disabling the old IAM key and setting
+  `enable_static_ses_credentials=false`. Federated mode has no static fallback.
 - **GitHub WIF and deploy identity:** prefer short-lived federation. Rotate the
   provider/service account binding without introducing static GCP keys, then
   verify a non-production keyless signature and deployment.
 - **Firebase native configuration:** rotate through EAS/build secrets and ship a
-  new native binary when native files change; never commit them.
+  new native binary when native files change; never commit them. Store Android
+  and iOS files as `GOOGLE_SERVICES_JSON` and `GOOGLE_SERVICE_INFO_PLIST` file
+  variables in each matching EAS environment. Restrict keys to the exact mobile
+  app identity and rotate any key whose console restrictions cannot be proven.

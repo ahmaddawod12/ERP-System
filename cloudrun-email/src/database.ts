@@ -60,6 +60,21 @@ export class EmailDeliveryStore {
     this.#pool = new Pool(config);
   }
 
+  async checkReadiness(): Promise<void> {
+    const result = await this.#pool.query<{ ready: boolean }>(
+      `SELECT
+        current_user = 'smart_job_email'
+        AND has_function_privilege(
+          current_user,
+          'private.claim_email_delivery(uuid,uuid,integer)',
+          'EXECUTE'
+        ) AS ready`,
+    );
+    if (result.rows[0]?.ready !== true) {
+      throw new Error("Email database privileges are unavailable");
+    }
+  }
+
   async claim(deliveryId: string, leaseSeconds: number): Promise<CanonicalEmailDelivery | null> {
     const leaseToken = randomUUID();
     const result = await this.#pool.query<CanonicalDeliveryRow>(

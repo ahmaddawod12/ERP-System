@@ -3,6 +3,8 @@ import {
   DEFAULT_DOCUMENT_PAGE_SIZE,
   DocumentListPageSchema,
   DocumentDetailSchema,
+  DocumentPaymentDetailsSchema,
+  DocumentPaymentMethodSchema,
   DocumentSummarySchema,
   DocumentTaskSchema,
   type Cursor,
@@ -10,6 +12,8 @@ import {
   type DocumentDetail,
   type DocumentSummary,
   type DocumentTask,
+  containsLikelyPaymentCardNumber,
+  normalizeLegacyDocumentPaymentDetails,
 } from "@smart-job/api-contracts";
 import type { QueryResultRow } from "pg";
 import { z } from "zod";
@@ -142,6 +146,34 @@ function invalidCursor(): AppError {
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function readPaymentMetadata(payload: unknown): {
+  readonly paymentMethod: z.infer<typeof DocumentPaymentMethodSchema> | null;
+  readonly paymentDetails: z.infer<typeof DocumentPaymentDetailsSchema> | null;
+} {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { paymentMethod: null, paymentDetails: null };
+  }
+  const record = payload as Record<string, unknown>;
+  const method = DocumentPaymentMethodSchema.safeParse(record.paymentMethod);
+  if (!method.success) return { paymentMethod: null, paymentDetails: null };
+  if (method.data === "cash") return { paymentMethod: method.data, paymentDetails: null };
+
+  const structured = DocumentPaymentDetailsSchema.safeParse(record.paymentDetails);
+  const details = structured.success
+    ? structured.data
+    : typeof record.paymentInfo === "string"
+      ? normalizeLegacyDocumentPaymentDetails(method.data, record.paymentInfo)
+      : undefined;
+  if (!details) return { paymentMethod: method.data, paymentDetails: null };
+  const reference = "reference" in details
+    ? details.reference
+    : details.authorizationReference;
+  return {
+    paymentMethod: method.data,
+    paymentDetails: containsLikelyPaymentCardNumber(reference) ? null : details,
+  };
 }
 
 function nullableIso(value: Date | string | null): string | null {
@@ -284,6 +316,7 @@ export const READ_DOCUMENT_PAGE_SQL = `
     document.confirmation_number,
     document.document_date,
     document.storage_path,
+    document.payload,
     document.email_sent,
     private.get_api_document_email_delivery_status(
       document.company_id,
@@ -509,14 +542,20 @@ export async function readDocumentDetail(
       "failed",
       "submission_unknown",
     ]).nullable(),
+    payload: z.unknown(),
   }).strict().optional().parse(result.rows[0]);
   if (!row) {
     throw new AppError({ statusCode: 404, code: "DOCUMENT_NOT_FOUND", message: "Document not found." });
   }
-  const { tax_submission_status: taxSubmissionStatus, ...summaryRow } = row;
+  const {
+    tax_submission_status: taxSubmissionStatus,
+    payload,
+    ...summaryRow
+  } = row;
   return DocumentDetailSchema.parse({
     ...mapDocumentRow(summaryRow),
     taxSubmissionStatus,
+    ...readPaymentMetadata(payload),
   });
 }
 

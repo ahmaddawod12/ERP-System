@@ -91,6 +91,15 @@ const inventorySearch = `
   ORDER BY part.part_no ASC, part.id ASC
   LIMIT 51
 `;
+const archivePeriodList = `
+  SELECT run.id
+  FROM public.archive_runs AS run
+  WHERE run.company_id = $1::uuid
+    AND run.data_type = 'jobs'
+    AND run.period_start = '2024-01-01T00:00:00Z'::timestamptz
+  ORDER BY run.created_at DESC, run.id DESC
+  LIMIT 51
+`;
 
 await client.connect();
 let transactionOpen = false;
@@ -193,9 +202,29 @@ try {
      FROM pg_catalog.generate_series(1, 20000) AS series(value)`,
     [companyId, suffix],
   );
+  await client.query(
+    `INSERT INTO public.archive_runs (
+       id, company_id, archive_key, data_type, status,
+       period_start, period_end, snapshot_at, segment, created_at
+     )
+     SELECT
+       pg_catalog.md5($2::text || ':archive:' || value)::uuid,
+       $1::uuid,
+       '2024-01-j-s' || pg_catalog.lpad(value::text, 6, '0'),
+       'jobs',
+       'pending'::public.archive_run_status,
+       '2024-01-01T00:00:00Z'::timestamptz,
+       '2024-02-01T00:00:00Z'::timestamptz,
+       '2024-02-01T00:00:00Z'::timestamptz,
+       value,
+       '2024-02-01T00:00:00Z'::timestamptz + value * interval '1 second'
+     FROM pg_catalog.generate_series(1, 1200) AS series(value)`,
+    [companyId, suffix],
+  );
   await client.query('ANALYZE public.jobs');
   await client.query('ANALYZE public.documents');
   await client.query('ANALYZE public.inventory_parts');
+  await client.query('ANALYZE public.archive_runs');
 
   const results = [];
   results.push(await measure('jobs_list', jobsList, [companyId]));
@@ -203,9 +232,16 @@ try {
   results.push(await measure('documents_list', documentsList, [companyId]));
   results.push(await measure('documents_search', documentsSearch, [companyId, 'batch5needle', 'batch5needle%']));
   results.push(await measure('inventory_search', inventorySearch, [companyId, 'batch5needle', 'batch5needle%']));
+  results.push(await measure('archive_period_list', archivePeriodList, [companyId]));
 
   const report = {
-    fixture: { jobs: 100000, documents: 50000, inventoryParts: 20000, runsPerQuery: RUNS },
+    fixture: {
+      jobs: 100000,
+      documents: 50000,
+      inventoryParts: 20000,
+      archiveSegmentsInOneMonth: 1200,
+      runsPerQuery: RUNS,
+    },
     targetsMs: { listP95: LIST_TARGET_MS, searchP95: SEARCH_TARGET_MS },
     results: results.map((result) => ({
       ...result,
@@ -219,5 +255,6 @@ try {
   await client.query('ANALYZE public.jobs').catch(() => undefined);
   await client.query('ANALYZE public.documents').catch(() => undefined);
   await client.query('ANALYZE public.inventory_parts').catch(() => undefined);
+  await client.query('ANALYZE public.archive_runs').catch(() => undefined);
   await client.end();
 }

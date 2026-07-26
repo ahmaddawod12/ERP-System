@@ -14,13 +14,13 @@ test("local storage signing keeps the private request internal and returns a bro
   };
   try {
     const result = await createDocumentDownloadUrl({
-      baseUrl: new URL("http://supabase_kong_smart-job-erp-local:8000"),
+      baseUrl: new URL("http://smart-job-supabase-gateway:8000"),
       publicBaseUrl: new URL("http://127.0.0.1:55321"),
       secretKey: "sb_secret_local",
       bucket: "smart-job-company-files",
       signedUrlTtlSeconds: 300,
     }, "company/document.pdf");
-    assert.match(requested, /^http:\/\/supabase_kong_smart-job-erp-local:8000\/storage\/v1\/object\/sign\//);
+    assert.match(requested, /^http:\/\/smart-job-supabase-gateway:8000\/storage\/v1\/object\/sign\//);
     assert.equal(
       result,
       "http://127.0.0.1:55321/storage/v1/object/sign/smart-job-company-files/company/document.pdf?token=local",

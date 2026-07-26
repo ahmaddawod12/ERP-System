@@ -1,4 +1,10 @@
 import type { AppDocument, DateLike } from '../../../types';
+import type {
+  DocumentDataInput,
+  DocumentPaymentMethod,
+} from '@smart-job/api-contracts';
+
+export type PaymentMethod = DocumentPaymentMethod;
 
 export type ReceiptMode = 'auto' | 'manual' | null;
 
@@ -55,8 +61,10 @@ export type FormData = {
   customerPhone: string;
   customerId: string;
   clientVatNumber: string;
-  paymentMethod: string;
-  paymentInfo: string;
+  paymentMethod: PaymentMethod | '';
+  paymentReference: string;
+  creditLast4: string;
+  creditAuthorizationReference: string;
   invoiceReference: string;
   documentDate: string;
   notes: string;
@@ -79,8 +87,8 @@ export type BuiltDocumentData = {
   language: 'he' | 'ar' | 'en';
   date: string;
   notes: string;
-  paymentMethod?: string;
-  paymentInfo?: string;
+  paymentMethod?: PaymentMethod;
+  paymentDetails?: DocumentDataInput['paymentDetails'];
   invoiceReference?: string | number;
 };
 

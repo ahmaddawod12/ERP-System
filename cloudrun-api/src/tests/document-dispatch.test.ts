@@ -126,7 +126,10 @@ test("Pub/Sub publisher uses Cloud Run metadata identity and caches its token", 
   assert.deepEqual(JSON.parse(Buffer.from(body.messages[0].data, "base64").toString("utf8")), {
     taskId: "preview-task",
   });
-  assert.deepEqual(body.messages[0].attributes, { taskType: "preview" });
+  assert.deepEqual(body.messages[0].attributes, {
+    schemaVersion: "v1",
+    taskType: "preview",
+  });
 });
 
 test("Pub/Sub publisher can target only an explicitly supplied local adapter", async () => {

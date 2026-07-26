@@ -8,15 +8,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/src/server.js",
-    "test": "npm run build && node --test dist/tests/*.test.js"
+    "start": "node --import @smart-job/observability/register dist/src/server.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/**/*.js --test-coverage-exclude=dist/tests/** --test-coverage-lines=74.07 --test-coverage-branches=77.03 --test-coverage-functions=70.37 dist/tests/*.test.js"
   },
   "engines": {
     "node": "22.x"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "3.1030.0",
+    "@aws-sdk/client-sts": "3.1030.0",
     "@smart-job/api-contracts": "file:../packages/api-contracts",
+    "@smart-job/observability": "file:../packages/observability",
     "fastify": "5.10.0",
     "google-auth-library": "10.9.0",
     "pg": "8.16.3",
@@ -28,6 +31,7 @@
     "typescript": "5.9.3"
   },
   "overrides": {
-    "fast-xml-parser": "5.5.12"
+    "fast-xml-parser": "5.5.12",
+    "find-my-way": "9.7.0"
   }
 }

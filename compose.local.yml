@@ -106,16 +106,16 @@ services:
       HOST: 0.0.0.0
       PORT: "8080"
       LOG_LEVEL: info
-      DATABASE_URL: postgresql://smart_job_api:${LOCAL_API_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_URL: postgresql://smart_job_api:${LOCAL_API_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "5"
       SUPABASE_URL: http://127.0.0.1:55321
-      SUPABASE_INTERNAL_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_INTERNAL_URL: http://smart-job-supabase-gateway:8000
       SUPABASE_PUBLISHABLE_KEY: ${LOCAL_SUPABASE_PUBLISHABLE_KEY:?run the local-platform start script}
       SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
       SUPABASE_STORAGE_BUCKET: smart-job-company-files
       SUPABASE_JWT_ISSUER: http://127.0.0.1:55321/auth/v1
-      SUPABASE_JWKS_URL: http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json
+      SUPABASE_JWKS_URL: http://smart-job-supabase-gateway:8000/auth/v1/.well-known/jwks.json
       SUPABASE_JWT_AUDIENCE: authenticated
       ARCHIVE_BUCKET: smart-job-archives-local
       STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
@@ -172,10 +172,10 @@ services:
       NODE_ENV: production
       PORT: "8080"
       SMART_JOB_PERSISTENCE_BACKEND: sql
-      DATABASE_URL: postgresql://smart_job_pdf:${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_URL: postgresql://smart_job_pdf:${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "3"
-      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_URL: http://smart-job-supabase-gateway:8000
       SUPABASE_PUBLIC_URL: http://127.0.0.1:55321
       SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
       SUPABASE_STORAGE_BUCKET: smart-job-company-files
@@ -188,7 +188,7 @@ services:
       cloudrun-api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 4s
       start_period: 15s
@@ -204,11 +204,11 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "8080"
-      DATABASE_URL: postgresql://smart_job_email:${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_URL: postgresql://smart_job_email:${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "3"
       PUBSUB_VERIFICATION_TOKEN: ${LOCAL_PUBSUB_VERIFICATION_TOKEN:?run the local-platform start script}
-      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_URL: http://smart-job-supabase-gateway:8000
       SUPABASE_PUBLIC_URL: http://127.0.0.1:55321
       SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
       SUPABASE_STORAGE_BUCKET: smart-job-company-files
@@ -226,7 +226,7 @@ services:
       local-platform-adapter:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 18
@@ -242,7 +242,7 @@ services:
       PORT: "3000"
       BACKEND_API_BASE_URL: http://cloudrun-api:8080
       BACKEND_API_TIMEOUT_MS: "12000"
-      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_URL: http://smart-job-supabase-gateway:8000
       SUPABASE_PUBLISHABLE_KEY: ${LOCAL_SUPABASE_PUBLISHABLE_KEY:?run the local-platform start script}
       WEBSITE_ORIGIN: http://127.0.0.1:${LOCAL_WEBSITE_PORT:-3000}
       WEBSITE_SESSION_SECRET: ${LOCAL_WEBSITE_SESSION_SECRET:?run the local-platform start script}
@@ -265,7 +265,7 @@ services:
     networks:
       - smart-job-local
     environment:
-      PGHOST: supabase_db_smart-job-erp-local
+      PGHOST: smart-job-supabase-db
       PGPORT: "5432"
       PGDATABASE: postgres
       PGUSER: postgres
@@ -300,7 +300,7 @@ services:
       <<: *local-environment
       NODE_ENV: production
       SMART_JOB_PERSISTENCE_BACKEND: sql
-      DATABASE_URL: postgresql://smart_job_archiver:${LOCAL_ARCHIVER_DB_PASSWORD:?run the local-platform start script}@supabase_db_smart-job-erp-local:5432/postgres
+      DATABASE_URL: postgresql://smart_job_archiver:${LOCAL_ARCHIVER_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "1"
       STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
@@ -310,7 +310,7 @@ services:
       ARCHIVER_LEASE_SECONDS: "3600"
       ARCHIVER_JOB_DEADLINE_MS: "3300000"
       ARCHIVER_CANDIDATE_LIMIT: "2000"
-      SUPABASE_URL: http://supabase_kong_smart-job-erp-local:8000
+      SUPABASE_URL: http://smart-job-supabase-gateway:8000
       SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
     depends_on:
       local-platform-adapter:

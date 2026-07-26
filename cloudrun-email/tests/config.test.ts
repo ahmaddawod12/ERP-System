@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { loadConfig } from "../src/config.js";
+import { terraformProductionEnv } from "./fixtures/terraform-production-env.js";
 
 const base = {
   NODE_ENV: "test",
@@ -17,6 +18,38 @@ const base = {
 
 test("email worker accepts an isolated local configuration", () => {
   assert.equal(loadConfig(base).database.ssl, false);
+});
+
+test("federated SES requires a complete role, audience, and Google service-account subject", () => {
+  const config = loadConfig({
+    ...base,
+    AWS_SES_CREDENTIAL_MODE: "federated",
+    AWS_SES_ROLE_ARN: "arn:aws:iam::123456789012:role/smart-job-email-ses",
+    AWS_SES_OIDC_AUDIENCE: "smart-job-email-production",
+    AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID: "123456789012345678901",
+  });
+  assert.equal(config.ses.credentialMode, "federated");
+  assert.equal(config.ses.federation?.subject, "123456789012345678901");
+  assert.throws(
+    () => loadConfig({
+      ...base,
+      AWS_SES_CREDENTIAL_MODE: "federated",
+      AWS_SES_ROLE_ARN: "arn:aws:iam::123456789012:role/smart-job-email-ses",
+    }),
+    /Federated SES requires/,
+  );
+  assert.throws(
+    () => loadConfig({
+      ...base,
+      AWS_SES_CREDENTIAL_MODE: "federated",
+      AWS_SES_ROLE_ARN: "arn:aws:iam::123456789012:role/smart-job-email-ses",
+      AWS_SES_OIDC_AUDIENCE: "smart-job-email-production",
+      AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID: "123456789012345678901",
+      AWS_ACCESS_KEY_ID: "static-key",
+      AWS_SECRET_ACCESS_KEY: "static-secret-key-material",
+    }),
+    /Static AWS credentials are forbidden/,
+  );
 });
 
 test("production requires the least-privilege database role", () => {
@@ -37,11 +70,11 @@ test("local service endpoints require the exact mounted platform marker", () => 
   const local = {
     ...base,
     NODE_ENV: "production",
-    DATABASE_URL: "postgresql://smart_job_email:local@supabase_db_smart-job-erp-local:5432/postgres",
+    DATABASE_URL: "postgresql://smart_job_email:local@smart-job-supabase-db:5432/postgres",
     SMART_JOB_DEPLOYMENT_ENV: "local",
     SMART_JOB_LOCAL_PLATFORM: "true",
     LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
-    SUPABASE_URL: "http://supabase_kong_smart-job-erp-local:8000",
+    SUPABASE_URL: "http://smart-job-supabase-gateway:8000",
     SUPABASE_PUBLIC_URL: "http://127.0.0.1:55321",
     AWS_SES_ENDPOINT: "http://local-platform-adapter:8090/ses",
     AWS_ACCESS_KEY_ID: "local-access-key",
@@ -68,5 +101,39 @@ test("provider emulator settings are forbidden outside the local platform", () =
       AWS_SECRET_ACCESS_KEY: "local-secret-access-key",
     }),
     /mounted local-platform marker/,
+  );
+});
+
+test("production accepts the exact Terraform environment and secret names", () => {
+  const config = loadConfig(terraformProductionEnv);
+
+  assert.equal(config.nodeEnv, "production");
+  assert.equal(config.ses.region, "eu-central-1");
+  assert.equal(config.ses.endpoint, undefined);
+  assert.equal(config.pubsub.audience, "https://email.example.test");
+});
+
+test("production accepts ambient AWS credentials or no static credential pair", () => {
+  assert.doesNotThrow(() => loadConfig(terraformProductionEnv));
+
+  const {
+    AWS_ACCESS_KEY_ID: _accessKeyId,
+    AWS_SECRET_ACCESS_KEY: _secretAccessKey,
+    ...withoutStaticCredentials
+  } = terraformProductionEnv;
+  assert.doesNotThrow(() => loadConfig(withoutStaticCredentials));
+});
+
+test("email configuration rejects a half-configured AWS credential pair", () => {
+  const { AWS_SECRET_ACCESS_KEY: _secretAccessKey, ...missingSecret } = terraformProductionEnv;
+  assert.throws(
+    () => loadConfig(missingSecret),
+    /must be configured together/,
+  );
+
+  const { AWS_ACCESS_KEY_ID: _accessKeyId, ...missingAccessKey } = terraformProductionEnv;
+  assert.throws(
+    () => loadConfig(missingAccessKey),
+    /must be configured together/,
   );
 });

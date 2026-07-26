@@ -18,6 +18,11 @@ if (marker !== "smart-job-erp-local-platform-v1") {
   throw new Error("The local-platform marker is not canonical");
 }
 requireMatch(compose, /name:\s*\$\{SMART_JOB_LOCAL_NETWORK:-smart-job-local\}[\s\S]*external:\s*true/, "Compose must use the external repository network");
+requireMatch(compose, /smart-job-supabase-gateway:8000/, "Compose must use the stable repository-owned Supabase gateway alias");
+requireMatch(compose, /smart-job-supabase-db:5432/, "Compose must use the stable repository-owned Supabase database alias");
+if (/supabase_(?:kong|db)_/.test(compose)) throw new Error("Compose must not couple services to Supabase CLI container names");
+requireMatch(launcher, /ensureSupabaseNetworkAlias\("8000\/tcp",\s*supabaseNetworkAliases\.gateway\)/, "The launcher must resolve and bind the active Supabase gateway");
+requireMatch(launcher, /ensureSupabaseNetworkAlias\("5432\/tcp",\s*supabaseNetworkAliases\.database\)/, "The launcher must resolve and bind the active Supabase database");
 requireMatch(compose, /smart_job_local_platform:[\s\S]*file:\s*\.\/local-platform\/marker/, "Compose must mount the repository marker as a secret");
 requireMatch(compose, /cloudrun-tax:[\s\S]*?TAX_SUBMISSION_MODE:\s*disabled[\s\S]*?cloudrun-pdf:/, "Local tax submission must remain disabled");
 requireMatch(compose, /cloudrun-archiver:[\s\S]*?profiles:\s*\["jobs"\][\s\S]*?DATABASE_URL:\s*postgresql:\/\/smart_job_archiver:/, "The archiver must use its least-privileged database role");

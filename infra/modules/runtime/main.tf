@@ -12,6 +12,7 @@ locals {
   required_images = toset([
     "api",
     "archiver",
+    "backup",
     "email",
     "migration",
     "pdf",
@@ -34,6 +35,51 @@ locals {
     document_generate = "${var.name_prefix}-document-generate-dlq"
     email_delivery    = "${var.name_prefix}-email-delivery-dlq"
   }
+
+  otel_service_keys     = toset(["api", "tax", "pdf", "email"])
+  otel_collector_image  = "us-docker.pkg.dev/cloud-ops-agents-artifacts/google-cloud-opentelemetry-collector/otelcol-google:0.156.0@sha256:8a141713e33e4584b3bd24e0db39d56a8e650edb03d79b6bf3de82ff1cdd97f9"
+  otel_collector_config = <<-YAML
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: localhost:4317
+    processors:
+      batch:
+        send_batch_max_size: 200
+        send_batch_size: 200
+        timeout: 5s
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 65
+        spike_limit_percentage: 20
+      resourcedetection:
+        detectors: [gcp]
+        timeout: 10s
+      transform/set_project_id:
+        error_mode: ignore
+        trace_statements:
+          - set(resource.attributes["gcp.project_id"], resource.attributes["gcp.project.id"]) where resource.attributes["gcp.project.id"] != nil
+          - set(resource.attributes["gcp.project_id"], resource.attributes["cloud.account.id"]) where resource.attributes["gcp.project_id"] == nil and resource.attributes["cloud.account.id"] != nil
+    exporters:
+      otlp:
+        endpoint: telemetry.googleapis.com:443
+        compression: none
+        balancer_name: pick_first
+        auth:
+          authenticator: googleclientauth
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      googleclientauth:
+    service:
+      extensions: [health_check, googleclientauth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [resourcedetection, memory_limiter, transform/set_project_id, batch]
+          exporters: [otlp]
+  YAML
 
   service_configs = {
     website = {
@@ -153,7 +199,7 @@ locals {
       ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
       disable_invoker_iam = false
       custom_audiences    = [local.pdf_oidc_audience]
-      health_path         = "/health"
+      health_path         = "/readyz"
       env = {
         CLOUD_RUN_SERVICE_URL                  = local.pdf_oidc_audience
         DATABASE_MAX_CONNECTIONS               = tostring(var.database_pool_max.pdf)
@@ -190,9 +236,10 @@ locals {
       ingress             = "INGRESS_TRAFFIC_INTERNAL_ONLY"
       disable_invoker_iam = false
       custom_audiences    = [local.email_oidc_audience]
-      health_path         = "/health"
-      env = {
+      health_path         = "/readyz"
+      env = merge({
         AWS_REGION                      = "eu-central-1"
+        AWS_SES_CREDENTIAL_MODE         = var.email_ses_federation.enabled ? "federated" : "static"
         CLOUD_RUN_SERVICE_URL           = local.email_oidc_audience
         DATABASE_MAX_CONNECTIONS        = tostring(var.database_pool_max.email)
         DATABASE_SSL_MODE               = "require"
@@ -203,15 +250,20 @@ locals {
         SES_FROM_NAME                   = "Smart-Job"
         SIGNED_DOWNLOAD_TTL_SECONDS     = "86400"
         SUPABASE_STORAGE_BUCKET         = "smart-job-company-files"
-      }
-      secret_env = {
+        }, var.email_ses_federation.enabled ? {
+        AWS_SES_ROLE_ARN                     = var.email_ses_federation.role_arn
+        AWS_SES_OIDC_AUDIENCE                = var.email_ses_federation.oidc_audience
+        AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID = var.email_ses_federation.google_service_account_unique_id
+      } : {})
+      secret_env = merge({
+        DATABASE_URL        = var.secret_ids["email_database_url"]
+        SES_FROM_EMAIL      = var.secret_ids["ses_from_email"]
+        SUPABASE_SECRET_KEY = var.secret_ids["supabase_secret_key"]
+        SUPABASE_URL        = var.secret_ids["supabase_url"]
+        }, var.email_ses_federation.enabled ? {} : {
         AWS_ACCESS_KEY_ID     = var.secret_ids["aws_access_key_id"]
         AWS_SECRET_ACCESS_KEY = var.secret_ids["aws_secret_access_key"]
-        DATABASE_URL          = var.secret_ids["email_database_url"]
-        SES_FROM_EMAIL        = var.secret_ids["ses_from_email"]
-        SUPABASE_SECRET_KEY   = var.secret_ids["supabase_secret_key"]
-        SUPABASE_URL          = var.secret_ids["supabase_url"]
-      }
+      })
     }
   }
 
@@ -246,6 +298,53 @@ locals {
         DATABASE_URL        = var.secret_ids["archiver_database_url"]
         SUPABASE_SECRET_KEY = var.secret_ids["supabase_secret_key"]
         SUPABASE_URL        = var.secret_ids["supabase_url"]
+      }
+    }
+    backup-storage = {
+      location        = var.primary_region
+      subnet          = var.primary_subnet_id
+      service_account = var.service_accounts["backup"]
+      image           = lookup(var.image_digests, "backup", "")
+      max_retries     = 2
+      timeout         = "900s"
+      cpu             = "1"
+      memory          = "1Gi"
+      command         = []
+      args            = []
+      env = {
+        BACKUP_BUCKET            = var.backup_bucket_name
+        BACKUP_MAX_PAGES_PER_RUN = "100"
+        BACKUP_MODE              = "storage"
+        BACKUP_RPO_MINUTES       = "15"
+        NODE_ENV                 = "production"
+        SUPABASE_S3_REGION       = "eu-central-1"
+        SUPABASE_STORAGE_BUCKET  = "smart-job-company-files"
+      }
+      secret_env = {
+        SUPABASE_S3_ACCESS_KEY_ID     = var.secret_ids["supabase_s3_access_key_id"]
+        SUPABASE_S3_SECRET_ACCESS_KEY = var.secret_ids["supabase_s3_secret_access_key"]
+        SUPABASE_URL                  = var.secret_ids["supabase_url"]
+      }
+    }
+    backup-database = {
+      location        = var.primary_region
+      subnet          = var.primary_subnet_id
+      service_account = var.service_accounts["backup"]
+      image           = lookup(var.image_digests, "backup", "")
+      max_retries     = 1
+      timeout         = "3600s"
+      cpu             = "1"
+      memory          = "1Gi"
+      command         = []
+      args            = []
+      env = {
+        BACKUP_BUCKET      = var.backup_bucket_name
+        BACKUP_MODE        = "database"
+        BACKUP_RPO_MINUTES = "15"
+        NODE_ENV           = "production"
+      }
+      secret_env = {
+        BACKUP_DATABASE_URL = var.secret_ids["backup_database_url"]
       }
     }
     migration = {
@@ -299,6 +398,7 @@ locals {
     + var.service_max_instances.email * var.database_pool_max.email
     + var.database_pool_max.archiver
     + var.database_pool_max.migration
+    + 1
   )
 
   required_secret_ids = toset(concat(
@@ -318,7 +418,7 @@ resource "terraform_data" "deployment_preconditions" {
       condition = !var.enable_runtime || alltrue([
         for image in local.required_images : contains(keys(var.image_digests), image)
       ])
-      error_message = "Runtime enablement requires all seven signed image digests."
+      error_message = "Runtime enablement requires all eight signed image digests."
     }
 
     precondition {
@@ -395,6 +495,9 @@ resource "google_cloud_run_v2_service" "service" {
     containers {
       name  = "app"
       image = each.value.image
+      depends_on = (
+        var.enable_otel && contains(local.otel_service_keys, each.key)
+      ) ? ["collector"] : []
 
       ports {
         name           = "http1"
@@ -412,6 +515,20 @@ resource "google_cloud_run_v2_service" "service" {
 
       dynamic "env" {
         for_each = each.value.env
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.enable_otel && contains(local.otel_service_keys, each.key) ? {
+          GOOGLE_CLOUD_PROJECT        = var.project_id
+          OTEL_ENABLED                = "true"
+          OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4317"
+          OTEL_SERVICE_NAME           = "${var.name_prefix}-${each.key}"
+          OTEL_SUCCESS_SAMPLE_RATIO   = "0.05"
+        } : {}
         content {
           name  = env.key
           value = env.value
@@ -463,6 +580,51 @@ resource "google_cloud_run_v2_service" "service" {
           http_get {
             path = readiness_probe.value
             port = 8080
+          }
+        }
+      }
+    }
+
+    dynamic "containers" {
+      for_each = var.enable_otel && contains(local.otel_service_keys, each.key) ? [1] : []
+      content {
+        name    = "collector"
+        image   = local.otel_collector_image
+        args    = ["--config=env:OTELCOL_CONFIG"]
+        command = []
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "256Mi"
+          }
+          cpu_idle = true
+        }
+
+        env {
+          name  = "OTELCOL_CONFIG"
+          value = local.otel_collector_config
+        }
+
+        startup_probe {
+          failure_threshold = 6
+          period_seconds    = 5
+          timeout_seconds   = 3
+
+          http_get {
+            path = "/"
+            port = 13133
+          }
+        }
+
+        liveness_probe {
+          failure_threshold = 3
+          period_seconds    = 30
+          timeout_seconds   = 3
+
+          http_get {
+            path = "/"
+            port = 13133
           }
         }
       }
@@ -795,4 +957,54 @@ resource "google_cloud_scheduler_job" "archive" {
   }
 
   depends_on = [google_cloud_run_v2_job_iam_member.scheduler_archiver]
+}
+
+resource "google_cloud_run_v2_job_iam_member" "scheduler_backup" {
+  for_each = var.enable_runtime ? toset(["backup-storage", "backup-database"]) : toset([])
+
+  project  = var.project_id
+  location = google_cloud_run_v2_job.job[each.key].location
+  name     = google_cloud_run_v2_job.job[each.key].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.service_accounts["scheduler"]}"
+}
+
+resource "google_cloud_scheduler_job" "backup" {
+  for_each = var.enable_runtime ? {
+    storage = {
+      job_key  = "backup-storage"
+      schedule = var.backup_storage_schedule
+    }
+    database = {
+      job_key  = "backup-database"
+      schedule = var.backup_database_schedule
+    }
+  } : {}
+
+  project     = var.project_id
+  region      = var.primary_region
+  name        = "${var.name_prefix}-backup-${each.key}"
+  description = "Invoke the create-only ${each.key} recovery backup job"
+  schedule    = each.value.schedule
+  time_zone   = "Etc/UTC"
+
+  retry_config {
+    retry_count          = 2
+    max_retry_duration   = "3600s"
+    min_backoff_duration = "60s"
+    max_backoff_duration = "300s"
+    max_doublings        = 2
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.primary_region}/jobs/${google_cloud_run_v2_job.job[each.value.job_key].name}:run"
+
+    oauth_token {
+      service_account_email = var.service_accounts["scheduler"]
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_job_iam_member.scheduler_backup]
 }

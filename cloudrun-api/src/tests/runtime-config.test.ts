@@ -94,10 +94,10 @@ test("runtime config accepts marker-gated Compose endpoints and keeps tax disabl
     SMART_JOB_LOCAL_PLATFORM: "true",
     LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
     DATABASE_URL:
-      "postgresql://smart_job_api:local-only@supabase_db_smart-job-erp-local:5432/postgres",
-    SUPABASE_INTERNAL_URL: "http://supabase_kong_smart-job-erp-local:8000",
+      "postgresql://smart_job_api:local-only@smart-job-supabase-db:5432/postgres",
+    SUPABASE_INTERNAL_URL: "http://smart-job-supabase-gateway:8000",
     SUPABASE_JWKS_URL:
-      "http://supabase_kong_smart-job-erp-local:8000/auth/v1/.well-known/jwks.json",
+      "http://smart-job-supabase-gateway:8000/auth/v1/.well-known/jwks.json",
     DOCUMENT_PUBSUB_PROJECT_ID: "smart-job-local",
     DOCUMENT_PREVIEW_TOPIC: "document-preview",
     DOCUMENT_GENERATE_TOPIC: "document-generate",
@@ -115,7 +115,7 @@ test("runtime config accepts marker-gated Compose endpoints and keeps tax disabl
   assert.equal(config.database.ssl, false);
   assert.equal(
     config.supabaseAuth.baseUrl.href,
-    "http://supabase_kong_smart-job-erp-local:8000/",
+    "http://smart-job-supabase-gateway:8000/",
   );
   assert.equal(config.supabaseStorage.publicBaseUrl?.href, "http://127.0.0.1:55321/");
   assert.equal(config.documentDispatch?.apiBaseUrl?.href, "http://local-platform-adapter:8090/");

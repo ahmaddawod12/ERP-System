@@ -2,10 +2,17 @@ import { readFileSync } from "node:fs";
 
 const workflow = readFileSync(".github/workflows/cloudrun-deploy.yml", "utf8");
 const foundation = readFileSync("infra/modules/foundation/main.tf", "utf8");
+const foundationVariables = readFileSync("infra/modules/foundation/variables.tf", "utf8");
 const runtime = readFileSync("infra/modules/runtime/main.tf", "utf8");
 const edge = readFileSync("infra/modules/edge/main.tf", "utf8");
 const observability = readFileSync("infra/modules/observability/main.tf", "utf8");
 const migrationImage = readFileSync("cloudrun-migrations/Dockerfile", "utf8");
+const awsSesFederation = readFileSync("infra/aws/ses-federation/main.tf", "utf8");
+const emailConfig = readFileSync("cloudrun-email/src/config.ts", "utf8");
+const environmentVariables = ["dev", "staging", "prod"].map((environment) => ({
+  environment,
+  source: readFileSync(`infra/environments/${environment}/variables.tf`, "utf8"),
+}));
 
 function requireMatch(source, expression, message) {
   if (!expression.test(source)) throw new Error(message);
@@ -21,6 +28,7 @@ function requireOrder(source, first, second, message) {
 
 requireMatch(workflow, /test "\$\{IMAGE_TAG\}" = "\$\{GITHUB_SHA\}"/, "Release SHA must match the selected workflow ref");
 requireMatch(workflow, /actions\/workflows\/ci\.yml\/runs\?head_sha=\$\{GITHUB_SHA\}/, "Release must require successful CI for the selected SHA");
+requireMatch(workflow, /check-launch-evidence\.mjs/, "Production releases must validate exact-SHA launch evidence");
 requireMatch(workflow, /environment: \$\{\{ inputs\.environment \}\}/, "Production promotion must pass through the protected environment gate");
 requireMatch(workflow, /Require a prebuilt release for production/, "Production must consume a prebuilt staging release");
 requireMatch(workflow, /test "\$\{DESTINATION_DIGEST\}" = "\$\{EXPECTED_DIGEST\}"/, "Production promotion must preserve the exact manifest digest");
@@ -41,6 +49,7 @@ for (const [name, dockerfile] of Object.entries({
   pdf: "cloudrun-pdf/Dockerfile",
   email: "cloudrun-email/Dockerfile",
   archiver: "cloudrun-archiver/Dockerfile",
+  backup: "cloudrun-backup/Dockerfile",
   migration: "cloudrun-migrations/Dockerfile",
 })) {
   requireMatch(workflow, new RegExp(`name: ${name}\\s+repository:[\\s\\S]{0,80}dockerfile: ${dockerfile.replaceAll("/", "\\/")}`), `${name} must be part of the build-once release matrix`);
@@ -54,6 +63,13 @@ requireMatch(foundation, /resource "google_secret_manager_secret" "runtime"/, "T
 if (/google_secret_manager_secret_version/.test(foundation)) {
   throw new Error("Terraform must never manage secret payload versions");
 }
+requireMatch(foundation, /resource "google_kms_crypto_key" "backup"/, "The backup bucket must use a customer-managed encryption key");
+requireMatch(foundation, /default_kms_key_name\s+= google_kms_crypto_key\.backup\.id/, "The backup bucket must default to its CMEK");
+requireMatch(
+  foundationVariables,
+  /condition\s+= !var\.lock_backup_retention \|\| var\.backup_restore_drill_verified/,
+  "Backup retention locking must require successful restore-drill evidence",
+);
 
 requireMatch(runtime, /INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER/, "Public services must reject direct internet ingress");
 requireMatch(runtime, /INGRESS_TRAFFIC_INTERNAL_ONLY/, "Worker services must remain internal");
@@ -69,6 +85,33 @@ requireMatch(migrationJob, /DATABASE_SSL_MODE\s+= "require"/, "Migration connect
 requireMatch(migrationJob, /DATABASE_SSL_REJECT_UNAUTHORIZED\s+= "true"/, "Migration connections must verify database certificates");
 requireMatch(runtime, /tax-submissions\/drain[\s\S]{0,150}paused\s+= true/, "Tax submission scheduler must remain paused");
 requireMatch(runtime, /resource "google_pubsub_subscription" "dead_letter"/, "Every DLQ must retain messages through an inspection subscription");
+requireMatch(runtime, /BACKUP_RPO_MINUTES\s+= "15"/, "Storage backup must enforce the fifteen-minute RPO");
+requireMatch(runtime, /backup-storage[\s\S]*max_retries\s+= 2/, "Storage backup must be resumable and retryable");
+requireMatch(runtime, /backup-database[\s\S]*BACKUP_MODE\s+= "database"/, "A daily logical database backup job must be configured");
+requireMatch(runtime, /resource "google_cloud_scheduler_job" "backup"/, "Storage and database backup jobs must be scheduled");
+requireMatch(runtime, /AWS_SES_CREDENTIAL_MODE\s+= var\.email_ses_federation\.enabled \? "federated" : "static"/, "Email deployments must explicitly select static or federated AWS credentials");
+requireMatch(runtime, /var\.email_ses_federation\.enabled \? \{\} : \{[\s\S]*AWS_ACCESS_KEY_ID[\s\S]*AWS_SECRET_ACCESS_KEY/, "Federated email must remove static AWS secret mounts");
+requireMatch(foundation, /enable_static_ses_credentials \? \{[\s\S]*aws_access_key_id[\s\S]*aws_secret_access_key[\s\S]*\} : \{\}/, "The foundation must remove legacy AWS secret containers after federation cutover");
+requireMatch(emailConfig, /Static AWS credentials are forbidden in federated SES mode/, "The email process must fail closed if federation and static keys are mixed");
+requireMatch(awsSesFederation, /accounts\.google\.com:aud/, "AWS trust must bind the Google authorized party");
+requireMatch(awsSesFederation, /accounts\.google\.com:oaud/, "AWS trust must bind the dedicated requested audience");
+requireMatch(awsSesFederation, /accounts\.google\.com:sub/, "AWS trust must bind the immutable service-account subject");
+requireMatch(awsSesFederation, /actions\s+= \["ses:SendEmail"\]/, "The federated AWS role must remain least-privilege");
+for (const service of ["api", "tax", "pdf", "email"]) {
+  requireMatch(
+    runtime,
+    new RegExp(`\\n    ${service} = \\{[\\s\\S]{0,2500}?health_path\\s+= "\\/readyz"`),
+    `${service} must use dependency readiness for Cloud Run startup probes`,
+  );
+}
+
+for (const { environment, source } of environmentVariables) {
+  requireMatch(
+    source,
+    /variable "notification_channels"[\s\S]*condition\s+= !var\.enable_runtime \|\| length\(var\.notification_channels\) > 0/,
+    `${environment} runtime deployments must configure at least one notification channel`,
+  );
+}
 
 requireMatch(edge, /evaluatePreconfiguredWaf\('sqli-v33-stable'\)/, "Cloud Armor must enable the managed SQLi ruleset");
 requireMatch(edge, /evaluatePreconfiguredWaf\('xss-v33-stable'\)/, "Cloud Armor must enable the managed XSS ruleset");

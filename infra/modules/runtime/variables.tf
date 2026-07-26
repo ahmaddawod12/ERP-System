@@ -15,6 +15,38 @@ variable "enable_runtime" {
   type        = bool
 }
 
+variable "enable_otel" {
+  description = "Deploy the pinned Google-built OpenTelemetry Collector sidecar for serving workloads."
+  type        = bool
+  default     = false
+}
+
+variable "email_ses_federation" {
+  description = "Post-stabilization AWS SES federation settings. Static keys are not mounted when enabled."
+  type = object({
+    enabled                          = bool
+    role_arn                         = string
+    oidc_audience                    = string
+    google_service_account_unique_id = string
+  })
+  default = {
+    enabled                          = false
+    role_arn                         = ""
+    oidc_audience                    = ""
+    google_service_account_unique_id = ""
+  }
+
+  validation {
+    condition = !var.email_ses_federation.enabled || (
+      can(regex("^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$", var.email_ses_federation.role_arn))
+      && length(var.email_ses_federation.oidc_audience) >= 8
+      && length(var.email_ses_federation.oidc_audience) <= 256
+      && can(regex("^[0-9]{10,32}$", var.email_ses_federation.google_service_account_unique_id))
+    )
+    error_message = "Enabled email SES federation requires a role ARN, bounded audience, and numeric Google service-account unique ID."
+  }
+}
+
 variable "enable_release_jobs" {
   description = "Create only migration/smoke jobs before the first runtime apply."
   type        = bool
@@ -64,6 +96,10 @@ variable "secret_versions" {
 }
 
 variable "archive_bucket_name" {
+  type = string
+}
+
+variable "backup_bucket_name" {
   type = string
 }
 
@@ -176,6 +212,16 @@ variable "tax_drain_schedule" {
 variable "archive_schedule" {
   type    = string
   default = "30 1 1 * *"
+}
+
+variable "backup_storage_schedule" {
+  type    = string
+  default = "*/15 * * * *"
+}
+
+variable "backup_database_schedule" {
+  type    = string
+  default = "15 2 * * *"
 }
 
 variable "labels" {

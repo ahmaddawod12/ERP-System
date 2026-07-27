@@ -374,7 +374,16 @@ function reset(confirmed) {
   }
   startSupabase();
   process.stdout.write("Resetting the repository-owned local Supabase database...\n");
-  run("supabase", ["db", "reset", "--local", "--no-seed"]);
+  run("supabase", [
+    "db",
+    "reset",
+    "--local",
+    "--no-seed",
+    "--network-id",
+    localNetwork,
+  ]);
+  ensureSupabaseNetworkAlias("5432/tcp", supabaseNetworkAliases.database);
+  ensureSupabaseNetworkAlias("8000/tcp", supabaseNetworkAliases.gateway);
   const supabase = readSupabaseStatus();
   const values = ensureRuntimeEnvironment(supabase);
   validateCompose();

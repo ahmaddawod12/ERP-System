@@ -20,5 +20,8 @@ COPY --from=build /workspace/cloudrun-backup/node_modules ./node_modules
 COPY --from=build /workspace/cloudrun-backup/dist ./dist
 COPY --from=build /workspace/packages/observability /workspace/packages/observability
 
+# The inherited entrypoint does not need gosu because this image always runs as postgres.
+RUN rm /usr/local/bin/gosu
+
 USER postgres
 CMD ["node", "--import", "@smart-job/observability/register", "dist/index.js"]

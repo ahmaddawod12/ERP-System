@@ -22,7 +22,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:integration": "node --test tests/api-security-foundation.integration.test.mjs",
-    "test:migrations": "node scripts/run-isolated-upgrade-verification.mjs",
+    "test:migrations": "node scripts/run-isolated-baseline-verification.mjs",
     "perf:large-tenant": "node perf/profile-large-tenant.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

@@ -21,8 +21,8 @@ This document summarizes the active backend boundaries as of July 22, 2026.
   and `cloudrun-email` implement the worker boundaries. Tax stays disabled
   pending certification.
 
-The approved migration chain now runs through `0032`. Migrations `0006`–`0032`
-add least-privileged API and worker roles, request context, private
+The approved database surface is captured in the single consolidated baseline.
+It adds least-privileged API and worker roles, request context, private
 session/idempotency/upload/workflow state, atomic domain mutations,
 transactional accepted-job inventory consumption, canonical PDF/email claims,
 and the authoritative tax transaction/outbox, leased immutable archives,
@@ -50,33 +50,33 @@ This is the staged Node 22 modular API boundary. Its current implementation owns
 - SQL-filtered, bounded `GET` routes for jobs, clients, company inventory, and
   the authenticated member's inventory, all with opaque `(createdAt, id)`
   cursors and role/module/tenant enforcement
-- verified, idempotent client create/update/delete routes through migration
-  `0018`; default reads exclude archived rows, updates are version checked,
+- verified, idempotent client create/update/delete routes through baseline
+  RPCs; default reads exclude archived rows, updates are version checked,
   sequential client numbers use the company counter, and DELETE archives
   referenced clients instead of orphaning job or document history
 - verified, idempotent inventory part create/update/archive, company/self
-  adjustment, single transfer, and bounded batch-pick routes through migration
-  `0019`. SQL derives entitlement/membership authority, versions part metadata
+  adjustment, single transfer, and bounded batch-pick routes through baseline
+  RPCs. SQL derives entitlement/membership authority, versions part metadata
   and each location balance, locks balances deterministically, rejects
   underflow/stale writes, and bumps inventory sync state atomically; the
   runtime role has no direct inventory-table write grant
 - verified, idempotent, version-checked team-member updates and guarded disable
-  through migration `0020`; direct Auth-user creation/password handling is not
+  through baseline RPCs; direct Auth-user creation/password handling is not
   part of worker management, and members with active jobs or positive stock
   cannot be disabled
 - idempotent `POST` routes for atomic job creation and version-checked job
   completion, including same-transaction attachment upload-session consumption
 - idempotent, signed create-only job-attachment upload sessions in the private
-  `smart-job-company-files` bucket. Migration `0016` deterministically reuses
+  `smart-job-company-files` bucket. The baseline deterministically reuses
   the claim-backed session, enforces a committed 12-per-10-minute user limit
   and four-active-session user/workspace quota, and queues cleanup after three
   initial signing failures; replays generate fresh signed URLs rather than
   persisting bearer URLs
 - verified-email, idempotent first-workspace business registration through the
-  migration `0010` transaction
-- verified, self-scoped push-token upsert/clear through migration `0011`; token
+  baseline transaction
+- verified, self-scoped push-token upsert/clear through baseline RPCs; token
   values are never returned or logged
-- verified, idempotent invitation create/redeem through migration `0012`, with
+- verified, idempotent invitation create/redeem through baseline RPCs, with
   SQL-derived authority, exact row locks, atomic membership creation, and
   separate hashed 10-per-minute limits
 - opaque document dispatch, lease-token PDF completion, durable email delivery,
@@ -136,7 +136,7 @@ This private Pub/Sub worker owns generated-document email delivery. It:
 This batch job owns monthly archive creation and verified deletion. It:
 
 - queues expired upload sessions and claims one bounded cleanup batch through
-  migration `0009` service-role-only RPCs
+  baseline service-role-only RPCs
 - deletes only exact, canonical `smart-job-company-files` manifest paths and
   acknowledges each lease as complete, retryable, or dead-lettered
 - reports upload-cleanup failures without preventing monthly archive work
@@ -158,21 +158,21 @@ This package is the SQL persistence layer. It contains:
 - read-model helpers used by backend services
 - read-only profiling helpers under `packages/db/perf/` for advisor and `EXPLAIN` checks before broad index changes
 - optimized baseline RPCs for client pages, inventory pages, and atomic multi-part inventory picks
-- migration `0006_api_security_foundation.sql`, which provides
+- the consolidated baseline, which provides
   `smart_job_api`, `private.set_api_request_context(...)`, private opaque
   session/idempotency/upload state, job `entity_version`, and
   `private.complete_job_with_details(...)`
-- migration `0007_api_job_creation_and_storage.sql`, which provides atomic API
+- baseline SQL for atomic API
   job creation and the private `smart-job-company-files` attachment bucket
-- migration `0008_pdf_supabase_storage.sql`, which permits PDF content in that
+- baseline SQL that permits PDF content in that
   same private bucket while leaving overwrite prevention to the trusted worker
-- migration `0009_bounded_upload_session_cleanup.sql`, which provides
+- baseline SQL that provides
   service-role-only expiry/claim/finish wrappers, skip-locked leases, canonical
   manifest quarantine, and bounded cleanup attempts
-- migration `0010_hardened_api_business_registration.sql`, which derives the
+- baseline SQL that derives the
   first workspace's identity, role, tier, modules, and public counter inside one
   serialized transaction
-- migration `0011_api_push_tokens.sql`, which exposes only authenticated-self
+- baseline SQL that exposes only authenticated-self
   push-token upsert/clear RPCs to `smart_job_api`
 
 `smart_job_api` is intentionally not a migration role and has no general direct
@@ -281,7 +281,7 @@ supabase db lint --local --schema public,private --level warning
   job completion must go through `private.complete_job_with_details(...)` so
   job, part, inventory, upload, attachment, and sync-version state commits
   together. API metadata updates, manager acceptance, and guarded deletion use
-  only the narrow functions from `0021_api_job_mutations.sql`; each derives
+  only the narrow baseline functions; each derives
   tenant/module/role authority in SQL and bumps `jobs_version` atomically.
 - Enforce subscription status, expiry, tier, and canonical module overrides in
   SQL before returning module counts or accepting completion. Completion also

@@ -280,11 +280,11 @@ test("worker read SQL keeps role, entitlement, tenant, filters, and keyset check
 
 test("existing database foundation supplies RLS and least-privileged team SELECT", () => {
   const foundation = readFileSync(
-    new URL("../../../packages/db/migrations/0006_api_security_foundation.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   const baseline = readFileSync(
-    new URL("../../../packages/db/migrations/0000_optimized_baseline.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
 

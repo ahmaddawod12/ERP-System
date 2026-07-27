@@ -246,11 +246,11 @@ test("client read SQL keeps entitlement, role, tenant, search, and keyset checks
 
 test("existing database foundation supplies request context, RLS, and least-privileged client SELECT", () => {
   const foundation = readFileSync(
-    new URL("../../../packages/db/migrations/0006_api_security_foundation.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   const baseline = readFileSync(
-    new URL("../../../packages/db/migrations/0000_optimized_baseline.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   const runtime = readFileSync(new URL("../database/runtime.js", import.meta.url), "utf8");

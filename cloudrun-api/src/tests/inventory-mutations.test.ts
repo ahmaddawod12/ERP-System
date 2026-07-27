@@ -310,7 +310,7 @@ test("inventory mutations reject missing idempotency before auth and database wo
 
 test("inventory migration keeps runtime writes behind narrow atomic RPCs", () => {
   const migration = readFileSync(
-    new URL("../../../packages/db/migrations/0019_api_inventory_mutations.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   assert.match(migration, /inventory_parts_increment_entity_version/);

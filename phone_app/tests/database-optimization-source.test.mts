@@ -28,47 +28,10 @@ test('mobile initial cache does not bootstrap broad job/document collections', (
 test('database optimization migration adds indexes, RLS, and RPC execute hardening', () => {
   const migrationsDir = path.resolve(process.cwd(), '..', 'packages', 'db', 'migrations');
   const migrationFiles = fs.readdirSync(migrationsDir).filter((name) => name.endsWith('.sql')).sort();
-  const migration = readRepoFile('packages', 'db', 'migrations', '0000_optimized_baseline.sql');
-  const hardeningMigration = readRepoFile('packages', 'db', 'migrations', '0001_supabase_cost_perf_security_hardening.sql');
+  const migration = readRepoFile('packages', 'db', 'migrations', '0000_baseline.sql');
+  const hardeningMigration = migration;
 
-  assert.deepEqual(migrationFiles, [
-    '0000_optimized_baseline.sql',
-    '0001_supabase_cost_perf_security_hardening.sql',
-    '0002_phase1_read_caps.sql',
-    '0003_phase1_atomic_jobs.sql',
-    '0004_phase1_atomic_business_registration.sql',
-    '0005_phase2_trigger_search_path.sql',
-    '0006_api_security_foundation.sql',
-    '0007_api_job_creation_and_storage.sql',
-    '0008_pdf_supabase_storage.sql',
-    '0009_bounded_upload_session_cleanup.sql',
-    '0010_hardened_api_business_registration.sql',
-    '0011_api_push_tokens.sql',
-    '0012_hardened_api_invitations.sql',
-    '0013_api_profile_updates.sql',
-    '0014_api_support_conversations.sql',
-    '0015_api_push_devices.sql',
-    '0016_upload_session_idempotency_limits.sql',
-    '0017_api_upgrade_and_contact_requests.sql',
-    '0018_api_client_mutations.sql',
-    '0019_api_inventory_mutations.sql',
-    '0020_api_worker_mutations.sql',
-    '0021_api_job_mutations.sql',
-    '0022_api_document_tasks.sql',
-    '0023_api_tax_callback_processing.sql',
-    '0024_api_archive_retrieval.sql',
-    '0025_post_0024_metadata_baseline.sql',
-    '0026_job_acceptance_inventory_consumption.sql',
-    '0027_durable_workflow_foundations.sql',
-    '0028_reliable_document_email_pipeline.sql',
-    '0029_authoritative_tax_workflow.sql',
-    '0030_post_tax_metadata_sync.sql',
-    '0031_batch5_archive_hardening.sql',
-    '0032_batch5_readiness_search.sql',
-    '0033_archive_period_authority.sql',
-    '0034_receipt_payment_metadata.sql',
-    '0035_backup_runtime_role.sql',
-  ]);
+  assert.deepEqual(migrationFiles, ['0000_baseline.sql']);
 
   assert.match(migration, /company_memberships_user_active_joined_idx/);
   assert.match(migration, /jobs_company_assignee_status_finished_cursor_idx/);

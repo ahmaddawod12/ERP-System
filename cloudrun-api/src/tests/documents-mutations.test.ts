@@ -210,7 +210,7 @@ test("document mutations use verified, idempotent, narrow SQL transactions", asy
 
 test("document migration owns totals, counters, versions, and dispatch leases", () => {
   const migration = readFileSync(
-    new URL("../../../packages/db/migrations/0022_api_document_tasks.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   assert.match(migration, /documents_increment_entity_version/);
@@ -224,10 +224,14 @@ test("document migration owns totals, counters, versions, and dispatch leases", 
 });
 
 test("database rejects unsafe receipt payment payloads before insertion", () => {
-  const migration = readFileSync(
-    new URL("../../../packages/db/migrations/0034_receipt_payment_metadata.sql", import.meta.url),
+  const baseline = readFileSync(
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
+  const migration = baseline
+    .split("-- Consolidated source: 0034_receipt_payment_metadata.sql")[1]
+    ?.split("-- Consolidated source: 0035_backup_runtime_role.sql")[0];
+  assert.ok(migration, "receipt payment baseline section is required");
   assert.match(migration, /documents_payment_metadata_guard/);
   assert.match(migration, /PAYMENT_METADATA_PAN_FORBIDDEN/);
   assert.match(migration, /PAYMENT_METADATA_CASH_DETAILS_FORBIDDEN/);

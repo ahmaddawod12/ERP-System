@@ -23,6 +23,8 @@ requireMatch(compose, /smart-job-supabase-db:5432/, "Compose must use the stable
 if (/supabase_(?:kong|db)_/.test(compose)) throw new Error("Compose must not couple services to Supabase CLI container names");
 requireMatch(launcher, /ensureSupabaseNetworkAlias\("8000\/tcp",\s*supabaseNetworkAliases\.gateway\)/, "The launcher must resolve and bind the active Supabase gateway");
 requireMatch(launcher, /ensureSupabaseNetworkAlias\("5432\/tcp",\s*supabaseNetworkAliases\.database\)/, "The launcher must resolve and bind the active Supabase database");
+requireMatch(launcher, /"db",\s*"reset",\s*"--local",\s*"--no-seed",\s*"--network-id",\s*localNetwork/, "Database reset must preserve the repository-owned Docker network");
+requireMatch(launcher, /"--network-id",\s*localNetwork,\s*\]\);\s*ensureSupabaseNetworkAlias\("5432\/tcp",\s*supabaseNetworkAliases\.database\);\s*ensureSupabaseNetworkAlias\("8000\/tcp",\s*supabaseNetworkAliases\.gateway\)/, "Database reset must restore stable Supabase aliases before local role bootstrap");
 requireMatch(compose, /smart_job_local_platform:[\s\S]*file:\s*\.\/local-platform\/marker/, "Compose must mount the repository marker as a secret");
 requireMatch(compose, /cloudrun-tax:[\s\S]*?TAX_SUBMISSION_MODE:\s*disabled[\s\S]*?cloudrun-pdf:/, "Local tax submission must remain disabled");
 requireMatch(compose, /cloudrun-archiver:[\s\S]*?profiles:\s*\["jobs"\][\s\S]*?DATABASE_URL:\s*postgresql:\/\/smart_job_archiver:/, "The archiver must use its least-privileged database role");

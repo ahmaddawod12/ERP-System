@@ -49,7 +49,7 @@ export async function checkSharedSqlReadiness(): Promise<void> {
       current_user = 'smart_job_pdf'
       AND has_function_privilege(
         current_user,
-        'private.claim_document_task(uuid,uuid,integer)',
+        'private.claim_pdf_document_task(text,uuid,integer)',
         'EXECUTE'
       ) AS ready`,
     [],

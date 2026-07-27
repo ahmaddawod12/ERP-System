@@ -50,8 +50,8 @@ run "operational_gates_have_metrics_alerts_and_dashboard_tiles" {
   }
 
   assert {
-    condition     = length(google_logging_metric.operational_failure) == 5
-    error_message = "Tax, callback, archive, database-pool, and session-refresh failures each require a log metric."
+    condition     = length(google_logging_metric.operational_failure) == 6
+    error_message = "Tax, callback, archive, backup, database-pool, and session-refresh failures each require a log metric."
   }
 
   assert {

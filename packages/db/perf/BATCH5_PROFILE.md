@@ -18,7 +18,7 @@ Targets are p95 below 300 ms for list queries and below 500 ms for search.
 | Inventory search | 44.68 ms | 9.16 ms | 500 ms | Pass |
 
 The baseline job search exceeded its budget and justified the generated,
-normalized search columns and `pg_trgm` GIN indexes in migration `0032`.
+normalized search columns and `pg_trgm` GIN indexes in the consolidated baseline.
 Document and inventory indexes use the same bounded query pattern and add
 headroom while avoiding multiple per-row lowercase/substring calculations.
 The tradeoff is additional index storage and write amplification; the list

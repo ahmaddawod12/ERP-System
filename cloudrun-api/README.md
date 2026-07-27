@@ -89,18 +89,18 @@ Configuration is validated before the server starts. Invalid values fail closed.
   `GET /api/v1/companies/{companyId}/bootstrap` are implemented.
 - `POST /api/v1/auth/business-registration` creates only the authenticated
   user's first workspace. It requires verified email plus a global
-  idempotency key; migration `0010_hardened_api_business_registration` derives
+  idempotency key; the consolidated baseline derives
   the Auth subject, public company counter, owner role, tier, and modules in
   one transaction and serializes concurrent attempts by user.
 - `POST /api/v1/me/push-token` registers an `ios` or `android` device token,
   and `DELETE /api/v1/me/push-token` clears it idempotently. Both mutations
   require a verified identity and call the self-scoped private RPCs from
-  migration `0011_api_push_tokens`; token values are write-only and are never
+  baseline push-token RPCs; token values are write-only and are never
   returned or included in structured logs.
 - `POST /api/v1/companies/{companyId}/invitations` creates a manager-owned,
   team-entitled invitation. `POST /api/v1/auth/invitations/redeem` binds the
   public company ID and code to the verified Supabase Auth subject. Both
-  require `Idempotency-Key`. Migration `0012_hardened_api_invitations` keeps
+  require `Idempotency-Key`. The consolidated baseline keeps
   role and tenant authority in SQL, locks the exact invite during atomic
   consumption, permits memberships in other workspaces, and makes a
   same-user retry deterministic without accepting identity fields from the
@@ -138,7 +138,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
   existing `app_users` RLS policy to expose Auth profiles.
 - `PATCH` and `DELETE /api/v1/companies/{companyId}/workers/{memberNo}`
   require verified identity, `Idempotency-Key`, and an opaque entity version.
-  Migration `0020_api_worker_mutations` derives manager/dev and Team-module
+  The consolidated baseline derives manager/dev and Team-module
   authority in SQL. DELETE disables the membership instead of erasing
   history, and is rejected until active jobs are reassigned/finished and the
   member's remaining inventory is transferred.
@@ -155,7 +155,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
   `stockEntityVersion` (selected location balance). Verified, idempotent
   mutations cover part create/update/zero-company/member-stock archive, company and
   `/inventory/me` adjustments, manager transfers, and manager batch picks.
-  Migration `0019_api_inventory_mutations` keeps writes behind narrow RPCs,
+  The consolidated baseline keeps writes behind narrow RPCs,
   caps picks at 100 unique parts, locks balances deterministically, rejects
   underflow/stale versions, and commits movements with the inventory sync bump.
 - `POST /api/v1/companies/{companyId}/jobs/{jobId}/complete` uses the atomic,
@@ -175,7 +175,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
   `apply_job_inventory_consumption_batch(...)` before status finalization and
   rolls back completely on insufficient stock.
 - `POST /api/v1/uploads/job-attachments/sessions` requires `Idempotency-Key`.
-  Migration `0016_upload_session_idempotency_limits` binds the claim UUID to
+  The consolidated baseline binds the claim UUID to
   one canonical pending session, limits each user to 12 new sessions per fixed
   ten-minute window and four active sessions per workspace, and moves an
   unissued session to bounded cleanup after three signing failures. Signed
@@ -216,7 +216,7 @@ authenticated transaction establishes `private.set_api_request_context(...)`
 with bounded statement, lock, and idle-transaction timeouts; the HTTP deadline
 alone cannot cancel a query already sent to Postgres.
 
-Migration `0018` supplies the default client-list
+The consolidated baseline supplies the default client-list
 `(company_id, status, created_at DESC, id DESC)` index plus narrow client
 reference indexes for jobs and documents. The baseline schema does not yet
 have dedicated created-at cursor indexes for memberships or inventory parts.

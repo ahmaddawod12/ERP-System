@@ -29,7 +29,7 @@ Scheduler/queues -------Google IAM------------^       |----Pub/Sub----> cloudrun
                                                        `----Google IAM--> cloudrun-tax (me-west1)
 ```
 
-Migrations through `0032` support the API, private file/PDF flow, versioned
+The single consolidated baseline supports the API, private file/PDF flow, versioned
 domain mutations, transactional accepted-job inventory consumption, dedicated
 worker roles, durable email/tax/archive workflow state, leased immutable
 archives, schema-aware readiness, indexed bounded search, and approval-only tax
@@ -94,7 +94,7 @@ These are the primary company-scoped ERP entities and should be treated as SQL-o
   atomically commit status, parts, inventory, uploads, attachments, and sync
   version changes.
 - Job metadata/client/assignee updates, manager acceptance, and guarded
-  deletion use the private functions in migration `0021`. Each re-derives the
+  deletion use the private functions in the consolidated baseline. Each re-derives the
   authenticated membership, jobs entitlement, role, assignment, and expected
   entity version in SQL; only the three transaction functions are executable
   by `smart_job_api`.
@@ -310,7 +310,7 @@ Persist only canonical `storagePath` references in records. Do not persist durab
 - Inventory mutations must fail on negative resulting balances; they must not silently clamp stock underflow to zero.
 - Inventory movement mutations should be applied atomically through SQL helpers such as `apply_inventory_movement(...)` rather than client-visible read-modify-write sequences.
 - Multi-part inventory picks should use `apply_inventory_pick_batch(...)` so all movements commit or roll back together.
-- Migration `0019` makes part metadata and each location balance independently
+- The consolidated database baseline makes part metadata and each location balance independently
   versioned. Manager/dev owns company create/update/archive/adjust/transfer/
   pick while member adjustment is self-scoped; public targets use `memberNo`,
   picks contain at most 100 unique parts, and `smart_job_api` reaches these

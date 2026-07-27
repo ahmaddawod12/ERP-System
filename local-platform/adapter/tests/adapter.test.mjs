@@ -96,6 +96,21 @@ test("published messages are persisted and delivered with the shared worker toke
     await new Promise((resolve) => adapter.server.listen(0, "127.0.0.1", resolve));
     const address = adapter.server.address();
     assert.ok(address && typeof address === "object");
+    const sesReadiness = await fetch(`http://127.0.0.1:${address.port}/ses`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        Action: "GetAccountSendingEnabled",
+        Version: "2010-12-01",
+      }),
+    });
+    const sesReadinessBody = await sesReadiness.text();
+    assert.equal(sesReadiness.status, 200, sesReadinessBody);
+    assert.match(
+      sesReadinessBody,
+      /<GetAccountSendingEnabledResult><Enabled>true<\/Enabled><\/GetAccountSendingEnabledResult>/,
+    );
+    assert.equal(requests.length, 0, "SES readiness must not create a Mailpit message");
     const metadata = await fetch(`http://127.0.0.1:${address.port}/computeMetadata/v1/instance/service-accounts/default/token`, {
       headers: { "metadata-flavor": "Google" },
     });

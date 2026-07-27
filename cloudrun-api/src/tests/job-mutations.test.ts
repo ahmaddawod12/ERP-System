@@ -330,7 +330,7 @@ test("job mutation database failures map to route-specific conflicts and authori
 
 test("job mutation migration exposes only narrow, versioned transaction functions", () => {
   const migration = readFileSync(
-    new URL("../../../packages/db/migrations/0021_api_job_mutations.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   assert.match(migration, /SECURITY DEFINER[\s\S]*SET search_path = ''/);

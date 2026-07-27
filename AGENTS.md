@@ -314,7 +314,7 @@ npm --prefix packages/db run typecheck
 npm --prefix packages/db run build
 npm --prefix packages/db run test
 npm --prefix packages/db run test:integration   # requires the isolated local Supabase DB
-npm --prefix packages/db run test:migrations    # creates/drops one isolated loopback DB; verifies 0024 upgrade
+npm --prefix packages/db run test:migrations    # creates/drops one isolated loopback DB; verifies the single baseline
 npm --prefix packages/db run db:generate   # drizzle-kit generate (new migration from schema change)
 npm --prefix packages/db run db:migrate    # drizzle-kit migrate (apply to DB)
 ```
@@ -575,15 +575,14 @@ Finished-job inventory consumption uses `apply_job_inventory_consumption_batch(.
 ### Business registration
 `registerBusinessV1` uses the `register_business_account(...)` SQL RPC so the company, profile, subscription, sync state, and owner membership are created in a single transaction.
 
-The new `POST /api/v1/auth/business-registration` path uses migration
-`0010_hardened_api_business_registration.sql` and
-`private.register_api_business_account(...)`. It is first-workspace-only,
+The `POST /api/v1/auth/business-registration` path uses
+`private.register_api_business_account(...)` from the consolidated baseline. It is first-workspace-only,
 requires verified email plus an idempotency key, derives the authenticated uid,
 role, tier, enabled modules, and public company counter server-side, and commits
 the company/profile/subscription/sync/membership state atomically.
 
 ### API database security foundation
-- Migration `0006_api_security_foundation.sql` creates the least-privileged
+- The consolidated baseline creates the least-privileged
   `smart_job_api` runtime role. Its password is never stored in migrations or
   source control; provision it out of band and inject the runtime connection
   string through the environment/Secret Manager.
@@ -597,45 +596,42 @@ the company/profile/subscription/sync/membership state atomically.
   `private.complete_job_with_details(...)`, which rejects stale versions and
   atomically finishes the job, replaces optional parts, consumes inventory,
   consumes an upload session, inserts attachments, and bumps sync versions.
-- Migration `0007_api_job_creation_and_storage.sql` adds atomic API job
-  creation plus the canonical private `smart-job-company-files` upload bucket;
-  migration `0008_pdf_supabase_storage.sql` extends that bucket to generated
-  PDF content, and migration `0009_bounded_upload_session_cleanup.sql` adds the
+- The baseline adds atomic API job creation plus the canonical private
+  `smart-job-company-files` upload bucket, generated PDF storage, and the
   bounded abandoned-upload cleanup protocol.
-- Migration `0010_hardened_api_business_registration.sql` owns the API-only
+- The baseline owns the API-only
   first-workspace registration transaction described above.
 - Do not grant `smart_job_api` direct write access to public ERP tables or
   execute access to legacy privileged RPCs that trust caller-supplied identity.
-- Migration `0011_api_push_tokens.sql` exposes only self-scoped
+- The baseline exposes only self-scoped
   `private.upsert_api_push_token(...)` and `private.clear_api_push_token()` to
   `smart_job_api`. Push-token values are write-only API data; never return or
   log them, and never accept a caller-supplied target user id.
-- Migration `0012_hardened_api_invitations.sql` derives invitation identity,
+- Invitation RPCs derive invitation identity,
   verified email, tenant role, and membership authority in SQL. Create/redeem
   use separate hashed 10-per-minute buckets, mandatory idempotency, exact
   company/code row locking, and atomic invite consumption plus membership.
-- Migration `0016_upload_session_idempotency_limits.sql` makes attachment
-  session creation idempotency-key-only: the claim UUID owns one session,
+- Attachment session creation is idempotency-key-only: the claim UUID owns one session,
   replays mint fresh signed URLs, and Postgres enforces 12 new sessions per
   user per ten minutes plus four active sessions per user/company. Direct
   runtime writes are revoked; three initial signing failures enqueue bounded
   cleanup and the final minute before expiry is never returned.
-- Migration `0018_api_client_mutations.sql` gives clients opaque entity
-  versions and exposes only narrow create/update/delete-or-archive functions
+- Client mutation RPCs give clients opaque entity
+  versions and expose only narrow create/update/delete-or-archive functions
   to `smart_job_api`. Mutations require verified identity and idempotency,
   derive module/tenant/role authority in SQL, allow manager/user/basic while
   denying workers, allocate `client_no` through the company counter, and bump
   `clients_version` atomically. Referenced clients are archived; only
   unreferenced clients are physically deleted. Default client reads are
   active-only and accept explicit `active`, `archived`, or `all` filters.
-- Migration `0019_api_inventory_mutations.sql` adds trigger-maintained opaque
-  versions to inventory parts and location balances, hardens tenant validation
+- Inventory mutation RPCs use trigger-maintained opaque
+  versions for inventory parts and location balances, harden tenant validation
   plus deterministic lock order in shared movement/batch-pick helpers, and
   exposes only narrow create/update/archive/adjust/transfer/pick RPCs to
   `smart_job_api`. Company and cross-member mutations require manager/dev;
   `/inventory/me` adjustments are self-scoped. Archive requires zero company/member
   stock, picks are unique and capped at 100 items, and sync bumps atomically.
-- Migration `0021_api_job_mutations.sql` exposes only versioned
+- Job mutation access exposes only versioned
   `private.update_api_job(...)`, `private.accept_api_job(...)`, and
   `private.delete_api_job(...)` to `smart_job_api`. Every route requires
   verified identity plus `Idempotency-Key`; SQL re-derives tenant, jobs-module,
@@ -643,7 +639,7 @@ the company/profile/subscription/sync/membership state atomically.
   Accept is manager/dev-only from `pending` or `waiting`. Delete rejects
   certificates and any document, inventory-movement, upload-session, or
   attachment reference before removing the job and bumping `jobs_version`.
-- The implemented API slices through `0021` join viewer/workspaces/bootstrap
+- The implemented API slices join viewer/workspaces/bootstrap
   (including a bounded subscription entitlement summary);
   bounded jobs, clients, company inventory, and member inventory reads; atomic
   job create/complete plus versioned update/accept/delete; attachment upload
@@ -652,7 +648,7 @@ the company/profile/subscription/sync/membership state atomically.
   create/redeem plus client create/update/delete-or-archive and inventory
   create/update/archive/adjust/transfer/pick. Do not describe an in-progress route as available until its
   contract, SQL migration, and integration tests land together.
-- Migration `0023_api_tax_callback_processing.sql` adds
+- Tax callback processing uses
   `private.tax_callback_events` for idempotent callback tracking, an indexed
   `oauth_session_id` link on `tax_invoice_reservations`, and
   `private.bind_api_tax_approval_session(...)` so the document reservation is
@@ -662,26 +658,26 @@ the company/profile/subscription/sync/membership state atomically.
   bumps `documents_version`. Replays with the same payload hash return
   idempotently; different payload hashes raise `TAX_CALLBACK_PAYLOAD_CONFLICT`.
   Also exposes `private.cleanup_tax_callback_events(...)` for bounded retention.
-- Migration `0024_api_archive_retrieval.sql` adds RLS policies and
+- Archive retrieval uses RLS policies and
   `smart_job_api` grants to the previously-dormant `archive_runs` table,
   plus `private.list_api_company_archives(...)` for bounded cursor pagination
   of archive run metadata. The archiver now records runs in `archive_runs`
   via `recordArchiveRun(...)`.
-- Migration `0025_post_0024_metadata_baseline.sql` is an intentional no-op
-  Drizzle metadata baseline. `test:migrations` verifies that its schema
-  fingerprint exactly matches a database built through `0024`, then applies
-  every later migration as an upgrade.
-- Migration `0026_job_acceptance_inventory_consumption.sql` makes manager/dev
-  job acceptance consume recorded part usages through
+- `packages/db/migrations/0000_baseline.sql` is the only migration. Its single
+  Drizzle journal entry and snapshot represent the complete pre-production
+  schema. Reset development databases after a baseline squash; do not apply it
+  over a partially migrated database. `test:migrations` verifies it on an
+  isolated loopback database.
+- Manager/dev
+  job acceptance consumes recorded part usages through
   `apply_job_inventory_consumption_batch(...)` before finalizing status. The
   locked transaction is exactly-once and rolls back the job on insufficient
   stock.
-- Migrations `0027` and `0028` add private durable email/tax/archive state,
+- The baseline includes private durable email/tax/archive state,
   dedicated passwordless-at-migration worker login roles, opaque ID-only
   Pub/Sub messages, lease-token PDF/email RPCs, and manual retry for
   `failed|delivery_unknown`. Runtime workers have no direct ERP-table writes.
-- Migrations `0029` and `0030` add the authoritative tax-invoice transaction
-  and synchronize Drizzle metadata. The API allocates `doc_305`, document,
+- The authoritative tax-invoice transaction allocates `doc_305`, document,
   items, reservation, and submission outbox atomically. Only an `approved`
   result with a confirmation number creates the final PDF task; ambiguous
   submissions become `submission_unknown` and are never blindly retried.
@@ -699,10 +695,10 @@ the company/profile/subscription/sync/membership state atomically.
   manual email retry. Google-identity-protected drains publish opaque document
   task and email delivery IDs and process the tax outbox. Production tax
   creation remains fail-closed while `TAX_SUBMISSION_MODE=disabled`.
-- Migration `0031_batch5_archive_hardening.sql` replaces mutable archive
+- Archive hardening replaces mutable archive
   manifests with least-privilege leased segments, immutable record/ID objects,
   exact generation/checksum metadata, and resumable 500-row deletion RPCs.
-- Migration `0032_batch5_readiness_search.sql` records the exact API schema
+- The baseline records the exact API schema
   marker, exposes a narrow readiness privilege check, and adds generated
   normalized trigram search indexes. The measured 100k-job search p95 fell from
   958.70 ms to 7.33 ms; keep the reproducible profile under `packages/db/perf`.
@@ -800,8 +796,8 @@ the company/profile/subscription/sync/membership state atomically.
 
 ### cloudrun-archiver
 - Before monthly archive work, the job runs one bounded abandoned-upload cleanup
-  batch through service-role-only RPCs from migration
-  `0009_bounded_upload_session_cleanup.sql`. Cleanup failure is reported but
+  batch through service-role-only RPCs from the consolidated baseline. Cleanup
+  failure is reported but
   must not prevent the monthly archive phase.
 - Configure server-only `SUPABASE_URL` and `SUPABASE_SECRET_KEY`
   (`sb_secret_...`) to enable cleanup. Native requests send the opaque key only

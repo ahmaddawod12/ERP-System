@@ -1,6 +1,6 @@
 {
-  "id": "7c06f8fa-efa5-47f0-8d64-f63a33ddd80e",
-  "prevId": "1e14a21b-5ed7-4e0e-bcf2-04b600dcd24c",
+  "id": "8ea2c2af-021c-4df2-a67c-e55b1cf3a3e4",
+  "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -334,11 +334,30 @@
           "notNull": true,
           "default": "'pending'"
         },
+        "period_start": {
+          "name": "period_start",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_end": {
+          "name": "period_end",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
         "snapshot_at": {
           "name": "snapshot_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "segment": {
+          "name": "segment",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
         },
         "lease_token": {
           "name": "lease_token",
@@ -455,6 +474,14 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "archive_run_leases_period_check": {
+          "name": "archive_run_leases_period_check",
+          "value": "\"private\".\"archive_run_leases\".\"period_end\" > \"private\".\"archive_run_leases\".\"period_start\" AND \"private\".\"archive_run_leases\".\"snapshot_at\" >= \"private\".\"archive_run_leases\".\"period_end\""
+        },
+        "archive_run_leases_segment_positive_check": {
+          "name": "archive_run_leases_segment_positive_check",
+          "value": "\"private\".\"archive_run_leases\".\"segment\" > 0"
+        },
         "archive_run_leases_attempt_count_check": {
           "name": "archive_run_leases_attempt_count_check",
           "value": "\"private\".\"archive_run_leases\".\"attempt_count\" BETWEEN 0 AND 100"
@@ -489,7 +516,7 @@
         },
         "archive_key": {
           "name": "archive_key",
-          "type": "varchar(32)",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true
         },
@@ -507,6 +534,31 @@
           "notNull": true,
           "default": "'pending'"
         },
+        "period_start": {
+          "name": "period_start",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_end": {
+          "name": "period_end",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "snapshot_at": {
+          "name": "snapshot_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "segment": {
+          "name": "segment",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
         "doc_count": {
           "name": "doc_count",
           "type": "integer",
@@ -521,6 +573,13 @@
           "notNull": true,
           "default": 0
         },
+        "delete_cursor": {
+          "name": "delete_cursor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "storage_path": {
           "name": "storage_path",
           "type": "varchar(1024)",
@@ -529,7 +588,31 @@
         },
         "checksum": {
           "name": "checksum",
-          "type": "varchar(128)",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "storage_generation": {
+          "name": "storage_generation",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id_manifest_path": {
+          "name": "id_manifest_path",
+          "type": "varchar(1024)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id_manifest_checksum": {
+          "name": "id_manifest_checksum",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id_manifest_generation": {
+          "name": "id_manifest_generation",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": false
         },
@@ -574,6 +657,111 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "archive_runs_company_type_period_segment_unique": {
+          "name": "archive_runs_company_type_period_segment_unique",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "data_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "segment",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "archive_runs_company_type_period_cursor_idx": {
+          "name": "archive_runs_company_type_period_cursor_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "data_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "period_start",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "archive_runs_company_type_snapshot_idx": {
+          "name": "archive_runs_company_type_snapshot_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "data_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "snapshot_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "segment",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -594,7 +782,24 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "archive_runs_segment_positive_check": {
+          "name": "archive_runs_segment_positive_check",
+          "value": "\"archive_runs\".\"segment\" > 0"
+        },
+        "archive_runs_period_check": {
+          "name": "archive_runs_period_check",
+          "value": "\"archive_runs\".\"period_start\" = (\n        pg_catalog.date_trunc('month', \"archive_runs\".\"period_start\" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'\n      )\n      AND \"archive_runs\".\"period_end\" = \"archive_runs\".\"period_start\" + INTERVAL '1 month'"
+        },
+        "archive_runs_key_period_check": {
+          "name": "archive_runs_key_period_check",
+          "value": "CASE\n      WHEN \"archive_runs\".\"archive_key\" ~ '^[0-9]{4}-(0?[1-9]|1[0-2])-[jd]$' THEN\n        pg_catalog.split_part(\"archive_runs\".\"archive_key\", '-', 1)::INTEGER\n          = pg_catalog.extract(YEAR FROM \"archive_runs\".\"period_start\" AT TIME ZONE 'UTC')::INTEGER\n        AND pg_catalog.split_part(\"archive_runs\".\"archive_key\", '-', 2)::INTEGER\n          = pg_catalog.extract(MONTH FROM \"archive_runs\".\"period_start\" AT TIME ZONE 'UTC')::INTEGER\n        AND (\n          (\"archive_runs\".\"data_type\" = 'jobs' AND \"archive_runs\".\"archive_key\" ~ '-j$')\n          OR (\"archive_runs\".\"data_type\" = 'documents' AND \"archive_runs\".\"archive_key\" ~ '-d$')\n        )\n        AND \"archive_runs\".\"segment\" = 1\n      WHEN \"archive_runs\".\"archive_key\" ~ '^[0-9]{4}-(0[1-9]|1[0-2])-[jd]-s[0-9]{6}$' THEN\n        pg_catalog.split_part(\"archive_runs\".\"archive_key\", '-', 1)::INTEGER\n          = pg_catalog.extract(YEAR FROM \"archive_runs\".\"period_start\" AT TIME ZONE 'UTC')::INTEGER\n        AND pg_catalog.split_part(\"archive_runs\".\"archive_key\", '-', 2)::INTEGER\n          = pg_catalog.extract(MONTH FROM \"archive_runs\".\"period_start\" AT TIME ZONE 'UTC')::INTEGER\n        AND (\n          (\"archive_runs\".\"data_type\" = 'jobs' AND \"archive_runs\".\"archive_key\" ~ '-j-s[0-9]{6}$')\n          OR (\"archive_runs\".\"data_type\" = 'documents' AND \"archive_runs\".\"archive_key\" ~ '-d-s[0-9]{6}$')\n        )\n        AND pg_catalog.split_part(\"archive_runs\".\"archive_key\", '-s', 2)::INTEGER = \"archive_runs\".\"segment\"\n      ELSE false\n    END"
+        },
+        "archive_runs_counts_check": {
+          "name": "archive_runs_counts_check",
+          "value": "\"archive_runs\".\"doc_count\" >= 0 AND \"archive_runs\".\"deleted_count\" >= 0 AND \"archive_runs\".\"delete_cursor\" >= 0\n      AND \"archive_runs\".\"deleted_count\" <= \"archive_runs\".\"doc_count\"\n      AND \"archive_runs\".\"delete_cursor\" <= \"archive_runs\".\"doc_count\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.audit_logs": {
@@ -2933,6 +3138,16 @@
           "primaryKey": false,
           "notNull": false
         },
+        "search_text": {
+          "name": "search_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "\n    pg_catalog.lower(\n      document_code || ' ' ||\n      COALESCE(client_name_snapshot, '') || ' ' ||\n      COALESCE(client_phone_snapshot, '') || ' ' ||\n      COALESCE(client_city_snapshot, '') || ' ' ||\n      COALESCE(client_vat_snapshot, '')\n    )\n  "
+          }
+        },
         "payload": {
           "name": "payload",
           "type": "jsonb",
@@ -3483,6 +3698,22 @@
           "isUnique": false,
           "with": {},
           "method": "btree",
+          "concurrently": false
+        },
+        "documents_search_text_trgm_idx": {
+          "name": "documents_search_text_trgm_idx",
+          "columns": [
+            {
+              "expression": "search_text",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "gin_trgm_ops"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
           "concurrently": false
         }
       },
@@ -4327,6 +4558,16 @@
           "primaryKey": false,
           "notNull": true
         },
+        "normalized_name": {
+          "name": "normalized_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "pg_catalog.lower(name)"
+          }
+        },
         "active": {
           "name": "active",
           "type": "boolean",
@@ -4476,6 +4717,22 @@
           "isUnique": false,
           "with": {},
           "method": "btree",
+          "concurrently": false
+        },
+        "inventory_parts_normalized_name_trgm_idx": {
+          "name": "inventory_parts_normalized_name_trgm_idx",
+          "columns": [
+            {
+              "expression": "normalized_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "gin_trgm_ops"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
           "concurrently": false
         }
       },
@@ -4880,6 +5137,16 @@
           "type": "varchar(200)",
           "primaryKey": false,
           "notNull": false
+        },
+        "search_text": {
+          "name": "search_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "type": "stored",
+            "as": "\n    pg_catalog.lower(\n      COALESCE(title, '') || ' ' ||\n      COALESCE(description, '') || ' ' ||\n      COALESCE(location, '') || ' ' ||\n      COALESCE(address, '') || ' ' ||\n      COALESCE(client_name_snapshot, '') || ' ' ||\n      COALESCE(client_phone_snapshot, '') || ' ' ||\n      COALESCE(assigned_member_name_snapshot, '') || ' ' ||\n      COALESCE(created_by_name_snapshot, '')\n    )\n  "
+          }
         },
         "meta": {
           "name": "meta",
@@ -5413,6 +5680,22 @@
           "isUnique": false,
           "with": {},
           "method": "btree",
+          "concurrently": false
+        },
+        "jobs_search_text_trgm_idx": {
+          "name": "jobs_search_text_trgm_idx",
+          "columns": [
+            {
+              "expression": "search_text",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "gin_trgm_ops"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "gin",
           "concurrently": false
         },
         "jobs_company_status_created_cursor_idx": {
@@ -7076,6 +7359,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "requested_by_user_id": {
+          "name": "requested_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "status": {
           "name": "status",
           "type": "tax_submission_status",
@@ -7302,6 +7591,19 @@
           ],
           "onUpdate": "no action",
           "onDelete": "cascade"
+        },
+        "tax_submissions_requested_by_user_id_app_users_id_fk": {
+          "name": "tax_submissions_requested_by_user_id_app_users_id_fk",
+          "tableFrom": "tax_submissions",
+          "columnsFrom": [
+            "requested_by_user_id"
+          ],
+          "tableTo": "app_users",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         }
       },
       "compositePrimaryKeys": {},

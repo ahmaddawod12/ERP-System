@@ -128,9 +128,10 @@ npm --prefix packages/db run db:migrate
 ```
 
 On a disposable loopback database, `npm --prefix packages/db run
-test:migrations` reconstructs the schema through `0024`, proves that the `0025`
-metadata baseline is a no-op, and applies every later migration. Reset the
-local Supabase database afterward before the normal Drizzle migration run.
+test:migrations` applies the single baseline through Drizzle, verifies its
+critical schema/security surface, and proves a second migration run is a no-op.
+Reset the local Supabase database afterward before the normal Drizzle migration
+run.
 
 ## 5. Website Environment
 
@@ -216,11 +217,10 @@ receive a Supabase secret key.
 `packages/db` is the canonical SQL schema and migration surface.
 
 Current migration shape:
-- Empty/new databases apply the optimized baseline migration
-  `0000_optimized_baseline.sql`, then every journaled forward migration in
-  numeric order through the current Drizzle journal tail. The historical
-  incremental migrations before the baseline were intentionally squashed
-  because this database starts empty.
+- Empty/new databases apply only `0000_baseline.sql`. The pre-production
+  incremental history through the former `0035` tail was squashed into this
+  baseline. Reset any development database whose Drizzle history predates the
+  squash before running `db:migrate`.
 - The baseline includes:
   - RLS enabled on all public-schema tables, with client-visible policies only where the app needs direct reads
   - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
@@ -243,8 +243,7 @@ Current migration shape:
   - active membership uniqueness on `(company_id, user_id)` for active memberships only
   - split `inventory_locations` uniqueness for company-only rows vs membership-scoped rows
 
-Migration `0006_api_security_foundation.sql` additionally establishes the future
-main API database boundary:
+The consolidated baseline establishes the main API database boundary:
 
 - `smart_job_api` is a least-privileged login role with explicit grants and
   bounded statement, lock, and idle-transaction timeouts. The migration does
@@ -264,37 +263,36 @@ main API database boundary:
   transaction.
 - `smart_job_api` has no general direct write grant on public ERP tables and no
   execute grant on legacy privileged RPCs that trust caller-provided identity.
-- Migration `0016_upload_session_idempotency_limits.sql` also removes direct
+- Attachment session hardening removes direct
   runtime writes to `private.file_upload_sessions`. The API must use the narrow
   prepare/signing-failure RPCs with a prior idempotency claim. Preparation uses
   a committed 12-session/10-minute user limiter, a transaction-serialized
   four-pending-session user/workspace quota, and one-minute expiry response
   floor. Replays sign fresh URLs and three initial signing failures enqueue the
-  canonical manifest for the migration `0009` cleanup worker.
-- Migration `0018_api_client_mutations.sql` adds client entity versions, the
+  canonical manifest for the bounded cleanup worker.
+- Client mutation hardening adds client entity versions, the
   default active-list cursor index, reference lookup indexes, and API-only
   create/update/delete-or-archive functions. Runtime table writes remain
   revoked. Live acceptance must cover manager/user/basic authority, worker and
   cross-tenant denial, idempotent replay, stale-version 409, referenced-client
   archival, unreferenced deletion, and concurrent `client_no` allocation.
-- Migration `0019_api_inventory_mutations.sql` adds part/balance entity
+- Inventory mutation hardening adds part/balance entity
   versions and API-only inventory mutation RPCs. Runtime table writes remain
   revoked. Acceptance covers manager versus worker authority, self-member
   adjustment, cross-tenant denial, idempotent replay, stale and insufficient
   stock conflicts, concurrent writes, atomic transfer/pick, zero-company/member-stock archive,
   and same-transaction inventory sync bumps.
-- Migration `0021_api_job_mutations.sql` adds API-only, version-checked job
+- Job mutation hardening adds API-only, version-checked job
   metadata/client/assignee update, manager/dev acceptance, and guarded deletion
   RPCs. Live acceptance covers SQL-derived tenant/module/role/assignment
   authority, idempotent replay, stale-version 409, rejection of direct PATCH
   completion, pending/waiting-only acceptance, and deletion conflicts for
   certificates, document links, inventory movements, upload sessions, and
   attachments. The runtime role retains no direct job-table writes.
-- Migration `0025_post_0024_metadata_baseline.sql` intentionally changes no
-  schema. It brings Drizzle metadata up to the schema produced through `0024`;
-  the loopback-only `test:migrations` command verifies the fingerprint before
-  applying later migrations.
-- Migrations `0026`–`0030` add accepted-job inventory consumption, dedicated
+- The single journal entry and `0000_snapshot.json` represent the complete
+  baseline. The loopback-only `test:migrations` command applies it on a fresh
+  isolated database and verifies that a second Drizzle migration run is a no-op.
+- The baseline includes accepted-job inventory consumption, dedicated
   least-privilege PDF/email/archiver roles, private durable email/tax/archive
   state, opaque ID-only worker dispatch, lease-token completion, and the
   authoritative tax transaction/outbox. New private objects remain outside the
@@ -305,7 +303,7 @@ Database profiling:
 - Use `packages/db/perf/profiling.sql` against local or staging data with realistic row counts before adding broad indexes or dropping unused indexes.
 - The profiling checklist uses `pg_stat_statements`, Supabase `index_advisor`, Supabase Security/Performance Advisors, and representative `EXPLAIN (analyze, buffers)` targets for clients, jobs, documents, inventory, tax, and support paths.
 - Schedule `cleanup_expired_operational_rows()` daily through Supabase Scheduled Functions, pg_cron, or an external trusted job if the project accumulates rate-limit, document task, notification, contact, or failed idempotency rows.
-- Migration `0009` exposes service-role-only
+- The baseline exposes service-role-only
   `queue_expired_file_upload_cleanup(...)`,
   `claim_file_upload_cleanup_batch(...)`, and
   `finish_file_upload_cleanup(...)` wrappers. Claims use skip-locked leases and
@@ -535,8 +533,8 @@ Required deployment concerns:
 - trusted invocations from the Cloud Run API for preview/generate task dispatch
 
 The secret key bypasses Storage RLS and must remain in Secret Manager/Cloud Run
-only. Do not expose it to website or mobile bundles and do not log it. Migration
-`0008_pdf_supabase_storage.sql` keeps the canonical bucket private and adds
+only. Do not expose it to website or mobile bundles and do not log it. The
+consolidated baseline keeps the canonical bucket private and adds
 `application/pdf` to its existing image MIME allowlist.
 
 Preserve these invariants:
@@ -584,8 +582,8 @@ Required deployment concerns:
 
 - access to source data
 - a dedicated `smart-job-archiver-database-url` secret whose database role can
-  authenticate as `smart_job_archiver` and execute only the migration `0031`
-  archive RPCs; it has no direct ERP-table writes
+  authenticate as `smart_job_archiver` and execute only the baseline's archive
+  RPCs; it has no direct ERP-table writes
 - Cloud Storage archive bucket access
 - `SUPABASE_URL` plus a dedicated `SUPABASE_SECRET_KEY` (`sb_secret_...`) for
   bounded abandoned-upload cleanup; the opaque key is sent only as `apikey`

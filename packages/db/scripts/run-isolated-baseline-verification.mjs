@@ -15,13 +15,13 @@ assert.ok(
   'The isolated migration verifier only accepts a loopback PostgreSQL server',
 );
 
-const databaseName = `smart_job_upgrade_${randomUUID().replaceAll('-', '')}`;
+const databaseName = `smart_job_baseline_${randomUUID().replaceAll('-', '')}`;
 assert.match(databaseName, /^[a-z0-9_]+$/);
 const testUrl = new URL(parsed);
 testUrl.pathname = `/${databaseName}`;
 const verifier = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
-  'verify-upgrade-from-0024.mjs',
+  'verify-baseline.mjs',
 );
 
 const admin = new Client({ connectionString: adminDatabaseUrl, ssl: false });

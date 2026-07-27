@@ -59,7 +59,7 @@ test('opaque dispatch messages cannot supply tenant, user, or document authority
 
 test('only the dedicated PDF role receives canonical worker RPC access', () => {
   const migration = fs.readFileSync(
-    path.join(resolveRepoRoot(), 'packages', 'db', 'migrations', '0028_reliable_document_email_pipeline.sql'),
+    path.join(resolveRepoRoot(), 'packages', 'db', 'migrations', '0000_baseline.sql'),
     'utf8',
   );
   assert.match(migration, /GRANT EXECUTE ON FUNCTION private\.claim_pdf_document_task[\s\S]*TO smart_job_pdf/);

@@ -238,7 +238,7 @@ test("worker mutation routes reject missing idempotency before handler work", as
 
 test("worker mutation migration keeps authority and lifecycle guards in SQL", () => {
   const migration = readFileSync(
-    new URL("../../../packages/db/migrations/0020_api_worker_mutations.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   assert.match(migration, /requester\.role = 'manager'/);

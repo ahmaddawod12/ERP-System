@@ -288,7 +288,7 @@ test("client mutation routes reject missing idempotency before handler work", as
 
 test("client migration exposes only narrow functions and keeps runtime public writes revoked", () => {
   const migration = readFileSync(
-    new URL("../../../packages/db/migrations/0018_api_client_mutations.sql", import.meta.url),
+    new URL("../../../packages/db/migrations/0000_baseline.sql", import.meta.url),
     "utf8",
   );
   assert.match(migration, /private\.allocate_company_counter\(p_company_id, 'client_no'\)/);

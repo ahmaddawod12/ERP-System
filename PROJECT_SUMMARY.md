@@ -28,7 +28,8 @@ evidence remain launch gates.
 - Keep the phone app on Expo 57's supported React/React DOM `19.2.3` pair.
 - Drizzle migrations under `packages/db/migrations` are authoritative;
   `supabase/migrations` is intentionally disabled.
-- The migration chain currently runs through `0035`.
+- The database is created from the single pre-production baseline
+  `packages/db/migrations/0000_baseline.sql`.
 
 ## Trust and data ownership
 

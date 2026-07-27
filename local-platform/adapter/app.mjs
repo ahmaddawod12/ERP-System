@@ -425,6 +425,14 @@ function sesSuccessXml(messageId, requestId) {
     + `</SendEmailResponse>`;
 }
 
+function sesAccountSendingEnabledXml(requestId) {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<GetAccountSendingEnabledResponse xmlns="http://ses.amazonaws.com/doc/2010-12-01/">`
+    + `<GetAccountSendingEnabledResult><Enabled>true</Enabled></GetAccountSendingEnabledResult>`
+    + `<ResponseMetadata><RequestId>${xmlEscape(requestId)}</RequestId></ResponseMetadata>`
+    + `</GetAccountSendingEnabledResponse>`;
+}
+
 async function drain(url, config, fetchImplementation) {
   try {
     const response = await fetchImplementation(url, {
@@ -543,6 +551,15 @@ export async function createLocalPlatformAdapter(
       }
       if (request.method === "POST" && (url.pathname === "/ses" || url.pathname === "/ses/")) {
         const form = new URLSearchParams(await readBody(request, 256 * 1024));
+        if (form.get("Action") === "GetAccountSendingEnabled") {
+          const body = sesAccountSendingEnabledXml(randomUUID());
+          response.writeHead(200, {
+            "content-type": "text/xml; charset=utf-8",
+            "content-length": Buffer.byteLength(body),
+          });
+          response.end(body);
+          return;
+        }
         const message = sesFormToMailpit(form);
         const mailpitUrl = new URL("api/v1/send", config.mailpitBaseUrl);
         const mailpitResponse = await fetchImplementation(mailpitUrl, {

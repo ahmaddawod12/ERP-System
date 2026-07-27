@@ -33,7 +33,7 @@ test('archiver uses leased immutable segments and never mutable manifests', () =
   const runner = fs.readFileSync(resolveProjectFile('archive-runner.ts'), 'utf8');
   const files = fs.readFileSync(resolveProjectFile('archive-files.ts'), 'utf8');
   const migration = fs.readFileSync(
-    resolveProjectFile('..', 'packages', 'db', 'migrations', '0031_batch5_archive_hardening.sql'),
+    resolveProjectFile('..', 'packages', 'db', 'migrations', '0000_baseline.sql'),
     'utf8',
   );
 

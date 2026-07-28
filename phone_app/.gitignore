@@ -1,0 +1,36 @@
+# Expo / React Native
+.expo/
+.expo-shared/
+node_modules/
+dist/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Firebase / native config (inject via EAS secrets)
+google-services.json
+GoogleService-Info.plist
+
+# Native directories (prebuild output)
+ios/
+android/
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store

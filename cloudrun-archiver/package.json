@@ -1,28 +1,31 @@
 {
   "name": "job-archiver",
   "version": "1.0.0",
-  "description": "Cloud Run Job for archiving old Firestore data to Cloud Storage (finished jobs & documents)",
+  "description": "Cloud Run Job for leased PostgreSQL archive segments in Cloud Storage",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "npm run build && node dist/index.js",
-    "test": "npm run build && node --test dist/tests/*.test.js"
+    "start": "npm run build && node --import @smart-job/observability/register dist/index.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/**/*.js --test-coverage-exclude=dist/tests/** --test-coverage-lines=79.83 --test-coverage-branches=61.24 --test-coverage-functions=77.94 dist/tests/*.test.js"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": "22.x"
   },
   "dependencies": {
     "@smart-job/db": "file:../packages/db",
+    "@smart-job/observability": "file:../packages/observability",
     "@google-cloud/storage": "^7.19.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "22.20.1",
     "typescript": "^5.9.2"
   },
   "overrides": {
     "@google-cloud/storage": {
-      "fast-xml-parser": "5.5.12"
+      "fast-xml-parser": "5.7.0",
+      "uuid": "11.1.1"
     },
     "node-forge": "1.4.0"
   }

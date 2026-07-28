@@ -28,7 +28,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           {...props}
         />
         {error ? (
-          <span id={errorId} className="text-xs text-red-600">
+          <span id={errorId} role="alert" aria-live="polite" className="text-xs text-red-600">
             {error}
           </span>
         ) : null}

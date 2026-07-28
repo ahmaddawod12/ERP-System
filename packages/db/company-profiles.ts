@@ -1,10 +1,32 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq } from 'drizzle-orm';
-import { getDb } from './client';
+import { getDb, type DatabaseOptions } from './client';
 import { companyProfiles } from './schema';
 import { getCompanyBusinessInfo } from './read-model';
 import { resolveCompanyByPublicId } from './membership';
 
-function asDate(value, fallback) {
+type CompanyProfileChanges = Partial<Record<
+  | 'he_name'
+  | 'en_name'
+  | 'city'
+  | 'address'
+  | 'business_type'
+  | 'business_phone'
+  | 'business_email'
+  | 'business_fax'
+  | 'accountant_name'
+  | 'accountant_email'
+  | 'accountant_phone',
+  string | null
+>> & { vat_number?: unknown };
+
+type UpdateCompanyBusinessInfoInput = {
+  companyId: string | number;
+  changes?: CompanyProfileChanges;
+  now?: string | Date;
+};
+
+function asDate(value: unknown, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -13,7 +35,10 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-async function getCompanyBusinessInfoByPublicId(companyId, options: any = {}) {
+async function getCompanyBusinessInfoByPublicId(
+  companyId: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) {
@@ -22,16 +47,25 @@ async function getCompanyBusinessInfoByPublicId(companyId, options: any = {}) {
   return getCompanyBusinessInfo(company.id, { db });
 }
 
-async function updateCompanyBusinessInfo(input, options: any = {}) {
+async function updateCompanyBusinessInfo(
+  input: UpdateCompanyBusinessInfoInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
-  const changes = input.changes && typeof input.changes === 'object' ? input.changes : {};
+    const changes: CompanyProfileChanges = input.changes ?? {};
 
-  return db.transaction(async (tx) => {
+    if (Object.prototype.hasOwnProperty.call(changes, 'vat_number')) {
+      const error = new Error('vat_number is immutable after onboarding');
+      setDatabaseErrorCode(error, 'failed-precondition');
+      throw error;
+    }
+
+    return db.transaction(async (tx) => {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -42,11 +76,11 @@ async function updateCompanyBusinessInfo(input, options: any = {}) {
       .limit(1);
     if (!existingRows[0]) {
       const error = new Error('Business info not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
-    const updateData: Record<string, any> = {
+    const updateData: Partial<typeof companyProfiles.$inferInsert> = {
       lastUpdatedAt: now,
     };
     if (Object.prototype.hasOwnProperty.call(changes, 'he_name')) updateData.heName = changes.he_name || null;

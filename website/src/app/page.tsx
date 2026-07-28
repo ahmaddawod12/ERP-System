@@ -147,11 +147,11 @@ export default function HomePage() {
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 text-slate-600 dark:bg-slate-900 dark:text-slate-300">
                       <tr>
-                        <th className="px-3 py-2 font-semibold">Job No</th>
-                        <th className="px-3 py-2 font-semibold">Client</th>
-                        <th className="px-3 py-2 font-semibold">Status</th>
-                        <th className="px-3 py-2 font-semibold">Worker</th>
-                        <th className="px-3 py-2 font-semibold">Scheduled</th>
+                        <th scope="col" className="px-3 py-2 font-semibold">Job No</th>
+                        <th scope="col" className="px-3 py-2 font-semibold">Client</th>
+                        <th scope="col" className="px-3 py-2 font-semibold">Status</th>
+                        <th scope="col" className="px-3 py-2 font-semibold">Worker</th>
+                        <th scope="col" className="px-3 py-2 font-semibold">Scheduled</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">

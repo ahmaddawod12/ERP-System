@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   DOCUMENT_TASK_POLL_MAX_INTERVAL_MS,
   DOCUMENT_TASK_POLL_MIN_INTERVAL_MS,
@@ -17,4 +19,19 @@ test('document task polling backs off while work remains in flight', () => {
 
 test('document task polling caps at the configured maximum interval', () => {
   assert.equal(getNextDocumentTaskPollIntervalMs(10), DOCUMENT_TASK_POLL_MAX_INTERVAL_MS);
+});
+
+test('document task polling carries user and company scope to the Cloud API', () => {
+  const source = fs.readFileSync(path.resolve(process.cwd(), 'hooks', 'useDocumentTask.ts'), 'utf8');
+
+  assert.match(source, /fetchDocumentTask\(\{/);
+  assert.match(source, /uid,\s*companyId: resolvedCompanyId,\s*taskId: newTaskId/);
+  assert.match(source, /createDocumentPreviewTask\(\{/);
+  assert.match(source, /createDocumentGenerationTask\(\{/);
+  assert.match(source, /listenToTask\(accepted\.taskId, 'preview', companyId\)/);
+  assert.match(source, /listenToTask\(accepted\.taskId, 'generate', companyId\)/);
+  assert.doesNotMatch(source, /['"]publishPreviewTask['"]/);
+  assert.doesNotMatch(source, /['"]publishGenerateTask['"]/);
+  assert.doesNotMatch(source, /httpsCallable/);
+  assert.doesNotMatch(source, /readModelV1|callHttpFunction/);
 });

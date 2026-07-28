@@ -2,10 +2,28 @@
   "name": "@smart-job/db",
   "version": "0.1.0",
   "description": "Shared Postgres schema and access helpers for Smart-Job ERP",
+  "engines": {
+    "node": "22.x"
+  },
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "default": "./dist/schema.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:integration": "node --test tests/api-security-foundation.integration.test.mjs",
+    "test:migrations": "node scripts/run-isolated-baseline-verification.mjs",
+    "perf:large-tenant": "node perf/profile-large-tenant.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
@@ -17,11 +35,12 @@
   ],
   "dependencies": {
     "@smart-job/contracts": "file:../contracts",
-    "drizzle-orm": "^0.44.2",
+    "drizzle-orm": "^0.45.2",
     "pg": "^8.16.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "22.20.1",
+    "@types/pg": "^8.16.0",
     "drizzle-kit": "^0.31.4",
     "typescript": "^5.9.2"
   },

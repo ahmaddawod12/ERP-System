@@ -1,23 +1,24 @@
 import { useCallback } from 'react';
 import { CACHE_KEYS } from './mmkv-storage';
+import { logger } from '../utils/logger';
+import type { Job } from '../types';
 
 interface JobActionsParams {
   getUserRole: () => string | null;
-  jobs: any[];
-  companyJobs: any[];
+  jobs: Job[];
+  companyJobs: Job[];
   saveToLocalCache: (key: string, value: unknown) => void;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
 }
 
-function upsertJob(arr: any[], job: any) {
+export function upsertJob(arr: Job[], job: Job): Job[] {
   return [...arr.filter((item) => item.id !== job.id), job];
 }
 
-function mergeJob(arr: any[], jobId: string, updates: any) {
+export function mergeJob(arr: Job[], jobId: string, updates: Partial<Job>): Job[] {
   return arr.map((item) => item.id === jobId ? { ...item, ...updates } : item);
 }
 
-function removeJobById(arr: any[], jobId: string) {
+export function removeJobById(arr: Job[], jobId: string): Job[] {
   return arr.filter((item) => item.id !== jobId);
 }
 
@@ -26,40 +27,35 @@ export function useCacheJobActions({
   jobs,
   companyJobs,
   saveToLocalCache,
-  preIncrementVersion,
 }: JobActionsParams) {
-  const addJob = useCallback((job: any) => {
+  const addJob = useCallback((job: Job) => {
     if (!job?.id) {
-      console.error('Cannot add job without ID');
+      logger.error('Cannot add job without ID');
       return;
     }
 
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, upsertJob(current, job));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
-  const updateJob = useCallback((jobId: string, updates: any) => {
+  const updateJob = useCallback((jobId: string, updates: Partial<Job>) => {
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, mergeJob(current, jobId, updates));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
   const removeJob = useCallback((jobId: string) => {
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, removeJobById(current, jobId));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
-  const acceptJob = useCallback((jobId: string, updates: any) => {
+  const acceptJob = useCallback((jobId: string, updates: Partial<Job> = {}) => {
     const cacheKey = getUserRole() === 'manager' ? CACHE_KEYS.COMPANY_JOBS : CACHE_KEYS.JOBS;
     const current = cacheKey === CACHE_KEYS.COMPANY_JOBS ? companyJobs : jobs;
     saveToLocalCache(cacheKey, mergeJob(current, jobId, updates));
-    preIncrementVersion('jobsVersion', true);
-  }, [companyJobs, getUserRole, jobs, preIncrementVersion, saveToLocalCache]);
+  }, [companyJobs, getUserRole, jobs, saveToLocalCache]);
 
   return {
     addJob,

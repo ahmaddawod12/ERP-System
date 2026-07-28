@@ -1,0 +1,23 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - core
+  - tenant
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: "login-email"
+- tapOn:
+    id: "login-email"
+- inputText: ${MAESTRO_TEST_EMAIL}
+- tapOn:
+    id: "login-password"
+- inputText: ${MAESTRO_TEST_PASSWORD}
+- tapOn:
+    id: "login-submit"
+- assertVisible: "Select a company"
+- tapOn:
+    text: "${MAESTRO_TEST_WORKSPACE}.*"
+- assertVisible:
+    id: "dashboard-screen"
+- assertNotVisible: "Select a company"

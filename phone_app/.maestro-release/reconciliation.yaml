@@ -1,0 +1,79 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - release
+  - reconciliation
+---
+# The release fixture job is intentionally seeded with valid times, one photo,
+# and a test signature. This flow mutates that disposable job exactly once.
+- runFlow: subflows/authenticate.yaml
+- tapOn:
+    id: "dashboard-action-my-jobs"
+- assertVisible:
+    id: "worker-jobs-screen"
+- tapOn:
+    id: "worker-job-complete-${MAESTRO_RELEASE_JOB_ID}"
+- setAirplaneMode: enabled
+- tapOn:
+    id: "fill-job-submit"
+- extendedWaitUntil:
+    visible: "Saved Offline|Saved to Pending Work"
+    timeout: 15000
+- tapOn:
+    id: "alert-button-0"
+- stopApp
+- launchApp
+- assertVisible:
+    id: "dashboard-screen"
+- tapOn:
+    id: "global-menu"
+- tapOn: "Settings"
+- tapOn: "Pending Work.*"
+- assertVisible:
+    id: "pending-work-screen"
+- assertVisible: "Queued on this device|Waiting to retry"
+- stopApp
+- launchApp
+- setAirplaneMode: disabled
+- tapOn:
+    id: "global-menu"
+- tapOn: "Settings"
+- tapOn: "Pending Work.*"
+- extendedWaitUntil:
+    visible: "Everything is synchronized"
+    timeout: 60000
+
+# Log out without clearing native application state, then prove the encrypted
+# queue is not exposed after switching to a different authenticated user.
+- tapOn:
+    id: "global-menu"
+- tapOn: "Settings"
+- tapOn:
+    id: "settings-logout"
+- tapOn:
+    id: "alert-button-1"
+- assertVisible:
+    id: "login-email"
+- tapOn:
+    id: "login-email"
+- inputText: ${MAESTRO_SECOND_USER_EMAIL}
+- tapOn:
+    id: "login-password"
+- inputText: ${MAESTRO_SECOND_USER_PASSWORD}
+- tapOn:
+    id: "login-submit"
+- runFlow:
+    when:
+      visible: "Select a company"
+    commands:
+      - tapOn:
+          text: "${MAESTRO_SECOND_USER_WORKSPACE}.*"
+- assertVisible:
+    id: "dashboard-screen"
+- tapOn:
+    id: "global-menu"
+- tapOn: "Settings"
+- tapOn: "Pending Work.*"
+- assertVisible:
+    id: "pending-work-screen"
+- assertVisible: "Everything is synchronized"
+- assertNotVisible: "${MAESTRO_RELEASE_JOB_TITLE}"

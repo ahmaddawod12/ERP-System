@@ -1,5 +1,5 @@
 /**
- * DevInbox.js — thin route entry
- * Screen logic lives in modules/support/DevInbox.js
+ * DevInbox.tsx — thin route entry
+ * Screen logic lives in modules/support/screens/DevInbox.tsx
  */
-export { default } from '../modules/support/DevInbox';
+export { default } from '../modules/support/screens/DevInbox';

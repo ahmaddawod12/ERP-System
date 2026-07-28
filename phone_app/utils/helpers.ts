@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 /**
  * Utility helper functions for Smart-Job App
  * Centralized common functions to reduce code duplication
@@ -12,7 +14,7 @@ export const formatDate = (date: Date | string, locale: string = 'en-US'): strin
     const dateObj = date instanceof Date ? date : new Date(date);
     return dateObj.toLocaleDateString(locale);
   } catch (error) {
-    console.error('Error formatting date:', error);
+    logger.error('Error formatting date:', error);
     return '';
   }
 };
@@ -25,7 +27,7 @@ export const formatDateTime = (date: Date | string, locale: string = 'en-US'): s
     const dateObj = date instanceof Date ? date : new Date(date);
     return dateObj.toLocaleString(locale);
   } catch (error) {
-    console.error('Error formatting datetime:', error);
+    logger.error('Error formatting datetime:', error);
     return '';
   }
 };
@@ -60,7 +62,7 @@ export const calculateTimeDifference = (timeFrom: string, timeTo: string): numbe
     
     return toTotalMinutes - fromTotalMinutes;
   } catch (error) {
-    console.error('Error calculating time difference:', error);
+    logger.error('Error calculating time difference:', error);
     return 0;
   }
 };
@@ -99,9 +101,32 @@ export const deepClone = <T>(obj: T): T => {
   try {
     return JSON.parse(JSON.stringify(obj));
   } catch (error) {
-    console.error('Error cloning object:', error);
+    logger.error('Error cloning object:', error);
     return obj;
   }
+};
+
+/**
+ * Generate a UUID v4 suitable for React Native.
+ * Uses expo-crypto when available; falls back to a Math.random-based v4
+ * for environments where the native module is not linked yet.
+ */
+export const generateUuid = (): string => {
+  try {
+    // Dynamic import so projects that have not yet installed expo-crypto do not crash at import time.
+    const Crypto = require('expo-crypto');
+    if (Crypto && typeof Crypto.randomUUID === 'function') {
+      return Crypto.randomUUID();
+    }
+  } catch {
+    // Fall through to JS implementation.
+  }
+
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const rand = Math.random() * 16 | 0;
+    const value = char === 'x' ? rand : (rand & 0x3) | 0x8;
+    return value.toString(16);
+  });
 };
 
 /**
@@ -113,7 +138,7 @@ export const safeJsonParse = <T = unknown>(jsonString: unknown, fallback: T | nu
   try {
     return JSON.parse(jsonString) as T;
   } catch (error) {
-    console.error('safeJsonParse: failed to parse JSON:', (error as Error).message);
+    logger.error('safeJsonParse: failed to parse JSON:', (error as Error).message);
     return fallback;
   }
 };

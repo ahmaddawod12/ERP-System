@@ -1,0 +1,251 @@
+import { z } from "zod";
+
+import { isVerifiedLocalPlatform, type LocalMarkerReader } from "./local-platform.js";
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  HOST: z.string().trim().min(1).default("0.0.0.0"),
+  PORT: z.coerce.number().int().min(1).max(65_535).default(8080),
+  DATABASE_URL: z.string().trim().url(),
+  DATABASE_SSL_MODE: z.enum(["disable", "require"]).default("require"),
+  DATABASE_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(5).default(3),
+  CLOUD_RUN_SERVICE_URL: z.string().trim().url().optional(),
+  PUBSUB_ALLOWED_SERVICE_ACCOUNTS: z.string().default(""),
+  PUBSUB_VERIFICATION_TOKEN: z.string().trim().min(24).optional(),
+  GCS_PROJECT_ID: z.string().trim().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/).optional(),
+  COMPANY_FILES_BUCKET: z.string().trim().min(3).max(63)
+    .regex(/^[a-z0-9][a-z0-9._-]*[a-z0-9]$/)
+    .default("smart-job-company-files"),
+  GCS_API_ENDPOINT: z.string().trim().url().optional(),
+  COMPANY_FILES_PUBLIC_BASE_URL: z.string().trim().url().optional(),
+  SIGNED_DOWNLOAD_TTL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
+  AWS_REGION: z.string().trim().regex(/^eu-[a-z]+-\d+$/),
+  AWS_SES_CREDENTIAL_MODE: z.enum(["static", "federated"]).default("static"),
+  AWS_SES_ENDPOINT: z.string().trim().url().optional(),
+  AWS_ACCESS_KEY_ID: z.string().trim().min(3).max(128).optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().trim().min(16).max(256).optional(),
+  AWS_SES_ROLE_ARN: z.string().trim()
+    .regex(/^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9+=,.@_/-]{1,512}$/)
+    .optional(),
+  AWS_SES_OIDC_AUDIENCE: z.string().trim().min(8).max(256).optional(),
+  AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID: z.string().trim().regex(/^[0-9]{10,32}$/).optional(),
+  SES_FROM_EMAIL: z.string().trim().email().max(320),
+  SES_FROM_NAME: z.string().trim().min(1).max(100).default("Smart-Job"),
+  EMAIL_SEND_LEASE_SECONDS: z.coerce.number().int().min(10).max(300).default(60),
+}).strict();
+
+export type EmailWorkerConfig = ReturnType<typeof loadConfig>;
+
+function safeServiceUrl(
+  raw: string | undefined,
+  field: string,
+  localServiceHost?: string,
+  expectedPath = "/",
+): URL | undefined {
+  if (raw === undefined) return undefined;
+  const url = new URL(raw);
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname.toLowerCase());
+  const localService = localServiceHost !== undefined
+    && url.protocol === "http:"
+    && url.hostname === localServiceHost;
+  if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback) && !localService)
+      || url.username || url.password || url.search || url.hash || url.pathname !== expectedPath) {
+    throw new TypeError(`${field} must be an exact HTTPS service origin (loopback HTTP is allowed locally)`);
+  }
+  return url;
+}
+
+export function loadConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+  options: { readonly readLocalMarker?: LocalMarkerReader } = {},
+) {
+  const parsed = envSchema.parse({
+    NODE_ENV: environment.NODE_ENV,
+    HOST: environment.HOST,
+    PORT: environment.PORT,
+    DATABASE_URL: environment.DATABASE_URL,
+    DATABASE_SSL_MODE: environment.DATABASE_SSL_MODE,
+    DATABASE_MAX_CONNECTIONS: environment.DATABASE_MAX_CONNECTIONS,
+    CLOUD_RUN_SERVICE_URL: environment.CLOUD_RUN_SERVICE_URL,
+    PUBSUB_ALLOWED_SERVICE_ACCOUNTS: environment.PUBSUB_ALLOWED_SERVICE_ACCOUNTS,
+    PUBSUB_VERIFICATION_TOKEN: environment.PUBSUB_VERIFICATION_TOKEN,
+    GCS_PROJECT_ID: environment.GCS_PROJECT_ID,
+    COMPANY_FILES_BUCKET: environment.COMPANY_FILES_BUCKET,
+    GCS_API_ENDPOINT: environment.GCS_API_ENDPOINT,
+    COMPANY_FILES_PUBLIC_BASE_URL: environment.COMPANY_FILES_PUBLIC_BASE_URL,
+    SIGNED_DOWNLOAD_TTL_SECONDS: environment.SIGNED_DOWNLOAD_TTL_SECONDS,
+    AWS_REGION: environment.AWS_REGION,
+    AWS_SES_CREDENTIAL_MODE: environment.AWS_SES_CREDENTIAL_MODE,
+    AWS_SES_ENDPOINT: environment.AWS_SES_ENDPOINT,
+    AWS_ACCESS_KEY_ID: environment.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: environment.AWS_SECRET_ACCESS_KEY,
+    AWS_SES_ROLE_ARN: environment.AWS_SES_ROLE_ARN,
+    AWS_SES_OIDC_AUDIENCE: environment.AWS_SES_OIDC_AUDIENCE,
+    AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID: environment.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID,
+    SES_FROM_EMAIL: environment.SES_FROM_EMAIL,
+    SES_FROM_NAME: environment.SES_FROM_NAME,
+    EMAIL_SEND_LEASE_SECONDS: environment.EMAIL_SEND_LEASE_SECONDS,
+  });
+  const localFlagsPresent = environment.SMART_JOB_DEPLOYMENT_ENV === "local"
+    || environment.SMART_JOB_LOCAL_PLATFORM !== undefined
+    || environment.LOCAL_PLATFORM_MARKER_PATH !== undefined
+    || parsed.GCS_API_ENDPOINT !== undefined
+    || parsed.COMPANY_FILES_PUBLIC_BASE_URL !== undefined
+    || parsed.AWS_SES_ENDPOINT !== undefined;
+  const verifiedLocalPlatform = isVerifiedLocalPlatform(
+    environment,
+    options.readLocalMarker,
+  );
+  if (localFlagsPresent && !verifiedLocalPlatform) {
+    throw new TypeError("Local email overrides require the mounted local-platform marker");
+  }
+  const databaseUrl = new URL(parsed.DATABASE_URL);
+  const isLoopbackDatabase = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+    databaseUrl.hostname.toLowerCase(),
+  );
+  if (databaseUrl.protocol !== "postgresql:" && databaseUrl.protocol !== "postgres:") {
+    throw new TypeError("DATABASE_URL must use PostgreSQL");
+  }
+  if (parsed.NODE_ENV === "production" && databaseUrl.username !== "smart_job_email") {
+    throw new TypeError("Production DATABASE_URL must authenticate as smart_job_email");
+  }
+  const isLocalPlatformDatabase = verifiedLocalPlatform
+      && databaseUrl.hostname === "smart-job-postgres"
+    && (databaseUrl.port === "5432" || databaseUrl.port === "");
+  if (parsed.DATABASE_SSL_MODE === "disable" && !isLoopbackDatabase && !isLocalPlatformDatabase) {
+    throw new TypeError("DATABASE_SSL_MODE=disable is allowed only for a loopback database");
+  }
+
+  const storageEmulatorUrl = safeServiceUrl(
+    parsed.GCS_API_ENDPOINT,
+    "GCS_API_ENDPOINT",
+    verifiedLocalPlatform ? "gcs-emulator" : undefined,
+  );
+  const publicStorageUrl = safeServiceUrl(
+    parsed.COMPANY_FILES_PUBLIC_BASE_URL,
+    "COMPANY_FILES_PUBLIC_BASE_URL",
+  );
+  const serviceUrl = safeServiceUrl(parsed.CLOUD_RUN_SERVICE_URL, "CLOUD_RUN_SERVICE_URL");
+  const allowedServiceAccounts = [...new Set(
+    parsed.PUBSUB_ALLOWED_SERVICE_ACCOUNTS.split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  )];
+  if (allowedServiceAccounts.some(
+    (email) => !/^[^@\s]+@[^@\s]+\.gserviceaccount\.com$/.test(email),
+  )) {
+    throw new TypeError("PUBSUB_ALLOWED_SERVICE_ACCOUNTS contains an invalid service-account email");
+  }
+  if (parsed.NODE_ENV === "production" && !verifiedLocalPlatform
+      && (!serviceUrl || allowedServiceAccounts.length === 0)) {
+    throw new TypeError("Production requires CLOUD_RUN_SERVICE_URL and a Pub/Sub service-account allowlist");
+  }
+  if (!serviceUrl && !parsed.PUBSUB_VERIFICATION_TOKEN) {
+    throw new TypeError("Configure Cloud Run OIDC or PUBSUB_VERIFICATION_TOKEN");
+  }
+  const sesEndpoint = safeServiceUrl(
+    parsed.AWS_SES_ENDPOINT,
+    "AWS_SES_ENDPOINT",
+    verifiedLocalPlatform ? "local-platform-adapter" : undefined,
+    "/ses",
+  );
+  const hasAccessKeyId = parsed.AWS_ACCESS_KEY_ID !== undefined;
+  const hasSecretAccessKey = parsed.AWS_SECRET_ACCESS_KEY !== undefined;
+  if (hasAccessKeyId !== hasSecretAccessKey) {
+    throw new TypeError(
+      "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be configured together",
+    );
+  }
+  const hasCompleteFederation = parsed.AWS_SES_ROLE_ARN !== undefined
+    && parsed.AWS_SES_OIDC_AUDIENCE !== undefined
+    && parsed.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID !== undefined;
+  if (parsed.AWS_SES_CREDENTIAL_MODE === "federated") {
+    if (!hasCompleteFederation) {
+      throw new TypeError(
+        "Federated SES requires AWS_SES_ROLE_ARN, AWS_SES_OIDC_AUDIENCE, and AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID",
+      );
+    }
+    if (hasAccessKeyId || hasSecretAccessKey) {
+      throw new TypeError("Static AWS credentials are forbidden in federated SES mode");
+    }
+    if (verifiedLocalPlatform) {
+      throw new TypeError("The verified local platform must use static fake SES credentials");
+    }
+  } else if (
+    parsed.AWS_SES_ROLE_ARN !== undefined
+    || parsed.AWS_SES_OIDC_AUDIENCE !== undefined
+    || parsed.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID !== undefined
+  ) {
+    throw new TypeError("Federation settings require AWS_SES_CREDENTIAL_MODE=federated");
+  }
+  if (verifiedLocalPlatform) {
+    if (
+      storageEmulatorUrl === undefined
+      || publicStorageUrl === undefined
+      || sesEndpoint === undefined
+      || sesEndpoint.port !== "8090"
+      || !hasAccessKeyId
+      || !hasSecretAccessKey
+    ) {
+      throw new TypeError(
+        "Local email requires GCS emulator URLs, SES adapter, and local AWS credential settings",
+      );
+    }
+  } else if (
+    parsed.GCS_API_ENDPOINT !== undefined
+    || parsed.COMPANY_FILES_PUBLIC_BASE_URL !== undefined
+    || parsed.AWS_SES_ENDPOINT !== undefined
+  ) {
+    throw new TypeError("Email provider emulator settings are forbidden outside the local platform");
+  }
+
+  return {
+    nodeEnv: parsed.NODE_ENV,
+    host: parsed.HOST,
+    port: parsed.PORT,
+    database: {
+      connectionString: parsed.DATABASE_URL,
+      ssl: parsed.DATABASE_SSL_MODE === "require" ? { rejectUnauthorized: true } : false,
+      max: parsed.DATABASE_MAX_CONNECTIONS,
+    },
+    pubsub: {
+      audience: serviceUrl?.origin,
+      allowedServiceAccounts,
+      sharedToken: parsed.PUBSUB_VERIFICATION_TOKEN,
+    },
+    storage: {
+      ...(parsed.GCS_PROJECT_ID === undefined ? {} : { projectId: parsed.GCS_PROJECT_ID }),
+      ...(storageEmulatorUrl === undefined
+        ? {}
+        : { apiEndpoint: storageEmulatorUrl.origin }),
+      ...(publicStorageUrl === undefined ? {} : { publicBaseUrl: publicStorageUrl }),
+      bucket: parsed.COMPANY_FILES_BUCKET,
+      signedUrlTtlSeconds: parsed.SIGNED_DOWNLOAD_TTL_SECONDS,
+    },
+    ses: {
+      region: parsed.AWS_REGION,
+      fromEmail: parsed.SES_FROM_EMAIL,
+      fromName: parsed.SES_FROM_NAME,
+      credentialMode: parsed.AWS_SES_CREDENTIAL_MODE,
+      ...(parsed.AWS_SES_CREDENTIAL_MODE === "federated"
+        ? {
+            federation: {
+              roleArn: parsed.AWS_SES_ROLE_ARN!,
+              audience: parsed.AWS_SES_OIDC_AUDIENCE!,
+              subject: parsed.AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID!,
+            },
+          }
+        : {}),
+      ...(sesEndpoint === undefined
+        ? {}
+        : {
+            endpoint: sesEndpoint,
+            credentials: {
+              accessKeyId: parsed.AWS_ACCESS_KEY_ID!,
+              secretAccessKey: parsed.AWS_SECRET_ACCESS_KEY!,
+            },
+          }),
+    },
+    sendLeaseSeconds: parsed.EMAIL_SEND_LEASE_SECONDS,
+  } as const;
+}

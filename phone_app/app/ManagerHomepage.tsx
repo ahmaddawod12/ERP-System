@@ -1,2 +1,2 @@
-import Screen from '../modules/homepage/ManagerHomepage';
+import Screen from '../modules/home/screens/ManagerHomepage';
 export default Screen;

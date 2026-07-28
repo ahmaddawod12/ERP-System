@@ -1,0 +1,109 @@
+# Mobile rollout
+
+The shipped client uses Firebase Authentication for identity and the Cloud Run
+API exclusively for ERP data. Firebase Functions/Firestore/Storage and the old
+rollback endpoint are not present; rollback therefore depends on API backward
+compatibility and a previously healthy native build.
+
+## Release prerequisites
+
+1. Build `packages/contracts` and `packages/api-contracts`, then run:
+
+   ```bash
+   npm --prefix phone_app run test
+   npm --prefix phone_app run typecheck
+   npm --prefix phone_app run doctor
+   node scripts/check-maestro-flows.mjs
+   ```
+
+2. Produce fresh Android and iOS binaries. NotifyKit, Messaging, Crashlytics,
+   SecureStore, SQLCipher/SQLite, and other native dependencies cannot be added
+   or changed by an Expo OTA update.
+3. Inject `.env.example` values through the matching EAS environment and set
+   `GOOGLE_SERVICES_JSON` / `GOOGLE_SERVICE_INFO_PLIST` as EAS file-secret
+   variables containing `google-services.json` / `GoogleService-Info.plist`.
+   Confirm Firebase API keys are restricted to the exact Android package plus
+   signing certificate or iOS bundle identifier, and rotate any unrestricted
+   key before approving the build.
+   Confirm the API origin is stable HTTPS and matches the release environment.
+4. Confirm the API and worker image digests, database migrations, GCS,
+   Firebase Auth, FCM/APNs, Crashlytics, Pub/Sub, email, archive, and tax-disabled
+   paths are healthy before building the production binary.
+5. Run the mandatory open-source Maestro CLI flows against a seeded
+   non-production environment. CI builds a debug APK and runs it on its own
+   Android emulator; no Maestro Cloud account or paid plan is used. CI requires:
+
+   - secret `FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64`
+   - variable `MOBILE_E2E_API_BASE_URL`
+   - secret `MAESTRO_TEST_EMAIL`
+   - secret `MAESTRO_TEST_PASSWORD`
+   - variable `MAESTRO_TEST_WORKSPACE`
+   - variable `MAESTRO_TEST_JOB_TITLE`
+
+   The Firebase secret is the base64 encoding of the non-production
+   `google-services.json`; the API URL must be HTTPS. The release reconciliation
+   environment additionally requires the release job and second-user fixture
+   values already referenced by `.maestro-release/reconciliation.yaml`.
+
+   CI uses the canonical Android package (`erpsystem.app`) and fails in a
+   dedicated preflight step when any externally managed value is absent.
+   Maestro CLI is pinned to a fixed version and archive checksum.
+
+   The seeded user must have multiple workspaces and one job with the configured
+   title. Offline mode is Android-only in Maestro and verifies that Pending Work
+   remains safe while airplane mode is enabled.
+
+## Acceptance matrix
+
+Validate login/recovery, tenant selection/switching, role-specific dashboards,
+bounded pagination, job create/update/accept/delete/completion, attachment
+upload/download, document preview/generate/detail/download, invitations,
+clients, inventory, workers, upgrades, archive reads, notification open/display,
+and tax-disabled behavior.
+
+For offline v1, separately verify `job.create_finished` and
+`job.complete_assigned` across app restart, foreground, network restoration,
+logout/re-login by the same uid, conflict, retry, and explicit discard. Confirm
+another uid cannot open the prior uid's SQLCipher outbox or staged files.
+
+## Staged promotion
+
+1. Internal/test channel: complete the acceptance matrix and keep the build for
+   at least one normal work cycle.
+2. Promote to 10% of eligible installations for at least 24 hours.
+3. Promote to 50% for at least 48 additional hours.
+4. Promote to 100% only while release gates remain healthy.
+
+At each stage record version code/build number, active adoption, crash-free
+sessions, API latency/error budget, auth refresh failures, attachment errors,
+outbox age/conflicts, Pub/Sub/DLQ depth, PDF/email outcomes, and notification
+delivery. Use explicit environment thresholds; absence of telemetry is a failed
+gate, not a reason to continue.
+
+## Pause and rollback
+
+Pause promotion on an SLO breach, tenant/auth anomaly, data-integrity issue,
+outbox loss, crash regression, or unexpected tax behavior. Keep compatible API
+routes deployed, stop store rollout and OTA promotion, and release the last
+healthy compatible native build. Installed binaries cannot be remotely
+recalled, so do not remove an API contract until supported active versions no
+longer use it.
+
+Close the rollout only after 99% of active installations are on the release (or
+newer), the observation window is complete, and incident/support queues show no
+release-linked regression.
+
+## Greenfield adoption waiver
+
+The launch plan assumes there is no live production customer data. That alone
+does not prove there are no previously distributed binaries. The 99% adoption
+and 30-day zero-legacy-traffic retirement gate may be marked not applicable
+only when the release owner signs evidence that no production installation was
+ever distributed with a legacy Edge business-data path and traffic telemetry
+shows no such callers.
+
+If any legacy production installation or business request exists, the waiver
+is invalid: restore a compatible legacy bridge, keep v1 API fields backward
+compatible, reach 99% supported-version adoption, then observe 30 consecutive
+days of zero legacy business traffic before retirement. Record the decision in
+`docs/launch/LAUNCH_EVIDENCE_TEMPLATE.md`; absence of evidence blocks launch.

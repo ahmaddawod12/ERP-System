@@ -1,19 +1,19 @@
 /**
  * CacheContext.js - MMKV-based caching with summary-version sync
  * 
- * Cache Structure (Firestore company cache document):
- * - companies/{companyId}/data/cache:
- *   { jobsVersion, documentsVersion, clientsVersion, workersVersion, updatedAt }
+ * Cache Structure (backend company sync state):
+ * - company_sync_state:
+ *   { jobsVersion, documentsVersion, clientsVersion, workersVersion, companyInventoryVersion, updatedAt }
  * 
  * Sync Strategy:
- * - Snapshot listener on company cache doc
- * - On version mismatch: full re-fetch of the changed collection (within 90-day window)
- * - Constant-size cache doc (no per-document fields)
+ * - Poll backend sync summaries
+ * - On version mismatch: cursor re-fetch of the changed collection within the active cache window
+ * - Constant-size version state, no per-record payload fields
  * 
  * Unified Jobs Collection:
- * - All jobs live in companies/{companyId}/jobs
+ * - All jobs live in SQL `jobs`
  * - Status field distinguishes: pending, waiting, finished, denied
- * - No p_/f_ prefixes on IDs (plain sequential numbers from jid)
+ * - No p_/f_ prefixes on IDs; public job numbers come from SQL counters
  * 
  * Cache Duration: 90 days for finished jobs and documents
  * 
@@ -26,22 +26,35 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { auth, storage as firebaseStorage } from '../firebase';
+import { auth } from '../lib/auth/transport';
 import { useAppStateListener } from '../hooks/useAppStateListener';
-import type { CacheContextValue, UserProfile, Job, AppDocument, Client, Worker, InventoryPart, Subscription, CacheVersions, RoleTitle, Maybe } from '../types';
+import type {
+  AppDocument,
+  CacheLifecycleValue,
+  CacheVersions,
+  Client,
+  DirectoryCacheValue,
+  DocumentHistoryCacheValue,
+  InventoryCacheValue,
+  InventoryPart,
+  Job,
+  JobsCacheValue,
+  Maybe,
+  RoleTitle,
+  Subscription,
+  UserProfile,
+  Worker,
+} from '../types';
 import { safeJsonParse } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import {
-  fetchDataFromFirebase as _fetchDataFromFirebase,
+  fetchDataFromBackend as _fetchDataFromBackend,
   fetchCompanySyncState as _fetchCompanySyncState,
   fetchUserSyncState as _fetchUserSyncState,
-  fetchDocumentById as _fetchDocumentById,
-  fetchAllRecentJobs as _fetchAllRecentJobs,
   fetchJobsPage as _fetchJobsPage,
   fetchDocumentsPage as _fetchDocumentsPage,
 } from './cache-fetchers';
 import { useArchiveQuery } from '../hooks/useArchiveQuery';
-import { useCacheVersionActions } from './use-cache-version-actions';
 import { useCacheJobActions } from './use-cache-job-actions';
 import { useCacheWorkerActions } from './use-cache-worker-actions';
 import { useCacheClientActions } from './use-cache-client-actions';
@@ -68,17 +81,35 @@ import {
 import { roleUsesScopedJobAccess } from './job-membership';
 import { getNextCompanySyncPollIntervalMs } from './company-sync-poll';
 
-// Create context
-const CacheContext = createContext<CacheContextValue | null>(null);
+const CacheLifecycleContext = createContext<CacheLifecycleValue | null>(null);
+const JobsCacheContext = createContext<JobsCacheValue | null>(null);
+const DirectoryCacheContext = createContext<DirectoryCacheValue | null>(null);
+const InventoryCacheContext = createContext<InventoryCacheValue | null>(null);
+const DocumentHistoryCacheContext =
+  createContext<DocumentHistoryCacheValue | null>(null);
 
-// Custom hook to use cache
-export const useCache = (): CacheContextValue => {
-  const context = useContext(CacheContext);
-  if (!context) {
-    throw new Error('useCache must be used within a CacheProvider');
-  }
-  return context;
-};
+function requiredContext<T>(value: T | null, hookName: string): T {
+  if (!value) throw new Error(`${hookName} must be used within CacheProvider`);
+  return value;
+}
+
+export const useCacheLifecycle = (): CacheLifecycleValue =>
+  requiredContext(useContext(CacheLifecycleContext), 'useCacheLifecycle');
+
+export const useJobsCache = (): JobsCacheValue =>
+  requiredContext(useContext(JobsCacheContext), 'useJobsCache');
+
+export const useDirectoryCache = (): DirectoryCacheValue =>
+  requiredContext(useContext(DirectoryCacheContext), 'useDirectoryCache');
+
+export const useInventoryCache = (): InventoryCacheValue =>
+  requiredContext(useContext(InventoryCacheContext), 'useInventoryCache');
+
+export const useDocumentHistoryCache = (): DocumentHistoryCacheValue =>
+  requiredContext(
+    useContext(DocumentHistoryCacheContext),
+    'useDocumentHistoryCache',
+  );
 
 export function CacheProvider({ children }: { children: ReactNode }) {
   // State
@@ -129,12 +160,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const getWid = useCallback(() => mmkvHelpers.getString(CACHE_KEYS.USER_WID), []);
 
   /**
-   * Pause Firestore listeners when app is backgrounded (CRITICAL for Android)
+   * Pause backend sync polling when app is backgrounded.
    */
   const pauseListeners = useCallback(() => {
     if (!listenersActiveRef.current) return; // Already paused
     
-    logger.debug('?? [CACHE] Pausing Firestore listeners to prevent background reads');
+    logger.debug('[CACHE] Pausing backend sync polling to prevent background reads');
     
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -153,12 +184,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Resume Firestore listeners when app becomes active
+   * Resume backend sync polling when app becomes active.
    */
   const resumeListeners = useCallback(() => {
     if (listenersActiveRef.current) return; // Already active
     
-    logger.debug('?? [CACHE] Resuming Firestore listeners');
+    logger.debug('[CACHE] Resuming backend sync polling');
     
     const uid = getUid();
     const role = getUserRole();
@@ -270,7 +301,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
 
     const cachedProfile = mmkvHelpers.getObject<UserProfile & { uid?: string }>(CACHE_KEYS.PROFILE);
     if (!isProfileCacheOwnedByUser(cachedProfile, identity.uid)) {
-      console.warn('[CACHE READ] Ignoring scoped profile cache for a different user');
+      logger.warn('[CACHE READ] Ignoring scoped profile cache for a different user');
       setMmkvScope(identity.uid, null);
       return {
         hasCache: false,
@@ -367,21 +398,9 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Stable references to the module-level fetchers, compatible with useCallback dep arrays.
-  const fetchDataFromFirebase = useCallback(
+  const fetchDataFromBackend = useCallback(
     (field: string, uid: string, companyId: string, role: string) =>
-      _fetchDataFromFirebase(field, uid, companyId, role),
-    [],
-  );
-
-  const fetchDocumentById = useCallback(
-    (docId: string, uid: string, companyId: string, role: string) =>
-      _fetchDocumentById(docId, uid, companyId, role),
-    [],
-  );
-
-  const fetchAllRecentJobs = useCallback(
-    (uid: string, companyId: string, role: string) =>
-      _fetchAllRecentJobs(uid, companyId, role),
+      _fetchDataFromBackend(field, uid, companyId, role),
     [],
   );
 
@@ -412,21 +431,30 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const fetchAllCursorPages = useCallback(
+  const fetchCursorWindow = useCallback(
     async (
       fetchPage: (companyId: string, opts?: any) => Promise<{ items: any[]; nextCursor: string | null }>,
       companyId: string,
       pageSize = 200,
       baseOpts: Record<string, unknown> = {},
     ) => {
+      const MAX_PAGES = 5;
+      const MAX_ITEMS = 1_000;
       const allItems: any[] = [];
       const seenCursors = new Set<string>();
       let nextCursor: string | null = null;
+      let pagesFetched = 0;
 
       do {
+        pagesFetched++;
         const page = await fetchPage(companyId, { ...baseOpts, pageSize, afterCursor: nextCursor || undefined });
         if (Array.isArray(page.items) && page.items.length > 0) {
           allItems.push(...page.items);
+        }
+
+        if (allItems.length >= MAX_ITEMS || pagesFetched >= MAX_PAGES) {
+          logger.warn(`fetchCursorWindow capped for ${companyId} (pages=${pagesFetched}, items=${allItems.length})`);
+          break;
         }
 
         const candidateCursor = typeof page.nextCursor === 'string' && page.nextCursor.trim()
@@ -447,12 +475,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   );
 
   const fetchCompanySyncState = useCallback(
-    (companyId: string) => _fetchCompanySyncState(companyId),
+    (uid: string, companyId: string) => _fetchCompanySyncState(uid, companyId),
     [],
   );
 
   const fetchUserSyncState = useCallback(
-    () => _fetchUserSyncState(),
+    (uid: string, companyId: string) => _fetchUserSyncState(uid, companyId),
     [],
   );
 
@@ -555,7 +583,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       if (userPollInFlightRef.current) return;
       userPollInFlightRef.current = true;
       try {
-        const remoteVersions = await fetchUserSyncState();
+        if (!companyId) return;
+        const remoteVersions = await fetchUserSyncState(uid, companyId);
         const localVersions: Record<string, number> = mmkvHelpers.getObject(CACHE_KEYS.CACHE_VERSIONS) || {};
         let standardFields = role === 'basic' ? ['profile'] : ['profile', 'inventory'];
         standardFields.push('subscription');
@@ -568,10 +597,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           if (remoteVersion > localVersion) {
             logger.debug(`User sync mismatch for ${field}: local=${localVersion}, remote=${remoteVersion}`);
             if (field === 'subscription') {
-              const subData = await fetchDataFromFirebase('subscription', uid, companyId || '', role);
+              const subData = await fetchDataFromBackend('subscription', uid, companyId || '', role);
               saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
             } else {
-              const data = await fetchDataFromFirebase(field, uid, companyId || '', role);
+              const data = await fetchDataFromBackend(field, uid, companyId || '', role);
               if (data !== null) {
                 const cacheKey = getCacheKeyForField(field);
                 saveToLocalCache(cacheKey, data);
@@ -589,7 +618,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
           userPollIdleCountRef.current += 1;
         }
       } catch (error) {
-        console.error('User sync polling error:', error);
+        logger.error('User sync polling error:', error);
       } finally {
         userPollInFlightRef.current = false;
         if (listenersActiveRef.current) {
@@ -628,7 +657,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         if (companyPollInFlightRef.current) return;
         companyPollInFlightRef.current = true;
         try {
-          const remoteData = await fetchCompanySyncState(companyId);
+          const remoteData = await fetchCompanySyncState(uid, companyId);
           const localVersions: Record<string, any> = mmkvHelpers.getObject(CACHE_KEYS.COMPANY_VERSIONS) || {};
 
           logger.debug('Company sync state received:', JSON.stringify({
@@ -658,13 +687,13 @@ export function CacheProvider({ children }: { children: ReactNode }) {
 
               const [openJobs, closedJobs, docsItems] = await Promise.all([
                 shouldFetchJobs
-                  ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
+                  ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
                   : Promise.resolve([]),
                 shouldFetchJobs
-                  ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
+                  ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
                   : Promise.resolve([]),
                 shouldFetchDocs
-                  ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
+                  ? fetchCursorWindow(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
                   : Promise.resolve([]),
               ]);
               const jobsItems = [...openJobs, ...closedJobs];
@@ -689,7 +718,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             logger.debug(`Clients version changed: local=${localClientsVersion}, remote=${remoteClientsVersion}`);
 
             fetchPromises.push((async () => {
-              const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+              const clientsData = await fetchDataFromBackend('clients', uid, companyId, role);
               if (clientsData !== null) {
                 saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
                 setClients(clientsData);
@@ -706,7 +735,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
               logger.debug(`Workers version changed: local=${localWorkersVersion}, remote=${remoteWorkersVersion}`);
 
               fetchPromises.push((async () => {
-                const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+                const workersData = await fetchDataFromBackend('workers', uid, companyId, role);
                 if (workersData !== null) {
                   saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
                 }
@@ -723,7 +752,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
               logger.debug(`Company inventory version changed: local=${localCompanyInventoryVersion}, remote=${remoteCompanyInventoryVersion}`);
 
               fetchPromises.push((async () => {
-                const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
+                const companyInventoryData = await fetchDataFromBackend('companyInventory', uid, companyId, role);
                 if (companyInventoryData !== null) {
                   saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, companyInventoryData);
                   setCompanyInventory(companyInventoryData);
@@ -745,7 +774,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             companyPollIdleCountRef.current += 1;
           }
         } catch (error) {
-          console.error('Company sync polling error:', error);
+          logger.error('Company sync polling error:', error);
         } finally {
           companyPollInFlightRef.current = false;
           if (listenersActiveRef.current) {
@@ -773,24 +802,41 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     listenersActiveRef.current = true;
     
     logger.debug(`Cache listeners set up for ${role}`);
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchAllRecentJobs, fetchCompanySyncState, fetchDataFromFirebase, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
+  }, [applyBootstrappedJobDocumentCache, fetchCursorWindow, fetchCompanySyncState, fetchDataFromBackend, fetchUserSyncState, getExistingJobsCacheForRole, saveToLocalCache]);
 
   /**
    * Initialize cache for a user (called on login/app start)
-   * Sets up snapshot listeners on cache docs
+   * Sets up backend sync polling.
    * 
    * Flow:
    * 1. Load from local cache first
    * 2. Check if uid/role/companyId exists in local cache
-   * 3. If not, try to get from cached profile or fetch from Firebase (first login)
-   * 4. Setup snapshot listeners (they handle version sync automatically on connect)
+   * 3. If not, try to get from cached profile or fetch from backend (first login)
+   * 4. Setup sync polling for version changes
    */
-  const initializeCache = useCallback(async (userId: string) => {
+  const initializeCache = useCallback(async (
+    userId: string,
+    selectedCompanyId: string,
+    selectedRole: string,
+  ) => {
     logger.debug(`?? Initializing cache...`);
     setIsLoading(true);
     
     try {
       resetCacheState();
+
+      const normalizedCompanyId = String(selectedCompanyId || '').trim();
+      const normalizedRole = String(selectedRole || '').trim().toLowerCase();
+      if (!userId || !/^\d+$/.test(normalizedCompanyId) || !normalizedRole) {
+        throw new Error('An authenticated user and selected workspace are required');
+      }
+
+      // The explicit TenantProvider selection is the sole cache scope. Identity
+      // metadata is global, so set it before reading the tenant-scoped cache.
+      mmkvHelpers.setString(CACHE_KEYS.UID, userId);
+      mmkvHelpers.setString(CACHE_KEYS.USER_ROLE, normalizedRole);
+      mmkvHelpers.setString(CACHE_KEYS.COMPANY_ID, normalizedCompanyId);
+      setMmkvScope(userId, normalizedCompanyId);
 
       // STEP 1: Load from local cache first
       const cachedData = loadFromLocalCache(userId) as {
@@ -806,17 +852,24 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       };
       
       // STEP 2: Determine uid (UID), role, and companyId
-      let uid = userId || cachedData.uid;
-      let role = cachedData.role;
-      let companyId = cachedData.companyId;
+      let uid = userId;
+      let role: string | null = normalizedRole;
+      let companyId: string | null = normalizedCompanyId;
       let profileData = cachedData.profile;
-      let shouldForceFreshBootstrap = !cachedData.hasCache;
+      let shouldForceFreshBootstrap = !cachedData.hasCache
+        || cachedData.companyId !== normalizedCompanyId
+        || cachedData.role !== normalizedRole;
 
       if (uid && cachedData.hasCache && !cachedData.identityMismatch) {
-        const resolvedProfile = await fetchDataFromFirebase('profile', uid, '', role || '');
+        const resolvedProfile = await fetchDataFromBackend(
+          'profile',
+          uid,
+          normalizedCompanyId,
+          normalizedRole,
+        );
 
         if (!resolvedProfile) {
-          console.error('? Could not resolve profile from Firebase');
+          logger.error('Could not resolve profile from backend');
           setIsLoading(false);
           return null;
         }
@@ -824,14 +877,12 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         const resolvedRole = typeof resolvedProfile.role === 'string'
           ? resolvedProfile.role.toLowerCase()
           : null;
-        const resolvedCompanyId = typeof resolvedProfile.companyId === 'string'
-          ? resolvedProfile.companyId.trim() || null
-          : null;
-        const companyMismatch = isScopedCacheCompanyMismatch(companyId, resolvedCompanyId);
-        const roleMismatch = Boolean(role && resolvedRole && role !== resolvedRole);
+        const resolvedCompanyId = normalizedCompanyId;
+        const companyMismatch = cachedData.companyId !== normalizedCompanyId;
+        const roleMismatch = Boolean(resolvedRole && resolvedRole !== normalizedRole);
 
         if (companyMismatch || roleMismatch || !profileData) {
-          console.warn('[CACHE] Refreshing scoped cache metadata from live profile', {
+          logger.warn('[CACHE] Refreshing scoped cache metadata from live profile', {
             uid,
             cachedCompanyId: companyId,
             resolvedCompanyId,
@@ -839,8 +890,8 @@ export function CacheProvider({ children }: { children: ReactNode }) {
             roleMismatch,
           });
           profileData = resolvedProfile;
-          role = resolvedRole || role;
-          companyId = resolvedCompanyId;
+          role = normalizedRole;
+          companyId = normalizedCompanyId;
           shouldForceFreshBootstrap = true;
 
           setMmkvScope(uid, companyId);
@@ -854,28 +905,28 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       } else {
         // Try to get from cached profile
         if (profileData && !role) {
-          role = profileData.role;
-          companyId = profileData.companyId;
+          role = normalizedRole;
+          companyId = normalizedCompanyId;
         }
         
-        // Use Firebase UID directly (no email-to-uid derivation)
+        // Use authenticated UID directly (no email-to-uid derivation)
         if (!uid && userId) {
           uid = userId;
         }
         
-        // If still no profile, this is first login - fetch from Firebase
+        // If still no profile, this is first login - fetch from backend.
         if (!profileData) {
-          logger.debug('?? No cached profile, fetching from Firebase (first login)...');
-          profileData = await fetchDataFromFirebase('profile', uid || '', companyId || '', role || '');
+          logger.debug('No cached profile, fetching from backend (first login)...');
+          profileData = await fetchDataFromBackend('profile', uid || '', companyId || '', role || '');
           
           if (!profileData) {
-            console.error('? Could not fetch profile from Firebase');
+            logger.error('Could not fetch profile from backend');
             setIsLoading(false);
             return null;
           }
           
-          role = profileData.role;
-          companyId = profileData.companyId;
+          role = normalizedRole;
+          companyId = normalizedCompanyId;
           
           // Save profile to local cache
           saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
@@ -888,6 +939,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
         }
 
       }
+
+      // Never allow a profile/cache response to replace the explicit tenant.
+      role = normalizedRole;
+      companyId = normalizedCompanyId;
 
       // Save metadata to local cache using the authenticated user as the source of truth.
       setMmkvScope(uid, companyId);
@@ -905,15 +960,14 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       if (shouldForceFreshBootstrap) {
         logger.debug('?? No local cache found, performing full fresh fetch...');
         await fetchAllFresh(uid || '', role || '', companyId || '');
-        // Check if business_info exists in Firestore (don't cache the data itself)
+        // Check if business_info exists through the backend (don't cache the data itself).
         const hasBusinessInfo = mmkvHelpers.getString(CACHE_KEYS.HAS_BUSINESS_INFO) === 'true';
         return { uid, role, companyId, hasBusinessInfo };
       }
       
-      // STEP 4: Set up real-time snapshot listeners
-      // The listeners will automatically sync versions and fetch any missing/outdated data
-      // when they first connect (onSnapshot fires immediately with current state)
-      logger.debug('?? Setting up cache listeners (will sync versions automatically)...');
+      // STEP 4: Set up backend sync polling.
+      // Polling syncs versions and fetches missing/outdated data.
+      logger.debug('Setting up backend sync polling...');
       setupCacheListeners(uid || '', role || '', companyId);
       
       setIsInitialized(true);
@@ -924,42 +978,42 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       return { uid, role, companyId, hasBusinessInfo };
       
     } catch (error) {
-      console.error('? Cache initialization error:', error);
+      logger.error('Cache initialization error:', error);
       setIsLoading(false);
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [loadFromLocalCache, fetchDataFromFirebase, resetCacheState, saveToLocalCache, setupCacheListeners]);
+  }, [loadFromLocalCache, fetchDataFromBackend, resetCacheState, saveToLocalCache, setupCacheListeners]);
 
   /**
-   * Fetch all data fresh from Firebase (first-time login)
-   * Also fetches remote cache doc versions to store correct version numbers
+   * Fetch all data fresh from backend (first-time login).
+   * Also fetches remote sync versions to store correct version numbers.
    */
   const fetchAllFresh = useCallback(async (uid: string, role: string, companyId: string) => {
-    logger.debug('?? Fetching all data fresh from Firebase (first login)...');
+    logger.debug('Fetching all data fresh from backend (first login)...');
     
     try {
       // Fetch profile for all roles
-      const profileData = await fetchDataFromFirebase('profile', uid, companyId, role);
+      const profileData = await fetchDataFromBackend('profile', uid, companyId, role);
       if (profileData) saveToLocalCache(CACHE_KEYS.PROFILE, profileData);
       
       // Fetch subscription for all roles
       if (companyId) {
         try {
-          const subData = await fetchDataFromFirebase('subscription', uid, companyId, role);
+          const subData = await fetchDataFromBackend('subscription', uid, companyId, role);
           if (subData) {
             setSubscription(subData);
             saveToLocalCache(CACHE_KEYS.SUBSCRIPTION, subData);
           }
         } catch (e) {
-          console.warn('Could not fetch subscription:', (e as Error).message);
+          logger.warn('Could not fetch subscription:', (e as Error).message);
         }
       }
       
       // Fetch inventory for all roles EXCEPT basic and dev (they have no inventory)
       if (role !== 'basic' && role !== 'dev') {
-        const inventoryData = await fetchDataFromFirebase('inventory', uid, companyId, role);
+        const inventoryData = await fetchDataFromBackend('inventory', uid, companyId, role);
         if (inventoryData) saveToLocalCache(CACHE_KEYS.INVENTORY, inventoryData);
       } else {
         // Basic and dev roles: ensure inventory is empty
@@ -967,7 +1021,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       }
 
       if (role !== 'dev' && companyId) {
-        const companyInventoryData = await fetchDataFromFirebase('companyInventory', uid, companyId, role);
+        const companyInventoryData = await fetchDataFromBackend('companyInventory', uid, companyId, role);
         if (companyInventoryData) saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, companyInventoryData);
       } else {
         saveToLocalCache(CACHE_KEYS.COMPANY_INVENTORY, []);
@@ -975,7 +1029,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch role-specific standard fields
       if (role === 'manager') {
-        const workersData = await fetchDataFromFirebase('workers', uid, companyId, role);
+        const workersData = await fetchDataFromBackend('workers', uid, companyId, role);
         if (workersData) saveToLocalCache(CACHE_KEYS.WORKERS, workersData);
       } else if (role === 'dev') {
         // Dev role doesn't need workers
@@ -983,31 +1037,32 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       }
       
       // Check if business_info exists through the read model so SQL-backed
-      // companies do not depend on direct Firestore reads for registration state.
+      // companies do not depend on direct legacy database reads for registration state.
       if (role !== 'worker' && role !== 'dev' && companyId) {
         try {
-          const businessInfo = await fetchDataFromFirebase('business_info', uid, companyId, role);
+          const businessInfo = await fetchDataFromBackend('business_info', uid, companyId, role);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, businessInfo ? 'true' : 'false');
         } catch (e) {
-          console.warn('Could not check business_info existence:', (e as Error).message);
+          logger.warn('Could not check business_info existence:', (e as Error).message);
           mmkvHelpers.setString(CACHE_KEYS.HAS_BUSINESS_INFO, 'false');
         }
       }
       
-      // Fetch all recent jobs from Firebase
-      logger.debug('Fetching all recent jobs for initial cache...');
-      let { jobsData, documentsData } = await fetchAllRecentJobs(uid, companyId, role);
+      // Fetch a bounded recent cursor window for the initial cache.
+      logger.debug('Fetching the recent job/document cursor window for initial cache...');
+      let jobsData: any[] = [];
+      let documentsData: any[] = [];
       if (companyId) {
         const cacheStartIso = getCacheStartDate().toISOString();
         const [openJobsData, closedJobsData, allDocumentsData] = await Promise.all([
           role !== 'basic' && role !== 'dev'
-            ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
+            ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['pending', 'waiting'], dateField: 'createdAt' })
             : Promise.resolve([]),
           role !== 'basic' && role !== 'dev'
-            ? fetchAllCursorPages(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
+            ? fetchCursorWindow(fetchJobsPage, companyId, 200, { status: ['finished', 'denied'], dateField: 'updatedAt', dateFrom: cacheStartIso })
             : Promise.resolve([]),
           role !== 'dev'
-            ? fetchAllCursorPages(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
+            ? fetchCursorWindow(fetchDocumentsPage, companyId, 200, { dateField: 'createdAt', dateFrom: cacheStartIso })
             : Promise.resolve([]),
         ]);
         const allJobsData = [...openJobsData, ...closedJobsData];
@@ -1026,7 +1081,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       // Fetch clients for all roles (shared company collection)
       if (companyId) {
         logger.debug('?? Fetching clients for initial cache...');
-        const clientsData = await fetchDataFromFirebase('clients', uid, companyId, role);
+        const clientsData = await fetchDataFromBackend('clients', uid, companyId, role);
         if (Array.isArray(clientsData)) {
           saveToLocalCache(CACHE_KEYS.CLIENTS, clientsData);
           setClients(clientsData);
@@ -1038,7 +1093,9 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       const versions: Record<string, any> = {};
       const companyVersions: Record<string, any> = {};
       
-      const remoteUserState = await fetchUserSyncState();
+      const remoteUserState = companyId
+        ? await fetchUserSyncState(uid, companyId)
+        : { profile: 0, inventory: 0, subscription: 0, updatedAt: '' };
       for (const key of ['profile', 'inventory', 'subscription']) {
         if (remoteUserState[key as keyof typeof remoteUserState] !== undefined) {
           versions[key] = remoteUserState[key as keyof typeof remoteUserState];
@@ -1047,7 +1104,7 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       // Fetch company sync state from the backend read model
       if (companyId) {
-        const remoteCompanyState = await fetchCompanySyncState(companyId);
+        const remoteCompanyState = await fetchCompanySyncState(uid, companyId);
         for (const key of ['jobsVersion', 'documentsVersion', 'clientsVersion', 'workersVersion', 'companyInventoryVersion']) {
           if (remoteCompanyState[key as keyof typeof remoteCompanyState] !== undefined) {
             companyVersions[key] = remoteCompanyState[key as keyof typeof remoteCompanyState];
@@ -1066,36 +1123,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
       
       logger.debug('Initial cache populated with', jobsData.length, 'jobs');
     } catch (error) {
-      console.error('Error fetching fresh data:', error);
+      logger.error('Error fetching fresh data:', error);
       setIsLoading(false);
     }
-  }, [applyBootstrappedJobDocumentCache, fetchAllCursorPages, fetchCompanySyncState, fetchDataFromFirebase, fetchAllRecentJobs, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
-
-  /**
-   * Pre-increment a summary version field locally.
-   * Used for optimistic updates so the snapshot listener won't trigger
-   * an unnecessary re-fetch when the CF-written version arrives.
-   * 
-   * For user cache: standard fields (profile, inventory, subscription)
-   * For company cache: summary fields (jobsVersion, documentsVersion, clientsVersion, workersVersion)
-   */
-  const preIncrementVersion = useCallback((field: string, isCompanyCache = false) => {
-    const localVersionsKey = isCompanyCache ? CACHE_KEYS.COMPANY_VERSIONS : CACHE_KEYS.CACHE_VERSIONS;
-    const localVersions: Record<string, number> = mmkvHelpers.getObject(localVersionsKey) || {};
-    localVersions[field] = (localVersions[field] || 0) + 1;
-    saveToLocalCache(localVersionsKey, localVersions);
-  }, [saveToLocalCache]);
-
-  const {
-    incrementCacheVersion,
-    updateProfile,
-    updateInventory,
-  } = useCacheVersionActions({
-    getUid,
-    getCompanyId,
-    saveToLocalCache,
-    preIncrementVersion,
-  });
+  }, [applyBootstrappedJobDocumentCache, fetchCursorWindow, fetchCompanySyncState, fetchDataFromBackend, fetchDocumentsPage, fetchJobsPage, fetchUserSyncState, saveToLocalCache, setupCacheListeners]);
 
   const {
     addJob,
@@ -1107,7 +1138,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     jobs,
     companyJobs,
     saveToLocalCache,
-    preIncrementVersion,
   });
 
   const {
@@ -1120,7 +1150,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     getUserRole,
     getCompanyId,
     saveToLocalCache,
-    preIncrementVersion,
   });
 
   const {
@@ -1129,10 +1158,10 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     updateClient,
     deleteClient,
   } = useCacheClientActions({
+    getUid,
     getCompanyId,
     clients,
     saveToLocalCache,
-    preIncrementVersion,
     setClients,
   });
 
@@ -1140,17 +1169,15 @@ export function CacheProvider({ children }: { children: ReactNode }) {
    * Add document
    * manager/user/basic adds document ? Company cache, increment document version
    */
-  const addDocument = useCallback(async (document: any) => {
+  const addDocument = useCallback(async (document: AppDocument) => {
     if (!document.id) {
-      console.error('Cannot add document without ID');
+      logger.error('Cannot add document without ID');
       return;
     }
     
     const newDocuments = [...documents, document];
     saveToLocalCache(CACHE_KEYS.DOCUMENTS, newDocuments);
-    // Pre-increment local documentsVersion (CF handles Firebase bump)
-    preIncrementVersion('documentsVersion', true);
-  }, [documents, saveToLocalCache, preIncrementVersion]);
+  }, [documents, saveToLocalCache]);
 
   /**
    * Clear all cache (on logout)
@@ -1190,7 +1217,6 @@ export function CacheProvider({ children }: { children: ReactNode }) {
   const { fetchFromArchive, getDataForMonth, getDataForDateRange } = useArchiveQuery({
     getUserRole,
     getUid,
-    getWid,
     getCompanyId,
     jobs,
     companyJobs,
@@ -1205,94 +1231,105 @@ export function CacheProvider({ children }: { children: ReactNode }) {
     const role = getUserRole() || '';
     const companyId = getCompanyId() || '';
     
-    const data = await fetchDataFromFirebase(field, uid, companyId, role);
+    const data = await fetchDataFromBackend(field, uid, companyId, role);
     if (data !== null) {
       const cacheKey = getCacheKeyForField(field);
       saveToLocalCache(cacheKey, data);
     }
-  }, [getUid, getUserRole, getCompanyId, fetchDataFromFirebase, saveToLocalCache]);
+  }, [getUid, getUserRole, getCompanyId, fetchDataFromBackend, saveToLocalCache]);
 
   // Context value — memoized to avoid unnecessary re-renders of consumers
   // that don't depend on the changed state slice.
-  const value = useMemo<CacheContextValue>(() => ({
-    // State
+  const lifecycleValue = useMemo<CacheLifecycleValue>(() => ({
     isInitialized,
     isLoading,
     profile,
-    inventory,
-    jobs,
-    workers,
-    companyJobs,
-    documents,
-    clients,
     subscription,
-    companyInventory,
-    
-    // Getters (primary)
     getUid,
     getUserRole,
     getCompanyId,
-    
-    // Initialization
     initializeCache,
     clearCache,
-    
-    // Profile & Inventory
-    updateProfile,
-    updateInventory,
-    
-    // Jobs (unified)
+    refreshCache,
+  }), [
+    isInitialized,
+    isLoading,
+    profile,
+    subscription,
+    getUid,
+    getUserRole,
+    getCompanyId,
+    initializeCache,
+    clearCache,
+    refreshCache,
+  ]);
+
+  const jobsValue = useMemo<JobsCacheValue>(() => ({
+    jobs,
+    companyJobs,
     addJob,
     updateJob,
     removeJob,
     acceptJob,
-    
-    // Manager specific
+  }), [jobs, companyJobs, addJob, updateJob, removeJob, acceptJob]);
+
+  const directoryValue = useMemo<DirectoryCacheValue>(() => ({
+    workers,
+    clients,
     updateWorkers,
     addWorker,
     editWorker,
     deleteWorker,
-    
-    // Business
-    addDocument,
-    
-    // Clients
     fetchClients,
     addClient,
     updateClient,
     deleteClient,
-    
-    // Smart date filtering (use these in JobMonitor and DocumentHistory)
+  }), [
+    workers,
+    clients,
+    updateWorkers,
+    addWorker,
+    editWorker,
+    deleteWorker,
+    fetchClients,
+    addClient,
+    updateClient,
+    deleteClient,
+  ]);
+
+  const inventoryValue = useMemo<InventoryCacheValue>(() => ({
+    inventory,
+    companyInventory,
+  }), [inventory, companyInventory]);
+
+  const documentHistoryValue = useMemo<DocumentHistoryCacheValue>(() => ({
+    documents,
+    addDocument,
     getDataForMonth,
     getDataForDateRange,
     fetchFromArchive,
     isWithinCacheRange,
     getCacheStartDate,
-    
-    // Utilities
-    refreshCache,
-    preIncrementVersion,
-    
-    // Direct storage access (for special cases)
-    storage: mmkvHelpers,
   }), [
-    isInitialized, isLoading, profile, inventory, jobs, workers,
-    companyJobs, documents, clients, subscription, companyInventory,
-    getUid, getUserRole, getCompanyId,
-    initializeCache, clearCache,
-    updateProfile, updateInventory,
-    addJob, updateJob, removeJob, acceptJob,
-    updateWorkers, addWorker, editWorker, deleteWorker,
+    documents,
     addDocument,
-    fetchClients, addClient, updateClient, deleteClient,
-    getDataForMonth, getDataForDateRange, fetchFromArchive,
-    refreshCache, preIncrementVersion,
+    getDataForMonth,
+    getDataForDateRange,
+    fetchFromArchive,
   ]);
 
   return (
-    <CacheContext.Provider value={value}>
-      {children}
-    </CacheContext.Provider>
+    <CacheLifecycleContext.Provider value={lifecycleValue}>
+      <JobsCacheContext.Provider value={jobsValue}>
+        <DirectoryCacheContext.Provider value={directoryValue}>
+          <InventoryCacheContext.Provider value={inventoryValue}>
+            <DocumentHistoryCacheContext.Provider value={documentHistoryValue}>
+              {children}
+            </DocumentHistoryCacheContext.Provider>
+          </InventoryCacheContext.Provider>
+        </DirectoryCacheContext.Provider>
+      </JobsCacheContext.Provider>
+    </CacheLifecycleContext.Provider>
   );
 }
 

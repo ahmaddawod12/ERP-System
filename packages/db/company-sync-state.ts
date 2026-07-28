@@ -1,5 +1,6 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq, sql } from 'drizzle-orm';
-import { getDb } from './client';
+import { getDb, type DatabaseOptions } from './client';
 import { resolveCompanyByPublicId } from './membership';
 import { companySyncState } from './schema';
 
@@ -9,7 +10,16 @@ const VERSION_FIELDS = [
   'clientsVersion',
   'workersVersion',
   'companyInventoryVersion',
-];
+] as const;
+
+type VersionField = typeof VERSION_FIELDS[number];
+type VersionValues = Record<VersionField, number>;
+type SyncStateInput = {
+  companyId: string | number;
+  fields?: readonly unknown[];
+  increments?: Partial<Record<VersionField, unknown>>;
+  values?: Partial<Record<VersionField, unknown>>;
+} & Partial<Record<VersionField, unknown>>;
 
 function emptyCompanySyncState() {
   return {
@@ -22,20 +32,28 @@ function emptyCompanySyncState() {
   };
 }
 
-function toIsoString(value) {
+function toIsoString(value: unknown): string {
   if (!value) return '';
   if (typeof value === 'string') return value;
   if (value instanceof Date) return value.toISOString();
-  if (typeof value.toISOString === 'function') return value.toISOString();
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'toISOString' in value
+    && typeof value.toISOString === 'function'
+  ) return String(value.toISOString());
   return String(value);
 }
 
-function toSafeInteger(value, fallback = 0) {
+function toSafeInteger(value: unknown, fallback = 0): number {
   const numeric = Number(value);
   return Number.isInteger(numeric) && numeric >= 0 ? numeric : fallback;
 }
 
-function mapCompanySyncStateRow(row) {
+function mapCompanySyncStateRow(value: unknown) {
+  const row = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : null;
   if (!row) {
     return emptyCompanySyncState();
   }
@@ -49,7 +67,9 @@ function mapCompanySyncStateRow(row) {
   };
 }
 
-function normalizeAbsoluteValues(values: any = {}) {
+function normalizeAbsoluteValues(
+  values: Partial<Record<VersionField, unknown>> = {},
+): VersionValues {
   return {
     jobsVersion: toSafeInteger(values.jobsVersion),
     documentsVersion: toSafeInteger(values.documentsVersion),
@@ -59,8 +79,12 @@ function normalizeAbsoluteValues(values: any = {}) {
   };
 }
 
-function normalizeIncrements(input: any = {}) {
-  const increments: any = {
+function isVersionField(value: unknown): value is VersionField {
+  return typeof value === 'string' && VERSION_FIELDS.includes(value as VersionField);
+}
+
+function normalizeIncrements(input: SyncStateInput): VersionValues {
+  const increments: VersionValues = {
     jobsVersion: 0,
     documentsVersion: 0,
     clientsVersion: 0,
@@ -68,9 +92,9 @@ function normalizeIncrements(input: any = {}) {
     companyInventoryVersion: 0,
   };
 
-  const fields: any = Array.isArray(input.fields) ? input.fields : [];
+  const fields: readonly unknown[] = Array.isArray(input.fields) ? input.fields : [];
   for (const field of fields) {
-    if (VERSION_FIELDS.includes(field)) {
+    if (isVersionField(field)) {
       increments[field] += 1;
     }
   }
@@ -86,7 +110,10 @@ function normalizeIncrements(input: any = {}) {
   return increments;
 }
 
-async function getCompanySyncState(companyId, options: any = {}) {
+async function getCompanySyncState(
+  companyId: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) {
@@ -109,7 +136,10 @@ async function getCompanySyncState(companyId, options: any = {}) {
   return mapCompanySyncStateRow(rows[0] || null);
 }
 
-async function initializeCompanySyncState(input, options: any = {}) {
+async function initializeCompanySyncState(
+  input: SyncStateInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const values = normalizeAbsoluteValues(input.values || input);
 
@@ -117,7 +147,7 @@ async function initializeCompanySyncState(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -154,9 +184,12 @@ async function initializeCompanySyncState(input, options: any = {}) {
   });
 }
 
-async function bumpCompanySyncState(input, options: any = {}) {
+async function bumpCompanySyncState(
+  input: SyncStateInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
-  const increments: any = normalizeIncrements(input);
+  const increments = normalizeIncrements(input);
   const hasChanges = VERSION_FIELDS.some((field) => increments[field] > 0);
   if (!hasChanges) {
     return getCompanySyncState(input.companyId, options);
@@ -166,7 +199,7 @@ async function bumpCompanySyncState(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 

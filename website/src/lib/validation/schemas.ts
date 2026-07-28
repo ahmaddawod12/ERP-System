@@ -70,6 +70,7 @@ export const readModelSchema = z
     createdByUid: optionalText(200),
     scope: z.enum(['company', 'user']).optional(),
     targetUid: optionalText(200),
+    search: optionalText(80),
     taskId: optionalText(200),
     recordId: optionalText(200),
     countOnly: z.boolean().optional(),
@@ -120,7 +121,8 @@ export const contactRequestSchema = z
     email: z.string().trim().email("Valid email is required"),
     company: requiredText(2, 140, "company"),
     message: requiredText(8, 2000, "message"),
-    challenge: requiredText(1, 8, "challenge"),
+    challenge: requiredText(1, 64, "challenge"),
+    challengeToken: requiredText(20, 8192, "challengeToken"),
     website: z.string().max(0).optional(),
   })
   .strict();

@@ -5,7 +5,7 @@ import {
   getSupportCategoryMeta,
   getSupportTemplateQuestions,
   getSupportTranslations,
-} from '../modules/support/support-copy.ts';
+} from '../modules/support/lib/support-copy.ts';
 
 test('support copy exposes localized open and closed status labels', () => {
   const en = getSupportTranslations('en');

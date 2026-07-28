@@ -37,7 +37,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div aria-live="polite" className="pointer-events-none fixed inset-x-0 top-4 z-50 mx-auto flex w-full max-w-2xl flex-col gap-2 px-4">
+      <div aria-live="polite" aria-relevant="additions" className="pointer-events-none fixed inset-x-0 top-4 z-50 mx-auto flex w-full max-w-2xl flex-col gap-2 px-4">
         {items.map((item) => (
           <div
             key={item.id}
@@ -47,7 +47,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               item.variant === "error" && "border-red-500/40 bg-red-100/90 text-red-900 dark:bg-red-900/60 dark:text-red-100",
               item.variant === "info" && "border-sky-500/40 bg-sky-100/90 text-sky-900 dark:bg-sky-900/60 dark:text-sky-100",
             )}
-            role="status"
+            role={item.variant === "error" ? "alert" : "status"}
           >
             <div className="flex items-start justify-between gap-2">
               <div>

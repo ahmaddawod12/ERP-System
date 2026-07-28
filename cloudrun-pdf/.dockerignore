@@ -1,0 +1,12 @@
+.env
+.env.local
+.env.*
+node_modules
+dist
+tmp
+.git
+.gitignore
+*.md
+*.test.ts
+tests
+.DS_Store

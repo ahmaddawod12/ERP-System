@@ -1,16 +1,21 @@
-﻿/**
- * Server component wrapper — exports static metadata and Suspense boundary.
- * Client logic lives in page-client.tsx.
- */
-import { Suspense } from "react";
+import { redirect } from "next/navigation";
+
 import OnboardingClient from "./page-client";
+import { requireWebsiteSession } from "@/lib/dal/session";
+import { decideWorkspaceEntry } from "@/lib/dal/workspace-routing";
 
 export const metadata = { title: "Onboarding | Smart-Job" };
 
-export default function OnboardingPage() {
-  return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><p>Loading…</p></div>}>
-      <OnboardingClient />
-    </Suspense>
-  );
+export default async function OnboardingPage() {
+  const { viewer } = await requireWebsiteSession("/onboarding");
+  const decision = decideWorkspaceEntry(viewer.workspaces);
+
+  if (decision.kind === "select") {
+    redirect("/app/select-company");
+  }
+  if (decision.kind === "workspace") {
+    redirect(`/app/c/${decision.companyId}`);
+  }
+
+  return <OnboardingClient viewer={viewer} />;
 }

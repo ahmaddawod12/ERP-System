@@ -1,0 +1,37 @@
+﻿project_id                 = "REPLACE_WITH_STAGING_PROJECT_ID"
+archive_bucket_name        = "REPLACE_WITH_GLOBALLY_UNIQUE_STAGING_ARCHIVE_BUCKET"
+company_files_bucket_name  = "REPLACE_WITH_GLOBALLY_UNIQUE_STAGING_COMPANY_FILES_BUCKET"
+backup_bucket_name         = "REPLACE_WITH_GLOBALLY_UNIQUE_STAGING_BACKUP_BUCKET"
+github_repository_owner_id = "129868177"
+github_deploy_workflow_ref = "ahmaddawod12/ERP-System/.github/workflows/cloudrun-deploy.yml@refs/heads/main"
+root_domain                 = "staging.example.com"
+website_hostname            = "app.staging.example.com"
+api_hostname                = "api.staging.example.com"
+tax_hostname                = "tax.staging.example.com"
+database_connection_limit   = 100
+recaptcha_site_key          = "REPLACE_WITH_PUBLIC_RECAPTCHA_SITE_KEY"
+
+enable_runtime = false
+# After the dedicated AWS stack is applied, validate federation here first:
+# email_ses_federation = {
+#   enabled                          = true
+#   role_arn                         = "arn:aws:iam::123456789012:role/smart-job-email-ses"
+#   oidc_audience                    = "smart-job-email-staging"
+#   google_service_account_unique_id = "123456789012345678901"
+# }
+enable_release_jobs = false
+image_digests  = {}
+secret_versions = {}
+
+# Allow the production deploy identity to pull the staging release manifest
+# before copying the exact digest into the production repository.
+artifact_registry_reader_members = [
+  "serviceAccount:REPLACE_WITH_PRODUCTION_DEPLOY_SERVICE_ACCOUNT",
+]
+
+# Before enable_runtime=true, supply immutable refs for all keys:
+# website, api, tax, pdf, email, archiver, migration.
+
+labels = {
+  cost-center = "engineering"
+}

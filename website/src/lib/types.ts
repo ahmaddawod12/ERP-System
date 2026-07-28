@@ -1,6 +1,5 @@
 import {
   ACCOUNT_TYPE_VALUES,
-  paths,
   resolveCompanyScope,
   TIER_VALUES,
   type AccountTypeValue,
@@ -8,7 +7,7 @@ import {
   type SubStatusValue,
 } from "@smart-job/contracts";
 
-export { paths, resolveCompanyScope };
+export { resolveCompanyScope };
 
 export const ROLES = ["manager", "worker", "user", "basic", "dev"] as const;
 export type Role = (typeof ROLES)[number];

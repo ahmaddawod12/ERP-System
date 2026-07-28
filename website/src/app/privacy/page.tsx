@@ -10,7 +10,7 @@ export default function PrivacyPage() {
         <Card>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">Privacy Policy</h1>
           <p className="mt-4 text-sm text-slate-700 dark:text-slate-200">
-            Smart-Job ERP stores account and company data required for service management. We use Firebase services for authentication, database storage, and secure data processing.
+            Smart-Job ERP stores account and company data required for service management. We use Firebase Authentication, PostgreSQL-backed backend services, Google Cloud Storage, and secure data processing.
           </p>
           <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">
             Personal information includes account email, profile name, phone, and company context. Operational records may include job details, inventory updates, client records, and generated documents.

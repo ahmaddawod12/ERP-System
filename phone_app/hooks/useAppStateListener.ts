@@ -2,10 +2,10 @@
  * useAppStateListener Hook
  * 
  * Monitors app state (active, background, inactive) and provides callbacks
- * to pause/resume Firestore listeners to prevent background reads.
+ * to pause/resume backend sync work to prevent background reads.
  * 
  * CRITICAL for Android: When app is backgrounded or swiped away, listeners
- * should be paused to prevent excessive Firestore reads.
+ * should be paused to prevent excessive backend reads.
  * 
  * @example
  * ```javascript

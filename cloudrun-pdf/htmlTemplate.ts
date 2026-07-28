@@ -1,4 +1,6 @@
 import sanitizeHtml from 'sanitize-html';
+import { DOC_TYPE, DOC_LABELS, VAT_RATE, getDocumentLabel } from '@smart-job/contracts';
+import type { NormalizedDocumentData } from './document-payload';
 
 /**
  * HTML Template Generator Module
@@ -8,7 +10,7 @@ import sanitizeHtml from 'sanitize-html';
 /**
  * Helper function to sanitize user input
  */
-function sanitizeInput(input) {
+function sanitizeInput(input: unknown): string {
   if (typeof input !== 'string') {
     return String(input || '');
   }
@@ -21,13 +23,13 @@ function sanitizeInput(input) {
 }
 
 /**
- * Sanitize a URL to prevent XSS via javascript: or data: schemes.
- * Only allows https://, http://, and root-relative (/) URLs.
+ * PDF input is self-contained: only bounded image data URIs produced by the
+ * trusted Storage logo loader may enter Chromium.
  */
 function sanitizeUrl(url: unknown): string {
   if (typeof url !== 'string' || url.trim() === '') return '';
   const trimmed = url.trim();
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')) {
+  if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(trimmed)) {
     return trimmed;
   }
   return '';
@@ -36,7 +38,7 @@ function sanitizeUrl(url: unknown): string {
 /**
  * Parse amount to cents
  */
-function parseAmountToCents(value, fieldName = 'amount') {
+function parseAmountToCents(value: unknown, fieldName = 'amount'): number {
   const num = Number(value);
   
   if (isNaN(num) || !isFinite(num)) {
@@ -50,41 +52,19 @@ function parseAmountToCents(value, fieldName = 'amount') {
   return Math.round(num * 100);
 }
 
-function formatCentsToAmount(cents) {
+function formatCentsToAmount(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
-/**
- * Document Type Codes (numeric) — mirrors @smart-job/contracts DOC_TYPE.
- * Kept local because this Cloud Run service is deployed via Docker without
- * access to the monorepo's file: dependency.  Keep in sync with contracts.
- *
- * 10 = Price Proposal (הצעת מחיר)
- * 200 = Delivery Note (תעודת משלוח)
- * 210 = Return Certificate (תעודת החזרה)
- * 305 = Tax Invoice (חשבונית מס)
- * 330 = Refund (זיכוי)
- * 400 = Receipt (קבלה)
- */
-const DOC_TYPE = {
-  PRICE_PROPOSAL: 10,
-  DELIVERY_NOTE: 200,
-  RETURN_CERTIFICATE: 210,
-  TAX_INVOICE: 305,
-  REFUND: 330,
-  RECEIPT: 400
-};
 
-/** Israel VAT rate — mirrors @smart-job/contracts VAT_RATE. Keep in sync. */
-const VAT_RATE = 0.18;
 
 /**
  * Generate HTML template for documents
  */
-function generateDocumentHTML(documentData) {
+function generateDocumentHTML(documentData: NormalizedDocumentData): string {
   const { 
     type, client, items, company, language = 'he', documentNumber, date, notes, logoUrl, 
-    invoiceReference, paymentMethod,
+    invoiceReference, paymentMethod, paymentDetails,
     confirmationNumber, // Tax Authority confirmation number (מספר הקצאה) for tax invoices
   } = documentData;
   
@@ -99,20 +79,15 @@ function generateDocumentHTML(documentData) {
   const isPriceProposal = numericType === DOC_TYPE.PRICE_PROPOSAL;
   const isTaxInvoice = numericType === DOC_TYPE.TAX_INVOICE;
   const isReturnCertificate = numericType === DOC_TYPE.RETURN_CERTIFICATE;
+  const paymentDetailsText = paymentDetails
+    ? 'last4' in paymentDetails
+      ? `•••• ${paymentDetails.last4} · ${paymentDetails.authorizationReference}`
+      : paymentDetails.reference
+    : '';
   const isRefund = numericType === DOC_TYPE.REFUND;
   const isReceipt = numericType === DOC_TYPE.RECEIPT;
   const isDeliveryNote = numericType === DOC_TYPE.DELIVERY_NOTE;
   
-  // Document type titles (keyed by numeric type)
-  const titles = {
-    [DOC_TYPE.TAX_INVOICE]: { he: 'חשבונית מס', en: 'Tax Invoice', ar: 'فاتورة ضريبية' },
-    [DOC_TYPE.PRICE_PROPOSAL]: { he: 'הצעת מחיר', en: 'Price Proposal', ar: 'عرض سعر' },
-    [DOC_TYPE.REFUND]: { he: 'זיכוי', en: 'Refund', ar: 'رد' },
-    [DOC_TYPE.RETURN_CERTIFICATE]: { he: 'תעודת החזרה', en: 'Return Certificate', ar: 'شهادة إرجاع' },
-    [DOC_TYPE.RECEIPT]: { he: 'קבלה', en: 'Receipt', ar: 'إيصال' },
-    [DOC_TYPE.DELIVERY_NOTE]: { he: 'תעודת משלוח', en: 'Delivery Note', ar: 'إشعار تسليم' }
-  };
-
   const labels = {
     he: {
       documentNumber: 'מספר מסמך',
@@ -205,7 +180,9 @@ function generateDocumentHTML(documentData) {
   };
 
   const t = labels[effectiveLanguage] || labels.he;
-  const docTitle = titles[numericType] ? titles[numericType][effectiveLanguage] : titles[DOC_TYPE.TAX_INVOICE][effectiveLanguage];
+  const docTitle = DOC_LABELS[numericType as keyof typeof DOC_LABELS]
+    ? getDocumentLabel(numericType, effectiveLanguage)
+    : getDocumentLabel(DOC_TYPE.TAX_INVOICE, effectiveLanguage);
   const isRTL = effectiveLanguage === 'he' || effectiveLanguage === 'ar';
 
   // Sanitize all text inputs to prevent XSS
@@ -235,6 +212,7 @@ function generateDocumentHTML(documentData) {
   
   const sanitizedNotes = sanitizeInput(notes || '');
   const sanitizedDocNumber = sanitizeInput(documentNumber || 'N/A');
+  const sanitizedDate = sanitizeInput(date || new Date().toLocaleDateString('he-IL'));
 
   // Calculate totals using integer cents arithmetic to avoid floating point errors
   // Delivery notes now include prices (same as other documents)
@@ -244,11 +222,11 @@ function generateDocumentHTML(documentData) {
     const priceCents = parseAmountToCents(item.price || 0, 'price');
     const itemTotalCents = Math.round((quantityCents / 100) * priceCents);
     subtotalCents += itemTotalCents;
-    
+
     return {
       description: sanitizeInput(item.description),
-      quantity: item.quantity,
-      price: item.price || 0,
+      quantity: sanitizeInput(String(item.quantity ?? '')),
+      price: sanitizeInput(String(item.price ?? 0)),
       priceCents: priceCents,
       totalCents: itemTotalCents,
       partId: item.partId ? sanitizeInput(item.partId) : null,
@@ -629,21 +607,26 @@ function generateDocumentHTML(documentData) {
         <strong>מספר הקצאה:</strong> ${sanitizedConfirmationNumber || ''}
       </div>` : ''}
       <div class="document-date">
-        <strong>תאריך:</strong> ${date || new Date().toLocaleDateString('he-IL')}
+        <strong>תאריך:</strong> ${sanitizedDate}
       </div>
     </div>
     
-    ${isReceipt && invoiceReference ? `
+    ${isReceipt && (invoiceReference || paymentMethod) ? `
     <!-- Receipt Invoice Reference -->
     <div class="receipt-reference" style="margin: 15px 0; padding: 12px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px;">
       <div class="info-row">
         <span class="label" style="font-weight: bold;">עבור חשבונית מספר:</span>
-        <span class="value" style="font-size: 14px; font-weight: bold;">${sanitizeInput(invoiceReference)}</span>
+        <span class="value" style="font-size: 14px; font-weight: bold;">${sanitizeInput(invoiceReference || '')}</span>
       </div>
       ${paymentMethod ? `
       <div class="info-row" style="margin-top: 8px;">
         <span class="label" style="font-weight: bold;">${t.paymentMethod}:</span>
         <span class="value">${sanitizeInput(paymentMethod)}</span>
+      </div>` : ''}
+      ${paymentDetailsText ? `
+      <div class="info-row" style="margin-top: 8px;">
+        <span class="label" style="font-weight: bold;">${t.paymentMethod}:</span>
+        <span class="value">${sanitizeInput(paymentDetailsText)}</span>
       </div>` : ''}
     </div>` : ''}
     
@@ -664,7 +647,7 @@ function generateDocumentHTML(documentData) {
           ${sanitizedItems.some(i => i.partId) ? `<td>${item.partId || '-'}</td>` : ''}
           <td>${item.description}</td>
           <td>${item.quantity}</td>
-          <td>${currencySymbol}${Number(item.price).toFixed(2)}</td>
+          <td>${currencySymbol}${Number(item.price || 0).toFixed(2)}</td>
           <td>${currencySymbol}${formatCentsToAmount(item.totalCents)}</td>
         </tr>
         `).join('')}

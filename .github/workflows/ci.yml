@@ -4,15 +4,165 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   repo_guards:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - run: node scripts/check-no-ts-nocheck.mjs
+      - run: node scripts/check-js-syntax.mjs .
+      - run: node --test scripts/tests/*.test.mjs
+      - run: node scripts/check-local-platform.mjs
+      - run: node scripts/check-deployment-security.mjs
+      - run: node scripts/check-supply-chain-pins.mjs
+      - run: node scripts/check-maestro-flows.mjs
+      - run: node scripts/check-perf-budget.mjs
+      - run: node scripts/check-mobile-native-config.mjs
+      - name: Validate local Compose topology
+        env:
+          LOCAL_ADAPTER_ACCESS_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          LOCAL_INTERNAL_IDENTITY_TOKEN: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          LOCAL_PUBSUB_VERIFICATION_TOKEN: cccccccccccccccccccccccccccccccc
+          LOCAL_POSTGRES_PASSWORD: postgres-ci-password
+          LOCAL_FIREBASE_WEB_API_KEY: firebase-ci-placeholder-key
+          LOCAL_API_DB_PASSWORD: api-ci-password
+          LOCAL_PDF_DB_PASSWORD: pdf-ci-password
+          LOCAL_EMAIL_DB_PASSWORD: email-ci-password
+          LOCAL_ARCHIVER_DB_PASSWORD: archiver-ci-password
+          LOCAL_WEB_SESSION_ENCRYPTION_KEY_BASE64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          LOCAL_WEBSITE_SESSION_SECRET: website-ci-secret-01234567890123456789
+          LOCAL_CONTACT_CHALLENGE_SECRET: contact-ci-secret-01234567890123456789
+        run: docker compose -f compose.local.yml config --quiet
+
+  lockfile_audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Audit every independent npm lockfile
+        run: node scripts/check-npm-audit.mjs
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@fb4bfd79bfa826ce96c90727ff8833835ba8aad0 # v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@fb4bfd79bfa826ce96c90727ff8833835ba8aad0 # v3
+
+  secret_scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          exit-code: "1"
+          skip-dirs: node_modules,website/.next,dist,coverage
+
+  infrastructure_security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.14.3
+      - uses: terraform-linters/setup-tflint@6770de8d186019a148cc2b144e8bfa627f7d4aa8 # v5
+        with:
+          tflint_version: v0.64.0
+      - name: Terraform format and validation
+        shell: bash
+        run: |
+          terraform fmt -check -recursive infra
+          for environment in dev staging prod; do
+            root="infra/environments/${environment}"
+            terraform -chdir="${root}" init -backend=false -input=false
+            terraform -chdir="${root}" validate
+            tflint --chdir="${root}" --config="${GITHUB_WORKSPACE}/infra/.tflint.hcl" --init
+            tflint --chdir="${root}" --config="${GITHUB_WORKSPACE}/infra/.tflint.hcl"
+          done
+          for module in edge observability runtime; do
+            terraform -chdir="infra/modules/${module}" init -backend=false -input=false
+            terraform -chdir="infra/modules/${module}" test
+          done
+          terraform -chdir="infra/aws/ses-federation" init -backend=false -input=false
+          terraform -chdir="infra/aws/ses-federation" validate
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/environments/dev
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/environments/staging
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/environments/prod
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/modules
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: smart-job-sbom.spdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smart-job-sbom
+          path: smart-job-sbom.spdx.json
+          if-no-files-found: error
+
+  local_platform_adapter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: local-platform/adapter
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: local-platform/adapter/package-lock.json
+      - run: npm ci
+      - run: npm test
 
   packages_contracts:
     runs-on: ubuntu-latest
@@ -20,8 +170,8 @@ jobs:
       run:
         working-directory: packages/contracts
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -30,87 +180,169 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  packages_api_contracts:
+    runs-on: ubuntu-latest
+    needs: packages_contracts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run typecheck
+      - run: npm --prefix packages/api-contracts test
+      - run: npm --prefix packages/api-contracts run build
+
   packages_db:
     runs-on: ubuntu-latest
     needs: packages_contracts
-    defaults:
-      run:
-        working-directory: packages/db
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: packages/db/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
+          cache-dependency-path: |
+            packages/contracts/package-lock.json
+            packages/db/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/db ci
+      - run: npm --prefix packages/db run typecheck
+      - run: npm --prefix packages/db run build
+      - run: npm --prefix packages/db test
+
+  packages_control_db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/control-db/package-lock.json
+      - run: npm --prefix packages/control-db ci
+      - run: npm --prefix packages/control-db test
+
+  packages_observability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/observability/package-lock.json
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run typecheck
+      - run: npm --prefix packages/observability test
 
   website:
     runs-on: ubuntu-latest
-    needs:
-      - packages_contracts
-      - packages_db
-    defaults:
-      run:
-        working-directory: website
+    needs: [packages_contracts, packages_api_contracts]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: website/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run build
+          cache-dependency-path: |
+            website/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix website ci
+      - run: npm --prefix website run test:coverage
+      - run: npm --prefix website run typecheck
+      - run: npm --prefix website run lint
+      - run: npm --prefix website run build
+      - run: npm --prefix website run check:bundle-budget
 
   phone_app:
     runs-on: ubuntu-latest
-    needs: packages_contracts
-    defaults:
-      run:
-        working-directory: phone_app
+    needs: [packages_contracts, packages_api_contracts]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: phone_app/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
+          cache-dependency-path: |
+            phone_app/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix phone_app ci
+      - run: npm --prefix phone_app run test:coverage
+      - run: npm --prefix phone_app run typecheck
+      - run: npm --prefix phone_app run doctor
 
   cloudrun_pdf:
     runs-on: ubuntu-latest
-    needs:
-      - packages_contracts
-      - packages_db
-    defaults:
-      run:
-        working-directory: cloudrun-pdf
+    needs: [packages_contracts, packages_api_contracts, packages_observability]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: cloudrun-pdf/package-lock.json
-      - run: npm ci
-      - run: npm test
+          cache-dependency-path: |
+            cloudrun-pdf/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+            packages/observability/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
+      - run: npm --prefix cloudrun-pdf ci
+      - run: npm --prefix cloudrun-pdf run typecheck
+      - run: npm --prefix cloudrun-pdf run test:coverage
+
+  cloudrun_email:
+    runs-on: ubuntu-latest
+    needs: [packages_contracts, packages_api_contracts, packages_observability]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            cloudrun-email/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+            packages/observability/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
+      - run: npm --prefix cloudrun-email ci
+      - run: npm --prefix cloudrun-email run typecheck
+      - run: npm --prefix cloudrun-email run test:coverage
 
   cloudrun_archiver:
     runs-on: ubuntu-latest
-    needs:
-      - packages_contracts
-      - packages_db
+    needs: [packages_contracts, packages_db, packages_observability]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -118,39 +350,223 @@ jobs:
             cloudrun-archiver/package-lock.json
             packages/contracts/package-lock.json
             packages/db/package-lock.json
+            packages/observability/package-lock.json
       - run: npm --prefix packages/contracts ci
       - run: npm --prefix packages/contracts run build
       - run: npm --prefix packages/db ci
       - run: npm --prefix packages/db run build
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
       - run: npm --prefix cloudrun-archiver ci
-      - run: npm --prefix cloudrun-archiver test
+      - run: npm --prefix cloudrun-archiver run typecheck
+      - run: npm --prefix cloudrun-archiver run test:coverage
 
-  supabase_edge:
+  cloudrun_backup:
     runs-on: ubuntu-latest
+    needs: packages_observability
     steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - name: Type-check Supabase edge runtime
-        run: deno check supabase/shared-edge-helpers.ts supabase/functions/**/*.ts supabase/handlers/**/*.ts
-
-  perf_budget:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - name: Check performance budget
-        run: node scripts/check-perf-budget.mjs
+          cache: npm
+          cache-dependency-path: |
+            cloudrun-backup/package-lock.json
+            packages/observability/package-lock.json
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
+      - run: npm --prefix cloudrun-backup ci
+      - run: npm --prefix cloudrun-backup run typecheck
+      - run: npm --prefix cloudrun-backup run test:coverage
+
+  cloudrun_api:
+    runs-on: ubuntu-latest
+    needs: [packages_contracts, packages_api_contracts, packages_db, packages_observability]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+            packages/db/package-lock.json
+            packages/observability/package-lock.json
+            cloudrun-api/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix packages/db ci
+      - run: npm --prefix packages/db run build
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
+      - run: npm --prefix cloudrun-api ci
+      - run: npm --prefix cloudrun-api run typecheck
+      - run: npm --prefix cloudrun-api run test:coverage
+
+  cloudrun_tax:
+    runs-on: ubuntu-latest
+    needs: [packages_contracts, packages_api_contracts, packages_observability]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+            packages/observability/package-lock.json
+            cloudrun-tax/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
+      - run: npm --prefix cloudrun-tax ci
+      - run: npm --prefix cloudrun-tax run typecheck
+      - run: npm --prefix cloudrun-tax run test:coverage
 
   cloudrun_images:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: website
+            dockerfile: website/Dockerfile
+          - name: local-adapter
+            dockerfile: local-platform/adapter/Dockerfile
+          - name: api
+            dockerfile: cloudrun-api/Dockerfile
+          - name: tax
+            dockerfile: cloudrun-tax/Dockerfile
+          - name: pdf
+            dockerfile: cloudrun-pdf/Dockerfile
+          - name: email
+            dockerfile: cloudrun-email/Dockerfile
+          - name: archiver
+            dockerfile: cloudrun-archiver/Dockerfile
+          - name: backup
+            dockerfile: cloudrun-backup/Dockerfile
+          - name: migration
+            dockerfile: cloudrun-migrations/Dockerfile
     steps:
-      - uses: actions/checkout@v4
-      - name: Build PDF service image
-        run: docker build -t smart-job-cloudrun-pdf:ci ./cloudrun-pdf
-      - name: Build archiver image
-        run: docker build -f cloudrun-archiver/Dockerfile -t smart-job-cloudrun-archiver:ci .
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build image once for scanning
+        run: docker build -f ${{ matrix.dockerfile }} -t smart-job-${{ matrix.name }}:ci .
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: smart-job-${{ matrix.name }}:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+  integration_tests:
+    runs-on: ubuntu-latest
+    needs: [packages_contracts, packages_api_contracts, packages_db, packages_observability]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      DATABASE_SSL_MODE: disable
+      SMART_JOB_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+            packages/db/package-lock.json
+            packages/observability/package-lock.json
+            cloudrun-api/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix packages/db ci
+      - run: npm --prefix packages/db run build
+      - run: npm --prefix packages/observability ci
+      - run: npm --prefix packages/observability run build
+      - name: Verify the consolidated baseline
+        run: npm --prefix packages/db run test:migrations
+      - name: Apply database migrations
+        run: npm --prefix packages/db run db:migrate
+      - name: Run database integration tests
+        run: npm --prefix packages/db run test:integration
+      - run: npm --prefix cloudrun-api ci
+      - name: Build cloudrun-api
+        run: npm --prefix cloudrun-api run build
+      - name: Run cloudrun-api integration tests
+        run: node --test dist/tests/*.integration.test.js
+        working-directory: cloudrun-api
+
+  website_e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: website
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            website/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix website ci
+      - name: Install the pinned Playwright browser
+        run: npm --prefix website exec -- playwright install --with-deps chromium
+      - name: Run mandatory local-fixture Playwright journeys
+        run: npm --prefix website run test:e2e
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report
+          path: |
+            website/playwright-report
+            website/test-results
+          if-no-files-found: ignore
+
+  mobile_e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: phone_app
+    environment: mobile-e2e
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run mandatory free Maestro CLI journeys
+        uses: ./.github/actions/run-maestro-android
+        with:
+          flow-path: phone_app/.maestro
+          backend-api-base-url: ${{ vars.MOBILE_E2E_API_BASE_URL }}
+          google-services-json-base64: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+          test-workspace: ${{ vars.MAESTRO_TEST_WORKSPACE }}
+          test-job-title: ${{ vars.MAESTRO_TEST_JOB_TITLE }}
+          test-email: ${{ secrets.MAESTRO_TEST_EMAIL }}
+          test-password: ${{ secrets.MAESTRO_TEST_PASSWORD }}

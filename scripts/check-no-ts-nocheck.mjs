@@ -5,51 +5,23 @@ const repoRoot = process.cwd();
 
 const protectedPaths = [
   "packages/contracts",
+  "packages/api-contracts",
+  "cloudrun-api/src",
+  "cloudrun-tax/src",
+  "cloudrun-email/src",
   "website/src",
   "website/tests",
   "phone_app/components",
   "phone_app/contexts",
   "phone_app/tests",
-  "phone_app/firebase.ts",
+  "phone_app/lib",
 ];
 const monitoredModulePath = "phone_app/modules";
 
 const extensions = new Set([".js", ".jsx", ".ts", ".tsx", ".mts", ".cts"]);
 const protectedViolations = [];
 const moduleNoCheckPaths = [];
-const allowedModuleNoCheck = new Set([
-  "phone_app/modules/settings/Settings.tsx",
-  "phone_app/modules/clients/ClientBook.tsx",
-  "phone_app/modules/support/SupportChat.tsx",
-  "phone_app/modules/shared/withGate.tsx",
-  "phone_app/modules/team/WorkersUsers.tsx",
-  "phone_app/modules/support/DevInbox.tsx",
-  "phone_app/modules/shared/NotAvailableScreen.tsx",
-  "phone_app/modules/homepage/WorkerHomepage.tsx",
-  "phone_app/modules/team/WorkersMonitor.tsx",
-  "phone_app/modules/team/JobMonitor.tsx",
-  "phone_app/modules/documents/ViewDocument.tsx",
-  "phone_app/modules/team/CreateJob.tsx",
-  "phone_app/modules/homepage/UserHomepage.tsx",
-  "phone_app/modules/shared/EditJob.tsx",
-  "phone_app/modules/team/ManageJobs.tsx",
-  "phone_app/modules/auth/Login.tsx",
-  "phone_app/modules/documents/TaxInvoiceJobList.tsx",
-  "phone_app/modules/inventory/WorkerInventory.tsx",
-  "phone_app/modules/homepage/ManagerHomepage.tsx",
-  "phone_app/modules/inventory/UserInventory.tsx",
-  "phone_app/modules/documents/GeneralDocuments.tsx",
-  "phone_app/modules/documents/TaxInvoiceFormModal.tsx",
-  "phone_app/modules/homepage/BasicHomepage.tsx",
-  "phone_app/modules/inventory/CompanyInventory.tsx",
-  "phone_app/modules/documents/GenerateTaxInvoice.tsx",
-  "phone_app/modules/documents/index.ts",
-  "phone_app/modules/inventory/index.ts",
-  "phone_app/modules/shared/index.ts",
-  "phone_app/modules/solojob/index.ts",
-  "phone_app/modules/support/support-message-store.ts",
-  "phone_app/modules/team/index.ts",
-]);
+const allowedModuleNoCheck = new Set([]);
 
 function normalizePath(value) {
   return value.replaceAll("\\", "/");

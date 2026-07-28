@@ -1,0 +1,8 @@
+appId: ${MAESTRO_APP_ID}
+tags:
+  - core
+  - login
+---
+- runFlow: subflows/authenticate.yaml
+- assertVisible:
+    id: "dashboard-screen"

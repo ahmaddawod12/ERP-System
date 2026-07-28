@@ -1,0 +1,53 @@
+{
+  "name": "@smart-job/cloudrun-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Smart-Job ERP modular Cloud Run API",
+  "type": "module",
+  "main": "dist/server.js",
+  "types": "dist/server.d.ts",
+  "exports": {
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --import @smart-job/observability/register dist/server.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/**/*.js --test-coverage-exclude=dist/tests/** --test-coverage-lines=70 --test-coverage-branches=72 --test-coverage-functions=80 dist/tests/*.test.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@fastify/swagger": "9.8.0",
+    "@google-cloud/storage": "7.21.0",
+    "@smart-job/api-contracts": "file:../packages/api-contracts",
+    "@smart-job/contracts": "file:../packages/contracts",
+    "@smart-job/db": "file:../packages/db",
+    "@smart-job/observability": "file:../packages/observability",
+    "fastify": "5.10.0",
+    "fastify-type-provider-zod": "7.0.0",
+    "firebase-admin": "14.2.0",
+    "jose": "6.2.3",
+    "pg": "8.20.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/pg": "8.20.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "find-my-way": "9.7.0",
+    "uuid": "11.1.1"
+  },
+  "license": "UNLICENSED"
+}

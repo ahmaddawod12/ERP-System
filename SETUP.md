@@ -1,385 +1,131 @@
-# Smart-Job ERP Setup Guide
+# Smart-Job ERP setup
 
-This is the canonical setup and deployment guide for the current Smart-Job ERP stack.
-
-It reflects the active May 2026 architecture:
-
-- Supabase Auth for website and mobile sign-in
-- Supabase Edge gateways under `supabase/functions/` as the in-repo backend trust boundary
-- PostgreSQL as the primary company-scoped ERP persistence layer
-- Firestore and Cloud Storage for compatibility, rules, operations, and files
-- Cloud Run services for PDF generation and archiving
-- Supabase Edge Functions migration work in parallel
-
-## 1. Repository Components
-
-```text
-ERP-System/
-|-- website/             Next.js website
-|-- phone_app/           Expo mobile app
-|-- supabase/functions/  Edge gateway and endpoint runtime in this repository
-|-- cloudrun-pdf/        PDF preview/generation service
-|-- cloudrun-archiver/   Archive batch job
-|-- packages/contracts/  Shared enums/constants/path helpers
-|-- packages/db/         PostgreSQL schema, migrations, access layer
-`-- supabase/            Backend gateway runtime and migration work area
-```
-
-## 2. Prerequisites
-
-Install locally:
+## Prerequisites
 
 - Node.js 22
 - npm
-- Firebase CLI
-- Google Cloud CLI
-- Java 17 or newer for emulators
-- Docker or Cloud Build access for Cloud Run
-- EAS CLI for mobile builds
-- PostgreSQL access for SQL-backed development and deploys
-- Supabase project access for auth and migration testing
-- AWS access only if SES email delivery is used
+- Docker Desktop
+- Java/Android and Xcode tooling when building the Expo native clients
+- Terraform 1.14 for infrastructure validation
 
-Suggested installs:
+Each package owns its own `package.json` and lockfile; there is no root npm
+workspace.
 
-```bash
-npm install -g firebase-tools eas-cli
-```
-
-Authenticate:
-
-```bash
-firebase login
-gcloud auth login
-gcloud auth application-default login
-```
-
-## 3. Cloud Project Setup
-
-Create or configure the Firebase and Google Cloud project:
-
-1. Create a Firebase project.
-2. Upgrade to Blaze.
-3. Enable Firestore.
-4. Enable Firebase Storage.
-5. Enable Cloud Messaging.
-6. Enable Authentication if you still need Firebase-native mobile or runtime services, but do not treat Firebase Auth as the primary client auth provider.
-7. Enable these Google Cloud APIs:
-
-```bash
-gcloud services enable \
-  cloudbuild.googleapis.com \
-  run.googleapis.com \
-  artifactregistry.googleapis.com \
-  cloudscheduler.googleapis.com \
-  pubsub.googleapis.com \
-  firestore.googleapis.com \
-  firebase.googleapis.com \
-  firebasehosting.googleapis.com \
-  firebasestorage.googleapis.com \
-  cloudfunctions.googleapis.com \
-  eventarc.googleapis.com \
-  secretmanager.googleapis.com \
-  iamcredentials.googleapis.com
-```
-
-Set local shell variables as needed:
-
-```bash
-export PROJECT_ID="your-project-id"
-export REGION="us-central1"
-export STORAGE_BUCKET="your-storage-bucket"
-export ARTIFACT_REPO="smart-job"
-export PDF_SERVICE="pdf-service"
-export ARCHIVER_JOB="smart-job-archiver"
-```
-
-PowerShell:
-
-```powershell
-$env:PROJECT_ID = "your-project-id"
-$env:REGION = "us-central1"
-$env:STORAGE_BUCKET = "your-storage-bucket"
-$env:ARTIFACT_REPO = "smart-job"
-$env:PDF_SERVICE = "pdf-service"
-$env:ARCHIVER_JOB = "smart-job-archiver"
-```
-
-## 4. Install Dependencies
-
-There is no root package-manager workspace. Install packages individually:
+## Build shared packages
 
 ```bash
 npm --prefix packages/contracts install
-npm --prefix packages/db install
 npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts install
+npm --prefix packages/api-contracts run build
+npm --prefix packages/db install
 npm --prefix packages/db run build
-npm --prefix website install
-npm --prefix phone_app install
-npm --prefix cloudrun-pdf install
-npm --prefix cloudrun-archiver install
+npm --prefix packages/observability install
+npm --prefix packages/observability run build
 ```
 
-Apply SQL migrations for the target database:
+## Local platform
+
+```powershell
+.\scripts\local-platform.ps1 doctor
+.\scripts\local-platform.ps1 start
+.\scripts\local-platform.ps1 status
+.\scripts\local-platform.ps1 stop
+.\scripts\local-platform.ps1 reset -Yes
+```
+
+The lifecycle script creates the labeled `smart-job-local` network and writes
+stable local-only secrets to ignored `local-platform/.env.generated`. Compose
+starts:
+
+| Service | Loopback endpoint |
+|---|---|
+| Website | `http://127.0.0.1:3000` |
+| API | `http://127.0.0.1:58081` |
+| PostgreSQL | `127.0.0.1:55432` |
+| Firebase Auth emulator | `http://127.0.0.1:59099` |
+| GCS emulator | `http://127.0.0.1:58080` |
+| Mailpit | `http://127.0.0.1:58025` |
+
+The script applies `packages/db/migrations/0000_baseline.sql`, assigns local
+passwords to least-privilege roles, then starts the application services.
+
+## Website environment
+
+Copy `website/.env.example` to `website/.env.local`:
+
+```dotenv
+FIREBASE_PROJECT_ID=
+FIREBASE_WEB_API_KEY=
+BACKEND_API_BASE_URL=
+BACKEND_API_TIMEOUT_MS=12000
+WEBSITE_ORIGIN=
+WEBSITE_SESSION_SECRET=
+CONTACT_CHALLENGE_SECRET=
+RECAPTCHA_ENTERPRISE_PROJECT_ID=
+NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
+```
+
+Firebase credentials are used only by server routes. No ID or refresh token may
+enter browser JavaScript, HTML, readable cookies, or browser storage.
+
+## API environment
+
+Start from `cloudrun-api/.env.example`. Production requires:
+
+```dotenv
+DATABASE_URL=
+DATABASE_SSL_MODE=require
+FIREBASE_PROJECT_ID=
+FIREBASE_WEB_API_KEY=
+GCS_PROJECT_ID=
+COMPANY_FILES_BUCKET=
+WEB_SESSION_ENCRYPTION_KEY_BASE64=
+WEB_SESSION_ENCRYPTION_KEY_VERSION=
+```
+
+Application Default Credentials authorize Firebase Admin and GCS in production.
+The database URL must authenticate as `smart_job_api`.
+
+## Mobile environment
+
+The Expo client requires:
+
+```dotenv
+EXPO_PUBLIC_BACKEND_API_BASE_URL=
+EXPO_PUBLIC_COMPANY_FILE_UPLOAD_ORIGIN=https://storage.googleapis.com
+EXPO_PUBLIC_COMPANY_FILES_BUCKET=
+```
+
+Firebase Authentication, Messaging, and Crashlytics are configured through
+ignored native files:
+
+- `phone_app/google-services.json`
+- `phone_app/GoogleService-Info.plist`
+
+## Database commands
 
 ```bash
+npm --prefix packages/db run typecheck
+npm --prefix packages/db run build
+npm --prefix packages/db run test
+npm --prefix packages/db run test:migrations
 npm --prefix packages/db run db:migrate
 ```
 
-## 5. Website Environment
+`test:migrations` creates and drops one isolated loopback PostgreSQL database.
+The consolidated baseline is the only migration and is intended for clean
+pre-production databases.
 
-Create `website/.env.local` and configure:
-
-```dotenv
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-ALLOW_FIREBASE_AUTH_FALLBACK=false
-
-SESSION_COOKIE_SECRET=
-WEBSITE_SESSION_SECRET=
-
-BACKEND_PROJECT_ID=
-BACKEND_EDGE_FUNCTIONS_BASE_URL=
-
-NEXT_PUBLIC_FIREBASE_API_KEY=
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
-NEXT_PUBLIC_FIREBASE_APP_ID=
-
-FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON=
-FIREBASE_ADMIN_PROJECT_ID=
-FIREBASE_ADMIN_CLIENT_EMAIL=
-FIREBASE_ADMIN_PRIVATE_KEY=
-
-NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
-CLOUDRUN_PDF_URL=
-```
-
-Notes:
-
-- Supabase variables are required for active web auth.
-- `SESSION_COOKIE_SECRET` must be a strong shared secret per environment; it signs the website `__session` metadata payload.
-- Website server proxy auth uses two HttpOnly cookies: signed metadata in `__session`, bearer transport in `__session_access`.
-- Protected session validation requires both cookies; `__session` metadata alone is not enough to authorize backend proxy calls.
-- `BACKEND_EDGE_FUNCTIONS_BASE_URL` is the explicit website proxy override.
-- If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is not set, the website falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
-- Website auth transport avoids storing refresh tokens durably in `localStorage`; session continuity should rely on the signed cookie-backed session plus in-memory auth transport state.
-- Firebase web/admin vars are still required where Firebase services remain in use.
-
-## 6. Mobile Environment And Native Files
-
-The mobile app still requires Firebase native app registration for the installed services it uses.
-
-Place these files in `phone_app/`:
-
-- `google-services.json`
-- `GoogleService-Info.plist`
-
-Configure mobile envs as needed:
-
-```dotenv
-EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_ANON_KEY=
-
-EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL=
-```
-
-Notes:
-
-- Registration and onboarding remain website-only.
-- If `EXPO_PUBLIC_EDGE_FUNCTIONS_BASE_URL` is empty, the app uses `${EXPO_PUBLIC_SUPABASE_URL}/functions/v1`.
-- Mobile Supabase transport tokens are stored in Expo SecureStore, separate from the general cache MMKV store.
-- General MMKV stores non-sensitive cache and identity hints only; do not store access or refresh tokens there.
-- Push notification listeners and token registration are attached after authenticated cache bootstrap succeeds for the active session; Android channel setup is safe to call more than once.
-
-## 7. Supabase Edge Environment
-
-Create `supabase/.env` (or configure Supabase secrets) for local development and deployment configuration:
-
-```dotenv
-CORS_ALLOWED_ORIGINS=http://localhost:3000,https://your-website.example
-
-SMART_JOB_PERSISTENCE_BACKEND=sql
-DATABASE_URL=
-DATABASE_SSL_MODE=disable
-DATABASE_SSL_REJECT_UNAUTHORIZED=true
-DATABASE_SSL_CA=
-DATABASE_MAX_CONNECTIONS=10
-DATABASE_CONNECT_TIMEOUT_MS=10000
-DATABASE_IDLE_TIMEOUT_MS=30000
-
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-ALLOW_FIREBASE_AUTH_FALLBACK=false
-GCP_SERVICE_ACCOUNT_EMAIL=
-GCP_SERVICE_ACCOUNT_PRIVATE_KEY=
-PUBSUB_VERIFICATION_TOKEN=
-CLOUD_RUN_PDF_SERVICE_URL=
-ARCHIVE_BUCKET=
-
-TAX_AUTH_URL=
-TAX_TOKEN_URL=
-TAX_APPROVAL_URL=
-TAX_CLIENT_ID=
-TAX_CLIENT_SECRET=
-TAX_SCOPE=
-TAX_CALLBACK_URL=
-APP_SCHEME=erpsystem
-```
-
-Rules:
-
-- Set `SMART_JOB_PERSISTENCE_BACKEND=sql` explicitly in real environments.
-- Do not rely on implicit SQL enablement when database settings are present.
-- Keep CORS origins aligned with website domains and local dev origins.
-- Do not use `*` for CORS when sending credentials; use explicit origins in `CORS_ALLOWED_ORIGINS`.
-- Keep `CORS_ALLOWED_ORIGINS` non-empty in real environments. Empty origin lists are treated as fail-closed.
-- Supabase variables are required because backend HTTP auth verification and gateway routing are Supabase-based.
-- Shared edge auth verification derives the expected JWT issuer/audience from the configured Supabase project and fails closed on empty `uid` claims.
-- Keep `ALLOW_FIREBASE_AUTH_FALLBACK=false` unless a controlled compatibility incident requires temporary fallback.
-- `GCP_SERVICE_ACCOUNT_EMAIL` / `GCP_SERVICE_ACCOUNT_PRIVATE_KEY` allow edge handlers to mint OIDC tokens for trusted `cloudrun-pdf` dispatch.
-- `cloudrun-pdf` should be configured with the same service-account identity material when you want it to verify the edge-signed bearer JWT path locally.
-- The same service account credentials are used by `fetchArchiveMonthV1` to read archive objects from `ARCHIVE_BUCKET` through backend-controlled bucket/path access.
-- `PUBSUB_VERIFICATION_TOKEN` should match the shared verification token expected by `cloudrun-pdf` when that hardening layer is enabled.
-- `CLOUD_RUN_PDF_SERVICE_URL` is required for preview/generate task dispatch from the edge runtime.
-- `ARCHIVE_BUCKET` is required if mobile or other clients need archived month retrieval through `fetchArchiveMonthV1`.
-
-## 8. SQL Setup
-
-`packages/db` is the canonical SQL schema and migration surface.
-
-Current migration tip:
-- Ensure the runtime hardening migrations are applied, including `0008_supabase_auth_rls.sql`, `0011_runtime_hardening.sql`, `0013_support_owner_rls.sql`, and `0014_read_model_cursor_indexes.sql`. These changes include:
-  - corrected `document_tasks` / `support_conversations` RLS references
-  - owner-or-dev RLS for personal `support_conversations` and `support_messages`, including records with no company scope
-  - cursor-covering read-model indexes for timestamp-plus-id jobs/documents pagination
-  - `contact_requests.subject` column
-  - `upgrade_requests.company_id` → UUID
-  - `document_tasks.lock_key` plus active uniqueness on `(company_id, task_type, lock_key)`
-  - `redeem_company_invite(...)` atomic invite redemption RPC
-  - `claim_tax_invoice_idempotency(...)` atomic tax idempotency claim RPC
-  - `part_no` counter key
-  - `allocate_company_counter`, `allocate_system_counter`, and `increment_rate_limit_bucket` RPCs
-  - active membership uniqueness on `(company_id, user_id)` for non-revoked memberships only
-  - split `inventory_locations` uniqueness for company-only rows vs membership-scoped rows
-  - `apply_inventory_movement(...)` atomic inventory movement RPC
-
-Minimum steps:
-
-1. Provision PostgreSQL.
-2. Set `DATABASE_URL` for backend services.
-3. Run migrations from `packages/db`.
-4. Verify backend services can connect before deploying Supabase Edge Functions or Cloud Run.
-
-Do not add direct client SQL access for protected ERP operations.
-
-## 9. Local Development
-
-Common commands:
+## Validation
 
 ```bash
-npm --prefix website run dev
-npm --prefix website run typecheck
-npm --prefix website run test
-
-npm --prefix phone_app run start
-npm --prefix phone_app run typecheck
-npm --prefix phone_app run test
+node scripts/check-no-ts-nocheck.mjs
+node scripts/check-js-syntax.mjs .
+node scripts/check-local-platform.mjs
+node scripts/check-deployment-security.mjs
+node scripts/check-supply-chain-pins.mjs
 ```
 
-If you use emulators, keep local website origins in `CORS_ALLOWED_ORIGINS` and point client envs to emulator origins explicitly.
-
-## 10. Cloud Run PDF Service
-
-`cloudrun-pdf/` is responsible for preview and generate flows.
-
-Required deployment concerns:
-
-- OIDC verification for Pub/Sub push requests
-- optional shared `x-pubsub-token` hardening if configured
-- SQL access for task and document finalization in SQL mode
-- Cloud Storage write permissions
-- environment for tax and document generation as required by the service
-- trusted invocations from `supabase/functions/` for preview/generate task dispatch
-
-Preserve these invariants:
-
-- create-only semantics for new generated PDFs and documents across all document types
-- orphan file cleanup when finalize fails
-- canonical `storagePath` persistence instead of durable URLs
-- document finalization must refuse to overwrite an existing SQL `storage_path`
-
-## 11. Cloud Run Archiver
-
-`cloudrun-archiver/` is the monthly archive job.
-
-Required deployment concerns:
-
-- access to source data
-- Cloud Storage archive bucket access
-- scheduler or manual job trigger
-- checksum verification before delete
-- image builds must use repo-root Docker context because `cloudrun-archiver` depends on local `packages/db` and `packages/contracts`
-
-Preserve these invariants:
-
-- archive manifests are idempotent
-- month exports must drain every read-model page instead of relying on a single large query
-- archive payloads should be streamed to disk/storage instead of loading a full month into memory
-- date filtering respects ISO-string date storage
-- deletion uses only the exact IDs captured in the verified archive
-- manifests must remain resumable when deletion counts are partial instead of being marked fully deleted
-
-## 12. Supabase Migration Workspace
-
-The `supabase/` directory contains the in-repo backend runtime and migration hardening work.
-
-Use these docs when working there:
-
-- `SUPABASE-MIGRATION-GUIDE.md`
-- `supabase/README.md`
-
-If you still operate legacy Firebase backend paths outside this repository, keep rollback paths available until your production rollout is fully complete.
-
-## 13. Deployment Order
-
-Recommended high-level order:
-
-1. Provision Firebase, GCP APIs, PostgreSQL, and Supabase.
-2. Apply SQL migrations.
-3. Configure website and Supabase edge secrets and envs.
-4. Deploy `supabase/functions`.
-5. Deploy `cloudrun-pdf`.
-6. Deploy `cloudrun-archiver`.
-7. Configure website hosting.
-8. Build and release mobile apps.
-9. Validate website auth, mobile auth, backend operations, document generation, and archives.
-
-CI/CD evidence:
-
-- Use `.github/workflows/supabase-edge-deploy.yml` for manual Supabase Edge deployments.
-- Required repository secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`.
-
-## 14. Post-Setup Checks
-
-Verify:
-
-- website login, registration, and onboarding
-- mobile sign-in and protected operation routing
-- backend SQL connectivity
-- document preview and generate flows
-- tax invoice approval creates a draft SQL document and schedules the async generate task
-- signed URL flows for documents and job files
-- solo mobile job creation uploads attachments first and succeeds with temp `attachmentUploadId` references before the final job number exists
-- push-token updates and notification paths
-- archive creation and retrieval
-
-## 15. Canonical Documentation Rule
-
-If setup or deployment guidance changes, update this file instead of creating another setup-only markdown file.
+Then run the relevant package tests, typechecks, lints, and builds listed in
+`AGENTS.md`.

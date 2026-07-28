@@ -2,15 +2,58 @@
  * cache-fetchers.ts
  *
  * Centralized read-model fetchers for CacheContext.
- * These no longer read business data directly from Firestore.
+ * All slices now use the authenticated Cloud API with cursor pagination.
  */
 
+import { fetchClientsPage } from '../modules/clients/lib/clients-api';
 import {
-  mmkvHelpers,
-  CACHE_KEYS,
-} from './mmkv-storage';
-import { callHttpFunction } from '../utils/httpFunctions';
+  mapClientSummary,
+  normalizeClientListFilters,
+} from '../modules/clients/lib/client-list-model';
+import { fetchWorkersPage } from '../modules/workers/lib/workers-api';
+import { fetchInventoryPage } from '../modules/inventory/lib/inventory-api';
+import { normalizeInventoryListFilters } from '../modules/inventory/lib/inventory-list-model';
+import { fetchJobsPage as fetchJobsPageApi } from '../modules/jobs/lib/jobs-api';
+import { fetchDocumentsPage as fetchDocumentsPageApi } from '../modules/documents/lib/documents-api';
+import { fetchCompanyBootstrap, fetchViewerProfile, fetchBusinessProfile } from '../lib/api/client';
+import { auth } from '../lib/auth/transport';
+import { mapJobSummary, normalizeJobListFilters } from '../modules/jobs/lib/job-list-model';
+import {
+  mapDocumentSummary,
+  normalizeDocumentListFilters,
+} from '../modules/documents/lib/document-history-model';
+import { mapSubscriptionToCache, mapViewerProfileToCache } from './cache-api-model';
 import { logger } from '../utils/logger';
+
+const MAX_CURSOR_WINDOW_PAGES = 5;
+
+function numericCompanyId(companyId: string): number {
+  const n = Number(companyId);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new Error('A valid company is required');
+  }
+  return n;
+}
+
+async function fetchCursorWindow<T>(
+  fetchPage: (afterCursor: string | null) => Promise<{ items: readonly T[]; nextCursor: string | null }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+  for (let i = 0; i < MAX_CURSOR_WINDOW_PAGES; i++) {
+    const page = await fetchPage(cursor);
+    items.push(...page.items);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return items;
+}
+
+function currentUid(): string {
+  const uid = auth.currentUser?.uid?.trim();
+  if (!uid) throw new Error('Authentication is required');
+  return uid;
+}
 
 interface BootstrapPayload {
   profile: any | null;
@@ -20,41 +63,18 @@ interface BootstrapPayload {
   companyInventory: { parts: any[]; nextId: number; lastUpdated: string };
   workers: any[] | Record<string, any>;
   clients: any[];
+  clientsNextCursor?: string | null;
   jobs: any[];
   documents: any[];
   jobsNextCursor?: string | null;
   documentsNextCursor?: string | null;
 }
 
-interface CompanySyncStatePayload {
-  jobsVersion: number;
-  documentsVersion: number;
-  clientsVersion: number;
-  workersVersion: number;
-  companyInventoryVersion: number;
-  updatedAt?: string;
-}
-
-interface UserSyncStatePayload {
-  profile: number;
-  inventory: number;
-  subscription: number;
-  updatedAt?: string;
-}
-
-async function readBootstrap(companyId: string, includeCollections = false): Promise<BootstrapPayload> {
-  return callHttpFunction<BootstrapPayload>('readModelV1', {
-    kind: 'bootstrap',
-    ...(companyId ? { companyId } : {}),
-    includeCollections,
-  });
-}
-
 function normalizeWorkersArray(workers: any[] | Record<string, any> | null | undefined) {
   if (!workers) return {};
   if (!Array.isArray(workers)) return workers;
   return workers.reduce((accumulator: Record<string, any>, worker: any) => {
-    const wid = String(worker?.wid ?? '');
+    const wid = String(worker?.wid ?? worker?.memberNo ?? '');
     if (wid) {
       accumulator[wid] = worker;
     }
@@ -62,156 +82,112 @@ function normalizeWorkersArray(workers: any[] | Record<string, any> | null | und
   }, {});
 }
 
-export async function fetchDataFromFirebase(
+export async function fetchDataFromBackend(
   field: string,
   uid: string,
   companyId: string,
   role: string,
 ): Promise<any> {
-  logger.debug(`[READ MODEL] Fetching ${field} from backend...`);
-
   try {
+    const numericId = companyId ? numericCompanyId(companyId) : 0;
+
     switch (field) {
       case 'profile': {
-        const bootstrap = await readBootstrap(companyId, false);
-        return bootstrap.profile || null;
+        if (!numericId) return null;
+        const [profile, bootstrap] = await Promise.all([
+          fetchViewerProfile(uid, numericId),
+          fetchCompanyBootstrap(uid, numericId),
+        ]);
+        return mapViewerProfileToCache(profile, bootstrap);
       }
 
       case 'subscription': {
-        const bootstrap = await readBootstrap(companyId, false);
-        return bootstrap.subscription || null;
+        if (!numericId) return null;
+        const bootstrap = await fetchCompanyBootstrap(uid, numericId);
+        return mapSubscriptionToCache(bootstrap);
       }
 
       case 'inventory': {
-        const inventory = await callHttpFunction<{ parts: any[]; nextId: number; lastUpdated: string }>('readModelV1', {
-          kind: 'inventory',
-          ...(companyId ? { companyId } : {}),
-          scope: 'user',
-          targetUid: uid,
-        });
-        return Array.isArray(inventory?.parts) ? inventory.parts : [];
+        if (!numericId) return [];
+        const filters = normalizeInventoryListFilters({ pageSize: 200 });
+        const items = await fetchCursorWindow((cursor) =>
+          fetchInventoryPage({
+            uid,
+            companyId: numericId,
+            scope: 'member',
+            filters,
+            afterCursor: cursor,
+          }),
+        );
+        return items.map((part: any) => ({ ...part, id: part.partId ?? part.id }));
       }
 
       case 'companyInventory': {
-        if (!companyId) return [];
-        const inventory = await callHttpFunction<{ parts: any[]; nextId: number; lastUpdated: string }>('readModelV1', {
-          kind: 'inventory',
-          companyId,
-          scope: 'company',
-        });
-        return Array.isArray(inventory?.parts) ? inventory.parts : [];
+        if (!numericId) return [];
+        const filters = normalizeInventoryListFilters({ pageSize: 200 });
+        const items = await fetchCursorWindow((cursor) =>
+          fetchInventoryPage({
+            uid,
+            companyId: numericId,
+            scope: 'company',
+            filters,
+            afterCursor: cursor,
+          }),
+        );
+        return items.map((part: any) => ({ ...part, id: part.partId ?? part.id }));
       }
 
       case 'workers': {
-        if (role !== 'manager' || !companyId) {
+        if (role !== 'manager' || !numericId) {
           return {};
         }
-        const workers = await callHttpFunction<any[]>('readModelV1', {
-          kind: 'workers',
-          companyId,
-        });
-        return normalizeWorkersArray(workers);
+        const items = await fetchCursorWindow((cursor) =>
+          fetchWorkersPage({
+            uid,
+            companyId: numericId,
+            afterCursor: cursor,
+          }),
+        );
+        return normalizeWorkersArray(items);
       }
 
       case 'business_info': {
-        const bootstrap = await readBootstrap(companyId, false);
-        return bootstrap.businessInfo || null;
+        if (!numericId) return null;
+        const businessProfile = await fetchBusinessProfile(uid, numericId);
+        return businessProfile;
       }
 
       case 'clients': {
-        if (!companyId) return [];
-        return callHttpFunction<any[]>('readModelV1', {
-          kind: 'clients',
-          companyId,
+        if (!numericId) return [];
+        const page = await fetchClientsPage({
+          uid,
+          companyId: numericId,
+          filters: normalizeClientListFilters({ status: 'active', pageSize: 200 }),
         });
+        return page.items.map(mapClientSummary);
       }
 
       default:
         return null;
     }
   } catch (error) {
-    console.error(`Error fetching ${field} from read model:`, error);
+    logger.error(`Error fetching ${field} via Cloud API:`, error);
     return null;
   }
 }
 
-export async function fetchDocumentById(
-  docId: string,
-  _uid: string,
-  companyId: string,
-  _role: string,
-): Promise<any | null> {
-  logger.debug(`[READ MODEL] Fetching document ${docId} from backend...`);
-
-  try {
-    return await callHttpFunction<any | null>('readModelV1', {
-      kind: 'recordById',
-      companyId,
-      recordId: docId,
-    });
-  } catch (error) {
-    console.error(`Error fetching document ${docId}:`, error);
-    return null;
-  }
+export async function fetchCompanySyncState(uid: string, companyId: string): Promise<{
+  jobsVersion: number;
+  documentsVersion: number;
+  clientsVersion: number;
+  workersVersion: number;
+  companyInventoryVersion: number;
+  updatedAt: string;
+}> {
+  const bootstrap = await fetchCompanyBootstrap(uid, numericCompanyId(companyId));
+  return bootstrap.syncState;
 }
 
-export async function fetchAllRecentJobs(
-  _uid: string,
-  companyId: string,
-  role: string,
-): Promise<{ jobsData: any[]; documentsData: any[] }> {
-  if (role === 'dev') {
-    logger.debug('Dev role: skipping all jobs/documents fetch (early return)');
-    return { jobsData: [], documentsData: [] };
-  }
-
-  logger.debug('[READ MODEL] Fetching bootstrap jobs/documents from backend...');
-
-  try {
-    const bootstrap = await readBootstrap(companyId, true);
-    return {
-      jobsData: Array.isArray(bootstrap.jobs) ? bootstrap.jobs : [],
-      documentsData: Array.isArray(bootstrap.documents) ? bootstrap.documents : [],
-    };
-  } catch (error) {
-    console.error('Error fetching bootstrap jobs/documents:', error);
-    return { jobsData: [], documentsData: [] };
-  }
-}
-
-export async function fetchCompanySyncState(companyId: string): Promise<CompanySyncStatePayload> {
-  if (!companyId) {
-    return {
-      jobsVersion: 0,
-      documentsVersion: 0,
-      clientsVersion: 0,
-      workersVersion: 0,
-      companyInventoryVersion: 0,
-      updatedAt: '',
-    };
-  }
-
-  try {
-    return await callHttpFunction<CompanySyncStatePayload>('readModelV1', {
-      kind: 'companySyncState',
-      companyId,
-    });
-  } catch (error) {
-    console.error('Error fetching company sync state from read model:', error);
-    return {
-      jobsVersion: 0,
-      documentsVersion: 0,
-      clientsVersion: 0,
-      workersVersion: 0,
-      companyInventoryVersion: 0,
-      updatedAt: '',
-    };
-  }
-}
-
-/**
- * Fetches one page of jobs using cursor-based pagination.
- */
 export async function fetchJobsPage(
   companyId: string,
   opts: {
@@ -225,66 +201,79 @@ export async function fetchJobsPage(
   } = {},
 ): Promise<{ items: any[]; nextCursor: string | null }> {
   try {
-    const body: Record<string, unknown> = {
-      kind: 'jobs',
-      companyId,
+    const numericId = numericCompanyId(companyId);
+    const statusArray = opts.status
+      ? Array.isArray(opts.status) ? opts.status : [opts.status]
+      : undefined;
+    const filters = normalizeJobListFilters({
       pageSize: opts.pageSize ?? 50,
-    };
-    if (opts.afterCursor) body.afterCursor = opts.afterCursor;
-    if (opts.status) body.status = opts.status;
-    if (opts.dateField) body.dateField = opts.dateField;
-    if (opts.dateFrom) body.dateFrom = opts.dateFrom;
-    if (opts.dateTo) body.dateTo = opts.dateTo;
-    return await callHttpFunction<{ items: any[]; nextCursor: string | null }>('readModelV1', body, { signal: opts.signal });
+      ...(statusArray ? { status: statusArray as any } : {}),
+      ...(opts.dateField ? { dateField: opts.dateField } : {}),
+      ...(opts.dateFrom ? { dateFrom: opts.dateFrom } : {}),
+      ...(opts.dateTo ? { dateTo: opts.dateTo } : {}),
+    });
+    const page = await fetchJobsPageApi({
+      uid: currentUid(),
+      companyId: numericId,
+      filters,
+      afterCursor: opts.afterCursor ?? null,
+      signal: opts.signal,
+    });
+    return { items: page.items.map(mapJobSummary), nextCursor: page.nextCursor };
   } catch (error) {
-    console.error('Error fetching jobs page:', error);
+    logger.error('Error fetching jobs page via Cloud API:', error);
     return { items: [], nextCursor: null };
   }
 }
 
-/**
- * Fetches one page of documents using cursor-based pagination.
- */
 export async function fetchDocumentsPage(
   companyId: string,
   opts: {
     pageSize?: number;
     afterCursor?: string;
     signal?: AbortSignal;
-    dateField?: 'createdAt' | 'updatedAt' | 'documentDate';
     dateFrom?: string;
     dateTo?: string;
   } = {},
 ): Promise<{ items: any[]; nextCursor: string | null }> {
   try {
-    const body: Record<string, unknown> = {
-      kind: 'documents',
-      companyId,
+    const numericId = numericCompanyId(companyId);
+    const filters = normalizeDocumentListFilters({
       pageSize: opts.pageSize ?? 50,
-    };
-    if (opts.afterCursor) body.afterCursor = opts.afterCursor;
-    if (opts.dateField) body.dateField = opts.dateField;
-    if (opts.dateFrom) body.dateFrom = opts.dateFrom;
-    if (opts.dateTo) body.dateTo = opts.dateTo;
-    return await callHttpFunction<{ items: any[]; nextCursor: string | null }>('readModelV1', body, { signal: opts.signal });
+      ...(opts.dateFrom ? { dateFrom: opts.dateFrom } : {}),
+      ...(opts.dateTo ? { dateTo: opts.dateTo } : {}),
+    });
+    const page = await fetchDocumentsPageApi({
+      uid: currentUid(),
+      companyId: numericId,
+      filters,
+      afterCursor: opts.afterCursor ?? null,
+      signal: opts.signal,
+    });
+    return { items: page.items.map(mapDocumentSummary), nextCursor: page.nextCursor };
   } catch (error) {
-    console.error('Error fetching documents page:', error);
+    logger.error('Error fetching documents page via Cloud API:', error);
     return { items: [], nextCursor: null };
   }
 }
 
-export async function fetchUserSyncState(): Promise<UserSyncStatePayload> {
-  try {
-    return await callHttpFunction<UserSyncStatePayload>('readModelV1', {
-      kind: 'userSyncState',
-    });
-  } catch (error) {
-    console.error('Error fetching user sync state from read model:', error);
-    return {
-      profile: 0,
-      inventory: 0,
-      subscription: 0,
-      updatedAt: '',
-    };
-  }
+export async function fetchUserSyncState(uid: string, companyId: string): Promise<{
+  profile: number;
+  inventory: number;
+  subscription: number;
+  updatedAt: string;
+}> {
+  const numericId = numericCompanyId(companyId);
+  const [profile, bootstrap] = await Promise.all([
+    fetchViewerProfile(uid, numericId),
+    fetchCompanyBootstrap(uid, numericId),
+  ]);
+  const profileVersion = Date.parse(profile.updatedAt);
+  const subscriptionVersion = Date.parse(bootstrap.syncState.updatedAt);
+  return {
+    profile: Number.isFinite(profileVersion) ? profileVersion : 0,
+    inventory: bootstrap.syncState.companyInventoryVersion,
+    subscription: Number.isFinite(subscriptionVersion) ? subscriptionVersion : 0,
+    updatedAt: bootstrap.syncState.updatedAt,
+  };
 }

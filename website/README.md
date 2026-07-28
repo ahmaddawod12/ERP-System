@@ -1,63 +1,84 @@
-# Smart-Job ERP Website
+# Smart-Job Website
 
-`website/` is the Next.js app for marketing pages, auth entrypoints, onboarding, and protected ERP web workflows.
+The website is a Next.js 16 App Router application running on Node 22. It is a
+server-rendered client of `cloudrun-api`; it does not call business tables,
+Firebase, or Cloud Run directly from browser code.
 
-## Runtime Role
+## Runtime architecture
 
-- Uses Supabase Auth for sign-in flows.
-- Exchanges bearer tokens for HttpOnly session cookies.
-- Protects `/app/*` through middleware.
-- Revalidates session users server-side before accepting a session cookie.
-- Proxies protected operations to backend gateways instead of writing directly to protected data stores.
-- Uses short-lived browser auth transport state and avoids persisting refresh tokens in `localStorage`.
-- The website uses split HttpOnly cookies: signed metadata in `__session`, current bearer token in `__session_access` for `/api/callable` and `/api/read-model` proxy auth before client auth rehydrates.
-- Protected session validation requires both `__session` and `__session_access`; signed metadata without the bearer cookie is treated as unauthenticated.
-- Polls SQL-backed `document_tasks` through `/api/read-model` for preview/generate progress.
+- Firebase Auth calls terminate on the server.
+- A successful login exchanges Firebase credentials for one opaque,
+  Postgres-backed HttpOnly session cookie (`__Host-sj_web_session` in
+  production). Firebase ID and refresh tokens never enter browser storage,
+  HTML, readable cookies, or browser JSON.
+- All protected routes resolve the session and exact company membership in the
+  server-only DAL before issuing bounded Cloud API reads.
+- The canonical protected URL shape is `/app/c/{companyId}/...`. Legacy
+  `/app/*` entry points are redirects only.
+- Initial overview, jobs, clients, inventory, documents, workers, settings, and
+  upgrade data is rendered in Server Components. Focused Client Components own
+  interaction only.
+- Browser mutations call same-origin BFF Route Handlers. They require the exact
+  configured `WEBSITE_ORIGIN`, a readable `sj_csrf` cookie matching
+  `X-SJ-CSRF`, a stable `Idempotency-Key`, and the current opaque entity version
+  where the API contract requires one.
 
-## Key Responsibilities
+## Security invariants
 
-- Public pages and product content
-- `/login`, `/register`, `/forgot-password`, `/onboarding`
-- Protected app routes under `/app/*`
-- API proxy routes (`/api/callable`, `/api/read-model`, `/api/contact/request`)
-- Tax invoice creation delegates to backend draft-document reservation and async PDF scheduling.
-- Website document and job-file access rely on backend-issued short-lived URLs; protected storage paths are not read directly by the browser.
-- Registration signs the user in immediately before redirecting into onboarding so the cookie-backed session survives the handoff.
-- Contact request spam/challenge validation failures return stable `400` API errors (`spam_rejected`, `invalid_challenge`) instead of ambiguous server failures.
+- Never add `"use client"` to a `page.tsx` file.
+- Never expose Firebase credentials, database credentials, a bearer
+  token, or a `SmartJobSession` value to browser JavaScript.
+- Keep tenant authorization server-side; a company ID in the URL is not proof
+  of access.
+- Keep list reads cursor bounded. Forward filters and `afterCursor` to the API
+  instead of loading a collection and filtering in memory.
+- Tax invoice type `305` uses the authoritative tax workflow. Generic document
+  preview/generate routes must continue to reject it.
+- Store canonical file paths and request short-lived downloads through the BFF;
+  do not persist signed URLs.
 
-## Required Patterns
+## Environment
 
-- Keep API routes thin: parse, validate, auth-check, proxy.
-- Keep page wrapper pattern: `page.tsx` server wrapper, `page-client.tsx` interactive shell.
-- Keep protected writes backend-only.
-- Keep React Hook Form + Zod for form handling.
+Copy [`.env.example`](./.env.example) to `.env.local` and replace every
+placeholder. Public browser configuration is limited to the reCAPTCHA site
+key. All Firebase and backend transport settings are server-only.
 
-## Environment Variables
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SESSION_COOKIE_SECRET`
-- `WEBSITE_SESSION_SECRET`
-- `BACKEND_EDGE_FUNCTIONS_BASE_URL` (optional)
-- `CLOUDRUN_PDF_URL`
-
-If `BACKEND_EDGE_FUNCTIONS_BASE_URL` is unset, functions base URL falls back to `${SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL}/functions/v1`.
+The repository-owned local platform injects its own container configuration.
+Do not manually copy `SMART_JOB_LOCAL_PLATFORM` flags into a host or deployed
+environment.
 
 ## Commands
 
+Run from the repository root:
+
 ```bash
-npm install
-npm run dev
-npm run lint
-npm run typecheck
-npm run test
-npm run build
+npm --prefix packages/contracts run build
+npm --prefix packages/api-contracts run build
+npm --prefix website run test
+npm --prefix website run typecheck
+npm --prefix website run lint
+npm --prefix website run build
 ```
+
+The Playwright suite is self-contained by default: it starts a strict fake API
+on port `4100` and Next.js on port `3100`, then exercises login, reload,
+logout, unauthenticated redirects, tenant isolation, and absence of browser
+credentials.
+
+```bash
+npm --prefix website exec playwright install chromium
+npm --prefix website run test:e2e
+```
+
+Set `PLAYWRIGHT_BASE_URL`, `E2E_TEST_EMAIL`, and `E2E_TEST_PASSWORD` only when
+deliberately running the same journeys against a seeded non-production target.
+
+The standalone production image must be built with the repository root as its
+Docker context because Next.js traces the shared contracts packages.
 
 ## References
 
-- `../SETUP.md`
-- `../backend.md`
-- `../architecture.md`
+- [`../SETUP.md`](../SETUP.md)
+- [`../architecture.md`](../architecture.md)
+- [`../backend.md`](../backend.md)
+- [`../docs/runbooks/README.md`](../docs/runbooks/README.md)

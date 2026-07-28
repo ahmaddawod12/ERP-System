@@ -1,16 +1,80 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { getDb } from './client';
-
-const {
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobQueryExecutor,
+  type SmartJobTransaction,
+} from './client';
+import {
   appUsers,
   companies,
+  companyCounters,
   companyInvites,
   companyMemberships,
   inventoryLocations,
   jobs,
-} = require('./schema');
+} from './schema';
 
-function asDate(value, fallback) {
+type MembershipRole = 'manager' | 'worker' | 'user' | 'basic';
+type CounterKey = typeof companyCounters.$inferInsert['counterKey'];
+
+type AppUserInput = {
+  uid: string;
+  email: string;
+  name?: string | null;
+  phoneNumber?: string | null;
+};
+
+type CreateInviteInput = {
+  companyId: string | number;
+  code: string;
+  targetRole: MembershipRole;
+  invitedEmail?: string | null;
+  createdByUserId: string;
+  now?: string | Date;
+  expiresAt?: string | Date;
+};
+
+type JoinInviteInput = AppUserInput & {
+  companyId: string | number;
+  inviteCode: string;
+  requestedRole?: MembershipRole;
+  now?: string | Date;
+};
+
+type CreateManagedMembershipInput = AppUserInput & {
+  companyId: string | number;
+  role: MembershipRole;
+  createdByUserId?: string | null;
+  now?: string | Date;
+};
+
+type UpdateManagedMembershipInput = {
+  companyId: string | number;
+  uid: string;
+  email?: string | null;
+  currentEmail?: string | null;
+  name?: string | null;
+  phoneNumber?: string | null;
+  role?: MembershipRole;
+  now?: string | Date;
+};
+
+type DeleteManagedMembershipInput = {
+  companyId: string | number;
+  uid: string;
+};
+
+type ActiveMembership = {
+  id: string;
+  company_id: string;
+  member_no: number;
+  role: MembershipRole;
+  public_company_id: number;
+};
+
+function asDate(value: unknown, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -19,7 +83,10 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-async function resolveCompanyByPublicId(tx, companyPublicId) {
+async function resolveCompanyByPublicId(
+  tx: SmartJobQueryExecutor,
+  companyPublicId: string | number,
+) {
   const numericCompanyId = Number(companyPublicId);
   if (!Number.isInteger(numericCompanyId) || numericCompanyId < 1) {
     return null;
@@ -38,7 +105,11 @@ async function resolveCompanyByPublicId(tx, companyPublicId) {
   return rows[0] || null;
 }
 
-async function upsertAppUser(tx, input, now) {
+async function upsertAppUser(
+  tx: SmartJobTransaction,
+  input: AppUserInput,
+  now: Date,
+) {
   await tx.insert(appUsers).values({
     id: input.uid,
     email: input.email,
@@ -56,7 +127,11 @@ async function upsertAppUser(tx, input, now) {
   });
 }
 
-async function allocateCompanyCounter(tx, companyId, counterKey) {
+async function allocateCompanyCounter(
+  tx: SmartJobTransaction,
+  companyId: string,
+  counterKey: CounterKey,
+): Promise<number> {
   const result = await tx.execute(sql`
     UPDATE company_counters
     SET next_value = next_value + 1,
@@ -66,7 +141,7 @@ async function allocateCompanyCounter(tx, companyId, counterKey) {
     RETURNING next_value - 1 AS allocated_value
   `);
 
-  const row = result.rows?.[0] || null;
+  const row = result.rows?.[0] as Record<string, unknown> | undefined;
   const allocatedValue = Number(row?.allocated_value);
   if (!Number.isInteger(allocatedValue) || allocatedValue < 1) {
     throw new Error(`Failed to allocate counter ${counterKey}`);
@@ -74,7 +149,11 @@ async function allocateCompanyCounter(tx, companyId, counterKey) {
   return allocatedValue;
 }
 
-async function findActiveMembership(tx, uid, internalCompanyId = null) {
+async function findActiveMembership(
+  tx: SmartJobQueryExecutor,
+  uid: string,
+  internalCompanyId: string | null = null,
+): Promise<ActiveMembership | null> {
   const result = await tx.execute(sql`
     SELECT
       m.id,
@@ -91,10 +170,24 @@ async function findActiveMembership(tx, uid, internalCompanyId = null) {
     LIMIT 1
   `);
 
-  return result.rows?.[0] || null;
+  const row = result.rows?.[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    company_id: String(row.company_id),
+    member_no: Number(row.member_no),
+    role: String(row.role) as MembershipRole,
+    public_company_id: Number(row.public_company_id),
+  };
 }
 
-async function ensureMemberInventoryLocation(tx, companyId, membershipId, name, now) {
+async function ensureMemberInventoryLocation(
+  tx: SmartJobTransaction,
+  companyId: string,
+  membershipId: string,
+  name: string | null | undefined,
+  now: Date,
+) {
   await tx.insert(inventoryLocations).values({
     companyId,
     locationType: 'member',
@@ -104,7 +197,7 @@ async function ensureMemberInventoryLocation(tx, companyId, membershipId, name, 
   }).onConflictDoNothing();
 }
 
-async function createCompanyInvite(input, options: any = {}) {
+async function createCompanyInvite(input: CreateInviteInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const expiresAt = asDate(input.expiresAt, new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
@@ -114,14 +207,14 @@ async function createCompanyInvite(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const creatorMembership = await findActiveMembership(tx, input.createdByUserId, company.id);
     if (!creatorMembership) {
       const error = new Error('Creator is not an active company member');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
 
@@ -141,6 +234,10 @@ async function createCompanyInvite(input, options: any = {}) {
       targetRole: companyInvites.targetRole,
     });
 
+    if (!invite) {
+      throw new Error('Invite insert did not return a record');
+    }
+
     return {
       inviteId: invite.id,
       inviteCode: invite.code,
@@ -150,7 +247,7 @@ async function createCompanyInvite(input, options: any = {}) {
   });
 }
 
-async function joinCompanyWithInvite(input, options: any = {}) {
+async function joinCompanyWithInvite(input: JoinInviteInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const normalizedInviteCode = String(input.inviteCode || '').trim().toUpperCase();
@@ -159,7 +256,7 @@ async function joinCompanyWithInvite(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -170,6 +267,7 @@ async function joinCompanyWithInvite(input, options: any = {}) {
         target_role,
         status,
         used_by_user_id,
+        invited_email,
         expires_at
       FROM company_invites
       WHERE company_id = ${company.id}
@@ -177,17 +275,17 @@ async function joinCompanyWithInvite(input, options: any = {}) {
       LIMIT 1
       FOR UPDATE
     `);
-    const invite = inviteResult.rows?.[0] || null;
+    const invite = inviteResult.rows?.[0] as Record<string, unknown> | undefined;
     if (!invite) {
       const error = new Error('Invalid invite code');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
-    const inviteExpiresAt = invite.expires_at ? new Date(invite.expires_at) : null;
+    const inviteExpiresAt = invite.expires_at ? new Date(String(invite.expires_at)) : null;
     if (inviteExpiresAt && inviteExpiresAt.getTime() < now.getTime()) {
       const error = new Error('Invite code has expired');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -196,7 +294,7 @@ async function joinCompanyWithInvite(input, options: any = {}) {
       const existingCompanyId = String(existingMembership.public_company_id || '');
       if (existingCompanyId !== String(company.publicCompanyId)) {
         const error = new Error('User already belongs to another company');
-        (error as any).code = 'already-exists';
+        setDatabaseErrorCode(error, 'already-exists');
         throw error;
       }
 
@@ -209,30 +307,31 @@ async function joinCompanyWithInvite(input, options: any = {}) {
       }
 
       const error = new Error('User already belongs to this company');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
     if (String(invite.status || 'active') !== 'active') {
       const error = new Error('Invite code is not active');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
-    const invitedEmail = String((invite as { invited_email?: unknown }).invited_email || '').trim().toLowerCase();
+    const invitedEmail = String(invite.invited_email || '').trim().toLowerCase();
     const inputEmail = String(input.email || '').trim().toLowerCase();
     if (invitedEmail && invitedEmail !== inputEmail) {
       const error = new Error('Invite is restricted to a different email');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
 
-    const resolvedRole = String(invite.target_role || input.requestedRole || 'worker').trim().toLowerCase();
-    if (!['manager', 'worker', 'user', 'basic'].includes(resolvedRole)) {
+    const candidateRole = String(invite.target_role || input.requestedRole || 'worker').trim().toLowerCase();
+    if (!['manager', 'worker', 'user', 'basic'].includes(candidateRole)) {
       const error = new Error('Invite target role is invalid');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
+    const resolvedRole = candidateRole as MembershipRole;
 
     await upsertAppUser(tx, input, now);
 
@@ -254,6 +353,10 @@ async function joinCompanyWithInvite(input, options: any = {}) {
       role: companyMemberships.role,
     });
 
+    if (!membership) {
+      throw new Error('Membership insert did not return a record');
+    }
+
     await ensureMemberInventoryLocation(tx, company.id, membership.id, input.name || input.email || `Member ${memberNo}`, now);
 
     await tx.update(companyInvites)
@@ -262,7 +365,7 @@ async function joinCompanyWithInvite(input, options: any = {}) {
         usedByUserId: input.uid,
         usedAt: now,
       })
-      .where(eq(companyInvites.id, invite.id));
+      .where(eq(companyInvites.id, String(invite.id)));
 
     return {
       companyId: String(company.publicCompanyId),
@@ -272,7 +375,10 @@ async function joinCompanyWithInvite(input, options: any = {}) {
   });
 }
 
-async function createManagedWorkerMembership(input, options: any = {}) {
+async function createManagedWorkerMembership(
+  input: CreateManagedMembershipInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -280,7 +386,7 @@ async function createManagedWorkerMembership(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -289,7 +395,7 @@ async function createManagedWorkerMembership(input, options: any = {}) {
     const existingMembership = await findActiveMembership(tx, input.uid, company.id);
     if (existingMembership) {
       const error = new Error('User already belongs to this company');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
@@ -312,6 +418,10 @@ async function createManagedWorkerMembership(input, options: any = {}) {
       role: companyMemberships.role,
     });
 
+    if (!membership) {
+      throw new Error('Membership insert did not return a record');
+    }
+
     await ensureMemberInventoryLocation(tx, company.id, membership.id, input.name || input.email || `Member ${memberNo}`, now);
 
     return {
@@ -322,7 +432,10 @@ async function createManagedWorkerMembership(input, options: any = {}) {
   });
 }
 
-async function updateManagedWorkerMembership(input, options: any = {}) {
+async function updateManagedWorkerMembership(
+  input: UpdateManagedMembershipInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -330,7 +443,7 @@ async function updateManagedWorkerMembership(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -350,7 +463,7 @@ async function updateManagedWorkerMembership(input, options: any = {}) {
     const membership = membershipRows[0] || null;
     if (!membership) {
       const error = new Error('Worker membership not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -363,7 +476,7 @@ async function updateManagedWorkerMembership(input, options: any = {}) {
       }, now);
     }
 
-    const updateData: Record<string, any> = {
+    const updateData: Partial<typeof companyMemberships.$inferInsert> = {
       updatedAt: now,
     };
     if (input.role) updateData.role = input.role;
@@ -382,14 +495,17 @@ async function updateManagedWorkerMembership(input, options: any = {}) {
   });
 }
 
-async function deleteManagedWorkerMembership(input, options: any = {}) {
+async function deleteManagedWorkerMembership(
+  input: DeleteManagedMembershipInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
 
   return db.transaction(async (tx) => {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -408,7 +524,7 @@ async function deleteManagedWorkerMembership(input, options: any = {}) {
     const membership = membershipRows[0] || null;
     if (!membership) {
       const error = new Error('Worker membership not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -436,7 +552,10 @@ async function deleteManagedWorkerMembership(input, options: any = {}) {
   });
 }
 
-async function listCompanyWorkers(companyId, options: any = {}) {
+async function listCompanyWorkers(
+  companyId: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) {
@@ -461,7 +580,9 @@ async function listCompanyWorkers(companyId, options: any = {}) {
     ORDER BY m.joined_at DESC, m.created_at DESC
   `);
 
-  return (rows.rows || []).map((row) => ({
+  return (rows.rows || []).map((value) => {
+    const row = value as Record<string, unknown>;
+    return {
     wid: Number(row.member_no),
     uid: row.uid,
     email: row.email || '',
@@ -470,10 +591,15 @@ async function listCompanyWorkers(companyId, options: any = {}) {
     phoneNumber: row.phone_number || '',
     createdAt: row.joined_at instanceof Date ? row.joined_at.toISOString() : String(row.joined_at || ''),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || ''),
-  }));
+    };
+  });
 }
 
-async function getMemberByMemberNo(companyId, memberNo, options: any = {}) {
+async function getMemberByMemberNo(
+  companyId: string | number,
+  memberNo: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) return null;
@@ -492,7 +618,7 @@ async function getMemberByMemberNo(companyId, memberNo, options: any = {}) {
     LIMIT 1
   `);
 
-  const row = (rows.rows || [])[0] || null;
+  const row = (rows.rows || [])[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
     uid: String(row.uid),

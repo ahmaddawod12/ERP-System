@@ -1,7 +1,10 @@
 {
   "name": "@smart-job/contracts",
   "version": "0.1.0",
-  "description": "Shared constants, enums, and path builders for Smart-Job ERP",
+  "description": "Shared constants and enums for Smart-Job ERP",
+  "engines": {
+    "node": "22.x"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "files": ["dist/**/*", "index.js", "index.d.ts"],

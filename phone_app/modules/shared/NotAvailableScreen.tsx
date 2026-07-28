@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * NotAvailableScreen - Shown when a user tries to access a gated feature
  * they don't have permission for (wrong role, expired subscription, or disabled module).
@@ -52,7 +51,7 @@ export default function NotAvailableScreen({ reason = 'default' }: NotAvailableS
   const t = translations[language] || translations.en;
   const content = t[reason] || t.default;
 
-  const iconMap = {
+  const iconMap: Record<GateReason, React.ComponentProps<typeof Ionicons>['name']> = {
     role: 'lock-closed',
     subscription: 'time-outline',
     module: 'diamond-outline',

@@ -1,21 +1,42 @@
-import { callHttpFunction } from './httpFunctions';
+/**
+ * read-model.ts
+ *
+ * Transitional read-model wrappers. Migrated callers use the Cloud API
+ * directly through their module-specific API clients. These wrappers remain
+ * for screens that have not yet been individually cut over.
+ */
 
-type ReadModelListOptions = {
-  limit?: number;
-  pageSize?: number;
-  afterCursor?: string;
-  status?: string | string[];
-  dateField?: 'createdAt' | 'updatedAt' | 'finishedAt' | 'dueAt' | 'documentDate';
-  dateFrom?: string;
-  dateTo?: string;
-  documentType?: number;
-  createdByUid?: string;
-};
+import { fetchWorkersPage } from '../modules/workers/lib/workers-api';
+import { fetchInventoryPage } from '../modules/inventory/lib/inventory-api';
+import { normalizeInventoryListFilters } from '../modules/inventory/lib/inventory-list-model';
+import { fetchJobsPage as fetchJobsPageApi } from '../modules/jobs/lib/jobs-api';
+import { fetchDocumentsPage as fetchDocumentsPageApi } from '../modules/documents/lib/documents-api';
+import { mapJobSummary, normalizeJobListFilters } from '../modules/jobs/lib/job-list-model';
+import { mapDocumentSummary, normalizeDocumentListFilters } from '../modules/documents/lib/document-history-model';
+import { auth } from '../lib/auth/transport';
 
-type ReadModelPage<T = any> = {
-  items?: T[];
-  nextCursor?: string | null;
-};
+const MAX_CURSOR_WINDOW_PAGES = 5;
+const MAX_CURSOR_WINDOW_ITEMS = 1_000;
+
+function numericCompanyId(companyId: string): number {
+  const n = Number(companyId);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new Error('A valid company is required');
+  }
+  return n;
+}
+
+function currentUid(): string {
+  const uid = auth.currentUser?.uid?.trim();
+  if (!uid) throw new Error('Authentication is required');
+  return uid;
+}
+
+function positiveLimit(value: unknown, fallback = MAX_CURSOR_WINDOW_ITEMS): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(MAX_CURSOR_WINDOW_ITEMS, Math.max(1, Math.trunc(value)))
+    : fallback;
+}
 
 function normalizeWorker(worker: any) {
   return {
@@ -28,93 +49,129 @@ function normalizeWorker(worker: any) {
   };
 }
 
-export async function fetchCompanyWorkers(companyId: string) {
-  const workers = await callHttpFunction<any[]>('readModelV1', {
-    kind: 'workers',
-    companyId,
-  });
+async function fetchCursorWindow<T>(
+  fetchPage: (afterCursor: string | null) => Promise<{ items: readonly T[]; nextCursor: string | null }>,
+  maximumItems = MAX_CURSOR_WINDOW_ITEMS,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | null = null;
+  for (let i = 0; i < MAX_CURSOR_WINDOW_PAGES; i++) {
+    const page = await fetchPage(cursor);
+    items.push(...page.items);
+    if (items.length >= maximumItems) return items.slice(0, maximumItems);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return items;
+}
 
-  return (workers || [])
-    .map(normalizeWorker)
-    .filter((worker) => worker.wid || worker.uid || worker.email);
+export async function fetchCompanyWorkers(companyId: string) {
+  const numericId = numericCompanyId(companyId);
+  const items = await fetchCursorWindow((cursor) =>
+    fetchWorkersPage({ uid: currentUid(), companyId: numericId, afterCursor: cursor }),
+  );
+  return items.map(normalizeWorker).filter((worker) => worker.wid || worker.uid || worker.email);
 }
 
 export async function fetchCompanyInventoryParts(companyId: string) {
-  const inventory = await callHttpFunction<{ parts?: any[] }>('readModelV1', {
-    kind: 'inventory',
-    companyId,
-    scope: 'company',
-  });
-
-  return Array.isArray(inventory?.parts) ? inventory.parts : [];
+  const numericId = numericCompanyId(companyId);
+  const filters = normalizeInventoryListFilters({ pageSize: 200 });
+  const items = await fetchCursorWindow((cursor) =>
+    fetchInventoryPage({ uid: currentUid(), companyId: numericId, scope: 'company', filters, afterCursor: cursor }),
+  );
+  return items.map((part: any) => ({ ...part, id: part.partId ?? part.id }));
 }
 
-export async function fetchUserInventoryParts(companyId: string, targetUid: string) {
-  const inventory = await callHttpFunction<{ parts?: any[] }>('readModelV1', {
-    kind: 'inventory',
-    companyId,
-    scope: 'user',
-    targetUid,
-  });
-
-  return Array.isArray(inventory?.parts) ? inventory.parts : [];
-}
-
-function normalizeListOptions(limitOrOptions?: number | ReadModelListOptions): ReadModelListOptions {
-  if (typeof limitOrOptions === 'number') {
-    return { limit: limitOrOptions };
+export async function fetchUserInventoryParts(companyId: string, targetMemberNo: string | number) {
+  const numericId = numericCompanyId(companyId);
+  const memberNo = Number(targetMemberNo);
+  if (!Number.isSafeInteger(memberNo) || memberNo <= 0) {
+    throw new Error('A valid member number is required');
   }
-  return limitOrOptions || {};
+  const filters = normalizeInventoryListFilters({ pageSize: 200 });
+  const items = await fetchCursorWindow((cursor) =>
+    fetchInventoryPage({
+      uid: currentUid(),
+      companyId: numericId,
+      scope: 'member',
+      filters,
+      afterCursor: cursor,
+      targetMemberNo: memberNo,
+    }),
+  );
+  return items.map((part: any) => ({ ...part, id: part.partId ?? part.id }));
 }
 
-export async function fetchCompanyJobs(companyId: string, limitOrOptions?: number | ReadModelListOptions) {
-  const options = normalizeListOptions(limitOrOptions);
-  const result = await callHttpFunction<ReadModelPage>('readModelV1', {
-    kind: 'jobs',
-    companyId,
-    ...options,
+export async function fetchCompanyJobs(companyId: string, limitOrOptions?: number | Record<string, any>) {
+  const numericId = numericCompanyId(companyId);
+  const options = typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions ?? {};
+  const limit = positiveLimit(options.limit);
+  const filters = normalizeJobListFilters({
+    pageSize: Math.min(200, limit),
+    ...(options.status ? { status: options.status } : {}),
+    ...(options.dateField ? { dateField: options.dateField } : {}),
+    ...(options.dateFrom ? { dateFrom: options.dateFrom } : {}),
+    ...(options.dateTo ? { dateTo: options.dateTo } : {}),
+    ...(options.creatorUid ? { creatorUid: options.creatorUid } : {}),
+    ...(options.search ? { search: options.search } : {}),
   });
-  return Array.isArray(result?.items) ? result.items : [];
+  const items = await fetchCursorWindow(
+    (cursor) => fetchJobsPageApi({ uid: currentUid(), companyId: numericId, filters, afterCursor: cursor }),
+    limit,
+  );
+  return items.map(mapJobSummary);
 }
 
-export async function fetchCompanyJobsPage(companyId: string, options: ReadModelListOptions = {}) {
-  const result = await callHttpFunction<ReadModelPage>('readModelV1', {
-    kind: 'jobs',
-    companyId,
-    ...options,
+export async function fetchCompanyJobsPage(companyId: string, options: Record<string, any> = {}) {
+  const numericId = numericCompanyId(companyId);
+  const filters = normalizeJobListFilters({
+    pageSize: options.pageSize ?? 50,
+    ...(options.status ? { status: options.status } : {}),
+    ...(options.dateField ? { dateField: options.dateField } : {}),
+    ...(options.dateFrom ? { dateFrom: options.dateFrom } : {}),
+    ...(options.dateTo ? { dateTo: options.dateTo } : {}),
   });
-  return {
-    items: Array.isArray(result?.items) ? result.items : [],
-    nextCursor: result?.nextCursor || null,
-  };
+  const page = await fetchJobsPageApi({
+    uid: currentUid(),
+    companyId: numericId,
+    filters,
+    afterCursor: options.afterCursor ?? null,
+  });
+  return { items: page.items.map(mapJobSummary), nextCursor: page.nextCursor };
 }
 
-export async function fetchCompanyDocuments(companyId: string, limitOrOptions?: number | ReadModelListOptions) {
-  const options = normalizeListOptions(limitOrOptions);
-  const result = await callHttpFunction<ReadModelPage>('readModelV1', {
-    kind: 'documents',
-    companyId,
-    ...options,
+export async function fetchCompanyDocuments(companyId: string, limitOrOptions?: number | Record<string, any>) {
+  const numericId = numericCompanyId(companyId);
+  const options = typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions ?? {};
+  const limit = positiveLimit(options.limit);
+  const filters = normalizeDocumentListFilters({
+    pageSize: Math.min(200, limit),
+    ...(options.status ? { status: options.status } : {}),
+    ...(options.documentType ? { documentType: options.documentType } : {}),
+    ...(options.createdByUid ? { createdByUid: options.createdByUid } : {}),
+    ...(options.dateFrom ? { dateFrom: options.dateFrom } : {}),
+    ...(options.dateTo ? { dateTo: options.dateTo } : {}),
+    ...(options.search ? { search: options.search } : {}),
   });
-  return Array.isArray(result?.items) ? result.items : [];
+  const items = await fetchCursorWindow(
+    (cursor) => fetchDocumentsPageApi({ uid: currentUid(), companyId: numericId, filters, afterCursor: cursor }),
+    limit,
+  );
+  return items.map(mapDocumentSummary);
 }
 
-export async function fetchCompanyDocumentsPage(companyId: string, options: ReadModelListOptions = {}) {
-  const result = await callHttpFunction<ReadModelPage>('readModelV1', {
-    kind: 'documents',
-    companyId,
-    ...options,
+export async function fetchCompanyDocumentsPage(companyId: string, options: Record<string, any> = {}) {
+  const numericId = numericCompanyId(companyId);
+  const filters = normalizeDocumentListFilters({
+    pageSize: options.pageSize ?? 50,
+    ...(options.dateFrom ? { dateFrom: options.dateFrom } : {}),
+    ...(options.dateTo ? { dateTo: options.dateTo } : {}),
   });
-  return {
-    items: Array.isArray(result?.items) ? result.items : [],
-    nextCursor: result?.nextCursor || null,
-  };
-}
-
-export async function fetchRecordById(companyId: string, recordId: string) {
-  return callHttpFunction<any | null>('readModelV1', {
-    kind: 'recordById',
-    companyId,
-    recordId,
+  const page = await fetchDocumentsPageApi({
+    uid: currentUid(),
+    companyId: numericId,
+    filters,
+    afterCursor: options.afterCursor ?? null,
   });
+  return { items: page.items.map(mapDocumentSummary), nextCursor: page.nextCursor };
 }

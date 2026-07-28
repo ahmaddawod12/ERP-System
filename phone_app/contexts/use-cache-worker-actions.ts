@@ -1,12 +1,12 @@
 import { useCallback } from 'react';
 import { CACHE_KEYS } from './mmkv-storage';
+import type { Worker } from '../types';
 
 interface WorkerActionsParams {
-  workers: Record<string, any>;
+  workers: Record<string, Worker>;
   getUserRole: () => string | null;
   getCompanyId: () => string | null;
   saveToLocalCache: (key: string, value: unknown) => void;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
 }
 
 export function useCacheWorkerActions({
@@ -14,13 +14,12 @@ export function useCacheWorkerActions({
   getUserRole,
   getCompanyId,
   saveToLocalCache,
-  preIncrementVersion,
 }: WorkerActionsParams) {
-  const updateWorkers = useCallback(async (newWorkers: any) => {
+  const updateWorkers = useCallback(async (newWorkers: Record<string, Worker> | Worker[]) => {
     saveToLocalCache(CACHE_KEYS.WORKERS, newWorkers);
   }, [saveToLocalCache]);
 
-  const addWorker = useCallback(async (wid: string, workerData: any) => {
+  const addWorker = useCallback(async (wid: string, workerData: Worker) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     if (role !== 'manager' || !companyId) {
@@ -39,10 +38,9 @@ export function useCacheWorkerActions({
         companyId,
       },
     });
-    preIncrementVersion('workersVersion', true);
-  }, [getCompanyId, getUserRole, preIncrementVersion, saveToLocalCache, workers]);
+  }, [getCompanyId, getUserRole, saveToLocalCache, workers]);
 
-  const editWorker = useCallback(async (wid: string, updates: any) => {
+  const editWorker = useCallback(async (wid: string, updates: Partial<Worker>) => {
     const role = getUserRole();
     const companyId = getCompanyId();
     if (role !== 'manager' || !companyId) {
@@ -54,7 +52,9 @@ export function useCacheWorkerActions({
       throw new Error('Worker not found in cache');
     }
 
-    const { password, ...safeUpdates } = updates || {};
+    const { password: _password, ...safeUpdates } = updates as Partial<Worker> & {
+      password?: unknown;
+    };
     saveToLocalCache(CACHE_KEYS.WORKERS, {
       ...workers,
       [wid]: {
@@ -63,14 +63,12 @@ export function useCacheWorkerActions({
         email: currentWorker.email,
       },
     });
-    preIncrementVersion('workersVersion', true);
-  }, [getCompanyId, getUserRole, preIncrementVersion, saveToLocalCache, workers]);
+  }, [getCompanyId, getUserRole, saveToLocalCache, workers]);
 
   const deleteWorker = useCallback(async (wid: string) => {
     const { [wid]: _deletedWorker, ...remainingWorkers } = workers;
     saveToLocalCache(CACHE_KEYS.WORKERS, remainingWorkers);
-    preIncrementVersion('workersVersion', true);
-  }, [preIncrementVersion, saveToLocalCache, workers]);
+  }, [saveToLocalCache, workers]);
 
   return {
     updateWorkers,

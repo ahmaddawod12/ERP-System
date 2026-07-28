@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-22",
+  "exceptions": [
+    {
+      "workspace": "phone_app",
+      "source": 1119441,
+      "advisory": "GHSA-w5hq-g745-h8pq",
+      "package": "uuid",
+      "severity": "moderate",
+      "owner": "Mobile platform owner",
+      "reviewBy": "2026-08-21",
+      "reachability": "Expo and NotifyKit reach uuid 7 only through the xcode project generator. xcode invokes uuid.v4() without a caller-provided buffer; the affected v3/v5/v6 buffer overloads are not used and are absent from the shipped JavaScript runtime path.",
+      "compensatingControls": [
+        "Native projects are generated only in trusted CI/EAS environments from reviewed repository configuration.",
+        "Expo Doctor, native release checks, and the expiring lockfile audit guard every mobile dependency change."
+      ],
+      "resolution": "Adopt the first Expo 57-compatible xcode release that depends on uuid 11.1.1 or newer."
+    },
+    {
+      "workspace": "packages/db",
+      "source": 1102341,
+      "advisory": "GHSA-67mh-4wv8-2f99",
+      "package": "esbuild",
+      "severity": "moderate",
+      "owner": "Data platform owner",
+      "reviewBy": "2026-08-21",
+      "reachability": "The affected esbuild copy is a development-only drizzle-kit loader. This repository never starts esbuild's development server and production packages omit drizzle-kit.",
+      "compensatingControls": [
+        "Database tooling runs only on trusted source in isolated developer or CI environments.",
+        "Production installs omit development dependencies and the exception expires after 30 days."
+      ],
+      "resolution": "Upgrade when drizzle-kit removes @esbuild-kit or publishes a compatible patched dependency graph."
+    }
+  ]
+}

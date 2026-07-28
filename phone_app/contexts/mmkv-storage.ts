@@ -7,6 +7,7 @@
 
 import type { DateLike, MmkvHelpers } from '../types';
 import { safeJsonParse } from '../utils/helpers';
+import { logger } from '../utils/logger';
 
 // MMKV v4.1.1 - https://github.com/mrousavy/react-native-mmkv
 import { createMMKV } from 'react-native-mmkv';
@@ -16,7 +17,7 @@ export const storage = createMMKV({
   id: 'smart-job-cache'
 });
 
-console.log('🗄 MMKV initialized successfully');
+logger.debug('MMKV initialized successfully');
 
 /** For backwards compatibility */
 export const getStorage = () => storage;
@@ -101,7 +102,7 @@ export const mmkvHelpers: MmkvHelpers = {
     try {
       return storage.getString(scopedKey(key)) || null;
     } catch (e) {
-      console.error(`MMKV getString error for ${key}:`, e);
+      logger.error(`MMKV getString error for ${key}:`, e);
       return null;
     }
   },
@@ -111,7 +112,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.set(scopedKey(key), value);
       return true;
     } catch (e) {
-      console.error(`MMKV setString error for ${key}:`, e);
+      logger.error(`MMKV setString error for ${key}:`, e);
       return false;
     }
   },
@@ -121,7 +122,7 @@ export const mmkvHelpers: MmkvHelpers = {
       const str = storage.getString(scopedKey(key));
       return safeJsonParse<T>(str);
     } catch (e) {
-      console.error(`MMKV getObject error for ${key}:`, e);
+      logger.error(`MMKV getObject error for ${key}:`, e);
       return null;
     }
   },
@@ -131,7 +132,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.set(scopedKey(key), JSON.stringify(value));
       return true;
     } catch (e) {
-      console.error(`MMKV setObject error for ${key}:`, e);
+      logger.error(`MMKV setObject error for ${key}:`, e);
       return false;
     }
   },
@@ -141,7 +142,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.remove(scopedKey(key));
       return true;
     } catch (e) {
-      console.error(`MMKV delete error for ${key}:`, e);
+      logger.error(`MMKV delete error for ${key}:`, e);
       return false;
     }
   },
@@ -151,7 +152,7 @@ export const mmkvHelpers: MmkvHelpers = {
       storage.clearAll();
       return true;
     } catch (e) {
-      console.error('MMKV clearAll error:', e);
+      logger.error('MMKV clearAll error:', e);
       return false;
     }
   },

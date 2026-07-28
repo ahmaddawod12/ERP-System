@@ -7,7 +7,7 @@
     "checkJs": false,
     "outDir": "dist",
     "rootDir": ".",
-    "strict": false,
+    "strict": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
@@ -15,7 +15,11 @@
   },
   "include": [
     "index.ts",
+    "archive-runner.ts",
+    "archive-files.ts",
     "archive-month.ts",
+    "local-platform.ts",
+    "upload-cleanup.ts",
     "tests/**/*.js"
   ],
   "exclude": ["dist"]

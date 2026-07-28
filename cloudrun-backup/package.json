@@ -1,0 +1,35 @@
+{
+  "name": "@smart-job/cloudrun-backup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Resumable Google Cloud Storage and PostgreSQL recovery backup job",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node --import @smart-job/observability/register dist/index.js",
+    "restore:verify": "node --import @smart-job/observability/register dist/restore-verifier.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include=dist/**/*.js --test-coverage-exclude=dist/tests/** --test-coverage-lines=84.57 --test-coverage-branches=81.90 --test-coverage-functions=87.50 dist/tests/*.test.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "7.19.0",
+    "@smart-job/observability": "file:../packages/observability"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "@google-cloud/storage": {
+      "fast-xml-parser": "5.7.0",
+      "uuid": "11.1.1"
+    },
+    "fast-xml-parser": "5.7.0",
+    "node-forge": "1.4.0"
+  }
+}

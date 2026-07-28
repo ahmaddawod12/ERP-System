@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
-import { View, ActivityIndicator, StyleSheet, Modal } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import CustomAlert from '../components/CustomAlert';
+import CustomAlert from '../components/feedback/CustomAlert';
+import AccessibleModal from '../components/feedback/AccessibleModal';
 import { AppText } from '../components';
 import { gradients as themeGradients } from '../theme';
 import type { AlertType, AlertButton, AlertConfig, LoadingConfig, AlertContextValue } from '../types';
@@ -89,13 +90,14 @@ export function AlertProvider({ children }: { children: ReactNode }) {
       />
       
       {/* Loading Modal - NO nested CustomAlert, just simple UI */}
-      <Modal
+      <AccessibleModal
         visible={loadingConfig.visible}
         transparent
         animationType="fade"
         statusBarTranslucent
         presentationStyle="overFullScreen"
         hardwareAccelerated
+        announcement={[loadingConfig.title, loadingConfig.message].filter(Boolean).join('. ')}
       >
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingBox}>
@@ -112,7 +114,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
             </LinearGradient>
           </View>
         </View>
-      </Modal>
+      </AccessibleModal>
     </AlertContext.Provider>
   );
 }

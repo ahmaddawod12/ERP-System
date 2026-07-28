@@ -1,25 +1,25 @@
 /**
  * useDocumentTask Hook
  * 
- * Custom hook for publishing document tasks and polling for completion.
- * Uses Pub/Sub + Cloud Run architecture for scalable PDF generation.
+ * Publishes non-tax document tasks through the Cloud API and polls for
+ * completion. Tax invoice previews remain on the dedicated tax workflow.
  * 
  * @example
  * ```javascript
  * const { publishPreview, publishGenerate, taskStatus, error, reset } = useDocumentTask({
- *   onPreviewComplete: (url) => console.log('Preview ready:', url),
- *   onGenerateComplete: (url, docId) => console.log('PDF ready:', url),
- *   onError: (error) => console.error('Failed:', error),
+ *   onPreviewComplete: () => logger.debug('Preview ready'),
+ *   onGenerateComplete: () => logger.debug('PDF ready'),
+ *   onError: (error) => logger.error('Document task failed', error),
  * });
  * 
  * // Publish a preview task
  * const taskId = await publishPreview({
- *   documentType: 'priceProposal',
- *   companyId: 'mycompany',
+ *   documentType: 10,
+ *   companyId: 17,
  *   documentData: { client, items, language, date }
  * });
  * 
- * // Or listen to an existing task (e.g., from getInvoiceApproval)
+ * // Or resume an already accepted task after a retry or restart.
  * listenToTask('existing-task-id');
  * 
  * // taskStatus will update automatically
@@ -31,25 +31,37 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { functions, httpsCallable } from '../firebase';
-import { callHttpFunction } from '../utils/httpFunctions';
+import type { DocumentTask } from '@smart-job/api-contracts';
+import { randomUUID } from 'expo-crypto';
+import { useSession } from '../contexts/SessionContext';
+import { useTenant } from '../contexts/TenantContext';
+import { ApiClientError } from '../lib/api/client';
+import { StableDocumentActionKeys } from '../modules/documents/lib/document-action-keys';
+import { buildDocumentTaskAttempt } from '../modules/documents/lib/document-task-attempt';
+import {
+  clearDocumentTaskAttempt,
+  persistDocumentTaskAttempt,
+  readDocumentTaskAttempt,
+} from '../modules/documents/lib/document-task-persistence';
+import {
+  buildDocumentGenerateRequest,
+  buildDocumentPreviewRequest,
+  normalizeDocumentCompanyId,
+  type DocumentTaskParams,
+} from '../modules/documents/lib/document-mutation-model';
+import {
+  createDocumentGenerationTask,
+  createDocumentPreviewTask,
+  fetchDocumentTask,
+} from '../modules/documents/lib/documents-api';
+import { logger } from '../utils/logger';
 import { getNextDocumentTaskPollIntervalMs } from './document-task-poll';
 
 const TASK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-type TaskStatus = 'pending' | 'queued' | 'published' | 'completed' | 'failed' | null;
+type TaskStatus = DocumentTask['status'] | null;
 type TaskType = 'preview' | 'generate' | null;
-
-interface TaskData {
-  status?: string;
-  taskType?: string;
-  previewURL?: string;
-  downloadURL?: string;
-  documentId?: string;
-  pdfSize?: number;
-  error?: string;
-  [key: string]: any;
-}
+type TaskData = DocumentTask;
 
 export interface UseDocumentTaskOptions {
   onPreviewComplete?: (url: string) => void;
@@ -60,7 +72,7 @@ export interface UseDocumentTaskOptions {
 export interface UseDocumentTaskResult {
   publishPreview: (params: DocumentTaskParams) => Promise<string>;
   publishGenerate: (params: DocumentTaskParams) => Promise<string>;
-  listenToTask: (taskId: string, type?: 'preview' | 'generate') => void;
+  listenToTask: (taskId: string, type?: 'preview' | 'generate', companyId?: string | number) => void;
   reset: () => void;
   taskId: string | null;
   taskType: TaskType;
@@ -77,15 +89,10 @@ export interface UseDocumentTaskResult {
   isPending: boolean;
 }
 
-interface DocumentTaskParams {
-  documentType: string | number;
-  companyId: string;
-  documentData?: Record<string, any>;
-  documentId?: string;
-}
-
 export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocumentTaskResult {
   const { onPreviewComplete, onGenerateComplete, onError } = options;
+  const { user } = useSession();
+  const { workspace } = useTenant();
   
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<TaskStatus>(null);
@@ -97,6 +104,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbacksRef = useRef<UseDocumentTaskOptions>({ onPreviewComplete, onGenerateComplete, onError });
+  const [actionKeys] = useState(() => new StableDocumentActionKeys(() => randomUUID()));
 
   // Update callbacks ref when they change
   useEffect(() => {
@@ -117,12 +125,12 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
   /**
    * Start listening to a task document
-   * Can be called directly if you already have a task ID (e.g., from getInvoiceApproval)
+   * Can be called directly when an accepted task ID is already available.
    * 
    * @param {string} newTaskId - Task ID to listen to
    * @param {string} [type] - Task type ('preview' or 'generate') for callbacks
    */
-  const listenToTask = useCallback((newTaskId: string, type: 'preview' | 'generate' = 'generate') => {
+  const listenToTask = useCallback((newTaskId: string, type: 'preview' | 'generate' = 'generate', companyId?: string | number) => {
     // Clean up previous listener
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -140,9 +148,8 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
     // Set up timeout
     timeoutRef.current = setTimeout(() => {
-      const errorMsg = 'Task timed out. Please try again.';
+      const errorMsg = 'Task processing is still pending. Retry the same action to resume this task.';
       setError(errorMsg);
-      setTaskStatus('failed');
       setIsLoading(false);
       if (callbacksRef.current.onError) {
         callbacksRef.current.onError(errorMsg);
@@ -153,7 +160,28 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       }
     }, TASK_TIMEOUT_MS);
 
-    // Poll task status via readModelV1 (SQL-compatible; Cloud Run writes state to SQL in SQL mode)
+    const uid = user?.uid ?? '';
+    const resolvedCompanyId = Number(companyId ?? workspace?.companyId ?? 0);
+    if (!uid || !Number.isSafeInteger(resolvedCompanyId) || resolvedCompanyId <= 0) {
+      clearTimeout(timeoutRef.current ?? undefined);
+      timeoutRef.current = null;
+      const errorMsg = 'A signed-in user and company are required to read the document task.';
+      setError(errorMsg);
+      setTaskStatus('failed');
+      setIsLoading(false);
+      callbacksRef.current.onError?.(errorMsg);
+      return;
+    }
+
+    const action = `${type}:${resolvedCompanyId}`;
+    const reconcileTerminalAttempt = () => {
+      const persisted = readDocumentTaskAttempt(uid, resolvedCompanyId, type);
+      if (persisted?.accepted?.taskId !== newTaskId) return;
+      clearDocumentTaskAttempt(uid, resolvedCompanyId, type);
+      actionKeys.complete(action, persisted.idempotencyKey);
+    };
+
+    // Poll the versioned Cloud API for an accepted preview or generation task.
     let stopped = false;
     unsubscribeRef.current = () => { stopped = true; };
     let consecutiveInFlightPolls = 0;
@@ -161,15 +189,16 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     const poll = async () => {
       if (stopped) return;
       try {
-        const data = await callHttpFunction<TaskData>('readModelV1', {
-          kind: 'documentTask',
+        const data = await fetchDocumentTask({
+          uid,
+          companyId: resolvedCompanyId,
           taskId: newTaskId,
         });
 
         if (stopped) return;
 
         if (data) {
-          setTaskStatus(data.status as TaskStatus);
+          setTaskStatus(data.status);
           setTaskData(data);
 
           if (data.status === 'completed') {
@@ -177,6 +206,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
             setIsLoading(false);
             stopped = true;
             unsubscribeRef.current = null;
+            reconcileTerminalAttempt();
 
             if (data.taskType === 'preview' || type === 'preview') {
               if (callbacksRef.current.onPreviewComplete && data.previewURL) {
@@ -184,7 +214,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
               }
             } else {
               if (callbacksRef.current.onGenerateComplete) {
-                callbacksRef.current.onGenerateComplete(data.downloadURL || null, data.documentId);
+                callbacksRef.current.onGenerateComplete(data.downloadURL || null, data.documentId ?? undefined);
               }
             }
             return;
@@ -195,6 +225,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
             setIsLoading(false);
             stopped = true;
             unsubscribeRef.current = null;
+            reconcileTerminalAttempt();
 
             if (callbacksRef.current.onError) {
               callbacksRef.current.onError(errorMsg);
@@ -202,13 +233,23 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
             return;
           }
 
-          const status = String(data.status || '').trim().toLowerCase();
-          if (status === 'pending' || status === 'queued' || status === 'processing' || status === 'published') {
+          if (data.status === 'pending' || data.status === 'queued' || data.status === 'processing') {
             consecutiveInFlightPolls += 1;
           }
         }
       } catch (err) {
-        console.error('Error polling task status:', err);
+        logger.warn('Error polling document task status:', err);
+        if (err instanceof ApiClientError && !err.retryable) {
+          clearTimeout(timeoutRef.current ?? undefined);
+          const errorMsg = err.message || 'Task status is unavailable';
+          setError(errorMsg);
+          setTaskStatus('failed');
+          setIsLoading(false);
+          stopped = true;
+          unsubscribeRef.current = null;
+          callbacksRef.current.onError?.(errorMsg);
+          return;
+        }
       }
 
       // Still in progress — schedule next poll
@@ -218,65 +259,157 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     };
 
     poll();
-  }, []);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
+
+  useEffect(() => {
+    actionKeys.reset();
+    const uid = user?.uid ?? '';
+    const companyId = Number(workspace?.companyId ?? 0);
+    if (!uid || !Number.isSafeInteger(companyId) || companyId <= 0) return;
+
+    const attempts = (['preview', 'generate'] as const)
+      .map((action) => readDocumentTaskAttempt(uid, companyId, action))
+      .filter((attempt) => attempt !== null);
+    for (const attempt of attempts) {
+      actionKeys.restore(
+        `${attempt.action}:${companyId}`,
+        attempt.fingerprint,
+        attempt.idempotencyKey,
+      );
+    }
+    const latestAccepted = attempts
+      .filter((attempt) => attempt.accepted !== null)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    if (latestAccepted?.accepted) {
+      listenToTask(latestAccepted.accepted.taskId, latestAccepted.action, companyId);
+    }
+  }, [actionKeys, listenToTask, user?.uid, workspace?.companyId]);
 
   const publishPreview = useCallback(async (params: DocumentTaskParams): Promise<string> => {
     try {
       setIsLoading(true);
       setError(null);
-      
-      // React Native Firebase functions - modular API
-      const publishPreviewTask = httpsCallable(functions, 'publishPreviewTask');
-      const result = await publishPreviewTask(params) as { data: { success?: boolean; taskId?: string; error?: string } };
-      
-      if (result.data.success && result.data.taskId) {
-        listenToTask(result.data.taskId, 'preview');
-        return result.data.taskId;
-      } else {
-        throw new Error(result.data.error || 'Failed to publish preview task');
+
+      const uid = user?.uid ?? '';
+      if (!uid) throw new Error('Authentication is required to preview documents');
+      const companyId = normalizeDocumentCompanyId(params.companyId);
+      const request = buildDocumentPreviewRequest(params);
+      const fingerprint = JSON.stringify(request);
+      const action = `preview:${companyId}`;
+      const persisted = readDocumentTaskAttempt(uid, companyId, 'preview');
+      if (persisted && persisted.fingerprint !== fingerprint) {
+        throw new Error(
+          'Another preview is awaiting reconciliation. Resume or discard it before changing the request.',
+        );
       }
+      if (persisted) {
+        actionKeys.restore(action, persisted.fingerprint, persisted.idempotencyKey);
+      }
+      const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'preview',
+        fingerprint,
+        idempotencyKey,
+        accepted: persisted?.accepted,
+      }));
+      if (persisted?.accepted) {
+        listenToTask(persisted.accepted.taskId, 'preview', companyId);
+        return persisted.accepted.taskId;
+      }
+      const accepted = await createDocumentPreviewTask({
+        uid,
+        companyId,
+        request,
+        idempotencyKey,
+      });
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'preview',
+        fingerprint,
+        idempotencyKey,
+        accepted,
+      }));
+      listenToTask(accepted.taskId, 'preview', companyId);
+      return accepted.taskId;
     } catch (err) {
-      console.error('Error publishing preview task:', err);
+      logger.error('Error publishing preview task:', err);
       const errorMsg = (err as Error).message || 'Failed to publish preview task';
       setError(errorMsg);
       setIsLoading(false);
-      
+
       if (callbacksRef.current.onError) {
         callbacksRef.current.onError(errorMsg);
       }
-      
+
       throw err;
     }
-  }, [listenToTask]);
+  }, [actionKeys, listenToTask, user?.uid]);
 
   const publishGenerate = useCallback(async (params: DocumentTaskParams): Promise<string> => {
     try {
       setIsLoading(true);
       setError(null);
-      
-      // React Native Firebase functions - modular API
-      const publishGenerateTask = httpsCallable(functions, 'publishGenerateTask');
-      const result = await publishGenerateTask(params) as { data: { success?: boolean; taskId?: string; error?: string } };
-      
-      if (result.data.success && result.data.taskId) {
-        listenToTask(result.data.taskId, 'generate');
-        return result.data.taskId;
-      } else {
-        throw new Error(result.data.error || 'Failed to publish generate task');
+
+      const uid = user?.uid ?? '';
+      if (!uid) throw new Error('Authentication is required to create documents');
+      const companyId = normalizeDocumentCompanyId(params.companyId);
+      const request = buildDocumentGenerateRequest(params);
+      const fingerprint = JSON.stringify(request);
+      const action = `generate:${companyId}`;
+      const persisted = readDocumentTaskAttempt(uid, companyId, 'generate');
+      if (persisted && persisted.fingerprint !== fingerprint) {
+        throw new Error(
+          'Another document is awaiting reconciliation. Resume or discard it before changing the request.',
+        );
       }
+      if (persisted) {
+        actionKeys.restore(action, persisted.fingerprint, persisted.idempotencyKey);
+      }
+      const idempotencyKey = actionKeys.keyFor(action, fingerprint);
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'generate',
+        fingerprint,
+        idempotencyKey,
+        accepted: persisted?.accepted,
+      }));
+      if (persisted?.accepted) {
+        listenToTask(persisted.accepted.taskId, 'generate', companyId);
+        return persisted.accepted.taskId;
+      }
+      const accepted = await createDocumentGenerationTask({
+        uid,
+        companyId,
+        request,
+        idempotencyKey,
+      });
+      persistDocumentTaskAttempt(buildDocumentTaskAttempt({
+        uid,
+        companyId,
+        action: 'generate',
+        fingerprint,
+        idempotencyKey,
+        accepted,
+      }));
+      listenToTask(accepted.taskId, 'generate', companyId);
+      return accepted.taskId;
     } catch (err) {
-      console.error('Error publishing generate task:', err);
+      logger.error('Error publishing generate task:', err);
       const errorMsg = (err as Error).message || 'Failed to publish generate task';
       setError(errorMsg);
       setIsLoading(false);
-      
+
       if (callbacksRef.current.onError) {
         callbacksRef.current.onError(errorMsg);
       }
-      
+
       throw err;
     }
-  }, [listenToTask]);
+  }, [actionKeys, listenToTask, user?.uid]);
 
   /**
    * Reset the hook state
@@ -290,13 +423,20 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    const uid = user?.uid ?? '';
+    const companyId = Number(workspace?.companyId ?? 0);
+    if (uid && Number.isSafeInteger(companyId) && companyId > 0) {
+      clearDocumentTaskAttempt(uid, companyId, 'preview');
+      clearDocumentTaskAttempt(uid, companyId, 'generate');
+    }
+    actionKeys.reset();
     setTaskId(null);
     setTaskType(null);
     setTaskStatus(null);
     setTaskData(null);
     setError(null);
     setIsLoading(false);
-  }, []);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   return {
     // Methods
@@ -317,10 +457,10 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     previewURL: taskData?.previewURL || null,
     downloadURL: taskData?.downloadURL || null,
     documentId: taskData?.documentId || null,
-    pdfSize: taskData?.pdfSize || null,
+    pdfSize: taskData?.pdfSize ?? null,
     isCompleted: taskStatus === 'completed',
     isFailed: taskStatus === 'failed',
-    isPending: taskStatus === 'pending' || taskStatus === 'queued' || taskStatus === 'published',
+    isPending: taskStatus === 'pending' || taskStatus === 'queued' || taskStatus === 'processing',
   };
 }
 

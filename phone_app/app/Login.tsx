@@ -1,2 +1,2 @@
-import Screen from '../modules/auth/Login';
+import Screen from '../modules/auth/screens/Login';
 export default Screen;

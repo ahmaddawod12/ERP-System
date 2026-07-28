@@ -1,7 +1,11 @@
+import { setDatabaseErrorCode } from './errors';
 import { eq, sql } from 'drizzle-orm';
-import { getDb } from './client';
-
-const {
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobTransaction,
+} from './client';
+import {
   appUsers,
   companies,
   companyCounters,
@@ -10,11 +14,40 @@ const {
   companySubscriptions,
   inventoryLocations,
   systemCounters,
-} = require('./schema');
+} from './schema';
 
 const COMPANY_PUBLIC_ID_COUNTER_KEY = 'company_public_id';
 
-async function allocatePublicCompanyId(tx) {
+type BusinessRegistrationData = Partial<Record<
+  | 'he_name'
+  | 'en_name'
+  | 'vat_number'
+  | 'business_type'
+  | 'city'
+  | 'address'
+  | 'business_email'
+  | 'business_phone'
+  | 'business_fax'
+  | 'accountant_name'
+  | 'accountant_email'
+  | 'accountant_phone',
+  string | null
+>>;
+
+type WorkspaceRegistrationInput = {
+  uid: string;
+  email: string;
+  name?: string | null;
+  phoneNumber?: string | null;
+  accountType: 'solo' | 'business';
+  businessData: BusinessRegistrationData;
+  tier: 'Basic' | 'Solo' | 'Team' | 'Enterprise';
+  enabledModules?: Record<string, boolean>;
+  role: 'manager' | 'worker' | 'user' | 'basic';
+  now?: Date;
+};
+
+async function allocatePublicCompanyId(tx: SmartJobTransaction): Promise<number> {
   const result = await tx.execute(sql`
     INSERT INTO system_counters (counter_key, next_value, updated_at)
     VALUES (${COMPANY_PUBLIC_ID_COUNTER_KEY}, 2, NOW())
@@ -25,7 +58,7 @@ async function allocatePublicCompanyId(tx) {
     RETURNING next_value - 1 AS allocated_value
   `);
 
-  const row = result.rows?.[0] || null;
+  const row = result.rows?.[0] as Record<string, unknown> | undefined;
   const allocatedValue = Number(row?.allocated_value);
   if (!Number.isInteger(allocatedValue) || allocatedValue < 1) {
     throw new Error('Failed to allocate a public company ID');
@@ -33,7 +66,7 @@ async function allocatePublicCompanyId(tx) {
   return allocatedValue;
 }
 
-function buildCounterRows(companyId) {
+function buildCounterRows(companyId: string): Array<typeof companyCounters.$inferInsert> {
   return [
     { companyId, counterKey: 'member_no', nextValue: 2 },
     { companyId, counterKey: 'client_no', nextValue: 1 },
@@ -47,7 +80,10 @@ function buildCounterRows(companyId) {
   ];
 }
 
-async function createWorkspaceRegistration(input, options: any = {}) {
+async function createWorkspaceRegistration(
+  input: WorkspaceRegistrationInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = input.now instanceof Date ? input.now : new Date();
 
@@ -61,7 +97,7 @@ async function createWorkspaceRegistration(input, options: any = {}) {
 
     if (existingMembership) {
       const error = new Error('User is already registered with a company');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 

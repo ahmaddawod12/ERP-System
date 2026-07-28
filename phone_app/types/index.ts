@@ -15,29 +15,48 @@ import type {
   TierValue,
   SubStatusValue,
 } from '@smart-job/contracts';
+import type {
+  ClientDeleteResult,
+  DocumentPaymentDetails,
+  DocumentPaymentMethod,
+} from '@smart-job/api-contracts';
 
 // Re-export contract types so consumers can import from one place
 export type { RoleTitle, JobStatusValue, DocTypeCode, TierValue, SubStatusValue };
 
 // ── Language ───────────────────────────────────────────────────────────────
 export type Language = 'en' | 'he' | 'ar';
+export type ThemePreference = 'system' | 'light' | 'dark';
+export type HistoricalSource = 'cache' | 'live' | 'archive' | 'mixed';
+
+export interface HistoricalQueryResult<T> {
+  items: readonly T[];
+  complete: boolean;
+  nextCursor: string | null;
+  source: HistoricalSource;
+}
 
 // ── Firestore helpers ──────────────────────────────────────────────────────
-/** A Firestore Timestamp-like object (from @react-native-firebase). */
-export interface FirestoreTimestamp {
+/** Timestamp adapter retained only while legacy cached records remain readable. */
+export interface LegacyStoredTimestamp {
   seconds: number;
   nanoseconds: number;
   toDate(): Date;
   toMillis(): number;
 }
 
-/** Fields that may arrive as either a Firestore Timestamp or an ISO string. */
-export type DateLike = FirestoreTimestamp | string | Date;
+/** New API values are ISO strings; the object form is legacy cache compatibility. */
+export type DateLike = LegacyStoredTimestamp | string | Date;
 
 /** Nullable shorthand for optional backend fields. */
 export type Maybe<T> = T | null | undefined;
 
 export interface JobFileRef {
+  attachmentId?: string;
+  kind?: 'photo' | 'signature';
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
   storagePath?: string;
   uri?: string;
 }
@@ -77,6 +96,8 @@ export interface Subscription {
 // ── Client ─────────────────────────────────────────────────────────────────
 export interface Client {
   id: string;
+  /** Opaque optimistic-concurrency token returned by the API. */
+  entityVersion?: string;
   cname: string;
   cphone?: string;
   /** @deprecated Legacy alias — read cname instead */
@@ -96,6 +117,10 @@ export interface Client {
 // ── Job ────────────────────────────────────────────────────────────────────
 export interface Job {
   id: string;
+  /** Public sequential job number. */
+  jobNo?: number;
+  /** Opaque optimistic-concurrency token returned by the API. */
+  entityVersion?: string;
   status: JobStatusValue;
   title?: string;
   description?: string;
@@ -125,9 +150,21 @@ export interface Job {
   createdAt?: DateLike;
   updatedAt?: DateLike;
   finishedAt?: DateLike;
+  acceptedAt?: DateLike;
+  acceptedBy?: string;
+  deniedAt?: DateLike;
+  pendingSync?: boolean;
   /** Solo-job extra fields */
   signingPerson?: string;
   customer?: string;
+  /** Certified / tax-document flag (read-model extension) */
+  isCert?: boolean;
+  /** Display name of signing person */
+  signingPersonName?: string;
+  /** Travel distance in km */
+  travelDistance?: number | null;
+  /** Parts consumed for this job */
+  partsUsed?: Array<{ id?: string | number; name?: string; quantity?: number | string }>;
 }
 
 export interface JobItem {
@@ -147,6 +184,9 @@ export interface InventoryPart {
   unit?: string;
   minStock?: number;
   price?: number;
+  active?: boolean;
+  lowThreshold?: number;
+  dateAdded?: string;
 }
 
 export interface InventoryData {
@@ -163,19 +203,64 @@ export interface AppDocument {
   cid?: string;
   /** Client name */
   cname?: string;
+  /** Client phone */
+  cphone?: string;
   totalAmount?: number;
   vatAmount?: number;
   netAmount?: number;
   items?: DocumentItem[];
   createdAt?: DateLike;
   updatedAt?: DateLike;
+  /** Display / PDF metadata */
+  documentId?: string;
+  documentNumber?: string | number;
+  storagePath?: string;
+  taxAuthorityConfirmationNumber?: string;
+  paymentMethod?: DocumentPaymentMethod;
+  paymentDetails?: DocumentPaymentDetails;
+  /** @deprecated Read-only compatibility for documents written before structured payment metadata. */
+  paymentInfo?: string;
+  invoiceReference?: string;
+  totalBeforeVat?: number;
+  totalWithVat?: number;
+  clientVatNumber?: string;
+  createdByName?: string;
+  createdByUid?: string;
+  notes?: string;
+  income?: DocumentItem[];
+  /** Used-by receipt flag for price proposals */
+  isUsed?: boolean;
+  /** Client id for proposals/invoices */
+  clientId?: string;
+  documentData?: {
+    items?: DocumentItem[];
+    client?: {
+      name?: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      clientVatNumber?: string;
+    };
+    totalBeforeVat?: number;
+    vatAmount?: number;
+    totalWithVat?: number;
+    paymentMethod?: DocumentPaymentMethod;
+    paymentDetails?: DocumentPaymentDetails;
+    /** @deprecated Read-only compatibility for legacy stored documents. */
+    paymentInfo?: string;
+    invoiceReference?: string;
+    notes?: string;
+  };
 }
 
 export interface DocumentItem {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
+  id?: string | number;
+  partId?: string | number | null;
+  description?: string;
+  quantity?: number | string;
+  unitPrice?: number;
+  total?: number;
+  price?: number | string;
 }
 
 // ── Worker ─────────────────────────────────────────────────────────────────
@@ -253,7 +338,9 @@ export interface AlertContextValue {
 // ── Theme ──────────────────────────────────────────────────────────────────
 export interface ThemeContextValue {
   isDarkMode: boolean;
+  themePreference: ThemePreference;
   setTheme: (isDark: boolean) => void;
+  setThemePreference: (preference: ThemePreference) => void;
   toggleTheme: () => void;
   isLoading: boolean;
 }
@@ -276,66 +363,86 @@ export interface HeaderContextValue {
 }
 
 // ── Cache context ──────────────────────────────────────────────────────────
-export interface CacheContextValue {
-  // State
+export interface CacheLifecycleValue {
   isInitialized: boolean;
   isLoading: boolean;
   profile: Maybe<UserProfile>;
-  inventory: InventoryPart[];
-  jobs: Job[];
-  workers: Record<string, Worker>;
-  companyJobs: Job[];
-  documents: AppDocument[];
-  clients: Client[];
   subscription: Maybe<Subscription>;
-  companyInventory: InventoryPart[];
-
-  // Getters
   getUid: () => Maybe<string>;
   getUserRole: () => string | null;
   getCompanyId: () => Maybe<string>;
-
-  // Initialization
-  initializeCache: (uid: string) => Promise<any>;
+  initializeCache: (
+    uid: string,
+    companyId: string,
+    role: string,
+  ) => Promise<{
+    uid: string;
+    role: string;
+    companyId: string;
+    hasBusinessInfo: boolean;
+  } | null>;
   clearCache: () => void;
+  refreshCache: (field: string) => Promise<void>;
+}
 
-  // Profile & Inventory
-  updateProfile: (data: any) => Promise<void>;
-  updateInventory: (data: any) => Promise<void>;
-
-  // Jobs
-  addJob: (data: any) => void;
-  updateJob: (jobId: string, data: any) => void;
+export interface JobsCacheValue {
+  jobs: Job[];
+  companyJobs: Job[];
+  addJob: (data: Job) => void;
+  updateJob: (jobId: string, data: Partial<Job>) => void;
   removeJob: (jobId: string) => void;
-  acceptJob: (jobId: string, updates?: any) => void;
+  acceptJob: (jobId: string, updates?: Partial<Job>) => void;
+}
 
-  // Workers
-  updateWorkers: (data: any) => Promise<void>;
-  addWorker: (wid: string, data: any) => Promise<any>;
-  editWorker: (wid: string, data: any) => Promise<void>;
+export interface DirectoryCacheValue {
+  workers: Record<string, Worker>;
+  clients: Client[];
+  updateWorkers: (
+    data: Record<string, Worker> | Worker[],
+  ) => Promise<void>;
+  addWorker: (wid: string, data: Worker) => Promise<void>;
+  editWorker: (wid: string, data: Partial<Worker>) => Promise<void>;
   deleteWorker: (wid: string) => Promise<void>;
+  fetchClients: (companyId?: string) => Promise<Client[]>;
+  addClient: (data: unknown) => Promise<Client>;
+  updateClient: (clientId: string, data: unknown) => Promise<Client>;
+  deleteClient: (clientId: string, entityVersion?: string) => Promise<ClientDeleteResult>;
+}
 
-  // Documents
-  addDocument: (data: any) => Promise<any>;
+export interface InventoryCacheValue {
+  inventory: InventoryPart[];
+  companyInventory: InventoryPart[];
+}
 
-  // Clients
-  fetchClients: (companyId?: string) => Promise<any>;
-  addClient: (data: any) => Promise<any>;
-  updateClient: (clientId: string, data: any) => Promise<void>;
-  deleteClient: (clientId: string) => Promise<void>;
-
-  // Data queries
-  getDataForMonth: (monthDate: Date, dataType: string) => Promise<any[]>;
-  getDataForDateRange: (startDate: Date, endDate: Date, dataType: string) => Promise<any[]>;
-  fetchFromArchive: (companyId: string, year: number, month: number, dataType: string) => Promise<any[]>;
+export interface DocumentHistoryCacheValue {
+  documents: AppDocument[];
+  addDocument: (data: AppDocument) => Promise<void>;
+  getDataForMonth: (
+    monthDate: Date,
+    dataType: 'finishedJobs' | 'documents',
+  ) => Promise<HistoricalQueryResult<Job | AppDocument>>;
+  getDataForDateRange: (
+    startDate: Date,
+    endDate: Date,
+    dataType: 'finishedJobs' | 'documents' | 'pendingJobs',
+  ) => Promise<HistoricalQueryResult<Job | AppDocument>>;
+  fetchFromArchive: (
+    companyId: string,
+    year: number,
+    month: number,
+    dataType: 'finishedJobs' | 'documents',
+    signal?: AbortSignal,
+  ) => Promise<HistoricalQueryResult<Job | AppDocument>>;
   isWithinCacheRange: (date: DateLike) => boolean;
   getCacheStartDate: () => Date;
-
-  // Utilities
-  refreshCache: (field: string) => Promise<void>;
-  preIncrementVersion: (field: string, isCompanyCache?: boolean) => void;
-  storage: any;
 }
+
+export type CacheContextValue =
+  & CacheLifecycleValue
+  & JobsCacheValue
+  & DirectoryCacheValue
+  & InventoryCacheValue
+  & DocumentHistoryCacheValue;
 
 // ── withGate HOC ───────────────────────────────────────────────────────────
 export type ModuleName =

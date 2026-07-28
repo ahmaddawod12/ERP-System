@@ -7,7 +7,7 @@ export const revalidate = 3600;
 const items = [
   {
     icon: ShieldCheck,
-    title: "Supabase-backed auth",
+    title: "Firebase-backed auth",
     description: "Email/password authentication with SQL-backed runtime data access and scoped company boundaries.",
   },
   {
@@ -23,7 +23,7 @@ const items = [
 ];
 
 const principles = [
-  "Supabase auth uid is the account identity.",
+  "Firebase Auth uid is the external account identity.",
   "companyId scopes business data and is allocated server-side.",
   "Protected collections are mutated by backend flows, not client writes.",
   "Canonical status and field naming reduce schema drift across surfaces.",
@@ -39,7 +39,7 @@ export default function SecurityPage() {
             Secure by data model, role boundaries, and protected write paths.
           </h1>
           <p className="mt-4 text-base leading-8 text-slate-600 dark:text-slate-300">
-            Smart-Job ERP uses Supabase Authentication, SQL-backed backend flows, and backend-only mutation boundaries so account identity, company scope, and operational writes stay explicit.
+            Smart-Job ERP uses Firebase Authentication, SQL-backed backend flows, and backend-only mutation boundaries so account identity, company scope, and operational writes stay explicit.
           </p>
         </div>
 
@@ -75,7 +75,7 @@ export default function SecurityPage() {
             <ul className="mt-6 grid gap-3 text-sm text-slate-700 dark:text-slate-200">
               <li className="quiet-list-item flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />
-                <span>Primary account identity: Supabase auth uid.</span>
+                <span>Primary account identity: Firebase Auth uid.</span>
               </li>
               <li className="quiet-list-item flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-500" />

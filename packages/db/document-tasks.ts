@@ -1,8 +1,48 @@
-import { getDb } from './client';
+import { setDatabaseErrorCode } from './errors';
+import { sql } from 'drizzle-orm';
+import { getDb, type DatabaseOptions } from './client';
 import { documentTasks } from './schema';
 import { resolveCompanyByPublicId } from './membership';
 
-function asDate(value, fallback) {
+type DocumentTaskType = 'preview' | 'generate';
+type DocumentTaskStatus = 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+
+type DocumentTaskLockInput = {
+  lockKey?: string | null;
+  taskType?: DocumentTaskType | string;
+  documentId?: string | null;
+  documentType?: number | string;
+};
+
+type CreateDocumentTaskInput = DocumentTaskLockInput & {
+  companyId: string | number;
+  taskId: string;
+  uid: string;
+  taskType: DocumentTaskType;
+  documentType: number | string;
+  status?: DocumentTaskStatus;
+  requestPayload?: Record<string, unknown>;
+  now?: string | Date;
+  expireAt?: string | Date;
+};
+
+type TaskPayloadOptions = {
+  taskType?: DocumentTaskType;
+  resultUrl?: string | null;
+  publicDocumentId?: string | null;
+  emailSent?: boolean;
+  emailMessageId?: string | null;
+  emailError?: string | null;
+  emailRecipient?: string | null;
+  pubsubMessageId?: string | null;
+  storagePath?: string | null;
+  pdfSize?: number | null;
+  staleAfterMs?: number;
+};
+
+type DocumentTaskOptions = DatabaseOptions & TaskPayloadOptions;
+
+function asDate(value: unknown, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -11,11 +51,11 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-function asTrimmedTaskId(value) {
+function asTrimmedTaskId(value: unknown): string {
   return String(value || '').trim();
 }
 
-function buildDocumentTaskLockKey(input) {
+function buildDocumentTaskLockKey(input: DocumentTaskLockInput): string {
   const explicitLockKey = String(input?.lockKey || '').trim();
   if (explicitLockKey) {
     return explicitLockKey;
@@ -34,20 +74,23 @@ function buildDocumentTaskLockKey(input) {
   return `task:${taskType}:${Number(input?.documentType || 0)}`;
 }
 
-function isActiveTaskConstraintError(error) {
-  const constraintName = String(error?.constraint || error?.constraint_name || '').trim();
-  return error?.code === '23505' && constraintName === 'document_tasks_active_company_lock_unique';
+function isActiveTaskConstraintError(error: unknown): boolean {
+  const details = error && typeof error === 'object'
+    ? error as Record<string, unknown>
+    : {};
+  const constraintName = String(details.constraint || details.constraint_name || '').trim();
+  return details.code === '23505' && constraintName === 'document_tasks_active_company_lock_unique';
 }
 
-function createActiveTaskConflictError(input) {
+function createActiveTaskConflictError(input: DocumentTaskLockInput): Error {
   const taskLabel = String(input?.taskType || 'document').trim() || 'document';
   const error = new Error(`Another ${taskLabel} task is already in progress for this document type. Please wait a few seconds and try again.`);
-  (error as any).code = 'failed-precondition';
+  setDatabaseErrorCode(error, 'failed-precondition');
   return error;
 }
 
-function buildTaskPayloadPatch(options: any = {}) {
-  const patch: Record<string, any> = {};
+function buildTaskPayloadPatch(options: TaskPayloadOptions = {}): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
   if (options.taskType === 'preview' && options.resultUrl) {
     patch.previewURL = options.resultUrl;
   }
@@ -75,7 +118,10 @@ function buildTaskPayloadPatch(options: any = {}) {
   return patch;
 }
 
-async function createDocumentTask(input, options: any = {}) {
+async function createDocumentTask(
+  input: CreateDocumentTaskInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const expireAt = asDate(input.expireAt, new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000));
@@ -85,7 +131,7 @@ async function createDocumentTask(input, options: any = {}) {
       const company = await resolveCompanyByPublicId(tx, input.companyId);
       if (!company) {
         const error = new Error('Company not found');
-        (error as any).code = 'not-found';
+        setDatabaseErrorCode(error, 'not-found');
         throw error;
       }
 
@@ -116,7 +162,7 @@ async function createDocumentTask(input, options: any = {}) {
   }
 }
 
-async function markDocumentTaskQueued(taskId, options: any = {}) {
+async function markDocumentTaskQueued(taskId: string, options: DocumentTaskOptions = {}) {
   const db = options.db || getDb(options.env);
   const payloadPatch = buildTaskPayloadPatch({
     ...options,
@@ -124,7 +170,7 @@ async function markDocumentTaskQueued(taskId, options: any = {}) {
   });
   const patchJson = JSON.stringify(payloadPatch);
 
-  await db.execute(require('drizzle-orm').sql`
+  await db.execute(sql`
     UPDATE document_tasks
     SET status = 'queued',
         request_payload = COALESCE(request_payload, '{}'::jsonb) || ${patchJson}::jsonb
@@ -132,12 +178,12 @@ async function markDocumentTaskQueued(taskId, options: any = {}) {
   `);
 }
 
-async function claimDocumentTaskForProcessing(taskId, options: any = {}) {
+async function claimDocumentTaskForProcessing(taskId: string, options: DocumentTaskOptions = {}) {
   const db = options.db || getDb(options.env);
   const staleAfterMs = Math.max(1_000, Number(options.staleAfterMs || 15 * 60 * 1000) || 15 * 60 * 1000);
 
   return db.transaction(async (tx) => {
-    const result = await tx.execute(require('drizzle-orm').sql`
+    const result = await tx.execute(sql`
       SELECT status, processing_started_at
       FROM document_tasks
       WHERE task_key = ${asTrimmedTaskId(taskId)}
@@ -145,13 +191,15 @@ async function claimDocumentTaskForProcessing(taskId, options: any = {}) {
       FOR UPDATE
     `);
 
-    const row = result.rows?.[0] || null;
+    const row = result.rows?.[0] as Record<string, unknown> | undefined;
     if (!row) {
       return { shouldProcess: false, reason: 'task_not_found' };
     }
 
     const status = String(row.status || '').trim();
-    const processingStartedAt = row.processing_started_at ? new Date(row.processing_started_at) : null;
+    const processingStartedAt = row.processing_started_at
+      ? new Date(String(row.processing_started_at))
+      : null;
     if (status === 'completed' || status === 'failed') {
       return { shouldProcess: false, reason: `already_${status}` };
     }
@@ -166,7 +214,7 @@ async function claimDocumentTaskForProcessing(taskId, options: any = {}) {
       return { shouldProcess: false, reason: `invalid_state_${status || 'unknown'}` };
     }
 
-    await tx.execute(require('drizzle-orm').sql`
+    await tx.execute(sql`
       UPDATE document_tasks
       SET status = 'processing',
           processing_started_at = NOW(),
@@ -178,20 +226,20 @@ async function claimDocumentTaskForProcessing(taskId, options: any = {}) {
   });
 }
 
-async function markDocumentTaskCompleted(taskId, options: any = {}) {
+async function markDocumentTaskCompleted(taskId: string, options: DocumentTaskOptions = {}) {
   const db = options.db || getDb(options.env);
   const payloadPatch = buildTaskPayloadPatch(options);
   const patchJson = JSON.stringify(payloadPatch);
   const previewUrl = options.taskType === 'preview' ? options.resultUrl || null : null;
   const generateUrl = options.taskType === 'generate' ? options.resultUrl || null : null;
 
-  await db.execute(require('drizzle-orm').sql`
+  await db.execute(sql`
     UPDATE document_tasks
     SET status = 'completed',
-        preview_url = ${previewUrl},
-        generate_url = ${generateUrl},
-        storage_path = ${options.storagePath || null},
-        pdf_size = ${options.pdfSize ?? null},
+        preview_url = COALESCE(preview_url, ${previewUrl}),
+        generate_url = COALESCE(generate_url, ${generateUrl}),
+        storage_path = COALESCE(storage_path, ${options.storagePath || null}),
+        pdf_size = COALESCE(pdf_size, ${options.pdfSize ?? null}),
         error = NULL,
         completed_at = NOW(),
         request_payload = COALESCE(request_payload, '{}'::jsonb) || ${patchJson}::jsonb
@@ -199,10 +247,14 @@ async function markDocumentTaskCompleted(taskId, options: any = {}) {
   `);
 }
 
-async function markDocumentTaskFailed(taskId, errorMessage, options: any = {}) {
+async function markDocumentTaskFailed(
+  taskId: string,
+  errorMessage: unknown,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
 
-  await db.execute(require('drizzle-orm').sql`
+  await db.execute(sql`
     UPDATE document_tasks
     SET status = 'failed',
         error = ${String(errorMessage || 'Task failed')},

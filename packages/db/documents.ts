@@ -1,7 +1,12 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { getDb } from './client';
-
-const {
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobQueryExecutor,
+  type SmartJobTransaction,
+} from './client';
+import {
   appUsers,
   clients,
   companyMemberships,
@@ -10,13 +15,65 @@ const {
   documents,
   jobs,
   proposalUsage,
-} = require('./schema');
-const {
+} from './schema';
+import {
   findActiveMembership,
   resolveCompanyByPublicId,
-} = require('./membership');
+} from './membership';
 
-function asDate(value, fallback) {
+type UnknownRecord = Record<string, unknown>;
+type DateInput = string | number | Date | null | undefined;
+
+type NormalizedDocumentItem = {
+  lineNo: number;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  metadata: { partId?: number };
+};
+
+type DocumentWriteInput = {
+  companyId: string | number;
+  documentId?: string | number;
+  documentType?: string | number;
+  documentNumber?: string | number;
+  generationStatus?: string;
+  createdByUserId?: string | null;
+  sourcePriceProposalId?: string | null;
+  linkedJobIds?: readonly unknown[];
+  record?: UnknownRecord;
+  createOnly?: boolean;
+  markLinkedJobsCertified?: boolean;
+  markSourcePriceProposalUsed?: boolean;
+  now?: DateInput;
+};
+
+type DeleteDocumentInput = {
+  companyId: string | number;
+  documentId: string | number;
+};
+
+type DocumentQueryOptions = DatabaseOptions<SmartJobQueryExecutor> & {
+  limit?: number;
+  pageSize?: number;
+  afterCursor?: string | null;
+  status?: string | readonly string[];
+  documentType?: string | number;
+  createdByUid?: string;
+  dateFrom?: DateInput;
+  dateTo?: DateInput;
+  dateField?: 'documentDate' | 'updatedAt' | 'createdAt';
+  documentCode?: string;
+};
+
+function asRecord(value: unknown): UnknownRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as UnknownRecord
+    : {};
+}
+
+function asDate<T extends Date | null>(value: DateInput, fallback: T): Date | T {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -25,41 +82,39 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-function coerceTrimmedString(value) {
+function coerceTrimmedString(value: unknown): string {
   if (value === null || value === undefined) return '';
   return String(value).trim();
 }
 
-function coerceOptionalString(value) {
+function coerceOptionalString(value: unknown): string | null {
   const trimmed = coerceTrimmedString(value);
   return trimmed || null;
 }
 
-function numericOrNull(value) {
+function numericOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function roundCurrency(value) {
+function roundCurrency(value: unknown): number {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
-function normalizeDocumentPayload(record: any = {}) {
-  if (record.documentData && typeof record.documentData === 'object' && !Array.isArray(record.documentData)) {
-    return { ...record.documentData };
-  }
-  return {};
+function normalizeDocumentPayload(record: UnknownRecord = {}): UnknownRecord {
+  return { ...asRecord(record.documentData) };
 }
 
-function normalizeDocumentItems(record: any = {}) {
+function normalizeDocumentItems(record: UnknownRecord = {}): NormalizedDocumentItem[] {
+  const documentData = asRecord(record.documentData);
   const rawItems = Array.isArray(record.items)
     ? record.items
-    : (Array.isArray(record.documentData?.items) ? record.documentData.items : []);
+    : (Array.isArray(documentData.items) ? documentData.items : []);
 
   return rawItems
-    .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
-    .map((item, index) => {
+    .filter((item): item is UnknownRecord => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((item: UnknownRecord, index: number) => {
       const description = coerceTrimmedString(item.description || item.name);
       const quantity = Number(item.quantity ?? 0);
       const unitPrice = Number(item.price ?? item.unitPrice ?? 0);
@@ -75,11 +130,17 @@ function normalizeDocumentItems(record: any = {}) {
     });
 }
 
-function normalizeLinkedJobIds(input: any = {}) {
+function normalizeLinkedJobIds(input: DocumentWriteInput): string[] {
+  const record = input.record ?? {};
+  const documentData = asRecord(record.documentData);
   const source = Array.isArray(input.linkedJobIds)
     ? input.linkedJobIds
-    : (Array.isArray(input.record?.jobsData) ? input.record.jobsData.map((entry) => entry?.jobId) : []);
-  const ids = [];
+    : (Array.isArray(record.jobsData)
+      ? record.jobsData.map((entry) => asRecord(entry).jobId)
+      : Array.isArray(documentData.jobsData)
+        ? documentData.jobsData.map((entry) => asRecord(entry).jobId)
+        : []);
+  const ids: string[] = [];
   for (const rawId of source) {
     const normalized = coerceTrimmedString(rawId);
     if (normalized && !ids.includes(normalized)) {
@@ -89,30 +150,24 @@ function normalizeLinkedJobIds(input: any = {}) {
   return ids;
 }
 
-function extractDocumentTotals(record: any = {}) {
+function extractDocumentTotals(record: UnknownRecord = {}) {
+  const documentData = asRecord(record.documentData);
+  const totals = asRecord(documentData.totals);
   return {
-    totalBeforeVat: roundCurrency(record.totalBeforeVat ?? record.documentData?.totals?.totalBeforeVat ?? 0),
-    vatAmount: roundCurrency(record.vatAmount ?? record.documentData?.totals?.vatAmount ?? 0),
-    totalWithVat: roundCurrency(record.totalWithVat ?? record.documentData?.totals?.totalWithVat ?? 0),
+    totalBeforeVat: roundCurrency(record.totalBeforeVat ?? totals.totalBeforeVat ?? 0),
+    vatAmount: roundCurrency(record.vatAmount ?? totals.vatAmount ?? 0),
+    totalWithVat: roundCurrency(record.totalWithVat ?? totals.totalWithVat ?? 0),
   };
 }
 
-function normalizeStringList(value) {
+function normalizeStringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
-      .map((entry) => String(entry || '').trim())
+      .map((entry: unknown) => String(entry || '').trim())
       .filter(Boolean);
   }
   const single = coerceTrimmedString(value);
   return single ? [single] : [];
-}
-
-function resolveDocumentDateColumnName(dateField: string): string {
-  switch (String(dateField || '').trim()) {
-    case 'documentDate': return 'd.document_date';
-    case 'updatedAt': return 'd.updated_at';
-    default: return 'd.created_at';
-  }
 }
 
 // ─── Cursor helpers ───────────────────────────────────────────────────────────
@@ -134,7 +189,7 @@ function decodeDocumentsCursor(cursor: string): { dateValue: Date; id: string } 
   }
 }
 
-function resolveDocumentDateColumnSql(dateField) {
+function resolveDocumentDateColumnSql(dateField: unknown) {
   switch (String(dateField || '').trim()) {
     case 'documentDate':
       return sql`d.document_date`;
@@ -146,24 +201,31 @@ function resolveDocumentDateColumnSql(dateField) {
   }
 }
 
-function buildDocumentRowValues(input, companyInternalId, createdByMembershipId, clientInternalId, sourcePriceProposalInternalId, now) {
+function buildDocumentRowValues(
+  input: DocumentWriteInput,
+  companyInternalId: string,
+  createdByMembershipId: string | null,
+  clientInternalId: string | null,
+  sourcePriceProposalInternalId: string | null,
+  now: Date,
+): typeof documents.$inferInsert {
   const record = input.record || {};
   const payload = normalizeDocumentPayload(record);
   const totals = extractDocumentTotals(record);
-  const client = payload.client && typeof payload.client === 'object' ? payload.client : {};
-  const company = payload.company && typeof payload.company === 'object' ? payload.company : {};
+  const client = asRecord(payload.client);
+  const company = asRecord(payload.company);
   const documentType = Number(input.documentType ?? record.documentType ?? record.type);
   const documentNumber = Number(input.documentNumber ?? record.documentNumber);
 
   if (!Number.isInteger(documentType)) {
     const error = new Error('Document type is required');
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
 
   if (!Number.isInteger(documentNumber) || documentNumber < 1) {
     const error = new Error('Document number is required');
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
 
@@ -172,14 +234,16 @@ function buildDocumentRowValues(input, companyInternalId, createdByMembershipId,
     documentType,
     documentNumber,
     documentCode: coerceTrimmedString(input.documentId || record.documentId),
-    generationStatus: coerceTrimmedString(input.generationStatus) || (record.storagePath ? 'completed' : 'pending'),
+    generationStatus: (
+      coerceTrimmedString(input.generationStatus) || (record.storagePath ? 'completed' : 'pending')
+    ) as typeof documents.$inferInsert['generationStatus'],
     taxAuthorityStatus: record.taxAuthorityResponseData ? 'approved' : 'none',
     clientId: clientInternalId,
     createdByMembershipId: createdByMembershipId || null,
     sourcePriceProposalId: sourcePriceProposalInternalId || null,
     storagePath: coerceOptionalString(record.storagePath),
     language: coerceOptionalString(record.language || payload.language),
-    documentDate: asDate(record.date || payload.date, null),
+    documentDate: asDate((record.date || payload.date) as DateInput, null),
     notes: coerceOptionalString(record.notes || payload.notes),
     totalBeforeVat: String(totals.totalBeforeVat),
     vatAmount: String(totals.vatAmount),
@@ -199,8 +263,15 @@ function buildDocumentRowValues(input, companyInternalId, createdByMembershipId,
   };
 }
 
-async function resolveClientInternalId(tx, companyInternalId, record: any = {}) {
-  const clientNo = numericOrNull(record.cid ?? record.clientId ?? record.documentData?.client?.clientId ?? record.documentData?.client?.id);
+async function resolveClientInternalId(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  record: UnknownRecord = {},
+) {
+  const documentClient = asRecord(asRecord(record.documentData).client);
+  const clientNo = numericOrNull(
+    record.cid ?? record.clientId ?? documentClient.clientId ?? documentClient.id,
+  );
   if (!clientNo) return null;
   const rows = await tx
     .select({ id: clients.id })
@@ -213,7 +284,11 @@ async function resolveClientInternalId(tx, companyInternalId, record: any = {}) 
   return rows[0]?.id || null;
 }
 
-async function resolveSourcePriceProposalInternalId(tx, companyInternalId, sourcePriceProposalId) {
+async function resolveSourcePriceProposalInternalId(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  sourcePriceProposalId: unknown,
+) {
   const documentCode = coerceTrimmedString(sourcePriceProposalId);
   if (!documentCode) return null;
   const rows = await tx
@@ -227,10 +302,14 @@ async function resolveSourcePriceProposalInternalId(tx, companyInternalId, sourc
   return rows[0]?.id || null;
 }
 
-async function fetchInternalJobIds(tx, companyInternalId, linkedJobIds) {
+async function fetchInternalJobIds(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  linkedJobIds: string[],
+): Promise<string[]> {
   const numericJobNos = linkedJobIds
     .map((jobId) => numericOrNull(jobId))
-    .filter((jobNo) => Number.isInteger(jobNo));
+    .filter((jobNo): jobNo is number => jobNo !== null && Number.isInteger(jobNo));
   if (numericJobNos.length === 0) {
     return [];
   }
@@ -243,10 +322,16 @@ async function fetchInternalJobIds(tx, companyInternalId, linkedJobIds) {
       inArray(jobs.jobNo, numericJobNos),
     ));
   const byJobNo = new Map(rows.map((row) => [Number(row.jobNo), row.id]));
-  return numericJobNos.map((jobNo) => byJobNo.get(jobNo)).filter(Boolean);
+  return numericJobNos
+    .map((jobNo) => byJobNo.get(jobNo))
+    .filter((id): id is string => Boolean(id));
 }
 
-async function replaceDocumentItems(tx, documentInternalId, normalizedItems) {
+async function replaceDocumentItems(
+  tx: SmartJobTransaction,
+  documentInternalId: string,
+  normalizedItems: NormalizedDocumentItem[],
+) {
   await tx.delete(documentItems).where(eq(documentItems.documentId, documentInternalId));
   if (normalizedItems.length === 0) {
     return;
@@ -263,7 +348,11 @@ async function replaceDocumentItems(tx, documentInternalId, normalizedItems) {
   })));
 }
 
-async function replaceDocumentJobLinks(tx, documentInternalId, internalJobIds) {
+async function replaceDocumentJobLinks(
+  tx: SmartJobTransaction,
+  documentInternalId: string,
+  internalJobIds: string[],
+) {
   await tx.delete(documentJobLinks).where(eq(documentJobLinks.documentId, documentInternalId));
   if (internalJobIds.length === 0) {
     return;
@@ -274,7 +363,10 @@ async function replaceDocumentJobLinks(tx, documentInternalId, internalJobIds) {
   })));
 }
 
-async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
+async function listCompanyDocumentsDetailed(
+  companyId: string | number,
+  options: DocumentQueryOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) {
@@ -291,9 +383,8 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   const requestedDateFrom = options.dateFrom ? asDate(options.dateFrom, null) : null;
   const requestedDateTo = options.dateTo ? asDate(options.dateTo, null) : null;
   const dateColumn = resolveDocumentDateColumnSql(options.dateField);
-  const dateColumnName = resolveDocumentDateColumnName(options.dateField);
   const cursorFilter = afterCursor
-    ? sql` AND (${sql.raw(dateColumnName)}, d.id) < (${afterCursor.dateValue}, ${afterCursor.id})`
+    ? sql` AND (${dateColumn}, d.id) < (${afterCursor.dateValue}, ${afterCursor.id})`
     : sql``;
 
   // Optional filter by a specific document code (used by getDocumentRecordById for targeted lookups).
@@ -303,8 +394,24 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   const documentTypeFilter = Number.isInteger(requestedDocumentType)
     ? sql` AND d.document_type = ${requestedDocumentType}`
     : sql``;
-  const createdByUidFilter = requestedCreatedByUid
-    ? sql` AND cm.user_id = ${requestedCreatedByUid}`
+  let creatorMembershipIds: string[] = [];
+  if (requestedCreatedByUid) {
+    const creatorRows = await db.execute(sql`
+      SELECT id
+      FROM company_memberships
+      WHERE company_id = ${company.id}
+        AND user_id = ${requestedCreatedByUid}
+        AND status = 'active'
+    `);
+    creatorMembershipIds = (creatorRows.rows || [])
+      .map((value) => String((value as UnknownRecord).id || ''))
+      .filter(Boolean);
+    if (creatorMembershipIds.length === 0) {
+      return { items: [], nextCursor: null };
+    }
+  }
+  const createdByMembershipFilter = creatorMembershipIds.length > 0
+    ? sql` AND d.created_by_membership_id IN (${sql.join(creatorMembershipIds.map((id) => sql`${id}`), sql`, `)})`
     : sql``;
   const dateFromFilter = requestedDateFrom
     ? sql` AND ${dateColumn} >= ${requestedDateFrom}`
@@ -353,45 +460,50 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       AND NOT (d.document_type = 305 AND d.tax_authority_status <> 'approved')
       ${documentCodeFilter}
       ${documentTypeFilter}
-      ${createdByUidFilter}
+      ${createdByMembershipFilter}
       ${dateFromFilter}
       ${dateToFilter}
       ${statusFilter}
       ${cursorFilter}
     ORDER BY ${dateColumn} DESC, d.id DESC
-    LIMIT ${sql.raw(String(effectiveLimit + 1))}
+    LIMIT ${effectiveLimit + 1}
   `);
 
-  const allRows = rows.rows || [];
+  const allRows = (rows.rows || []) as UnknownRecord[];
   const hasMore = allRows.length > effectiveLimit;
   const documentRows = hasMore ? allRows.slice(0, effectiveLimit) : allRows;
   if (documentRows.length === 0) {
     return { items: [], nextCursor: null };
   }
 
-  const documentIds = documentRows.map((row) => row.id);
+  const documentIds = documentRows.map((row) => String(row.id));
   const [itemRows, jobLinkRows] = await Promise.all([
     db.execute(sql`
       SELECT document_id, line_no, description, quantity, unit_price, metadata
       FROM document_items
       WHERE document_id = ANY(${documentIds})
       ORDER BY line_no ASC
-    `).then((result) => result.rows || []),
+    `).then((result) => (result.rows || []) as UnknownRecord[]),
     db.execute(sql`
       SELECT l.document_id, j.job_no
       FROM document_job_links l
       INNER JOIN jobs j ON j.id = l.job_id
       WHERE l.document_id = ANY(${documentIds})
       ORDER BY j.job_no ASC
-    `).then((result) => result.rows || []),
+    `).then((result) => (result.rows || []) as UnknownRecord[]),
   ]);
 
-  const itemsByDocumentId = new Map();
+  const itemsByDocumentId = new Map<string, Array<{
+    description: unknown;
+    quantity: number;
+    price: number;
+    partId: number | null;
+  }>>();
   for (const row of itemRows) {
     const key = String(row.document_id);
     if (!itemsByDocumentId.has(key)) itemsByDocumentId.set(key, []);
-    const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
-    itemsByDocumentId.get(key).push({
+    const metadata = asRecord(row.metadata);
+    itemsByDocumentId.get(key)?.push({
       description: row.description,
       quantity: Number(row.quantity || 0),
       price: Number(row.unit_price || 0),
@@ -399,25 +511,25 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
     });
   }
 
-  const jobsByDocumentId = new Map();
+  const jobsByDocumentId = new Map<string, Array<{ jobId: string }>>();
   for (const row of jobLinkRows) {
     const key = String(row.document_id);
     if (!jobsByDocumentId.has(key)) jobsByDocumentId.set(key, []);
-    jobsByDocumentId.get(key).push({ jobId: String(row.job_no) });
+    jobsByDocumentId.get(key)?.push({ jobId: String(row.job_no) });
   }
 
   const mappedRows = documentRows.map((row) => {
-    const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
-    const payloadClient = payload.client && typeof payload.client === 'object' ? payload.client : {};
+    const payload = asRecord(row.payload);
+    const payloadClient = asRecord(payload.client);
     const items = itemsByDocumentId.get(String(row.id)) || [];
     const jobsData = jobsByDocumentId.get(String(row.id)) || payload.jobsData || [];
     const confirmationNumber = row.confirmation_number || payload.taxAuthorityConfirmationNumber || undefined;
     return {
-      id: row.document_code || String(row.document_number),
+      id: String(row.document_code || row.document_number),
       type: Number(row.document_type),
       documentType: Number(row.document_type),
-      documentNumber: row.document_number,
-      documentId: row.document_code || String(row.document_number),
+      documentNumber: Number(row.document_number),
+      documentId: String(row.document_code || row.document_number),
       cname: row.client_name_snapshot || payloadClient.name || undefined,
       cphone: row.client_phone_snapshot || payloadClient.phone || undefined,
       clientCity: row.client_city_snapshot || payloadClient.city || undefined,
@@ -426,36 +538,42 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || ''),
       storagePath: row.storage_path || undefined,
       notes: row.notes || payload.notes || undefined,
-      confirmationNumber,
-      taxAuthorityConfirmationNumber: confirmationNumber,
+      confirmationNumber: confirmationNumber ? String(confirmationNumber) : undefined,
+      taxAuthorityConfirmationNumber: confirmationNumber ? String(confirmationNumber) : undefined,
       items,
       totalBeforeVat: roundCurrency(row.total_before_vat),
       vatAmount: roundCurrency(row.vat_amount),
       totalWithVat: roundCurrency(row.total_with_vat),
       documentData: payload,
-      paymentMethod: payload.paymentMethod || undefined,
+      paymentMethod: coerceOptionalString(payload.paymentMethod) || undefined,
       paymentInfo: payload.paymentInfo || undefined,
-      createdByUid: row.created_by_uid || undefined,
-      createdByName: row.created_by_name || undefined,
-      language: row.language || payload.language || undefined,
+      createdByUid: coerceOptionalString(row.created_by_uid) || undefined,
+      createdByName: coerceOptionalString(row.created_by_name) || undefined,
+      language: coerceOptionalString(row.language || payload.language) || undefined,
       date: row.document_date ? (row.document_date instanceof Date ? row.document_date.toISOString().slice(0, 10) : String(row.document_date)) : (payload.date || undefined),
       jobsData,
-      priceProposalId: row.source_price_proposal_code || payload.priceProposalId || undefined,
-      status: row.generation_status || undefined,
+      priceProposalId: coerceOptionalString(row.source_price_proposal_code || payload.priceProposalId) || undefined,
+      status: coerceOptionalString(row.generation_status) || undefined,
       taxAuthorityResponseData: row.tax_authority_response || null,
       isUsed: Boolean(row.used_by_document_code),
-      usedByDocumentId: row.used_by_document_code || undefined,
-      invoiceReference: payload.invoiceReference || undefined,
+      usedByDocumentId: coerceOptionalString(row.used_by_document_code) || undefined,
+      invoiceReference: coerceOptionalString(payload.invoiceReference) || undefined,
     };
   });
 
-  const lastRow = documentRows[documentRows.length - 1];
+  const lastRow = documentRows[documentRows.length - 1] as UnknownRecord;
   // Choose the cursor date value from the selected column that matches the sort key.
   const cursorDateValue: Date | string = (() => {
     switch (String(options.dateField || '').trim()) {
-      case 'documentDate': return lastRow.document_date ?? lastRow.created_at;
-      case 'updatedAt': return lastRow.updated_at ?? lastRow.created_at;
-      default: return lastRow.created_at;
+      case 'documentDate': return lastRow.document_date instanceof Date
+        ? lastRow.document_date
+        : String(lastRow.document_date ?? lastRow.created_at ?? '');
+      case 'updatedAt': return lastRow.updated_at instanceof Date
+        ? lastRow.updated_at
+        : String(lastRow.updated_at ?? lastRow.created_at ?? '');
+      default: return lastRow.created_at instanceof Date
+        ? lastRow.created_at
+        : String(lastRow.created_at ?? '');
     }
   })();
   const nextCursor = hasMore
@@ -465,7 +583,11 @@ async function listCompanyDocumentsDetailed(companyId, options: any = {}) {
   return { items: mappedRows, nextCursor };
 }
 
-async function getDocumentRecordById(companyId, documentId, options: any = {}) {
+async function getDocumentRecordById(
+  companyId: string | number,
+  documentId: string | number,
+  options: DocumentQueryOptions = {},
+) {
   const documentCode = String(documentId || '').trim();
   if (!documentCode) return null;
   // Use the documentCode filter so the query fetches exactly 1 row instead of up to 10 000.
@@ -477,7 +599,10 @@ async function getDocumentRecordById(companyId, documentId, options: any = {}) {
   return results.items[0] || null;
 }
 
-async function createOrUpdateDocumentRecord(input, options: any = {}) {
+async function createOrUpdateDocumentRecord(
+  input: DocumentWriteInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -485,14 +610,14 @@ async function createOrUpdateDocumentRecord(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const documentCode = coerceTrimmedString(input.documentId || input.record?.documentId);
     if (!documentCode) {
       const error = new Error('Document ID is required');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
@@ -507,12 +632,14 @@ async function createOrUpdateDocumentRecord(input, options: any = {}) {
     const existing = existingRows[0] || null;
     if (input.createOnly && existing) {
       const error = new Error('Document already exists');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
     const record = input.record || {};
-    const sourcePriceProposalId = input.sourcePriceProposalId || record.priceProposalId || record.documentData?.priceProposalId;
+    const sourcePriceProposalId = input.sourcePriceProposalId
+      || record.priceProposalId
+      || asRecord(record.documentData).priceProposalId;
     // Run three independent lookups in parallel.
     const [createdByMembership, clientInternalId, sourcePriceProposalInternalId] = await Promise.all([
       input.createdByUserId ? findActiveMembership(tx, input.createdByUserId, company.id) : Promise.resolve(null),
@@ -527,9 +654,13 @@ async function createOrUpdateDocumentRecord(input, options: any = {}) {
     } else {
       const inserted = await tx.insert(documents).values({
         ...rowValues,
-        createdAt: asDate(record.createdAt, now),
+        createdAt: asDate(record.createdAt as DateInput, now),
       }).returning({ id: documents.id });
-      documentInternalId = inserted[0].id;
+      const insertedDocument = inserted[0];
+      if (!insertedDocument) {
+        throw new Error('Document insert did not return a record');
+      }
+      documentInternalId = insertedDocument.id;
     }
 
     const normalizedItems = normalizeDocumentItems(record);
@@ -570,27 +701,30 @@ async function createOrUpdateDocumentRecord(input, options: any = {}) {
   });
 }
 
-async function deleteDocumentRecord(input, options: any = {}) {
+async function deleteDocumentRecord(
+  input: DeleteDocumentInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
 
   return db.transaction(async (tx) => {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const documentRecord = await getDocumentRecordById(input.companyId, input.documentId, { db: tx });
     if (!documentRecord) {
       const error = new Error('Document not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     if (Number(documentRecord.documentType) === 305 && documentRecord.taxAuthorityResponseData) {
       const error = new Error('Cannot delete a Tax Authority approved invoice');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 

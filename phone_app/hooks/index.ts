@@ -4,15 +4,15 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { auth, onAuthStateChanged } from '../firebase';
-import type { SupabaseAuthUser } from '../firebase';
+import { auth, onAuthStateChanged } from '../lib/auth/transport';
+import type { FirebaseAuthUser } from '../lib/auth/transport';
 
 /**
  * Hook for managing authentication state
  * @returns {Object} { user, loading, error, uid, userRole }
  */
 export interface UseAuthResult {
-  user: SupabaseAuthUser | null;
+  user: FirebaseAuthUser | null;
   loading: boolean;
   error: Error | null;
   uid: string | null;
@@ -21,7 +21,7 @@ export interface UseAuthResult {
 }
 
 export const useAuth = (): UseAuthResult => {
-  const [user, setUser] = useState<SupabaseAuthUser | null>(null);
+  const [user, setUser] = useState<FirebaseAuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error] = useState<Error | null>(null);
 

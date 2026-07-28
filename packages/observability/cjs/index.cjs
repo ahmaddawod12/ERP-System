@@ -1,0 +1,88 @@
+'use strict';
+
+const {
+  context,
+  propagation,
+  trace,
+} = require('@opentelemetry/api');
+
+const ALLOWED_ATTRIBUTE_KEYS = new Set([
+  'app.operation',
+  'app.result',
+  'cloud.pubsub.delivery_attempt',
+  'cloud.pubsub.schema_version',
+  'cloud.pubsub.topic',
+  'db.operation.name',
+  'error.type',
+  'http.request.method',
+  'http.response.status_code',
+  'rpc.method',
+  'server.address',
+  'service.name',
+  'url.scheme',
+]);
+
+function safeTraceAttributes(candidate) {
+  const attributes = {};
+  for (const [key, value] of Object.entries(candidate)) {
+    if (!ALLOWED_ATTRIBUTE_KEYS.has(key)) continue;
+    if (
+      typeof value === 'string'
+      || typeof value === 'number'
+      || typeof value === 'boolean'
+    ) {
+      attributes[key] = value;
+    }
+  }
+  return attributes;
+}
+
+function injectTraceContext(carrier = {}, activeContext = context.active()) {
+  propagation.inject(activeContext, carrier);
+  return carrier;
+}
+
+function extractTraceContext(carrier, parent = context.active()) {
+  return propagation.extract(parent, carrier);
+}
+
+function withExtractedTraceContext(carrier, run) {
+  return context.with(extractTraceContext(carrier), run);
+}
+
+async function withTaskSpan(name, attributes, run) {
+  const tracer = trace.getTracer('@smart-job/observability');
+  return tracer.startActiveSpan(
+    name,
+    { attributes: safeTraceAttributes(attributes) },
+    async (span) => {
+      try {
+        return await run(span);
+      } catch (error) {
+        span.recordException(error instanceof Error ? error : new Error('Task failed'));
+        throw error;
+      } finally {
+        span.end();
+      }
+    },
+  );
+}
+
+function cloudLoggingTraceFields(projectId = process.env.GOOGLE_CLOUD_PROJECT?.trim()) {
+  const spanContext = trace.getActiveSpan()?.spanContext();
+  if (!projectId || !spanContext?.traceId) return {};
+  return {
+    'logging.googleapis.com/trace': `projects/${projectId}/traces/${spanContext.traceId}`,
+    'logging.googleapis.com/spanId': spanContext.spanId,
+    'logging.googleapis.com/trace_sampled': Boolean(spanContext.traceFlags & 0x01),
+  };
+}
+
+module.exports = {
+  cloudLoggingTraceFields,
+  extractTraceContext,
+  injectTraceContext,
+  safeTraceAttributes,
+  withExtractedTraceContext,
+  withTaskSpan,
+};

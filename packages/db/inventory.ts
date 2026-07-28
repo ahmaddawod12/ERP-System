@@ -1,20 +1,83 @@
+import { setDatabaseErrorCode } from './errors';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { getDb } from './client';
-
-const {
+import {
+  getDb,
+  type DatabaseOptions,
+  type SmartJobTransaction,
+} from './client';
+import {
   companyMemberships,
   inventoryBalances,
   inventoryLocations,
-  inventoryMovements,
   inventoryParts,
-} = require('./schema');
-const {
+} from './schema';
+import {
   allocateCompanyCounter,
   findActiveMembership,
   resolveCompanyByPublicId,
-} = require('./membership');
+} from './membership';
 
-function asDate(value, fallback) {
+type UnknownRecord = Record<string, unknown>;
+type DateInput = string | number | Date | null | undefined;
+type InventoryPartSqlRow = {
+  id: string;
+  part_no: number;
+  name: string;
+  active: boolean;
+  low_threshold: unknown;
+  created_at: unknown;
+  updated_at: unknown;
+  archived_at: unknown;
+  quantity_on_hand: unknown;
+  location_id: string | null;
+};
+
+type InventoryMutationInput = {
+  companyId: string | number;
+  partId?: unknown;
+  partName?: unknown;
+  quantity?: unknown;
+  lowThreshold?: unknown;
+  active?: boolean;
+  targetUid?: string;
+  createdByUserId?: string;
+  now?: DateInput;
+};
+
+type ReplacementPart = {
+  id?: unknown;
+  name?: unknown;
+  quantity?: unknown;
+  lowThreshold?: unknown;
+  active?: boolean;
+};
+
+type ReplaceInventoryInput = {
+  companyId: string | number;
+  targetUid: string;
+  parts?: readonly ReplacementPart[];
+  now?: DateInput;
+};
+
+type PickPart = { id?: unknown; name?: unknown; quantity?: unknown };
+type PickInventoryInput = {
+  companyId: string | number;
+  targetUid: string;
+  createdByUserId: string;
+  partsToPick?: readonly PickPart[];
+  now?: DateInput;
+};
+
+type InventoryUsage = { id?: unknown; quantity?: unknown };
+type DeductInventoryInput = {
+  companyId: string | number;
+  targetUid?: string;
+  jobId?: string | null;
+  partsUsed?: readonly InventoryUsage[];
+  now?: DateInput;
+};
+
+function asDate(value: DateInput, fallback: Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -23,42 +86,62 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-function requireNumericId(value, fieldName) {
+function mapInventoryPartSqlRow(value: unknown): InventoryPartSqlRow | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as UnknownRecord;
+  return {
+    id: String(row.id),
+    part_no: Number(row.part_no),
+    name: String(row.name || ''),
+    active: row.active === true,
+    low_threshold: row.low_threshold,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    archived_at: row.archived_at,
+    quantity_on_hand: row.quantity_on_hand,
+    location_id: row.location_id ? String(row.location_id) : null,
+  };
+}
+
+function requireNumericId(value: unknown, fieldName: string): number {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric < 0) {
     const error = new Error(`${fieldName} is required`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   return numeric;
 }
 
-function requireFiniteNonNegative(value, fieldName) {
+function requireFiniteNonNegative(value: unknown, fieldName: string): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
     const error = new Error(`${fieldName} must be a non-negative finite number`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   return numeric;
 }
 
-function normalizePartName(value, fieldName = 'partName') {
+function normalizePartName(value: unknown, fieldName = 'partName'): string {
   const normalized = typeof value === 'string' ? value.trim() : '';
   if (!normalized) {
     const error = new Error(`${fieldName} is required`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   if (normalized.length > 120) {
     const error = new Error(`${fieldName} exceeds 120 characters`);
-    (error as any).code = 'invalid-argument';
+    setDatabaseErrorCode(error, 'invalid-argument');
     throw error;
   }
   return normalized;
 }
 
-async function getCompanyInventoryLocation(tx, companyInternalId) {
+async function getCompanyInventoryLocation(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+) {
   const rows = await tx
     .select({ id: inventoryLocations.id })
     .from(inventoryLocations)
@@ -71,7 +154,11 @@ async function getCompanyInventoryLocation(tx, companyInternalId) {
   return rows[0] || null;
 }
 
-async function getMemberInventoryLocation(tx, companyInternalId, targetUid) {
+async function getMemberInventoryLocation(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  targetUid: string,
+) {
   const membershipRows = await tx
     .select({
       id: companyMemberships.id,
@@ -87,7 +174,7 @@ async function getMemberInventoryLocation(tx, companyInternalId, targetUid) {
   const membership = membershipRows[0] || null;
   if (!membership) {
     const error = new Error('Target user membership not found');
-    (error as any).code = 'not-found';
+    setDatabaseErrorCode(error, 'not-found');
     throw error;
   }
 
@@ -103,7 +190,7 @@ async function getMemberInventoryLocation(tx, companyInternalId, targetUid) {
   const location = locationRows[0] || null;
   if (!location) {
     const error = new Error('Member inventory location not found');
-    (error as any).code = 'failed-precondition';
+    setDatabaseErrorCode(error, 'failed-precondition');
     throw error;
   }
 
@@ -114,11 +201,17 @@ async function getMemberInventoryLocation(tx, companyInternalId, targetUid) {
   };
 }
 
-async function lockCompanyInventoryPartAllocation(tx, companyInternalId) {
+async function lockCompanyInventoryPartAllocation(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`inventory_part_no:${companyInternalId}`}))`);
 }
 
-async function allocateInventoryPartNo(tx, companyInternalId) {
+async function allocateInventoryPartNo(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+): Promise<number> {
   await lockCompanyInventoryPartAllocation(tx, companyInternalId);
   try {
     return await allocateCompanyCounter(tx, companyInternalId, 'part_no');
@@ -132,7 +225,11 @@ async function allocateInventoryPartNo(tx, companyInternalId) {
   }
 }
 
-async function getInventoryPartByNo(tx, companyInternalId, partNo) {
+async function getInventoryPartByNo(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  partNo: unknown,
+) {
   const normalizedPartNo = requireNumericId(partNo, 'partId');
   const rows = await tx
     .select({
@@ -154,7 +251,11 @@ async function getInventoryPartByNo(tx, companyInternalId, partNo) {
   return rows[0] || null;
 }
 
-async function getCompanyInventoryPart(tx, companyInternalId, partNo) {
+async function getCompanyInventoryPart(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  partNo: unknown,
+): Promise<InventoryPartSqlRow | null> {
   const normalizedPartNo = requireNumericId(partNo, 'partId');
   const rows = await tx.execute(sql`
     SELECT
@@ -180,10 +281,15 @@ async function getCompanyInventoryPart(tx, companyInternalId, partNo) {
       AND p.part_no = ${normalizedPartNo}
     LIMIT 1
   `);
-  return rows.rows?.[0] || null;
+  return mapInventoryPartSqlRow(rows.rows?.[0]);
 }
 
-async function getInventoryPartAtLocation(tx, companyInternalId, locationId, partNo) {
+async function getInventoryPartAtLocation(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  locationId: string,
+  partNo: unknown,
+): Promise<InventoryPartSqlRow | null> {
   const normalizedPartNo = requireNumericId(partNo, 'partId');
   const rows = await tx.execute(sql`
     SELECT
@@ -205,10 +311,16 @@ async function getInventoryPartAtLocation(tx, companyInternalId, locationId, par
       AND p.part_no = ${normalizedPartNo}
     LIMIT 1
   `);
-  return rows.rows?.[0] || null;
+  return mapInventoryPartSqlRow(rows.rows?.[0]);
 }
 
-async function upsertLocationBalance(tx, locationId, partId, quantity, now) {
+async function upsertLocationBalance(
+  tx: SmartJobTransaction,
+  locationId: string,
+  partId: string,
+  quantity: number,
+  now: Date,
+) {
   await tx.execute(sql`
     INSERT INTO inventory_balances (location_id, part_id, quantity_on_hand, updated_at)
     VALUES (${locationId}, ${partId}, ${String(quantity)}, ${now})
@@ -219,35 +331,10 @@ async function upsertLocationBalance(tx, locationId, partId, quantity, now) {
   `);
 }
 
-async function incrementLocationBalance(tx, locationId, partId, quantity, now) {
-  await tx.execute(sql`
-    INSERT INTO inventory_balances (location_id, part_id, quantity_on_hand, updated_at)
-    VALUES (${locationId}, ${partId}, ${String(quantity)}, ${now})
-    ON CONFLICT (location_id, part_id)
-    DO UPDATE SET
-      quantity_on_hand = inventory_balances.quantity_on_hand + EXCLUDED.quantity_on_hand,
-      updated_at = EXCLUDED.updated_at
-  `);
-}
-
-async function createInventoryMovement(tx, input) {
-  await tx.insert(inventoryMovements).values({
-    companyId: input.companyId,
-    partId: input.partId,
-    quantity: String(input.quantity),
-    fromLocationId: input.fromLocationId || null,
-    toLocationId: input.toLocationId || null,
-    movementType: input.movementType,
-    jobId: input.jobId || null,
-    documentId: input.documentId || null,
-    createdByMembershipId: input.createdByMembershipId || null,
-    idempotencyKey: input.idempotencyKey || null,
-    note: input.note || null,
-    createdAt: input.createdAt,
-  });
-}
-
-async function addCompanyInventoryPart(input, options: any = {}) {
+async function addCompanyInventoryPart(
+  input: InventoryMutationInput & { createdByUserId: string },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -255,13 +342,13 @@ async function addCompanyInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
     const location = await getCompanyInventoryLocation(tx, company.id);
     if (!location) {
       const error = new Error('Company inventory location not found');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
@@ -284,6 +371,10 @@ async function addCompanyInventoryPart(input, options: any = {}) {
       partNo: inventoryParts.partNo,
     });
 
+    if (!part) {
+      throw new Error('Inventory part insert did not return a record');
+    }
+
     await tx.insert(inventoryBalances).values({
       locationId: location.id,
       partId: part.id,
@@ -298,7 +389,10 @@ async function addCompanyInventoryPart(input, options: any = {}) {
   });
 }
 
-async function updateCompanyInventoryPart(input, options: any = {}) {
+async function updateCompanyInventoryPart(
+  input: InventoryMutationInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -306,18 +400,18 @@ async function updateCompanyInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const part = await getCompanyInventoryPart(tx, company.id, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
-    const partUpdate: Record<string, any> = { updatedAt: now };
+    const partUpdate: Partial<typeof inventoryParts.$inferInsert> = { updatedAt: now };
     if (input.partName !== undefined) partUpdate.name = normalizePartName(input.partName);
     if (input.lowThreshold !== undefined) partUpdate.lowThreshold = String(requireFiniteNonNegative(input.lowThreshold, 'lowThreshold'));
     if (input.active !== undefined) partUpdate.active = !!input.active;
@@ -337,7 +431,10 @@ async function updateCompanyInventoryPart(input, options: any = {}) {
   });
 }
 
-async function toggleCompanyInventoryPart(input, options: any = {}) {
+async function toggleCompanyInventoryPart(
+  input: InventoryMutationInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -345,14 +442,14 @@ async function toggleCompanyInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const part = await getCompanyInventoryPart(tx, company.id, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -365,7 +462,10 @@ async function toggleCompanyInventoryPart(input, options: any = {}) {
   });
 }
 
-async function removeCompanyInventoryPart(input, options: any = {}) {
+async function removeCompanyInventoryPart(
+  input: InventoryMutationInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -373,14 +473,14 @@ async function removeCompanyInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const part = await getCompanyInventoryPart(tx, company.id, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -400,7 +500,10 @@ async function removeCompanyInventoryPart(input, options: any = {}) {
   });
 }
 
-async function addUserInventoryPart(input, options: any = {}) {
+async function addUserInventoryPart(
+  input: InventoryMutationInput & { targetUid: string },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -408,7 +511,7 @@ async function addUserInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -431,6 +534,10 @@ async function addUserInventoryPart(input, options: any = {}) {
       partNo: inventoryParts.partNo,
     });
 
+    if (!part) {
+      throw new Error('Inventory part insert did not return a record');
+    }
+
     await upsertLocationBalance(tx, memberLocation.locationId, part.id, quantity, now);
 
     return {
@@ -440,7 +547,10 @@ async function addUserInventoryPart(input, options: any = {}) {
   });
 }
 
-async function updateUserInventoryPart(input, options: any = {}) {
+async function updateUserInventoryPart(
+  input: InventoryMutationInput & { targetUid: string },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -448,7 +558,7 @@ async function updateUserInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -456,11 +566,11 @@ async function updateUserInventoryPart(input, options: any = {}) {
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
-    const partUpdate: Record<string, any> = { updatedAt: now };
+    const partUpdate: Partial<typeof inventoryParts.$inferInsert> = { updatedAt: now };
     if (input.partName !== undefined) partUpdate.name = normalizePartName(input.partName);
     if (input.lowThreshold !== undefined) partUpdate.lowThreshold = String(requireFiniteNonNegative(input.lowThreshold, 'lowThreshold'));
     if (input.active !== undefined) partUpdate.active = !!input.active;
@@ -474,7 +584,10 @@ async function updateUserInventoryPart(input, options: any = {}) {
   });
 }
 
-async function toggleUserInventoryPart(input, options: any = {}) {
+async function toggleUserInventoryPart(
+  input: InventoryMutationInput & { targetUid: string },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -482,7 +595,7 @@ async function toggleUserInventoryPart(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -490,7 +603,7 @@ async function toggleUserInventoryPart(input, options: any = {}) {
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
     if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -503,22 +616,26 @@ async function toggleUserInventoryPart(input, options: any = {}) {
   });
 }
 
-async function removeUserInventoryPart(input, options: any = {}) {
+async function removeUserInventoryPart(
+  input: InventoryMutationInput & { targetUid: string },
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
+  const now = asDate(input.now, new Date());
 
   return db.transaction(async (tx) => {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const memberLocation = await getMemberInventoryLocation(tx, company.id, input.targetUid);
     const part = await getInventoryPartAtLocation(tx, company.id, memberLocation.locationId, input.partId);
-    if (!part) {
+    if (!part || part.archived_at) {
       const error = new Error('Inventory part not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -527,11 +644,20 @@ async function removeUserInventoryPart(input, options: any = {}) {
       eq(inventoryBalances.partId, part.id),
     ));
 
+    await tx.update(inventoryParts).set({
+      archivedAt: now,
+      updatedAt: now,
+      active: false,
+    }).where(eq(inventoryParts.id, part.id));
+
     return { removed: Number(part.part_no) };
   });
 }
 
-async function replaceUserInventoryParts(input, options: any = {}) {
+async function replaceUserInventoryParts(
+  input: ReplaceInventoryInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -539,7 +665,7 @@ async function replaceUserInventoryParts(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -563,7 +689,7 @@ async function replaceUserInventoryParts(input, options: any = {}) {
     for (const rawPart of desiredParts) {
       if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) {
         const error = new Error('parts must contain objects only');
-        (error as any).code = 'invalid-argument';
+        setDatabaseErrorCode(error, 'invalid-argument');
         throw error;
       }
       normalizedEntries.push({
@@ -579,7 +705,8 @@ async function replaceUserInventoryParts(input, options: any = {}) {
 
     // Batch-fetch all parts that already exist — one query instead of N.
     const knownIds = [...new Set(normalizedEntries.map((e) => e.incomingId).filter((id) => id !== null))] as number[];
-    const existingByPartNo = new Map<number, any>();
+    type ExistingPart = Pick<typeof inventoryParts.$inferSelect, 'id' | 'partNo' | 'archivedAt'>;
+    const existingByPartNo = new Map<number, ExistingPart>();
     if (knownIds.length > 0) {
       const existingRows = await tx
         .select({
@@ -597,9 +724,11 @@ async function replaceUserInventoryParts(input, options: any = {}) {
       }
     }
 
-    const seenPartIds = new Set();
+    const seenPartIds = new Set<string>();
     for (const { incomingId, quantity, lowThreshold, partName, active } of normalizedEntries) {
-      let part: any = incomingId !== null ? (existingByPartNo.get(incomingId) ?? null) : null;
+      let part: { id: string; partNo: number; archivedAt?: Date | null } | null = incomingId !== null
+        ? (existingByPartNo.get(incomingId) ?? null)
+        : null;
       if (part && part.archivedAt) {
         part = null;
       }
@@ -619,9 +748,13 @@ async function replaceUserInventoryParts(input, options: any = {}) {
           id: inventoryParts.id,
           partNo: inventoryParts.partNo,
         });
+        const insertedPart = inserted[0];
+        if (!insertedPart) {
+          throw new Error('Inventory part insert did not return a record');
+        }
         part = {
-          id: inserted[0].id,
-          partNo: inserted[0].partNo,
+          id: insertedPart.id,
+          partNo: insertedPart.partNo,
         };
       } else {
         await tx.update(inventoryParts).set({
@@ -637,11 +770,12 @@ async function replaceUserInventoryParts(input, options: any = {}) {
       await upsertLocationBalance(tx, memberLocation.locationId, part.id, quantity, now);
     }
 
-    for (const row of currentRows.rows || []) {
+    for (const value of currentRows.rows || []) {
+      const row = value as UnknownRecord;
       if (!seenPartIds.has(String(row.id))) {
         await tx.delete(inventoryBalances).where(and(
           eq(inventoryBalances.locationId, memberLocation.locationId),
-          eq(inventoryBalances.partId, row.id),
+          eq(inventoryBalances.partId, String(row.id)),
         ));
       }
     }
@@ -650,7 +784,7 @@ async function replaceUserInventoryParts(input, options: any = {}) {
   });
 }
 
-async function pickCompanyParts(input, options: any = {}) {
+async function pickCompanyParts(input: PickInventoryInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -658,7 +792,7 @@ async function pickCompanyParts(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -667,25 +801,25 @@ async function pickCompanyParts(input, options: any = {}) {
     const actorMembership = await findActiveMembership(tx, input.createdByUserId, company.id);
     if (!companyLocation) {
       const error = new Error('Company inventory location not found');
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
     const picks = Array.isArray(input.partsToPick) ? input.partsToPick : [];
     if (picks.length === 0) {
       const error = new Error('partsToPick array is required');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
-    const normalizedPicks = picks.map((pick) => ({
-      id: requireNumericId(pick?.id, 'partsToPick[].id'),
-      name: typeof pick?.name === 'string' ? pick.name.trim() : '',
+    const normalizedPicks = picks.map((pick: PickPart) => ({
+      id: requireNumericId(pick.id, 'partsToPick[].id'),
+      name: typeof pick.name === 'string' ? pick.name.trim() : '',
       quantity: (() => {
-        const numeric = Number(pick?.quantity);
+        const numeric = Number(pick.quantity);
         if (!Number.isFinite(numeric) || numeric <= 0) {
           const error = new Error('picked quantity must be a positive finite number');
-          (error as any).code = 'invalid-argument';
+          setDatabaseErrorCode(error, 'invalid-argument');
           throw error;
         }
         return numeric;
@@ -707,18 +841,19 @@ async function pickCompanyParts(input, options: any = {}) {
         AND p.part_no = ANY(${requestedPartNos})
         AND p.archived_at IS NULL
     `);
-    const availableByPartNo = new Map();
-    for (const row of availableRows.rows || []) {
+    const availableByPartNo = new Map<number, UnknownRecord>();
+    for (const value of availableRows.rows || []) {
+      const row = value as UnknownRecord;
       availableByPartNo.set(Number(row.part_no), row);
     }
 
-    const insufficientParts = [];
+    const insufficientParts: Array<{ name: string; requested: number; available: number }> = [];
     for (const pick of normalizedPicks) {
       const available = availableByPartNo.get(pick.id);
       const availableQuantity = Number(available?.quantity_on_hand || 0);
       if (!available || availableQuantity < pick.quantity) {
         insufficientParts.push({
-          name: available?.name || pick.name || String(pick.id),
+          name: String(available?.name || pick.name || pick.id),
           requested: pick.quantity,
           available: availableQuantity,
         });
@@ -726,46 +861,47 @@ async function pickCompanyParts(input, options: any = {}) {
     }
     if (insufficientParts.length > 0) {
       const error = new Error(`Insufficient stock for parts: ${insufficientParts.map((part) => `${part.name} (need ${part.requested}, have ${part.available})`).join(', ')}`);
-      (error as any).code = 'failed-precondition';
+      setDatabaseErrorCode(error, 'failed-precondition');
       throw error;
     }
 
-    for (const pick of normalizedPicks) {
+    const pickPayload = normalizedPicks.map((pick) => {
       const available = availableByPartNo.get(pick.id);
-      const remaining = Number(available.quantity_on_hand || 0) - pick.quantity;
-      await tx.update(inventoryBalances).set({
-        quantityOnHand: String(remaining),
-        updatedAt: now,
-      }).where(and(
-        eq(inventoryBalances.locationId, companyLocation.id),
-        eq(inventoryBalances.partId, available.id),
-      ));
-
-      await incrementLocationBalance(tx, memberLocation.locationId, available.id, pick.quantity, now);
-      await createInventoryMovement(tx, {
-        companyId: company.id,
-        partId: available.id,
+      return {
+        part_id: String(available?.id || ''),
+        part_no: pick.id,
         quantity: pick.quantity,
-        fromLocationId: companyLocation.id,
-        toLocationId: memberLocation.locationId,
-        movementType: 'pick',
-        createdByMembershipId: actorMembership?.id || null,
-        createdAt: now,
-        note: `Picked part #${pick.id}`,
-      });
-    }
+      };
+    });
+    await tx.execute(sql`
+      SELECT *
+      FROM apply_inventory_pick_batch(
+        ${company.id},
+        ${companyLocation.id},
+        ${memberLocation.locationId},
+        ${actorMembership?.id || null},
+        ${JSON.stringify(pickPayload)}::jsonb,
+        ${now}
+      )
+    `);
 
     return { picked: normalizedPicks.length };
   });
 }
 
-async function deductUserInventoryPartsInTransaction(tx, companyInternalId, input, now) {
-  const partsUsed: Array<{ id: any; quantity: any }> = Array.isArray(input.partsUsed) ? input.partsUsed : [];
-  if (!String(input.targetUid || '').trim() || partsUsed.length === 0) {
+async function deductUserInventoryPartsInTransaction(
+  tx: SmartJobTransaction,
+  companyInternalId: string,
+  input: Omit<DeductInventoryInput, 'companyId'>,
+  now: Date,
+) {
+  const partsUsed: readonly InventoryUsage[] = Array.isArray(input.partsUsed) ? input.partsUsed : [];
+  const targetUid = String(input.targetUid || '').trim();
+  if (!targetUid || partsUsed.length === 0) {
     return { deducted: 0 };
   }
 
-  const memberLocation = await getMemberInventoryLocation(tx, companyInternalId, input.targetUid).catch(() => null);
+  const memberLocation = await getMemberInventoryLocation(tx, companyInternalId, targetUid).catch(() => null);
   if (!memberLocation) {
     return { deducted: 0 };
   }
@@ -793,45 +929,56 @@ async function deductUserInventoryPartsInTransaction(tx, companyInternalId, inpu
       AND p.part_no = ANY(${requestedPartNos})
       AND p.archived_at IS NULL
   `);
-  const availableByPartNo = new Map<number, any>();
-  for (const row of availableRows.rows || []) {
+  const availableByPartNo = new Map<number, UnknownRecord>();
+  for (const value of availableRows.rows || []) {
+    const row = value as UnknownRecord;
     availableByPartNo.set(Number(row.part_no), row);
   }
 
-  let deducted = 0;
-  for (const { partNo, qty } of normalizedEntries) {
-    const available = availableByPartNo.get(partNo);
-    if (!available) continue;
+  const consumptionPayload = normalizedEntries
+    .map(({ partNo, qty }) => {
+      const available = availableByPartNo.get(partNo);
+      return available
+        ? {
+          part_id: String(available.id),
+          part_no: partNo,
+          quantity: qty,
+        }
+        : null;
+    })
+    .filter((entry): entry is { part_id: string; part_no: number; quantity: number } => entry !== null);
 
-    const availableQty = Number(available.quantity_on_hand || 0);
-    if (availableQty < qty) {
-      const error = new Error(`Insufficient stock for part #${partNo}`);
-      (error as any).code = 'failed-precondition';
-      throw error;
-    }
-    const newQty = availableQty - qty;
-    await tx
-      .update(inventoryBalances)
-      .set({ quantityOnHand: String(newQty), updatedAt: now })
-      .where(and(
-        eq(inventoryBalances.locationId, memberLocation.locationId),
-        eq(inventoryBalances.partId, available.id),
-      ));
-    deducted++;
+  if (consumptionPayload.length === 0) {
+    return { deducted: 0 };
   }
 
-  return { deducted };
+  const result = await tx.execute(sql`
+    SELECT *
+    FROM apply_job_inventory_consumption_batch(
+      ${companyInternalId},
+      ${memberLocation.membershipId},
+      ${input.jobId || null},
+      ${memberLocation.membershipId},
+      ${JSON.stringify(consumptionPayload)}::jsonb,
+      ${now}
+    )
+  `);
+
+  return { deducted: Number(result.rows?.length || 0) };
 }
 
 /**
  * Deduct consumed parts from a member's inventory balance (used when a solo/user finishes a job).
  * Silently skips parts not found at the member's location — matches the graceful Firestore behaviour.
  */
-async function deductUserInventoryParts(input, options: any = {}) {
+async function deductUserInventoryParts(
+  input: DeductInventoryInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
-  const partsUsed: Array<{ id: any; quantity: any }> = Array.isArray(input.partsUsed) ? input.partsUsed : [];
+  const partsUsed: readonly InventoryUsage[] = Array.isArray(input.partsUsed) ? input.partsUsed : [];
   if (!String(input.targetUid || '').trim() || partsUsed.length === 0) {
     return { deducted: 0 };
   }

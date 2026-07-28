@@ -1,0 +1,70 @@
+name: Nightly and Release Matrices
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-matrices-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  website_full_browser_matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            website/package-lock.json
+            packages/contracts/package-lock.json
+            packages/api-contracts/package-lock.json
+      - run: npm --prefix packages/contracts ci
+      - run: npm --prefix packages/contracts run build
+      - run: npm --prefix packages/api-contracts ci
+      - run: npm --prefix packages/api-contracts run build
+      - run: npm --prefix website ci
+      - name: Install all release browsers
+        run: npm --prefix website exec -- playwright install --with-deps chromium firefox webkit
+      - name: Run desktop and mobile release profiles
+        env:
+          PLAYWRIGHT_FULL_MATRIX: "true"
+        run: npm --prefix website run test:e2e
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: full-playwright-report
+          path: |
+            website/playwright-report
+            website/test-results
+          if-no-files-found: ignore
+
+  mobile_reconciliation_matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    environment: mobile-release-e2e
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run free Maestro CLI reconciliation flow
+        uses: ./.github/actions/run-maestro-android
+        with:
+          flow-path: phone_app/.maestro-release
+          backend-api-base-url: ${{ vars.MOBILE_E2E_API_BASE_URL }}
+          google-services-json-base64: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+          test-email: ${{ secrets.MAESTRO_TEST_EMAIL }}
+          test-password: ${{ secrets.MAESTRO_TEST_PASSWORD }}
+          test-workspace: ${{ vars.MAESTRO_TEST_WORKSPACE }}
+          test-job-title: ${{ vars.MAESTRO_TEST_JOB_TITLE }}
+          release-job-id: ${{ vars.MAESTRO_RELEASE_JOB_ID }}
+          release-job-title: ${{ vars.MAESTRO_RELEASE_JOB_TITLE }}
+          second-user-email: ${{ secrets.MAESTRO_SECOND_USER_EMAIL }}
+          second-user-password: ${{ secrets.MAESTRO_SECOND_USER_PASSWORD }}
+          second-user-workspace: ${{ vars.MAESTRO_SECOND_USER_WORKSPACE }}

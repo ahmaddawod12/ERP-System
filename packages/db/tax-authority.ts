@@ -1,14 +1,54 @@
+import { setDatabaseErrorCode } from './errors';
 import { sql } from 'drizzle-orm';
-import { getDb } from './client';
+import { getDb, type DatabaseOptions } from './client';
 import { resolveCompanyByPublicId } from './membership';
-
-const {
+import {
   taxAuthorityTokens,
   taxOauthCallbacks,
   taxOauthSessions,
-} = require('./schema');
+} from './schema';
 
-function asDate(value, fallback) {
+type DateInput = string | number | Date | null | undefined;
+
+type CreateOauthSessionInput = {
+  companyId: string | number;
+  uid: string;
+  authId: string;
+  state: string;
+  stateNonce: string;
+  now?: DateInput;
+  expiresAt?: DateInput;
+};
+
+type ConsumeOauthSessionInput = {
+  authId: string;
+  state: string;
+  codeHash: string;
+  now?: DateInput;
+};
+
+type FinalizeOauthCallbackInput = {
+  callbackId: string;
+  tokenExchangeSuccess: boolean;
+  tokenExchangeError?: string | null;
+  now?: DateInput;
+};
+
+type TaxTokenInput = {
+  companyId: string | number;
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  accessTokenExpiresAt?: DateInput;
+  refreshTokenExpiresAt?: DateInput;
+  authorizedAt?: DateInput;
+  now?: DateInput;
+};
+
+type RefreshTaxTokenInput = TaxTokenInput & {
+  observedAccessTokenExpiresAt?: number;
+};
+
+function asDate<T extends Date | null>(value: DateInput, fallback: T): Date | T {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -17,20 +57,35 @@ function asDate(value, fallback) {
   return fallback;
 }
 
-function toIsoString(value) {
+function toIsoString(value: unknown): string {
   if (!value) return '';
   if (typeof value === 'string') return value;
   if (value instanceof Date) return value.toISOString();
-  if (typeof value.toISOString === 'function') return value.toISOString();
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'toISOString' in value
+    && typeof value.toISOString === 'function'
+  ) return String(value.toISOString());
   return String(value);
 }
 
-function toMillis(value) {
+function toMillis(value: DateInput): number {
   const parsed = asDate(value, null);
   return parsed ? parsed.getTime() : 0;
 }
 
-function mapTokenRow(row) {
+type TaxTokenRow = Pick<
+  typeof taxAuthorityTokens.$inferSelect,
+  | 'accessTokenEncrypted'
+  | 'refreshTokenEncrypted'
+  | 'accessTokenExpiresAt'
+  | 'refreshTokenExpiresAt'
+  | 'authorizedAt'
+  | 'updatedAt'
+>;
+
+function mapTokenRow(row: TaxTokenRow | null) {
   if (!row) return null;
   return {
     accessToken: row.accessTokenEncrypted || '',
@@ -42,7 +97,10 @@ function mapTokenRow(row) {
   };
 }
 
-async function createTaxOauthSession(input, options: any = {}) {
+async function createTaxOauthSession(
+  input: CreateOauthSessionInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const expiresAt = asDate(input.expiresAt, new Date(now.getTime() + 10 * 60 * 1000));
@@ -51,14 +109,14 @@ async function createTaxOauthSession(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
     const authId = String(input.authId || '').trim();
     if (!authId) {
       const error = new Error('Authorization session ID is required');
-      (error as any).code = 'invalid-argument';
+      setDatabaseErrorCode(error, 'invalid-argument');
       throw error;
     }
 
@@ -82,7 +140,7 @@ async function createTaxOauthSession(input, options: any = {}) {
   });
 }
 
-async function getLatestTaxOauthCallback(authId, options: any = {}) {
+async function getLatestTaxOauthCallback(authId: string, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const result = await db.execute(sql`
     SELECT
@@ -96,10 +154,10 @@ async function getLatestTaxOauthCallback(authId, options: any = {}) {
     ORDER BY c.created_at DESC
     LIMIT 1
   `);
-  const row = result.rows?.[0] || null;
+  const row = result.rows?.[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
-    id: row.id,
+    id: String(row.id || ''),
     used: row.used === true,
     tokenExchangeSuccess: row.token_exchange_success === true,
     tokenExchangeError: row.token_exchange_error || null,
@@ -107,7 +165,10 @@ async function getLatestTaxOauthCallback(authId, options: any = {}) {
   };
 }
 
-async function consumeTaxOauthSession(input, options: any = {}) {
+async function consumeTaxOauthSession(
+  input: ConsumeOauthSessionInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -126,25 +187,28 @@ async function consumeTaxOauthSession(input, options: any = {}) {
       LIMIT 1
       FOR UPDATE
     `);
-    const session = result.rows?.[0] || null;
+    const session = result.rows?.[0] as Record<string, unknown> | undefined;
     if (!session) {
       return null;
     }
     if (String(session.state || '') !== String(input.state || '')) {
       const error = new Error('Authorization state mismatch');
-      (error as any).code = 'permission-denied';
+      setDatabaseErrorCode(error, 'permission-denied');
       throw error;
     }
     if (String(session.status || '') !== 'pending') {
       const error = new Error('Authorization session already used');
-      (error as any).code = 'already-exists';
+      setDatabaseErrorCode(error, 'already-exists');
       throw error;
     }
 
-    const expiresAt = asDate(session.expires_at, null);
+    const expiresAt = asDate(
+      session.expires_at as DateInput,
+      null,
+    );
     if (expiresAt && expiresAt.getTime() < now.getTime()) {
       const error = new Error('Authorization session expired');
-      (error as any).code = 'deadline-exceeded';
+      setDatabaseErrorCode(error, 'deadline-exceeded');
       throw error;
     }
 
@@ -171,7 +235,10 @@ async function consumeTaxOauthSession(input, options: any = {}) {
   });
 }
 
-async function finalizeTaxOauthCallback(input, options: any = {}) {
+async function finalizeTaxOauthCallback(
+  input: FinalizeOauthCallbackInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   await db.update(taxOauthCallbacks).set({
@@ -182,7 +249,10 @@ async function finalizeTaxOauthCallback(input, options: any = {}) {
   }).where(sql`${taxOauthCallbacks.id} = ${String(input.callbackId || '').trim()}`);
 }
 
-async function getTaxAuthorityTokens(companyId, options: any = {}) {
+async function getTaxAuthorityTokens(
+  companyId: string | number,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const company = await resolveCompanyByPublicId(db, companyId);
   if (!company) {
@@ -199,7 +269,7 @@ async function getTaxAuthorityTokens(companyId, options: any = {}) {
   return mapTokenRow(rows[0] || null);
 }
 
-async function upsertTaxAuthorityTokens(input, options: any = {}) {
+async function upsertTaxAuthorityTokens(input: TaxTokenInput, options: DatabaseOptions = {}) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
 
@@ -207,7 +277,7 @@ async function upsertTaxAuthorityTokens(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -235,7 +305,10 @@ async function upsertTaxAuthorityTokens(input, options: any = {}) {
   });
 }
 
-async function finalizeTaxAuthorityTokenRefresh(input, options: any = {}) {
+async function finalizeTaxAuthorityTokenRefresh(
+  input: RefreshTaxTokenInput,
+  options: DatabaseOptions = {},
+) {
   const db = options.db || getDb(options.env);
   const now = asDate(input.now, new Date());
   const observedExpiresAt = Number(input.observedAccessTokenExpiresAt || 0);
@@ -244,7 +317,7 @@ async function finalizeTaxAuthorityTokenRefresh(input, options: any = {}) {
     const company = await resolveCompanyByPublicId(tx, input.companyId);
     if (!company) {
       const error = new Error('Company not found');
-      (error as any).code = 'not-found';
+      setDatabaseErrorCode(error, 'not-found');
       throw error;
     }
 
@@ -261,18 +334,18 @@ async function finalizeTaxAuthorityTokenRefresh(input, options: any = {}) {
       LIMIT 1
       FOR UPDATE
     `);
-    const current = currentResult.rows?.[0] || null;
-    const currentExpiresAt = toMillis(current?.access_token_expires_at);
+    const current = currentResult.rows?.[0] as Record<string, unknown> | undefined;
+    const currentExpiresAt = toMillis(current?.access_token_expires_at as DateInput);
 
     if (current && currentExpiresAt > observedExpiresAt && Date.now() + (5 * 60 * 1000) < currentExpiresAt) {
       return {
         ...mapTokenRow({
-          accessTokenEncrypted: current.access_token_encrypted,
-          refreshTokenEncrypted: current.refresh_token_encrypted,
-          accessTokenExpiresAt: current.access_token_expires_at,
-          refreshTokenExpiresAt: current.refresh_token_expires_at,
-          authorizedAt: current.authorized_at,
-          updatedAt: current.updated_at,
+          accessTokenEncrypted: String(current.access_token_encrypted || '') || null,
+          refreshTokenEncrypted: String(current.refresh_token_encrypted || '') || null,
+          accessTokenExpiresAt: asDate(current.access_token_expires_at as DateInput, null),
+          refreshTokenExpiresAt: asDate(current.refresh_token_expires_at as DateInput, null),
+          authorizedAt: asDate(current.authorized_at as DateInput, null),
+          updatedAt: asDate(current.updated_at as DateInput, now),
         }),
         skipped: true,
       };
@@ -290,7 +363,7 @@ async function finalizeTaxAuthorityTokenRefresh(input, options: any = {}) {
       target: taxAuthorityTokens.companyId,
       set: {
         accessTokenEncrypted: input.accessToken || null,
-        refreshTokenEncrypted: input.refreshToken || current?.refresh_token_encrypted || null,
+        refreshTokenEncrypted: input.refreshToken || String(current?.refresh_token_encrypted || '') || null,
         accessTokenExpiresAt: asDate(input.accessTokenExpiresAt, null),
         refreshTokenExpiresAt: asDate(input.refreshTokenExpiresAt, null),
         authorizedAt: asDate(input.authorizedAt, now),

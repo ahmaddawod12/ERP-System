@@ -24,10 +24,10 @@ export const docs: DocEntry[] = [
     title: "Getting Started",
     summary: "Create an account, complete onboarding, and use the protected app routes.",
     body: [
-      "Sign in with Supabase auth and complete onboarding on the website.",
+      "Sign in with Firebase Authentication and complete onboarding on the website.",
       "Managers create business workspaces; workers/basic members join via invite flow.",
-      "The website calls backend proxies (/api/callable and /api/read-model), not direct protected writes.",
-      "Core runtime data is SQL-first through supabase/functions gateways.",
+      "The website uses an opaque Postgres-backed session and a server-only BFF; browsers never call Cloud Run directly.",
+      "Core runtime data is SQL-first through the Cloud Run API.",
     ],
   },
   {
@@ -35,7 +35,7 @@ export const docs: DocEntry[] = [
     title: "Runtime Boundaries",
     summary: "Understand where reads/writes execute and which layer owns each responsibility.",
     body: [
-      "Supabase Edge gateways are the backend trust boundary in this repository.",
+      "The Cloud Run API is the backend trust boundary in this repository.",
       "Primary company-scoped entities (jobs, clients, documents, inventory, memberships) are SQL-owned.",
       "Firestore remains for compatibility and operational paths only.",
       "Cloud Run PDF and Archiver services handle asynchronous document generation and archive lifecycle.",
@@ -45,7 +45,7 @@ export const docs: DocEntry[] = [
         title: "Ownership Map",
         columns: ["Area", "Primary Layer", "Notes"],
         rows: [
-          ["Identity", "Supabase Auth", "uid is canonical identity"],
+          ["Identity", "Firebase Auth", "provider uid maps to an internal UUID"],
           ["Tenant scope", "SQL companies + memberships", "companyId normalized to internal UUID server-side"],
           ["Jobs/Clients/Documents/Inventory", "PostgreSQL", "Accessed via gateway handlers and read-model"],
           ["Files", "Cloud Storage", "Persist storagePath, issue signed URLs on demand"],
@@ -85,7 +85,7 @@ export const docs: DocEntry[] = [
       "publishPreviewTask and publishGenerateTask enqueue SQL-backed document_tasks entries.",
       "Task URLs are split by type: preview_url for preview tasks and generate_url for generate tasks.",
       "Generated artifacts persist canonical storagePath references; signed URLs are issued per request.",
-      "Tax invoice approval uses getInvoiceApproval in me-west1 and idempotency protection.",
+      "Tax invoice submission is fail-closed pending certification; the legacy reservation handler cannot create documents or PDFs.",
     ],
     tables: [
       {
@@ -124,9 +124,9 @@ export const docs: DocEntry[] = [
         columns: ["Invariant", "Rule", "Enforcement"],
         rows: [
           ["Identity", "uid + companyId are canonical", "Auth and company access checks in handlers"],
-          ["Counter allocation", "SQL counters only", "shared-edge-helpers + DB constraints"],
-          ["Job statuses", "pending/waiting/finished/denied", "Enum + handler validation"],
-          ["File references", "storagePath persisted, signed URLs ephemeral", "handler and Cloud Run logic"],
+          ["Counter allocation", "SQL counters only", "Cloud API + DB constraints"],
+          ["Job statuses", "pending/waiting/finished/denied", "Enum + API validation"],
+          ["File references", "storagePath persisted, signed URLs ephemeral", "Cloud API and Cloud Run logic"],
         ],
       },
     ],

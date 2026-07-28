@@ -18,13 +18,11 @@ if (marker !== "smart-job-erp-local-platform-v1") {
   throw new Error("The local-platform marker is not canonical");
 }
 requireMatch(compose, /name:\s*\$\{SMART_JOB_LOCAL_NETWORK:-smart-job-local\}[\s\S]*external:\s*true/, "Compose must use the external repository network");
-requireMatch(compose, /smart-job-supabase-gateway:8000/, "Compose must use the stable repository-owned Supabase gateway alias");
-requireMatch(compose, /smart-job-supabase-db:5432/, "Compose must use the stable repository-owned Supabase database alias");
-if (/supabase_(?:kong|db)_/.test(compose)) throw new Error("Compose must not couple services to Supabase CLI container names");
-requireMatch(launcher, /ensureSupabaseNetworkAlias\("8000\/tcp",\s*supabaseNetworkAliases\.gateway\)/, "The launcher must resolve and bind the active Supabase gateway");
-requireMatch(launcher, /ensureSupabaseNetworkAlias\("5432\/tcp",\s*supabaseNetworkAliases\.database\)/, "The launcher must resolve and bind the active Supabase database");
-requireMatch(launcher, /"db",\s*"reset",\s*"--local",\s*"--no-seed",\s*"--network-id",\s*localNetwork/, "Database reset must preserve the repository-owned Docker network");
-requireMatch(launcher, /"--network-id",\s*localNetwork,\s*\]\);\s*ensureSupabaseNetworkAlias\("5432\/tcp",\s*supabaseNetworkAliases\.database\);\s*ensureSupabaseNetworkAlias\("8000\/tcp",\s*supabaseNetworkAliases\.gateway\)/, "Database reset must restore stable Supabase aliases before local role bootstrap");
+requireMatch(compose, /postgres:17-alpine@sha256:[a-f0-9]{64}/, "The PostgreSQL image must be digest-pinned");
+requireMatch(compose, /smart-job-postgres:5432/, "Services must use the stable repository PostgreSQL alias");
+requireMatch(compose, /firebase-auth-emulator:[\s\S]*?127\.0\.0\.1:\$\{LOCAL_FIREBASE_AUTH_PORT:-59099\}:9099/, "Firebase Auth must be available only through a loopback port");
+requireMatch(compose, /FIREBASE_AUTH_EMULATOR_HOST:\s*firebase-auth-emulator:9099/, "Application services must use the internal Firebase Auth emulator");
+requireMatch(launcher, /"up",[\s\S]*?"postgres",[\s\S]*?"firebase-auth-emulator"/, "The launcher must start PostgreSQL and Firebase Auth before migrations");
 requireMatch(compose, /smart_job_local_platform:[\s\S]*file:\s*\.\/local-platform\/marker/, "Compose must mount the repository marker as a secret");
 requireMatch(compose, /cloudrun-tax:[\s\S]*?TAX_SUBMISSION_MODE:\s*disabled[\s\S]*?cloudrun-pdf:/, "Local tax submission must remain disabled");
 requireMatch(compose, /cloudrun-archiver:[\s\S]*?profiles:\s*\["jobs"\][\s\S]*?DATABASE_URL:\s*postgresql:\/\/smart_job_archiver:/, "The archiver must use its least-privileged database role");
@@ -44,8 +42,4 @@ requireMatch(gitignore, /local-platform\/\.env\.generated/, "Generated local cre
 requireMatch(nextConfig, /output:\s*"standalone"/, "The website must use standalone output");
 requireMatch(websiteDockerfile, /USER\s+node/, "The website runtime must be non-root");
 requireMatch(websiteDockerfile, /ENTRYPOINT\s+\["node",\s*"docker-entrypoint\.mjs"\]/, "The website must use its marker-validating entrypoint");
-if (/run\("supabase",\s*\["status"\]\)/.test(launcher)) {
-  throw new Error("The local status command must never print the Supabase credential table");
-}
-
 process.stdout.write("Local platform static safeguards passed.\n");

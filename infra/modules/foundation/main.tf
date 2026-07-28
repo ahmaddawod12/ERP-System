@@ -16,6 +16,7 @@ locals {
     "dns.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
+    "identitytoolkit.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "pubsub.googleapis.com",
@@ -44,26 +45,22 @@ locals {
   ])
 
   secret_ids = merge({
-    api_database_url              = "${var.name_prefix}-api-database-url"
-    archiver_database_url         = "${var.name_prefix}-archiver-database-url"
-    backup_database_url           = "${var.name_prefix}-backup-database-url"
-    contact_challenge_secret      = "${var.name_prefix}-contact-challenge-secret"
-    email_database_url            = "${var.name_prefix}-email-database-url"
-    migrator_database_url         = "${var.name_prefix}-migrator-database-url"
-    pdf_database_url              = "${var.name_prefix}-pdf-database-url"
-    ses_from_email                = "${var.name_prefix}-ses-from-email"
-    supabase_publishable_key      = "${var.name_prefix}-supabase-publishable-key"
-    supabase_s3_access_key_id     = "${var.name_prefix}-supabase-s3-access-key-id"
-    supabase_s3_secret_access_key = "${var.name_prefix}-supabase-s3-secret-access-key"
-    supabase_secret_key           = "${var.name_prefix}-supabase-secret-key"
-    supabase_url                  = "${var.name_prefix}-supabase-url"
-    tax_authority_approval_url    = "${var.name_prefix}-tax-authority-approval-url"
-    tax_authority_client_id       = "${var.name_prefix}-tax-authority-client-id"
-    tax_authority_client_secret   = "${var.name_prefix}-tax-authority-client-secret"
-    tax_authority_token_url       = "${var.name_prefix}-tax-authority-token-url"
-    tax_callback_hmac_secret      = "${var.name_prefix}-tax-callback-hmac-secret"
-    web_session_encryption_key    = "${var.name_prefix}-web-session-encryption-key"
-    website_session_secret        = "${var.name_prefix}-website-session-secret"
+    api_database_url            = "${var.name_prefix}-api-database-url"
+    archiver_database_url       = "${var.name_prefix}-archiver-database-url"
+    backup_database_url         = "${var.name_prefix}-backup-database-url"
+    contact_challenge_secret    = "${var.name_prefix}-contact-challenge-secret"
+    email_database_url          = "${var.name_prefix}-email-database-url"
+    migrator_database_url       = "${var.name_prefix}-migrator-database-url"
+    pdf_database_url            = "${var.name_prefix}-pdf-database-url"
+    ses_from_email              = "${var.name_prefix}-ses-from-email"
+    firebase_web_api_key        = "${var.name_prefix}-firebase-web-api-key"
+    tax_authority_approval_url  = "${var.name_prefix}-tax-authority-approval-url"
+    tax_authority_client_id     = "${var.name_prefix}-tax-authority-client-id"
+    tax_authority_client_secret = "${var.name_prefix}-tax-authority-client-secret"
+    tax_authority_token_url     = "${var.name_prefix}-tax-authority-token-url"
+    tax_callback_hmac_secret    = "${var.name_prefix}-tax-callback-hmac-secret"
+    web_session_encryption_key  = "${var.name_prefix}-web-session-encryption-key"
+    website_session_secret      = "${var.name_prefix}-website-session-secret"
     }, var.enable_static_ses_credentials ? {
     aws_access_key_id     = "${var.name_prefix}-aws-access-key-id"
     aws_secret_access_key = "${var.name_prefix}-aws-secret-access-key"
@@ -72,42 +69,24 @@ locals {
   secret_accessors = {
     website = toset([
       "contact_challenge_secret",
-      "supabase_publishable_key",
-      "supabase_url",
+      "firebase_web_api_key",
       "website_session_secret",
     ])
     api = toset([
       "api_database_url",
-      "supabase_publishable_key",
-      "supabase_secret_key",
-      "supabase_url",
+      "firebase_web_api_key",
       "web_session_encryption_key",
     ])
-    pdf = toset([
-      "pdf_database_url",
-      "supabase_secret_key",
-      "supabase_url",
-    ])
+    pdf = toset(["pdf_database_url"])
     email = setunion(toset([
       "email_database_url",
       "ses_from_email",
-      "supabase_secret_key",
-      "supabase_url",
       ]), var.enable_static_ses_credentials ? toset([
       "aws_access_key_id",
       "aws_secret_access_key",
     ]) : toset([]))
-    archiver = toset([
-      "archiver_database_url",
-      "supabase_secret_key",
-      "supabase_url",
-    ])
-    backup = toset([
-      "backup_database_url",
-      "supabase_s3_access_key_id",
-      "supabase_s3_secret_access_key",
-      "supabase_url",
-    ])
+    archiver = toset(["archiver_database_url"])
+    backup   = toset(["backup_database_url"])
     migrator = toset(["migrator_database_url"])
   }
 
@@ -321,6 +300,23 @@ resource "google_storage_bucket" "archive" {
   depends_on = [google_project_service.required]
 }
 
+resource "google_storage_bucket" "company_files" {
+  project                     = var.project_id
+  name                        = var.company_files_bucket_name
+  location                    = var.primary_region
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  labels                      = local.labels
+
+  versioning {
+    enabled = true
+  }
+
+  depends_on = [google_project_service.required]
+}
+
 resource "google_storage_bucket" "backup" {
   project                     = var.project_id
   name                        = var.backup_bucket_name
@@ -396,6 +392,52 @@ resource "google_storage_bucket_iam_member" "api_archive_reads" {
   bucket = google_storage_bucket.archive.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.platform["api"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "api_company_files" {
+  bucket = google_storage_bucket.company_files.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.platform["api"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "pdf_company_files" {
+  bucket = google_storage_bucket.company_files.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.platform["pdf"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "email_company_files" {
+  bucket = google_storage_bucket.company_files.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.platform["email"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "archiver_company_files" {
+  bucket = google_storage_bucket.company_files.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.platform["archiver"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "backup_company_files" {
+  bucket = google_storage_bucket.company_files.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.platform["backup"].email}"
+}
+
+resource "google_storage_bucket_iam_member" "company_file_bucket_readiness" {
+  for_each = toset(["api", "pdf", "backup"])
+
+  bucket = google_storage_bucket.company_files.name
+  role   = "roles/storage.bucketViewer"
+  member = "serviceAccount:${google_service_account.platform[each.value].email}"
+}
+
+resource "google_service_account_iam_member" "company_file_url_signers" {
+  for_each = toset(["api", "pdf", "email"])
+
+  service_account_id = google_service_account.platform[each.value].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.platform[each.value].email}"
 }
 
 resource "google_storage_bucket_iam_member" "backup_object_create" {

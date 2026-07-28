@@ -47,6 +47,10 @@ output "archive_bucket_name" {
   value = google_storage_bucket.archive.name
 }
 
+output "company_files_bucket_name" {
+  value = google_storage_bucket.company_files.name
+}
+
 output "backup_bucket_name" {
   value = google_storage_bucket.backup.name
 }

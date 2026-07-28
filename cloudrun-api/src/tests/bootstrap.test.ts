@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import type {
   ApiDatabaseRuntime,
   DatabaseQueryable,
@@ -17,9 +17,9 @@ const userId = "5f5bd2f8-a62f-43de-8f4d-27c814607dac";
 const internalCompanyId = "b879bd41-3211-4511-b5e9-323b0ff11ee7";
 const webSessionToken = "B".repeat(43);
 
-function verifier(): SupabaseJwtVerifier {
+function verifier(): FirebaseTokenVerifier {
   return {
-    issuer: "https://project.supabase.co/auth/v1",
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -101,6 +101,7 @@ test("bootstrap normalizes public tenant id before scoped count queries", async 
           assert.equal(token, webSessionToken);
           return {
             userId,
+            verifiedEmail: "viewer@example.test",
             absoluteExpiresAt: new Date("2026-07-14T00:00:00.000Z"),
           };
         },

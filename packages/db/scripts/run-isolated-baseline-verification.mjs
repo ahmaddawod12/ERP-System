@@ -33,49 +33,6 @@ try {
 }
 
 try {
-  const bootstrap = new Client({ connectionString: testUrl.toString(), ssl: false });
-  await bootstrap.connect();
-  try {
-    await bootstrap.query(`
-      CREATE SCHEMA extensions;
-      CREATE EXTENSION pgcrypto WITH SCHEMA extensions;
-      CREATE SCHEMA auth;
-      CREATE TABLE auth.users (
-        id UUID PRIMARY KEY,
-        aud TEXT,
-        role TEXT,
-        email TEXT,
-        email_confirmed_at TIMESTAMPTZ,
-        deleted_at TIMESTAMPTZ,
-        is_anonymous BOOLEAN NOT NULL DEFAULT false,
-        raw_app_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb,
-        raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.clock_timestamp(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.clock_timestamp()
-      );
-      CREATE SCHEMA storage;
-      CREATE TABLE storage.buckets (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        public BOOLEAN NOT NULL DEFAULT false,
-        file_size_limit BIGINT,
-        allowed_mime_types TEXT[],
-        created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.clock_timestamp(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.clock_timestamp()
-      );
-      CREATE TABLE storage.objects (
-        id UUID PRIMARY KEY,
-        bucket_id TEXT NOT NULL REFERENCES storage.buckets(id),
-        name TEXT NOT NULL,
-        owner_id UUID,
-        metadata JSONB,
-        user_metadata JSONB
-      );
-    `);
-  } finally {
-    await bootstrap.end();
-  }
-
   const exitCode = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [verifier], {
       stdio: 'inherit',

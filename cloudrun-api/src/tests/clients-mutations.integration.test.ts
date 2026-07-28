@@ -176,7 +176,7 @@ if (adminDatabaseUrl.length === 0) {
       const services = {
         authenticator,
         database: contextualRuntime(admin),
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser() {
             return {
               userId: activeUserId,
@@ -382,7 +382,7 @@ if (adminDatabaseUrl.length === 0) {
            has_function_privilege('smart_job_api', 'private.create_api_client(uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS can_create,
            has_function_privilege('smart_job_api', 'private.update_api_client(uuid,uuid,bigint,jsonb,timestamp with time zone)', 'EXECUTE') AS can_update,
            has_function_privilege('smart_job_api', 'private.delete_or_archive_api_client(uuid,uuid,bigint,timestamp with time zone)', 'EXECUTE') AS can_remove,
-           has_function_privilege('authenticated', 'private.create_api_client(uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS authenticated_can_create,
+           has_function_privilege('smart_job_backup', 'private.create_api_client(uuid,jsonb,timestamp with time zone)', 'EXECUTE') AS backup_can_create,
            has_table_privilege('smart_job_api', 'public.clients', 'INSERT') AS can_insert_directly,
            has_table_privilege('smart_job_api', 'public.clients', 'UPDATE') AS can_update_directly,
            has_table_privilege('smart_job_api', 'public.clients', 'DELETE') AS can_delete_directly`,
@@ -391,7 +391,7 @@ if (adminDatabaseUrl.length === 0) {
         can_create: true,
         can_update: true,
         can_remove: true,
-        authenticated_can_create: false,
+        backup_can_create: false,
         can_insert_directly: false,
         can_update_directly: false,
         can_delete_directly: false,

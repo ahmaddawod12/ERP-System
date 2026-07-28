@@ -11,6 +11,7 @@ const WORKSPACES = [
   'packages/contracts',
   'packages/api-contracts',
   'packages/db',
+  'packages/control-db',
   'website',
   'phone_app',
   'cloudrun-api',

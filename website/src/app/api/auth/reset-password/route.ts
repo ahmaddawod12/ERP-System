@@ -15,8 +15,7 @@ import {
 import { isVerifiedLocalPlatformRuntime } from "@/lib/local-platform";
 import {
   serverResetPassword,
-  serverRevokeAuthSession,
-} from "@/lib/auth/server-supabase";
+} from "@/lib/auth/server-firebase";
 
 export const runtime = "nodejs";
 
@@ -81,12 +80,12 @@ export async function POST(request: Request) {
     return response;
   }
 
-  let accessToken: string;
+  let actionCode: string;
   try {
-    accessToken = openRecoveryCredential(
+    actionCode = openRecoveryCredential(
       sealed,
       String(process.env.WEBSITE_SESSION_SECRET || ""),
-    ).accessToken;
+    ).actionCode;
   } catch {
     const response = json({ ok: false, error: "Reset link is missing or expired" }, 401);
     clearRecoveryCookies(response);
@@ -100,8 +99,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    await serverResetPassword(accessToken, password);
-    await serverRevokeAuthSession(accessToken).catch(() => undefined);
+    await serverResetPassword(actionCode, password);
     const response = json({ ok: true }, 200);
     clearRecoveryCookies(response);
     return response;

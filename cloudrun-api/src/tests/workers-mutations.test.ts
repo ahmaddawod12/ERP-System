@@ -158,7 +158,7 @@ test("worker mutations are verified, idempotent, versioned, and membership scope
   registerWorkerMutationRoutes(app, {
     authenticator,
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser(accessToken) {
         verifiedLookups += 1;
         assert.equal(accessToken, "worker.payload.signature");
@@ -221,7 +221,7 @@ test("worker mutation routes reject missing idempotency before handler work", as
         throw new Error("database must not run");
       },
     },
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         throw new Error("Auth lookup must not run");
       },

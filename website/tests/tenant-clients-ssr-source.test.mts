@@ -55,7 +55,7 @@ test("clients use one server-only opaque-session request and never hydrate-refet
   assert.doesNotMatch(page, /fetch\(|useEffect|useQuery|useInfiniteQuery|BACKEND_API_BASE_URL/);
   assert.doesNotMatch(clientsList, /fetch\(|useEffect|useQuery|useInfiniteQuery|SmartJobSession/);
   assert.doesNotMatch(clientsFilters, /fetch\(|useEffect|useQuery|BACKEND_API_BASE_URL|SmartJobSession/);
-  assert.doesNotMatch(mutationControls, /SmartJobSession|BACKEND_API_BASE_URL|Supabase|Firebase/i);
+  assert.doesNotMatch(mutationControls, /SmartJobSession|BACKEND_API_BASE_URL|IdentityToken|Firebase/i);
 });
 
 test("the clients slice exposes search, empty, loading, error, disabled, and cursor states", () => {

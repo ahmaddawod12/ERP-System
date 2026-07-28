@@ -51,6 +51,11 @@ variable "archive_bucket_name" {
   type        = string
 }
 
+variable "company_files_bucket_name" {
+  description = "Globally unique private bucket for active company files."
+  type        = string
+}
+
 variable "backup_bucket_name" {
   description = "Globally unique backup/export bucket name."
   type        = string

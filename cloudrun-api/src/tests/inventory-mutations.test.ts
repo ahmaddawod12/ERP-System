@@ -201,7 +201,7 @@ test("inventory mutations normalize tenants, require verification/idempotency, a
   registerInventoryMutationRoutes(app, {
     authenticator,
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         verifiedLookups += 1;
         return { userId, email: "manager@example.test", emailVerified: true };
@@ -298,7 +298,7 @@ test("inventory mutations reject missing idempotency before auth and database wo
       async close() {},
       async withTransaction() { throw new Error("database must not run"); },
     },
-    supabaseUsers: { async getUser() { throw new Error("user lookup must not run"); } },
+    firebaseUsers: { async getUser() { throw new Error("user lookup must not run"); } },
   });
   const response = await app.inject({
     method: "POST",

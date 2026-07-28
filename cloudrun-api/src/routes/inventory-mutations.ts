@@ -17,7 +17,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime, DatabaseQueryable } from "../database/runtime.js";
@@ -61,7 +61,7 @@ const mutationResponses = {
 export interface InventoryMutationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 function mapInventoryMutationDatabaseError(error: unknown): unknown {
@@ -213,7 +213,7 @@ export function registerInventoryMutationRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = companyParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = InventoryPartCreateRequestSchema.parse(request.body);
@@ -255,7 +255,7 @@ export function registerInventoryMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = partParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = InventoryPartUpdateRequestSchema.parse(request.body);
@@ -299,7 +299,7 @@ export function registerInventoryMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = partParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = InventoryPartArchiveRequestSchema.parse(request.body);
@@ -345,7 +345,7 @@ export function registerInventoryMutationRoutes(
       },
       async (request) => {
         const authenticated = await services.authenticator.authenticate(request);
-        await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+        await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
         const params = partParamsSchema.parse(request.params);
         const headers = mutationHeadersSchema.parse(request.headers);
         const body = InventoryAdjustmentRequestSchema.parse(request.body);
@@ -393,7 +393,7 @@ export function registerInventoryMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = companyParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = InventoryTransferRequestSchema.parse(request.body);
@@ -436,7 +436,7 @@ export function registerInventoryMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = companyParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = InventoryPickRequestSchema.parse(request.body);

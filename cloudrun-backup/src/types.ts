@@ -23,7 +23,7 @@ export interface StorageManifestEntry {
 
 export interface StorageManifest {
   schemaVersion: 1;
-  kind: "supabase-storage-inventory";
+  kind: "gcs-storage-inventory";
   runId: string;
   startedAt: string;
   completedAt: string;

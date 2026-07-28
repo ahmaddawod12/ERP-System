@@ -33,8 +33,8 @@ jobs:
           LOCAL_ADAPTER_ACCESS_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           LOCAL_INTERNAL_IDENTITY_TOKEN: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           LOCAL_PUBSUB_VERIFICATION_TOKEN: cccccccccccccccccccccccccccccccc
-          LOCAL_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
-          LOCAL_SUPABASE_SECRET_KEY: sb_secret_ci_placeholder
+          LOCAL_POSTGRES_PASSWORD: postgres-ci-password
+          LOCAL_FIREBASE_WEB_API_KEY: firebase-ci-placeholder-key
           LOCAL_API_DB_PASSWORD: api-ci-password
           LOCAL_PDF_DB_PASSWORD: pdf-ci-password
           LOCAL_EMAIL_DB_PASSWORD: email-ci-password
@@ -81,27 +81,6 @@ jobs:
           scanners: secret
           exit-code: "1"
           skip-dirs: node_modules,website/.next,dist,coverage
-
-  deno:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
-        with:
-          deno-version: 2.8.1
-      - name: Check and test every Deno source when present
-        shell: bash
-        run: |
-          mapfile -t sources < <(find supabase -type f \( -name '*.ts' -o -name '*.tsx' \) -print)
-          if (( ${#sources[@]} == 0 )); then
-            echo "No Deno sources remain after the Edge removal."
-            exit 0
-          fi
-          deno check "${sources[@]}"
-          mapfile -t tests < <(find supabase -type f \( -name '*_test.ts' -o -name '*.test.ts' \) -print)
-          if (( ${#tests[@]} > 0 )); then
-            deno test --allow-env --allow-read "${tests[@]}"
-          fi
 
   infrastructure_security:
     runs-on: ubuntu-latest
@@ -238,6 +217,18 @@ jobs:
       - run: npm --prefix packages/db run typecheck
       - run: npm --prefix packages/db run build
       - run: npm --prefix packages/db test
+
+  packages_control_db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/control-db/package-lock.json
+      - run: npm --prefix packages/control-db ci
+      - run: npm --prefix packages/control-db test
 
   packages_observability:
     runs-on: ubuntu-latest
@@ -479,17 +470,25 @@ jobs:
   integration_tests:
     runs-on: ubuntu-latest
     needs: [packages_contracts, packages_api_contracts, packages_db, packages_observability]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55322/postgres
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       DATABASE_SSL_MODE: disable
-      SMART_JOB_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55322/postgres
+      SMART_JOB_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
-        with:
-          version: 2.104.0
-      - name: Start isolated Supabase services
-        run: supabase start
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -508,25 +507,18 @@ jobs:
       - run: npm --prefix packages/db run build
       - run: npm --prefix packages/observability ci
       - run: npm --prefix packages/observability run build
-      - name: Verify the 0025 baseline and upgrade path
+      - name: Verify the consolidated baseline
         run: npm --prefix packages/db run test:migrations
-      - name: Reset after destructive migration-path verification
-        run: supabase db reset --local --no-seed
       - name: Apply database migrations
         run: npm --prefix packages/db run db:migrate
       - name: Run database integration tests
         run: npm --prefix packages/db run test:integration
-      - name: Lint application database schemas
-        run: supabase db lint --local --schema public,private --level warning
       - run: npm --prefix cloudrun-api ci
       - name: Build cloudrun-api
         run: npm --prefix cloudrun-api run build
       - name: Run cloudrun-api integration tests
         run: node --test dist/tests/*.integration.test.js
         working-directory: cloudrun-api
-      - name: Stop isolated Supabase services
-        if: always()
-        run: supabase stop --no-backup
 
   website_e2e:
     runs-on: ubuntu-latest
@@ -563,49 +555,18 @@ jobs:
 
   mobile_e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
     needs: phone_app
     environment: mobile-e2e
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Validate Maestro Cloud configuration
-        shell: bash
-        env:
-          MAESTRO_CLOUD_API_KEY: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
-          MAESTRO_CLOUD_PROJECT_ID: ${{ vars.MAESTRO_CLOUD_PROJECT_ID }}
-          MAESTRO_CLOUD_APP_BINARY_ID: ${{ vars.MAESTRO_CLOUD_APP_BINARY_ID }}
-          MAESTRO_TEST_WORKSPACE: ${{ vars.MAESTRO_TEST_WORKSPACE }}
-          MAESTRO_TEST_JOB_TITLE: ${{ vars.MAESTRO_TEST_JOB_TITLE }}
-          MAESTRO_TEST_EMAIL: ${{ secrets.MAESTRO_TEST_EMAIL }}
-          MAESTRO_TEST_PASSWORD: ${{ secrets.MAESTRO_TEST_PASSWORD }}
-        run: |
-          missing=0
-          for name in \
-            MAESTRO_CLOUD_API_KEY \
-            MAESTRO_CLOUD_PROJECT_ID \
-            MAESTRO_CLOUD_APP_BINARY_ID \
-            MAESTRO_TEST_WORKSPACE \
-            MAESTRO_TEST_JOB_TITLE \
-            MAESTRO_TEST_EMAIL \
-            MAESTRO_TEST_PASSWORD
-          do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::$name must be configured in the mobile-e2e GitHub environment"
-              missing=1
-            fi
-          done
-          exit "$missing"
-      - name: Run mandatory Maestro login, tenant, job, and offline journeys
-        uses: mobile-dev-inc/action-maestro-cloud@a988946a094437ff87f549b32b4d4c9af246c0d6 # v1
+      - name: Run mandatory free Maestro CLI journeys
+        uses: ./.github/actions/run-maestro-android
         with:
-          api-key: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
-          project-id: ${{ vars.MAESTRO_CLOUD_PROJECT_ID }}
-          app-binary-id: ${{ vars.MAESTRO_CLOUD_APP_BINARY_ID }}
-          workspace: phone_app/.maestro
-          timeout: 45
-          env: |
-            MAESTRO_APP_ID=erpsystem.app
-            MAESTRO_TEST_WORKSPACE=${{ vars.MAESTRO_TEST_WORKSPACE }}
-            MAESTRO_TEST_JOB_TITLE=${{ vars.MAESTRO_TEST_JOB_TITLE }}
-            MAESTRO_TEST_EMAIL=${{ secrets.MAESTRO_TEST_EMAIL }}
-            MAESTRO_TEST_PASSWORD=${{ secrets.MAESTRO_TEST_PASSWORD }}
+          flow-path: phone_app/.maestro
+          backend-api-base-url: ${{ vars.MOBILE_E2E_API_BASE_URL }}
+          google-services-json-base64: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+          test-workspace: ${{ vars.MAESTRO_TEST_WORKSPACE }}
+          test-job-title: ${{ vars.MAESTRO_TEST_JOB_TITLE }}
+          test-email: ${{ secrets.MAESTRO_TEST_EMAIL }}
+          test-password: ${{ secrets.MAESTRO_TEST_PASSWORD }}

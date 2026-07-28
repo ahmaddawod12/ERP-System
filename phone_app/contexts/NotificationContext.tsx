@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { useRouter } from 'expo-router';
 
-import { restoreSupabaseSession } from '../lib/auth/supabase-client';
+import { restoreFirebaseUser } from '../lib/auth/firebase-auth';
 import { notificationMatchesAudience } from '../lib/notifications/audience';
 import { NOTIFICATION_SCREEN_ROUTES } from '../navigation/routes';
 import {
@@ -41,7 +41,7 @@ function notificationRoute(event: NotificationTapEvent): string | null {
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { user } = useSession();
-  const userId = user?.id ?? null;
+  const userId = user?.uid ?? null;
   const { status: tenantStatus, workspace, workspaces } = useTenant();
   const [initialized, setInitialized] = useState(false);
 
@@ -72,12 +72,12 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     const accessibleCompanyIds = new Set(workspaces.map((candidate) => candidate.companyId));
     const guard = async (data: Readonly<Record<string, string>>): Promise<boolean> => {
       try {
-        const restoredSession = await restoreSupabaseSession();
+        const restoredUser = await restoreFirebaseUser();
         return Boolean(
           active
-          && restoredSession
+          && restoredUser
           && notificationMatchesAudience(data, {
-            restoredUserId: restoredSession.user.id,
+            restoredUserId: restoredUser.uid,
             sessionUserId: userId,
             currentCompanyId,
             accessibleCompanyIds,

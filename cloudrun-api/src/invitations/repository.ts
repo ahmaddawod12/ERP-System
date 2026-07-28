@@ -87,7 +87,8 @@ export const REDEEM_COMPANY_INVITATION_SQL = `
     $1::bigint,
     $2::text,
     $3::text,
-    $4::text
+    $4::text,
+    $5::text
   )
 `;
 
@@ -136,15 +137,19 @@ export async function createCompanyInvitation(
 
 export async function redeemCompanyInvitation(
   transaction: DatabaseQueryable,
-  request: InvitationRedeemRequest,
+  input: {
+    readonly request: InvitationRedeemRequest;
+    readonly verifiedEmail: string;
+  },
 ): Promise<RedeemedInvitationMembership> {
   const result = await transaction.query<InvitationRedemptionRow>(
     REDEEM_COMPANY_INVITATION_SQL,
     [
-      request.companyId,
-      request.inviteCode,
-      request.displayName ?? null,
-      request.phoneNumber ?? null,
+      input.request.companyId,
+      input.request.inviteCode,
+      input.request.displayName ?? null,
+      input.request.phoneNumber ?? null,
+      input.verifiedEmail,
     ],
   );
   const unknownRow = result.rows[0];
@@ -153,7 +158,7 @@ export async function redeemCompanyInvitation(
   }
   const row = invitationRedemptionRowSchema.parse(unknownRow);
   const normalizedPublicCompanyId = publicCompanyId(row.public_company_id);
-  if (normalizedPublicCompanyId !== request.companyId) {
+  if (normalizedPublicCompanyId !== input.request.companyId) {
     throw new Error("Invitation redemption returned a different workspace");
   }
   return {

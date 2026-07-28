@@ -177,7 +177,7 @@ test("client mutations require verified identity, idempotency, and one secure SQ
   registerClientMutationRoutes(app, {
     authenticator,
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser(accessToken) {
         verifiedLookups += 1;
         assert.equal(accessToken, "client.payload.signature");
@@ -271,7 +271,7 @@ test("client mutation routes reject missing idempotency before handler work", as
         throw new Error("database must not run");
       },
     },
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         throw new Error("Auth lookup must not run");
       },

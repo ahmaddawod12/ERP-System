@@ -15,25 +15,23 @@ export {
   type CreateApiRequestAuthenticatorOptions,
 } from "./request.js";
 export {
-  SUPABASE_ASYMMETRIC_JWT_ALGORITHMS,
-  createSupabaseJwtVerifier,
+  createFirebaseTokenVerifier,
   type AuthenticatedUser,
-  type SupabaseJwtVerifier,
-  type SupabaseJwtVerifierOptions,
-} from "./supabase-jwt.js";
+  type FirebaseTokenVerifier,
+  type FirebaseTokenVerifierOptions,
+} from "./firebase-token.js";
 export {
-  createSupabaseUserClient,
-  type CreateSupabaseUserClientOptions,
-  type SupabaseAuthUser,
-  type SupabaseUserClient,
-} from "./supabase-user-client.js";
+  createFirebaseUserClient,
+  type CreateFirebaseUserClientOptions,
+  type FirebaseAuthUser,
+  type FirebaseUserClient,
+} from "./firebase-user-client.js";
 export {
-  createSupabaseWebAuthClient,
-  type CreateSupabaseWebAuthClientOptions,
-  type SupabaseWebAuthClient,
-  type SupabaseWebAuthSession,
-  type SupabaseWebAuthUser,
-} from "./supabase-web-auth-client.js";
+  createFirebaseWebAuthClient,
+  type CreateFirebaseWebAuthClientOptions,
+  type FirebaseWebAuthClient,
+  type FirebaseWebAuthSession,
+} from "./firebase-web-auth-client.js";
 export { requireVerifiedMutationIdentity } from "./mutation.js";
 export {
   createGoogleServiceIdentityVerifier,

@@ -12,7 +12,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -46,7 +46,7 @@ const businessProfileResponseSchema = createApiSuccessResponseSchema(BusinessPro
 export interface ProfileRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 type ProfileOperation = "viewer" | "company";
@@ -176,7 +176,7 @@ export function registerProfileRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = ViewerProfileUpdateRequestSchema.parse(request.body);
 
@@ -276,7 +276,7 @@ export function registerProfileRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = companyParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = BusinessProfileUpdateRequestSchema.parse(request.body);

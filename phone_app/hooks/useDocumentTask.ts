@@ -160,7 +160,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       }
     }, TASK_TIMEOUT_MS);
 
-    const uid = user?.id ?? '';
+    const uid = user?.uid ?? '';
     const resolvedCompanyId = Number(companyId ?? workspace?.companyId ?? 0);
     if (!uid || !Number.isSafeInteger(resolvedCompanyId) || resolvedCompanyId <= 0) {
       clearTimeout(timeoutRef.current ?? undefined);
@@ -259,11 +259,11 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     };
 
     poll();
-  }, [actionKeys, user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   useEffect(() => {
     actionKeys.reset();
-    const uid = user?.id ?? '';
+    const uid = user?.uid ?? '';
     const companyId = Number(workspace?.companyId ?? 0);
     if (!uid || !Number.isSafeInteger(companyId) || companyId <= 0) return;
 
@@ -283,14 +283,14 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     if (latestAccepted?.accepted) {
       listenToTask(latestAccepted.accepted.taskId, latestAccepted.action, companyId);
     }
-  }, [actionKeys, listenToTask, user?.id, workspace?.companyId]);
+  }, [actionKeys, listenToTask, user?.uid, workspace?.companyId]);
 
   const publishPreview = useCallback(async (params: DocumentTaskParams): Promise<string> => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const uid = user?.id ?? '';
+      const uid = user?.uid ?? '';
       if (!uid) throw new Error('Authentication is required to preview documents');
       const companyId = normalizeDocumentCompanyId(params.companyId);
       const request = buildDocumentPreviewRequest(params);
@@ -346,14 +346,14 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
       throw err;
     }
-  }, [actionKeys, listenToTask, user?.id]);
+  }, [actionKeys, listenToTask, user?.uid]);
 
   const publishGenerate = useCallback(async (params: DocumentTaskParams): Promise<string> => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const uid = user?.id ?? '';
+      const uid = user?.uid ?? '';
       if (!uid) throw new Error('Authentication is required to create documents');
       const companyId = normalizeDocumentCompanyId(params.companyId);
       const request = buildDocumentGenerateRequest(params);
@@ -409,7 +409,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
 
       throw err;
     }
-  }, [actionKeys, listenToTask, user?.id]);
+  }, [actionKeys, listenToTask, user?.uid]);
 
   /**
    * Reset the hook state
@@ -423,7 +423,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-    const uid = user?.id ?? '';
+    const uid = user?.uid ?? '';
     const companyId = Number(workspace?.companyId ?? 0);
     if (uid && Number.isSafeInteger(companyId) && companyId > 0) {
       clearDocumentTaskAttempt(uid, companyId, 'preview');
@@ -436,7 +436,7 @@ export function useDocumentTask(options: UseDocumentTaskOptions = {}): UseDocume
     setTaskData(null);
     setError(null);
     setIsLoading(false);
-  }, [actionKeys, user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   return {
     // Methods

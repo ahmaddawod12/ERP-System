@@ -11,7 +11,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
 import { mapDatabaseError } from "../database/errors.js";
@@ -122,7 +122,7 @@ export interface UploadSessionRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly storage: CompanyFileStorage;
   readonly storageBucketId: string;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 export function registerUploadSessionRoutes(
@@ -152,7 +152,7 @@ export function registerUploadSessionRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const headers = uploadSessionHeadersSchema.parse(request.headers);
       const body = JobAttachmentUploadSessionRequestSchema.parse(request.body);
       const idempotencyRequest = { body };

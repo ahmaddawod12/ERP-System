@@ -53,7 +53,7 @@ test('notification listeners guard display and open paths and use the private No
   assert.match(notifications, /visibility: AndroidVisibility\.PRIVATE/);
   assert.doesNotMatch(notifications, /visibility: AndroidVisibility\.PUBLIC/);
   assert.match(notifications, /isAcceptedNotification\(data, guard\)/);
-  assert.match(provider, /restoreSupabaseSession\(\)/);
+  assert.match(provider, /restoreFirebaseUser\(\)/);
   assert.match(provider, /notificationMatchesAudience\(data,/);
   assert.match(provider, /const currentCompanyId = workspace\.companyId/);
   assert.match(packageJson, /"react-native-notify-kit": "10\.4\.8"/);

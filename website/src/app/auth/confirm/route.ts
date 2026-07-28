@@ -11,9 +11,9 @@ import {
   sealRecoveryCredential,
 } from "@/lib/auth/password-recovery";
 import {
-  serverRevokeAuthSession,
-  serverVerifyEmailTokenHash,
-} from "@/lib/auth/server-supabase";
+  serverConfirmEmail,
+  serverVerifyPasswordResetCode,
+} from "@/lib/auth/server-firebase";
 import { isVerifiedLocalPlatformRuntime } from "@/lib/local-platform";
 
 export const runtime = "nodejs";
@@ -57,35 +57,34 @@ export async function GET(request: Request) {
     process.env.NODE_ENV,
   );
   const requestUrl = new URL(request.url);
-  const tokenHash = requestUrl.searchParams.get("token_hash")?.trim() ?? "";
-  const type = requestUrl.searchParams.get("type");
-  if (!tokenHash || tokenHash.length > 1_024 || (type !== "email" && type !== "recovery")) {
+  const actionCode = requestUrl.searchParams.get("oobCode")?.trim() ?? "";
+  const mode = requestUrl.searchParams.get("mode");
+  if (
+    !actionCode
+    || actionCode.length > 4_096
+    || (mode !== "verifyEmail" && mode !== "resetPassword")
+  ) {
     return redirectResponse(
       origin,
-      type === "recovery"
+      mode === "resetPassword"
         ? "/forgot-password?error=invalid_link"
         : "/login?error=confirmation_failed",
     );
   }
 
   try {
-    const verified = await serverVerifyEmailTokenHash(tokenHash, type);
-    const accessToken = String(verified.access_token || "").trim();
-    if (!accessToken) {
-      throw new Error("Supabase did not return a verified session");
-    }
-
-    if (type === "email") {
-      await serverRevokeAuthSession(accessToken).catch(() => undefined);
+    if (mode === "verifyEmail") {
+      await serverConfirmEmail(actionCode);
       return redirectResponse(origin, "/login?verified=1");
     }
 
+    await serverVerifyPasswordResetCode(actionCode);
     const nowMs = Date.now();
-    const authExpiryMs = Number.isFinite(verified.expires_at)
-      ? Number(verified.expires_at) * 1_000
-      : nowMs + (Math.max(1, Number(verified.expires_in) || 300) * 1_000);
     const sealed = sealRecoveryCredential(
-      { accessToken, expiresAt: authExpiryMs },
+      {
+        actionCode,
+        expiresAt: nowMs + (RECOVERY_MAX_AGE_SECONDS * 1_000),
+      },
       String(process.env.WEBSITE_SESSION_SECRET || ""),
       nowMs,
     );
@@ -114,7 +113,7 @@ export async function GET(request: Request) {
   } catch {
     const response = redirectResponse(
       origin,
-      type === "recovery"
+      mode === "resetPassword"
         ? "/forgot-password?error=invalid_link"
         : "/login?error=confirmation_failed",
     );

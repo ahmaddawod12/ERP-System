@@ -13,7 +13,7 @@ export const RECOVERY_CSRF_COOKIE = "sj_recovery_csrf";
 export const RECOVERY_MAX_AGE_SECONDS = 10 * 60;
 
 interface RecoveryCredential {
-  readonly accessToken: string;
+  readonly actionCode: string;
   readonly expiresAt: number;
 }
 
@@ -70,18 +70,18 @@ export function sealRecoveryCredential(
   secret: string,
   nowMs = Date.now(),
 ): string {
-  const accessToken = credential.accessToken.trim();
+  const actionCode = credential.actionCode.trim();
   const maximumExpiry = nowMs + (RECOVERY_MAX_AGE_SECONDS * 1_000);
   if (
-    !accessToken
-    || accessToken.length > 4_096
+    !actionCode
+    || actionCode.length > 4_096
     || !Number.isSafeInteger(credential.expiresAt)
     || credential.expiresAt <= nowMs
   ) {
-    throw new Error("Supabase returned an invalid recovery credential");
+    throw new Error("Firebase returned an invalid recovery credential");
   }
   const payload = Buffer.from(JSON.stringify({
-    accessToken,
+    actionCode,
     expiresAt: Math.min(credential.expiresAt, maximumExpiry),
   }), "utf8");
   const iv = randomBytes(IV_BYTES);
@@ -124,20 +124,20 @@ export function openRecoveryCredential(
     decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
     const parsed = JSON.parse(plaintext.toString("utf8")) as Partial<RecoveryCredential>;
-    const accessToken = typeof parsed.accessToken === "string"
-      ? parsed.accessToken.trim()
+    const actionCode = typeof parsed.actionCode === "string"
+      ? parsed.actionCode.trim()
       : "";
     const expiresAt = Number(parsed.expiresAt);
     if (
-      !accessToken
-      || accessToken.length > 4_096
+      !actionCode
+      || actionCode.length > 4_096
       || !Number.isSafeInteger(expiresAt)
       || expiresAt <= nowMs
       || expiresAt > nowMs + (RECOVERY_MAX_AGE_SECONDS * 1_000)
     ) {
       throw new Error("invalid token payload");
     }
-    return { accessToken, expiresAt };
+    return { actionCode, expiresAt };
   } catch {
     throw new Error("The password recovery link is invalid or expired");
   }

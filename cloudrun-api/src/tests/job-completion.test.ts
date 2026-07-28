@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import type {
   ApiDatabaseRuntime,
   DatabaseQueryable,
@@ -71,8 +71,8 @@ test("transient database concurrency and connection failures are retryable", () 
 });
 
 test("job completion requires idempotency and commits one atomic RPC response", async (context) => {
-  const verifier: SupabaseJwtVerifier = {
-    issuer: "https://project.supabase.co/auth/v1",
+  const verifier: FirebaseTokenVerifier = {
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -149,7 +149,7 @@ test("job completion requires idempotency and commits one atomic RPC response", 
   context.after(() => app.close());
   registerJobCompletionRoutes(app, {
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser(accessToken) {
         assert.equal(accessToken, "header.payload.signature");
         return {
@@ -203,8 +203,8 @@ test("job completion requires idempotency and commits one atomic RPC response", 
 test("job completion rejects missing idempotency keys before database work", async (context) => {
   const app = await buildApp({ config: loadConfig({}), logger: false });
   context.after(() => app.close());
-  const jwtVerifier: SupabaseJwtVerifier = {
-    issuer: "https://project.supabase.co/auth/v1",
+  const jwtVerifier: FirebaseTokenVerifier = {
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -223,7 +223,7 @@ test("job completion rejects missing idempotency keys before database work", asy
   };
   registerJobCompletionRoutes(app, {
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         throw new Error("verified-user lookup must not run when headers are invalid");
       },

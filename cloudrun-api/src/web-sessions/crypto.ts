@@ -29,7 +29,7 @@ export interface WebSessionCredentials {
 export interface WebSessionEncryptionBinding {
   readonly id: string;
   readonly userId: string;
-  readonly supabaseSessionId: string;
+  readonly identitySessionId: string;
   readonly absoluteExpiresAt: Date;
 }
 
@@ -67,7 +67,7 @@ function aad(binding: WebSessionEncryptionBinding, keyVersion: string): Buffer {
     "smart-job:web-session:aes-256-gcm:v1",
     binding.id.toLowerCase(),
     binding.userId.toLowerCase(),
-    binding.supabaseSessionId.toLowerCase(),
+    binding.identitySessionId.toLowerCase(),
     binding.absoluteExpiresAt.toISOString(),
     keyVersion,
   ].join("\n"), "utf8");

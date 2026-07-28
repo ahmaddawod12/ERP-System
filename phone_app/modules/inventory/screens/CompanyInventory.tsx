@@ -173,7 +173,7 @@ export default function CompanyInventory() {
 
   useEffect(() => {
     actionKeys.reset();
-  }, [actionKeys, user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   const readScope = resolveInventoryReadScope(workspace);
   const canManageCompanyInventory = readScope === 'company'
@@ -184,14 +184,14 @@ export default function CompanyInventory() {
     pageSize: 50,
   }), [debouncedSearchQuery, filter]);
   const { query: inventoryQuery, parts: companyParts } = useInventoryInfinite({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     scope: 'company',
     filters: inventoryFilters,
     enabled: tenantStatus === 'ready' && readScope === 'company',
   });
   const { createMutation, updateMutation } = useInventoryMutations({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
   });
   const filteredParts = companyParts;

@@ -16,13 +16,13 @@ const now = Date.UTC(2026, 6, 13, 10, 0, 0);
 
 test("recovery credentials are encrypted, authenticated, and absolutely bounded", () => {
   const sealed = sealRecoveryCredential({
-    accessToken: "header.payload.signature",
+    actionCode: "firebase-action-code",
     expiresAt: now + (60 * 60 * 1_000),
   }, secret, now);
-  assert.doesNotMatch(sealed, /header|payload|signature/);
+  assert.doesNotMatch(sealed, /firebase-action-code/);
 
   const opened = openRecoveryCredential(sealed, secret, now + 1_000);
-  assert.equal(opened.accessToken, "header.payload.signature");
+  assert.equal(opened.actionCode, "firebase-action-code");
   assert.equal(opened.expiresAt, now + (RECOVERY_MAX_AGE_SECONDS * 1_000));
 
   const parts = sealed.split(".");
@@ -52,7 +52,7 @@ test("recovery CSRF comparison and host cookie names fail closed", () => {
   assert.equal(recoveryCookieName("production", true), "sj_recovery");
 });
 
-test("the reset browser never parses or submits Supabase recovery credentials", async () => {
+test("the reset browser never parses or submits Firebase recovery credentials", async () => {
   const [client, resetRoute, callback] = await Promise.all([
     readFile(new URL("../src/app/reset-password/page-client.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/api/auth/reset-password/route.ts", import.meta.url), "utf8"),
@@ -63,7 +63,7 @@ test("the reset browser never parses or submits Supabase recovery credentials", 
   assert.match(client, /X-SJ-Recovery-CSRF/);
   assert.match(resetRoute, /openRecoveryCredential/);
   assert.match(resetRoute, /request\.headers\.get\("origin"\)/);
-  assert.match(callback, /serverVerifyEmailTokenHash/);
+  assert.match(callback, /serverVerifyPasswordResetCode/);
   assert.match(callback, /httpOnly: true/);
 });
 
@@ -79,13 +79,13 @@ test("registration requires server-confirmed email verification before onboardin
   assert.match(registerRoute, /request\.headers\.get\("origin"\)/);
 });
 
-test("new server Auth flows require a publishable key without legacy fallback", async () => {
+test("new server Auth flows require the Firebase Web API key", async () => {
   const source = await readFile(
-    new URL("../src/lib/auth/server-supabase.ts", import.meta.url),
+    new URL("../src/lib/auth/server-firebase.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /process\.env\.SUPABASE_PUBLISHABLE_KEY/);
-  assert.doesNotMatch(source, /SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(source, /process\.env\.FIREBASE_WEB_API_KEY/);
+  assert.doesNotMatch(source, /NEXT_PUBLIC_FIREBASE/);
   assert.match(source, /new AbortController\(\)/);
   assert.match(source, /controller\.abort/);
   assert.match(source, /MAX_AUTH_RESPONSE_BYTES/);

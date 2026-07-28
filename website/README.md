@@ -1,15 +1,15 @@
 # Smart-Job Website
 
 The website is a Next.js 16 App Router application running on Node 22. It is a
-server-rendered client of `cloudrun-api`; it does not call Supabase business
-tables, Edge functions, Firebase, or Cloud Run directly from browser code.
+server-rendered client of `cloudrun-api`; it does not call business tables,
+Firebase, or Cloud Run directly from browser code.
 
 ## Runtime architecture
 
-- Supabase Auth calls terminate on the server.
-- A successful login exchanges the Supabase credentials for one opaque,
+- Firebase Auth calls terminate on the server.
+- A successful login exchanges Firebase credentials for one opaque,
   Postgres-backed HttpOnly session cookie (`__Host-sj_web_session` in
-  production). Supabase access and refresh tokens never enter browser storage,
+  production). Firebase ID and refresh tokens never enter browser storage,
   HTML, readable cookies, or browser JSON.
 - All protected routes resolve the session and exact company membership in the
   server-only DAL before issuing bounded Cloud API reads.
@@ -26,7 +26,7 @@ tables, Edge functions, Firebase, or Cloud Run directly from browser code.
 ## Security invariants
 
 - Never add `"use client"` to a `page.tsx` file.
-- Never expose `SUPABASE_SECRET_KEY`, database credentials, a Supabase bearer
+- Never expose Firebase credentials, database credentials, a bearer
   token, or a `SmartJobSession` value to browser JavaScript.
 - Keep tenant authorization server-side; a company ID in the URL is not proof
   of access.
@@ -41,7 +41,7 @@ tables, Edge functions, Firebase, or Cloud Run directly from browser code.
 
 Copy [`.env.example`](./.env.example) to `.env.local` and replace every
 placeholder. Public browser configuration is limited to the reCAPTCHA site
-key. All Supabase and backend transport settings are server-only.
+key. All Firebase and backend transport settings are server-only.
 
 The repository-owned local platform injects its own container configuration.
 Do not manually copy `SMART_JOB_LOCAL_PLATFORM` flags into a host or deployed

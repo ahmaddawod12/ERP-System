@@ -12,10 +12,12 @@ const envSchema = z.object({
   CLOUD_RUN_SERVICE_URL: z.string().trim().url().optional(),
   PUBSUB_ALLOWED_SERVICE_ACCOUNTS: z.string().default(""),
   PUBSUB_VERIFICATION_TOKEN: z.string().trim().min(24).optional(),
-  SUPABASE_URL: z.string().trim().url(),
-  SUPABASE_PUBLIC_URL: z.string().trim().url().optional(),
-  SUPABASE_SECRET_KEY: z.string().trim().regex(/^sb_secret_[A-Za-z0-9_-]+$/),
-  SUPABASE_STORAGE_BUCKET: z.literal("smart-job-company-files").default("smart-job-company-files"),
+  GCS_PROJECT_ID: z.string().trim().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/).optional(),
+  COMPANY_FILES_BUCKET: z.string().trim().min(3).max(63)
+    .regex(/^[a-z0-9][a-z0-9._-]*[a-z0-9]$/)
+    .default("smart-job-company-files"),
+  GCS_API_ENDPOINT: z.string().trim().url().optional(),
+  COMPANY_FILES_PUBLIC_BASE_URL: z.string().trim().url().optional(),
   SIGNED_DOWNLOAD_TTL_SECONDS: z.coerce.number().int().min(300).max(604_800).default(86_400),
   AWS_REGION: z.string().trim().regex(/^eu-[a-z]+-\d+$/),
   AWS_SES_CREDENTIAL_MODE: z.enum(["static", "federated"]).default("static"),
@@ -67,10 +69,10 @@ export function loadConfig(
     CLOUD_RUN_SERVICE_URL: environment.CLOUD_RUN_SERVICE_URL,
     PUBSUB_ALLOWED_SERVICE_ACCOUNTS: environment.PUBSUB_ALLOWED_SERVICE_ACCOUNTS,
     PUBSUB_VERIFICATION_TOKEN: environment.PUBSUB_VERIFICATION_TOKEN,
-    SUPABASE_URL: environment.SUPABASE_URL,
-    SUPABASE_PUBLIC_URL: environment.SUPABASE_PUBLIC_URL,
-    SUPABASE_SECRET_KEY: environment.SUPABASE_SECRET_KEY,
-    SUPABASE_STORAGE_BUCKET: environment.SUPABASE_STORAGE_BUCKET,
+    GCS_PROJECT_ID: environment.GCS_PROJECT_ID,
+    COMPANY_FILES_BUCKET: environment.COMPANY_FILES_BUCKET,
+    GCS_API_ENDPOINT: environment.GCS_API_ENDPOINT,
+    COMPANY_FILES_PUBLIC_BASE_URL: environment.COMPANY_FILES_PUBLIC_BASE_URL,
     SIGNED_DOWNLOAD_TTL_SECONDS: environment.SIGNED_DOWNLOAD_TTL_SECONDS,
     AWS_REGION: environment.AWS_REGION,
     AWS_SES_CREDENTIAL_MODE: environment.AWS_SES_CREDENTIAL_MODE,
@@ -87,7 +89,8 @@ export function loadConfig(
   const localFlagsPresent = environment.SMART_JOB_DEPLOYMENT_ENV === "local"
     || environment.SMART_JOB_LOCAL_PLATFORM !== undefined
     || environment.LOCAL_PLATFORM_MARKER_PATH !== undefined
-    || parsed.SUPABASE_PUBLIC_URL !== undefined
+    || parsed.GCS_API_ENDPOINT !== undefined
+    || parsed.COMPANY_FILES_PUBLIC_BASE_URL !== undefined
     || parsed.AWS_SES_ENDPOINT !== undefined;
   const verifiedLocalPlatform = isVerifiedLocalPlatform(
     environment,
@@ -107,22 +110,21 @@ export function loadConfig(
     throw new TypeError("Production DATABASE_URL must authenticate as smart_job_email");
   }
   const isLocalPlatformDatabase = verifiedLocalPlatform
-    && databaseUrl.hostname === "smart-job-supabase-db"
+      && databaseUrl.hostname === "smart-job-postgres"
     && (databaseUrl.port === "5432" || databaseUrl.port === "");
   if (parsed.DATABASE_SSL_MODE === "disable" && !isLoopbackDatabase && !isLocalPlatformDatabase) {
     throw new TypeError("DATABASE_SSL_MODE=disable is allowed only for a loopback database");
   }
 
-  const supabaseUrl = safeServiceUrl(
-    parsed.SUPABASE_URL,
-    "SUPABASE_URL",
-    verifiedLocalPlatform ? "smart-job-supabase-gateway" : undefined,
+  const storageEmulatorUrl = safeServiceUrl(
+    parsed.GCS_API_ENDPOINT,
+    "GCS_API_ENDPOINT",
+    verifiedLocalPlatform ? "gcs-emulator" : undefined,
   );
-  if (!supabaseUrl) throw new TypeError("SUPABASE_URL is required");
-  if (verifiedLocalPlatform && supabaseUrl.port !== "8000") {
-    throw new TypeError("Local SUPABASE_URL must use Kong port 8000");
-  }
-  const publicSupabaseUrl = safeServiceUrl(parsed.SUPABASE_PUBLIC_URL, "SUPABASE_PUBLIC_URL");
+  const publicStorageUrl = safeServiceUrl(
+    parsed.COMPANY_FILES_PUBLIC_BASE_URL,
+    "COMPANY_FILES_PUBLIC_BASE_URL",
+  );
   const serviceUrl = safeServiceUrl(parsed.CLOUD_RUN_SERVICE_URL, "CLOUD_RUN_SERVICE_URL");
   const allowedServiceAccounts = [...new Set(
     parsed.PUBSUB_ALLOWED_SERVICE_ACCOUNTS.split(",")
@@ -178,18 +180,20 @@ export function loadConfig(
   }
   if (verifiedLocalPlatform) {
     if (
-      publicSupabaseUrl === undefined
+      storageEmulatorUrl === undefined
+      || publicStorageUrl === undefined
       || sesEndpoint === undefined
       || sesEndpoint.port !== "8090"
       || !hasAccessKeyId
       || !hasSecretAccessKey
     ) {
       throw new TypeError(
-        "Local email requires public Supabase, SES adapter, and local AWS credential settings",
+        "Local email requires GCS emulator URLs, SES adapter, and local AWS credential settings",
       );
     }
   } else if (
-    parsed.SUPABASE_PUBLIC_URL !== undefined
+    parsed.GCS_API_ENDPOINT !== undefined
+    || parsed.COMPANY_FILES_PUBLIC_BASE_URL !== undefined
     || parsed.AWS_SES_ENDPOINT !== undefined
   ) {
     throw new TypeError("Email provider emulator settings are forbidden outside the local platform");
@@ -210,10 +214,12 @@ export function loadConfig(
       sharedToken: parsed.PUBSUB_VERIFICATION_TOKEN,
     },
     storage: {
-      baseUrl: supabaseUrl,
-      ...(publicSupabaseUrl === undefined ? {} : { publicBaseUrl: publicSupabaseUrl }),
-      secretKey: parsed.SUPABASE_SECRET_KEY,
-      bucket: parsed.SUPABASE_STORAGE_BUCKET,
+      ...(parsed.GCS_PROJECT_ID === undefined ? {} : { projectId: parsed.GCS_PROJECT_ID }),
+      ...(storageEmulatorUrl === undefined
+        ? {}
+        : { apiEndpoint: storageEmulatorUrl.origin }),
+      ...(publicStorageUrl === undefined ? {} : { publicBaseUrl: publicStorageUrl }),
+      bucket: parsed.COMPANY_FILES_BUCKET,
       signedUrlTtlSeconds: parsed.SIGNED_DOWNLOAD_TTL_SECONDS,
     },
     ses: {

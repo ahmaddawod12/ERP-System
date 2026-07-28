@@ -20,7 +20,7 @@ test('solo finished jobs use the encrypted SQLite outbox before synchronization'
   assert.ok(enqueueIndex < synchronizeIndex, 'the durable operation must exist before foreground synchronization');
   assert.match(fillJob, /kind: 'job\.create_finished'/);
   assert.match(fillJob, /companyId: workspace\.companyId/);
-  assert.match(fillJob, /userId: sessionUser\.id/);
+  assert.match(fillJob, /userId: sessionUser\.uid/);
   assert.doesNotMatch(fillJob, /getPendingUserJobsStorageKey/);
   assert.doesNotMatch(fillJob, /createJobV1/);
 });
@@ -37,7 +37,7 @@ test('assigned jobs complete through the same encrypted outbox with entity versi
   assert.ok(stageIndex < enqueueIndex, 'attachments must be encrypted before completion is enqueued');
   assert.ok(enqueueIndex < synchronizeIndex, 'completion must be durable before synchronization');
   assert.match(fillJob, /entityVersion: editingJob\.entityVersion/);
-  assert.match(fillJob, /invalidateTenantQueries\(sessionUser\.id, workspace\.companyId, 'jobs'\)/);
+  assert.match(fillJob, /invalidateTenantQueries\(sessionUser\.uid, workspace\.companyId, 'jobs'\)/);
   assert.doesNotMatch(fillJob, /pendingWorkerJobs|enqueuePendingWorkerJob/);
   assert.doesNotMatch(fillJob, /updateJobV1|uploadJobFilesForStorage|httpsCallable/);
 });

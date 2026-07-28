@@ -150,7 +150,7 @@ if (adminDatabaseUrl.length === 0) {
       registerDocumentMutationRoutes(app, {
         authenticator,
         database: contextualRuntime(admin),
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser() {
             return {
               userId: activeUserId,

@@ -1,156 +1,46 @@
 import {
-  getSupabaseAccessToken,
-  installSupabaseAuthLifecycle,
-  restoreSupabaseSession,
-  signInSupabase,
-  signOutSupabase,
-  subscribeSupabaseAuth,
-} from './supabase-client';
+  getAuth,
+  onAuthStateChanged as onNativeAuthStateChanged,
+  signInWithEmailAndPassword as nativeSignInWithEmailAndPassword,
+  signOut as nativeSignOut,
+  type FirebaseAuthTypes,
+} from '@react-native-firebase/auth';
 
-export type SupabaseAuthUser = {
-  uid: string;
-  email: string | null;
-  getIdToken: (_forceRefresh?: boolean) => Promise<string>;
-};
+export type FirebaseAuthUser = FirebaseAuthTypes.User;
 
-const authListeners = new Set<(user: SupabaseAuthUser | null) => void>();
-let authCurrentUser: SupabaseAuthUser | null = null;
-let authBridgePromise: Promise<void> | null = null;
-let authBridgeCleanup: (() => void) | null = null;
-
-function toSupabaseAuthUser(uid: string, email: string | null): SupabaseAuthUser {
-  return {
-    uid,
-    email,
-    getIdToken: async (forceRefresh = false) => {
-      const token = await getSupabaseAuthTransportToken(forceRefresh);
-      if (!token) {
-        throw new Error('User must be authenticated');
-      }
-      return token;
-    },
-  };
-}
-
-function emitAuthStateChange(): void {
-  for (const listener of authListeners) {
-    listener(authCurrentUser);
-  }
-}
-
-function setAuthCurrentUser(uid: string, email: string | null): void {
-  authCurrentUser = toSupabaseAuthUser(uid, email);
-  emitAuthStateChange();
-}
-
-function clearAuthCurrentUser(): void {
-  authCurrentUser = null;
-  emitAuthStateChange();
-}
-
-function ensureAuthBridge(): Promise<void> {
-  if (authBridgePromise) return authBridgePromise;
-
-  const promise = (async () => {
-    let removeLifecycle: (() => void) | null = null;
-    let unsubscribe: (() => void) | null = null;
-    try {
-      removeLifecycle = installSupabaseAuthLifecycle();
-      unsubscribe = subscribeSupabaseAuth((_session, user) => {
-        if (user) {
-          setAuthCurrentUser(user.id, user.email ?? null);
-        } else {
-          clearAuthCurrentUser();
-        }
-      });
-      authBridgeCleanup = () => {
-        unsubscribe?.();
-        removeLifecycle?.();
-      };
-
-      const restored = await restoreSupabaseSession();
-      if (restored?.user) {
-        setAuthCurrentUser(restored.user.id, restored.user.email ?? null);
-      } else {
-        clearAuthCurrentUser();
-      }
-    } catch (error) {
-      if (authBridgeCleanup) {
-        authBridgeCleanup();
-      } else {
-        unsubscribe?.();
-        removeLifecycle?.();
-      }
-      authBridgeCleanup = null;
-      throw error;
-    }
-  })();
-  authBridgePromise = promise;
-  void promise.catch(() => {
-    if (authBridgePromise === promise) authBridgePromise = null;
-  });
-  return promise;
-}
-
-export async function signInSupabaseAuthTransport(email: string, password: string): Promise<void> {
-  await ensureAuthBridge();
-  const session = await signInSupabase(email, password);
-  setAuthCurrentUser(session.user.id, session.user.email ?? null);
-}
-
-export async function getSupabaseAuthTransportToken(forceRefresh = true): Promise<string | null> {
-  await ensureAuthBridge();
-  return getSupabaseAccessToken(forceRefresh);
-}
-
-export async function clearSupabaseAuthTransportSession(): Promise<void> {
-  await signOutSupabase();
-  clearAuthCurrentUser();
-}
-
-export const auth = {
-  get currentUser(): SupabaseAuthUser | null {
-    return authCurrentUser;
-  },
-};
+export const auth = getAuth();
 
 export async function signInWithEmailAndPassword(
-  authInstance: unknown,
+  authInstance: FirebaseAuthTypes.Module,
   email: string,
   password: string,
 ) {
-  void authInstance;
-  await signInSupabaseAuthTransport(email, password);
-  return { user: auth.currentUser };
+  const credential = await nativeSignInWithEmailAndPassword(
+    authInstance,
+    email,
+    password,
+  );
+  if (!credential.user.emailVerified) {
+    await nativeSignOut(authInstance);
+    throw new Error('Verify your email before signing in to the mobile app');
+  }
+  return credential;
 }
 
-export async function signOut(authInstance: unknown): Promise<void> {
-  void authInstance;
-  await clearSupabaseAuthTransportSession();
+export function signOut(authInstance: FirebaseAuthTypes.Module): Promise<void> {
+  return nativeSignOut(authInstance);
 }
 
 export function onAuthStateChanged(
-  authInstance: unknown,
-  listener: (user: SupabaseAuthUser | null) => void,
+  authInstance: FirebaseAuthTypes.Module,
+  listener: (user: FirebaseAuthUser | null) => void,
 ): () => void {
-  void authInstance;
-  let active = true;
-  let notified = false;
-  const trackedListener = (user: SupabaseAuthUser | null) => {
-    if (!active) return;
-    notified = true;
+  return onNativeAuthStateChanged(authInstance, (user) => {
+    if (user && !user.emailVerified) {
+      listener(null);
+      void nativeSignOut(authInstance);
+      return;
+    }
     listener(user);
-  };
-  authListeners.add(trackedListener);
-  void ensureAuthBridge()
-    .then(() => {
-      if (!notified) trackedListener(auth.currentUser);
-    })
-    .catch(() => {
-      if (!notified) trackedListener(null);
-    });
-  return () => {
-    active = false;
-    authListeners.delete(trackedListener);
-  };
+  });
 }

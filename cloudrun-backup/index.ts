@@ -1,7 +1,7 @@
 import { loadBackupConfig } from "./src/config.js";
 import { runDatabaseBackup } from "./src/database-runner.js";
 import { createGcsDestination } from "./src/gcs-destination.js";
-import { createS3Source } from "./src/s3-source.js";
+import { createGcsSource } from "./src/gcs-source.js";
 import { runStorageBackup } from "./src/storage-runner.js";
 
 function log(event: Record<string, unknown>): void {
@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   }
 
   const result = await runStorageBackup({
-    source: createS3Source(config.source!),
+    source: createGcsSource(config.source!),
     destination,
     sourceBucket: config.source!.bucket,
     maxPages: config.maxPagesPerRun,

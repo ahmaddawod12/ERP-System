@@ -17,6 +17,7 @@ module "runtime" {
   secret_ids                = module.foundation.secret_ids
   secret_versions           = var.secret_versions
   archive_bucket_name       = module.foundation.archive_bucket_name
+  company_files_bucket_name = module.foundation.company_files_bucket_name
   backup_bucket_name        = module.foundation.backup_bucket_name
   image_digests             = var.image_digests
   image_registry_prefix     = module.foundation.artifact_registry_prefix
@@ -25,7 +26,7 @@ module "runtime" {
   tax_origin                = "https://${var.tax_hostname}"
   recaptcha_site_key        = var.recaptcha_site_key
   web_session_key_version   = var.web_session_key_version
-  supabase_connection_limit = var.supabase_connection_limit
+  database_connection_limit = var.database_connection_limit
   service_max_instances     = var.service_max_instances
   database_pool_max         = var.database_pool_max
   labels                    = var.labels

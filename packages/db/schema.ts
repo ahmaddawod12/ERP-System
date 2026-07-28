@@ -841,7 +841,7 @@ const webSessions = privateSchema.table('web_sessions', {
   sessionTokenHash: bytea('session_token_hash').notNull(),
   csrfTokenHash: bytea('csrf_token_hash').notNull(),
   userId: uuid('user_id').notNull(),
-  supabaseSessionId: uuid('supabase_session_id').notNull(),
+  identitySessionId: text('identity_session_id').notNull(),
   credentialsCiphertext: bytea('credentials_ciphertext').notNull(),
   credentialsIv: bytea('credentials_iv').notNull(),
   credentialsAuthTag: bytea('credentials_auth_tag').notNull(),
@@ -866,6 +866,10 @@ const webSessions = privateSchema.table('web_sessions', {
   credentialsAuthTagLength: check('web_sessions_credentials_auth_tag_length_check', sql`octet_length(${table.credentialsAuthTag}) = 16`),
   credentialsPresent: check('web_sessions_credentials_present_check', sql`octet_length(${table.credentialsCiphertext}) > 0`),
   keyVersionPresent: check('web_sessions_key_version_present_check', sql`btrim(${table.encryptionKeyVersion}) <> ''`),
+  identitySessionPresent: check(
+    'web_sessions_identity_session_present_check',
+    sql`length(${table.identitySessionId}) BETWEEN 1 AND 128`,
+  ),
   absoluteLifetime: check(
     'web_sessions_absolute_lifetime_check',
     sql`${table.absoluteExpiresAt} > ${table.createdAt} AND ${table.absoluteExpiresAt} <= ${table.createdAt} + interval '12 hours'`,

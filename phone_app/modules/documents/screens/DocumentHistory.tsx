@@ -220,14 +220,14 @@ export default function DocumentHistory() {
   const [showClientSelector, setShowClientSelector] = useState(false);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const { deleteMutation } = useDocumentMutations({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
   });
   const [actionKeys] = useState(() => new StableDocumentActionKeys(() => randomUUID()));
 
   useEffect(() => {
     actionKeys.reset();
-  }, [actionKeys, user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   const t = useMemo(() => (language === 'en' ? {
     title: 'Document History',
@@ -368,7 +368,7 @@ export default function DocumentHistory() {
     };
   }, [clientFilter, dateFilter.endDate, dateFilter.startDate, selectedDocType]);
   const { query: documentsQuery, documents } = useDocumentsInfinite({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     filters: documentFilters,
     enabled: tenantStatus === 'ready',
@@ -379,14 +379,14 @@ export default function DocumentHistory() {
     pageSize: 50,
   }), [clientSearchQuery]);
   const { clients } = useClientsInfinite({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     filters: clientFilters,
     enabled: tenantStatus === 'ready' && showClientSelector,
   });
 
   const resolveDocumentUrl = useCallback(async (doc: DocumentHistoryRecord) => {
-    const uid = user?.id;
+    const uid = user?.uid;
     const companyId = workspace?.companyId;
     const documentId = doc.documentId || doc.id;
     if (!doc.hasFile || !uid || !companyId || !documentId) {
@@ -394,7 +394,7 @@ export default function DocumentHistory() {
     }
 
     return getDocumentDownloadUrl(uid, companyId, documentId);
-  }, [t.pdfNotAvailable, user?.id, workspace?.companyId]);
+  }, [t.pdfNotAvailable, user?.uid, workspace?.companyId]);
 
   const getDocTypeName = useCallback((type: DocumentTypeFilter) => {
     const numericType = typeof type === 'number' ? type : Number(type);

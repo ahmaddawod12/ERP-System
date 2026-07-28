@@ -27,7 +27,7 @@ describe("restore verifier", () => {
     };
     const manifest: StorageManifest = {
       schemaVersion: 1,
-      kind: "supabase-storage-inventory",
+      kind: "gcs-storage-inventory",
       runId: "run",
       startedAt: "2026-07-26T00:00:00Z",
       completedAt: "2026-07-26T00:01:00Z",

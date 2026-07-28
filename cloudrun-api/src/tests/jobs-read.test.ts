@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
 import type {
@@ -32,9 +32,9 @@ const thirdJobId = "126bf50f-51de-4cf7-a2a1-90fb615e12b5";
 const attachmentId = "18188ccf-bb15-46ba-8825-c302b6e3d107";
 const partId = "ab8224f8-8d29-49c2-949a-ae8cf92ab984";
 
-function verifier(): SupabaseJwtVerifier {
+function verifier(): FirebaseTokenVerifier {
   return {
-    issuer: "https://project.supabase.co/auth/v1",
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -167,6 +167,7 @@ test("jobs route applies bounded SQL filters and returns safe cursor DTOs", asyn
           assert.equal(token, webSessionToken);
           return {
             userId,
+            verifiedEmail: "viewer@example.test",
             absoluteExpiresAt: new Date("2026-07-14T00:00:00.000Z"),
           };
         },

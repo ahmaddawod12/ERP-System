@@ -22,7 +22,7 @@ export function parseManifest(
   const candidate = value as Record<string, unknown>;
   if (
     candidate.schemaVersion !== 1 ||
-    (candidate.kind !== "supabase-storage-inventory" &&
+    (candidate.kind !== "gcs-storage-inventory" &&
       candidate.kind !== "postgresql-custom-export")
   ) {
     throw new Error("Unsupported backup manifest schema");

@@ -1,15 +1,24 @@
 import type { AuthenticatedApiRequest } from "./request.js";
-import type { SupabaseUserClient } from "./supabase-user-client.js";
+import type {
+  FirebaseAuthUser,
+  FirebaseUserClient,
+} from "./firebase-user-client.js";
 import { AuthError } from "./errors.js";
 import { AppError } from "../http/errors.js";
 
 export async function requireVerifiedMutationIdentity(
   authenticated: AuthenticatedApiRequest,
-  supabaseUsers: SupabaseUserClient,
-): Promise<void> {
-  if (authenticated.scheme === "smart-job-session") return;
+  firebaseUsers: FirebaseUserClient,
+): Promise<FirebaseAuthUser> {
+  if (authenticated.scheme === "smart-job-session") {
+    return {
+      userId: authenticated.userId,
+      email: authenticated.verifiedEmail,
+      emailVerified: true,
+    };
+  }
 
-  const user = await supabaseUsers.getUser(authenticated.accessToken);
+  const user = await firebaseUsers.getUser(authenticated.accessToken);
   if (user.userId !== authenticated.userId) {
     throw new AuthError("AUTHORIZATION_INVALID").toAppError();
   }
@@ -20,4 +29,5 @@ export async function requireVerifiedMutationIdentity(
       message: "Verify your email before changing workspace data.",
     });
   }
+  return user;
 }

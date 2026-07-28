@@ -28,5 +28,6 @@ export function hasLocalPlatformOverrides(env: NodeJS.ProcessEnv = process.env):
   return env.SMART_JOB_DEPLOYMENT_ENV === 'local'
     || env.SMART_JOB_LOCAL_PLATFORM !== undefined
     || env.LOCAL_PLATFORM_MARKER_PATH !== undefined
-    || env.SUPABASE_PUBLIC_URL !== undefined;
+    || env.COMPANY_FILES_PUBLIC_BASE_URL !== undefined
+    || env.GCS_API_ENDPOINT !== undefined;
 }

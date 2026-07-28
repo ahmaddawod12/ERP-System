@@ -193,7 +193,7 @@ export default function WorkersUsers() {
   const { workspace, status: tenantStatus } = useTenant();
   const palette = getColors(isDarkMode);
   const t = translations[language] ?? translations.en;
-  const uid = user?.id ?? null;
+  const uid = user?.uid ?? null;
   const companyId = workspace?.companyId ?? null;
   const canManageTeam = workspace !== null
     && (workspace.role === 'manager' || workspace.role === 'dev')

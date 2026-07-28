@@ -11,7 +11,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -40,7 +40,7 @@ const workerResponseSchema = createApiSuccessResponseSchema(WorkerSummarySchema)
 export interface WorkerMutationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 function mapWorkerMutationDatabaseError(error: unknown): unknown {
@@ -154,7 +154,7 @@ export function registerWorkerMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = workerMutationParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = WorkerUpdateRequestSchema.parse(request.body);
@@ -219,7 +219,7 @@ export function registerWorkerMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = workerMutationParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = WorkerDisableRequestSchema.parse(request.body);

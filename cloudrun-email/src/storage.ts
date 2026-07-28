@@ -1,60 +1,88 @@
+import { Storage } from "@google-cloud/storage";
+
 import type { EmailWorkerConfig } from "./config.js";
 
-export function checkStorageConfiguration(config: EmailWorkerConfig["storage"]): void {
+export interface DocumentDownloadUrlSigner {
+  sign(objectPath: string, expiresAt: number): Promise<string>;
+}
+
+function normalizedObjectPath(value: string): string {
+  const objectPath = value.trim();
+  const segments = objectPath.split("/");
   if (
-    config.bucket !== "smart-job-company-files"
-    || !config.secretKey.startsWith("sb_secret_")
-    || !["http:", "https:"].includes(config.baseUrl.protocol)
+    !objectPath
+    || objectPath.length > 1024
+    || objectPath.startsWith("/")
+    || objectPath.endsWith("/")
+    || segments.some((segment) => (
+      !segment
+      || segment === "."
+      || segment === ".."
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(segment)
+    ))
   ) {
-    throw new Error("Email storage configuration is unavailable");
+    throw new TypeError("Document object path is invalid");
   }
+  return objectPath;
 }
 
 function encodeObjectPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
+export function checkStorageConfiguration(config: EmailWorkerConfig["storage"]): void {
+  if (
+    !/^[a-z0-9][a-z0-9._-]*[a-z0-9]$/.test(config.bucket)
+    || !Number.isInteger(config.signedUrlTtlSeconds)
+    || config.signedUrlTtlSeconds < 300
+  ) {
+    throw new Error("Email storage configuration is unavailable");
+  }
+}
+
+export function createGcsDocumentUrlSigner(
+  config: EmailWorkerConfig["storage"],
+): DocumentDownloadUrlSigner {
+  checkStorageConfiguration(config);
+  const storage = new Storage({
+    ...(config.projectId === undefined ? {} : { projectId: config.projectId }),
+    ...(config.apiEndpoint === undefined ? {} : { apiEndpoint: config.apiEndpoint }),
+  });
+  const bucket = storage.bucket(config.bucket);
+
+  return {
+    async sign(objectPath, expiresAt) {
+      if (config.publicBaseUrl !== undefined) {
+        return new URL(
+          `${encodeURIComponent(config.bucket)}/${encodeObjectPath(objectPath)}`,
+          config.publicBaseUrl,
+        ).href;
+      }
+      const [url] = await bucket.file(objectPath).getSignedUrl({
+        version: "v4",
+        action: "read",
+        expires: expiresAt,
+      });
+      return url;
+    },
+  };
+}
+
 export async function createDocumentDownloadUrl(
   config: EmailWorkerConfig["storage"],
-  objectPath: string,
+  rawObjectPath: string,
+  signer: DocumentDownloadUrlSigner = createGcsDocumentUrlSigner(config),
 ): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  try {
-    const endpoint = new URL(
-      `storage/v1/object/sign/${encodeURIComponent(config.bucket)}/${encodeObjectPath(objectPath)}`,
-      config.baseUrl,
-    );
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        apikey: config.secretKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ expiresIn: config.signedUrlTtlSeconds }),
-      signal: controller.signal,
-    });
-    const bytes = await response.arrayBuffer();
-    if (bytes.byteLength > 64 * 1024) throw new Error("Storage signing response is too large");
-    const payload: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"));
-    if (!response.ok || !payload || typeof payload !== "object") {
-      throw new Error(`Storage signing failed with HTTP ${response.status}`);
-    }
-    const signedPath = String(
-      (payload as { signedURL?: unknown; signedUrl?: unknown }).signedURL
-        ?? (payload as { signedUrl?: unknown }).signedUrl
-        ?? "",
-    ).trim();
-    if (!signedPath) throw new Error("Storage signing returned no URL");
-    const signedUrl = new URL(signedPath, config.baseUrl);
-    if (signedUrl.origin !== config.baseUrl.origin || !signedUrl.pathname.startsWith("/storage/v1/object/sign/")) {
-      throw new Error("Storage signing returned an unexpected URL");
-    }
-    if (config.publicBaseUrl !== undefined) {
-      return new URL(`${signedUrl.pathname}${signedUrl.search}`, config.publicBaseUrl).href;
-    }
-    return signedUrl.href;
-  } finally {
-    clearTimeout(timeout);
+  checkStorageConfiguration(config);
+  const objectPath = normalizedObjectPath(rawObjectPath);
+  const signedUrl = new URL(
+    await signer.sign(
+      objectPath,
+      Date.now() + config.signedUrlTtlSeconds * 1_000,
+    ),
+  );
+  if (!["http:", "https:"].includes(signedUrl.protocol) || signedUrl.hash) {
+    throw new Error("Storage signing returned an unexpected URL");
   }
+  return signedUrl.href;
 }

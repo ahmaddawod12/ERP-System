@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { auth, onAuthStateChanged } from '../../lib/auth/transport';
-import type { SupabaseAuthUser } from '../../lib/auth/transport';
+import type { FirebaseAuthUser } from '../../lib/auth/transport';
 import Login from '../auth/screens/Login';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -22,7 +22,7 @@ import { logger } from '../../utils/logger';
 export default function App() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<SupabaseAuthUser | null>(null);
+  const [user, setUser] = useState<FirebaseAuthUser | null>(null);
   const [authInitialized, setAuthInitialized] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const { language } = useLanguageContext();
@@ -165,7 +165,7 @@ export default function App() {
         } catch (crashlyticsError) {
           logger.warn('Crash reporting is unavailable:', crashlyticsError);
         }
-        // Set up the Supabase-backed auth listener independently of Firebase native services.
+        // Authentication and crash reporting use isolated Firebase native modules.
         unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
           if (!isActive) {
             return;

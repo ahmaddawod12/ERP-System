@@ -422,11 +422,6 @@ async function insertApiCreateFixture(client) {
 
 async function deleteApiCreateFixture(client) {
   await client.query(
-    `DELETE FROM storage.objects
-     WHERE name LIKE $1`,
-    [`api-job-create/${apiCreateFixture.company}/%`],
-  ).catch(() => undefined);
-  await client.query(
     `DELETE FROM private.file_upload_sessions
      WHERE user_id IN ($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
     [
@@ -521,21 +516,6 @@ async function insertApiUploadSession(client, sessionId, upload, options = {}) {
       options.bucketId ?? 'smart-job-company-files',
       upload.objectPrefix,
       JSON.stringify(upload.manifest),
-    ],
-  );
-}
-
-async function insertApiStorageObject(client, upload) {
-  await client.query(
-    `INSERT INTO storage.objects (
-       id, bucket_id, name, owner_id, metadata, user_metadata
-     ) VALUES ($1, 'smart-job-company-files', $2, $3, $4::jsonb, $5::jsonb)`,
-    [
-      randomUUID(),
-      upload.objectPath,
-      apiCreateFixture.soloUser,
-      JSON.stringify({ size: 128, mimetype: 'image/jpeg' }),
-      JSON.stringify({ sha256: upload.manifest[0].sha256 }),
     ],
   );
 }
@@ -753,9 +733,6 @@ if (!databaseUrl) {
                     'smart_job_backup', current_database(), 'CONNECT'
                   ) AS database_connect,
                   has_table_privilege(
-                    'smart_job_backup', 'public.jobs', 'SELECT'
-                  ) AS jobs_read,
-                  has_table_privilege(
                     'smart_job_backup', 'public.jobs', 'UPDATE'
                   ) AS jobs_write
            FROM pg_catalog.pg_roles AS role
@@ -767,12 +744,14 @@ if (!databaseUrl) {
           rolcreatedb: false,
           rolcreaterole: false,
           rolreplication: false,
-          rolbypassrls: false,
+          rolbypassrls: true,
           read_all_data: true,
           database_connect: true,
-          jobs_read: true,
           jobs_write: false,
         });
+        await client.query('SET ROLE smart_job_backup');
+        await client.query('SELECT count(*) FROM public.jobs');
+        await client.query('RESET ROLE');
       });
     });
 
@@ -782,8 +761,7 @@ if (!databaseUrl) {
           `SELECT
              p.oid::regprocedure::text AS signature,
              has_function_privilege('smart_job_api', p.oid, 'EXECUTE') AS api_execute,
-             has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_execute,
-             has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated_execute
+             has_function_privilege('smart_job_backup', p.oid, 'EXECUTE') AS backup_execute
            FROM pg_catalog.pg_proc p
            INNER JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
            WHERE n.nspname = 'private'
@@ -798,8 +776,7 @@ if (!databaseUrl) {
         assert.equal(apiFunctions.rowCount, 4);
         for (const row of apiFunctions.rows) {
           assert.equal(row.api_execute, true, row.signature);
-          assert.equal(row.anon_execute, false, row.signature);
-          assert.equal(row.authenticated_execute, false, row.signature);
+          assert.equal(row.backup_execute, false, row.signature);
         }
 
         const legacyFunctions = await client.query(
@@ -808,7 +785,7 @@ if (!databaseUrl) {
              p.proname,
              p.oid::regprocedure::text AS signature,
              has_function_privilege('smart_job_api', p.oid, 'EXECUTE') AS api_execute,
-             has_function_privilege('service_role', p.oid, 'EXECUTE') AS service_execute
+             has_function_privilege('smart_job_backup', p.oid, 'EXECUTE') AS backup_execute
            FROM pg_catalog.pg_proc p
            INNER JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
            WHERE n.nspname IN ('private', 'public')
@@ -818,7 +795,7 @@ if (!databaseUrl) {
         assert.equal(legacyFunctions.rowCount, 4);
         for (const row of legacyFunctions.rows) {
           assert.equal(row.api_execute, false, row.signature);
-          assert.equal(row.service_execute, true, row.signature);
+          assert.equal(row.backup_execute, false, row.signature);
         }
       });
     });
@@ -911,7 +888,7 @@ if (!databaseUrl) {
         await setRuntimeContext(client, fixture.userA);
         const valid = await client.query(
           `INSERT INTO private.web_sessions (
-             session_token_hash, csrf_token_hash, user_id, supabase_session_id,
+             session_token_hash, csrf_token_hash, user_id, identity_session_id,
              credentials_ciphertext, credentials_iv, credentials_auth_tag,
              encryption_key_version, access_token_expires_at, absolute_expires_at,
              last_company_id
@@ -938,7 +915,7 @@ if (!databaseUrl) {
         await expectDatabaseError(
           client.query(
             `INSERT INTO private.web_sessions (
-               session_token_hash, csrf_token_hash, user_id, supabase_session_id,
+               session_token_hash, csrf_token_hash, user_id, identity_session_id,
                credentials_ciphertext, credentials_iv, credentials_auth_tag,
                encryption_key_version, access_token_expires_at, absolute_expires_at
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'test-key-v1',
@@ -1546,7 +1523,7 @@ if (!databaseUrl) {
     });
   });
 
-  describe('API job creation and private Storage migration', {
+  describe('API job creation and private GCS metadata', {
     concurrency: false,
     timeout: 60_000,
   }, () => {
@@ -1562,28 +1539,8 @@ if (!databaseUrl) {
       await withClient(deleteApiCreateFixture);
     });
 
-    it('creates the canonical private company-file bucket and exposes only the API RPC', async () => {
+    it('exposes only the narrow API job-creation RPC', async () => {
       await withClient(async (client) => {
-        const bucket = await client.query(
-          `SELECT id, name, public, file_size_limit, allowed_mime_types
-           FROM storage.buckets
-           WHERE id = 'smart-job-company-files'`,
-        );
-        assert.deepEqual(bucket.rows, [{
-          id: 'smart-job-company-files',
-          name: 'smart-job-company-files',
-          public: false,
-          file_size_limit: '10485760',
-          allowed_mime_types: [
-            'image/jpeg',
-            'image/png',
-            'image/webp',
-            'image/heic',
-            'image/heif',
-            'application/pdf',
-          ],
-        }]);
-
         const signature = [
           'private.create_api_job_with_details(',
           'uuid,public.job_status,text,text,text,text,integer,jsonb,jsonb,uuid,',
@@ -1592,16 +1549,12 @@ if (!databaseUrl) {
         const privileges = await client.query(
           `SELECT
              has_function_privilege('smart_job_api', $1, 'EXECUTE') AS api_execute,
-             has_function_privilege('service_role', $1, 'EXECUTE') AS service_execute,
-             has_function_privilege('authenticated', $1, 'EXECUTE') AS authenticated_execute,
-             has_function_privilege('anon', $1, 'EXECUTE') AS anon_execute`,
+             has_function_privilege('smart_job_backup', $1, 'EXECUTE') AS backup_execute`,
           [signature],
         );
         assert.deepEqual(privileges.rows[0], {
           api_execute: true,
-          service_execute: true,
-          authenticated_execute: false,
-          anon_execute: false,
+          backup_execute: false,
         });
 
         const functionSecurity = await client.query(
@@ -1779,7 +1732,6 @@ if (!databaseUrl) {
         const sessionId = randomUUID();
         const upload = createApiUploadManifest(sessionId);
         await insertApiUploadSession(client, sessionId, upload);
-        await insertApiStorageObject(client, upload);
         const beforeSync = await client.query(
           `SELECT jobs_version, company_inventory_version
            FROM public.company_sync_state WHERE company_id = $1`,
@@ -1877,7 +1829,6 @@ if (!databaseUrl) {
         const sessionId = randomUUID();
         const upload = createApiUploadManifest(sessionId);
         await insertApiUploadSession(client, sessionId, upload);
-        await insertApiStorageObject(client, upload);
         const beforeSync = await client.query(
           `SELECT jobs_version, company_inventory_version
            FROM public.company_sync_state WHERE company_id = $1`,
@@ -1941,20 +1892,26 @@ if (!databaseUrl) {
       });
     });
 
-    it('rejects a manifest whose object is not present in the private bucket', async () => {
+    it('consumes only the API-verified upload manifest stored in the session', async () => {
       await withTransaction(async (client) => {
         const sessionId = randomUUID();
         const upload = createApiUploadManifest(sessionId);
         await insertApiUploadSession(client, sessionId, upload);
         await setRuntimeContext(client, apiCreateFixture.soloUser);
-        await expectDatabaseError(
-          createApiJob(client, {
-            status: 'finished',
-            uploadSessionId: sessionId,
-          }),
-          '22023',
-          /UPLOAD_OBJECT_MISMATCH/,
+        const created = await createApiJob(client, {
+          status: 'finished',
+          uploadSessionId: sessionId,
+        });
+        assert.equal(created.rowCount, 1);
+        const attachment = await client.query(
+          `SELECT storage_path
+           FROM public.job_attachments
+           WHERE id = $1`,
+          [upload.manifest[0].attachmentId],
         );
+        assert.deepEqual(attachment.rows, [{
+          storage_path: upload.manifest[0].objectPath,
+        }]);
       });
     });
 
@@ -2011,47 +1968,41 @@ if (!databaseUrl) {
       await withClient(deleteUploadCleanupFixture);
     });
 
-    it('exposes maintenance RPCs only to service_role', async () => {
+    it('exposes maintenance RPCs only to the archiver role', async () => {
       await withClient(async (client) => {
         const privileges = await client.query(
           `SELECT
              has_function_privilege(
-               'service_role',
-               'public.queue_expired_file_upload_cleanup(timestamptz)',
+               'smart_job_archiver',
+               'private.queue_expired_file_upload_cleanup(timestamptz)',
                'EXECUTE'
-             ) AS service_can_queue,
+             ) AS archiver_can_queue,
              has_function_privilege(
-               'service_role',
-               'public.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
+               'smart_job_archiver',
+               'private.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
                'EXECUTE'
-             ) AS service_can_claim,
+             ) AS archiver_can_claim,
              has_function_privilege(
-               'service_role',
-               'public.finish_file_upload_cleanup(uuid,integer,boolean,text,timestamptz)',
+               'smart_job_archiver',
+               'private.finish_file_upload_cleanup(uuid,integer,boolean,text,timestamptz)',
                'EXECUTE'
-             ) AS service_can_finish,
+             ) AS archiver_can_finish,
              has_function_privilege(
-               'anon',
-               'public.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
+               'smart_job_backup',
+               'private.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
                'EXECUTE'
-             ) AS anon_can_claim,
-             has_function_privilege(
-               'authenticated',
-               'public.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
-               'EXECUTE'
-             ) AS authenticated_can_claim,
+             ) AS backup_can_claim,
              has_function_privilege(
                'smart_job_api',
-               'public.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
+               'private.claim_file_upload_cleanup_batch(integer,integer,timestamptz)',
                'EXECUTE'
              ) AS api_can_claim`,
         );
         assert.deepEqual(privileges.rows[0], {
-          service_can_queue: true,
-          service_can_claim: true,
-          service_can_finish: true,
-          anon_can_claim: false,
-          authenticated_can_claim: false,
+          archiver_can_queue: true,
+          archiver_can_claim: true,
+          archiver_can_finish: true,
+          backup_can_claim: false,
           api_can_claim: false,
         });
       });
@@ -2082,15 +2033,15 @@ if (!databaseUrl) {
           upload: crossPrefixUpload,
         });
 
-        await client.query('SET LOCAL ROLE service_role');
+        await client.query('SET LOCAL ROLE smart_job_archiver');
         const queued = await client.query(
-          'SELECT public.queue_expired_file_upload_cleanup(clock_timestamp()) AS result',
+          'SELECT private.queue_expired_file_upload_cleanup(clock_timestamp()) AS result',
         );
         assert.equal(queued.rows[0].result.uploadSessionsQueued, 2);
         assert.equal(queued.rows[0].result.uploadSessionsQuarantined, 1);
 
         const claimed = await client.query(
-          `SELECT * FROM public.claim_file_upload_cleanup_batch(
+          `SELECT * FROM private.claim_file_upload_cleanup_batch(
              10, 60, clock_timestamp()
            )`,
         );
@@ -2101,14 +2052,14 @@ if (!databaseUrl) {
         assert.equal(claimed.rows[0].attempt_count, 1);
 
         const noDuplicateClaim = await client.query(
-          `SELECT * FROM public.claim_file_upload_cleanup_batch(
+          `SELECT * FROM private.claim_file_upload_cleanup_batch(
              10, 60, clock_timestamp()
            )`,
         );
         assert.equal(noDuplicateClaim.rowCount, 0);
 
         const failed = await client.query(
-          `SELECT public.finish_file_upload_cleanup(
+          `SELECT private.finish_file_upload_cleanup(
              $1, 1, false, $2, clock_timestamp()
            ) AS result`,
           [expiredSessionId, 'x'.repeat(700)],
@@ -2116,7 +2067,7 @@ if (!databaseUrl) {
         assert.equal(failed.rows[0].result.outcome, 'cleanup_pending');
 
         const retried = await client.query(
-          `SELECT * FROM public.claim_file_upload_cleanup_batch(
+          `SELECT * FROM private.claim_file_upload_cleanup_batch(
              10, 60, clock_timestamp()
            )`,
         );
@@ -2125,7 +2076,7 @@ if (!databaseUrl) {
         assert.equal(retried.rows[0].attempt_count, 2);
 
         const completed = await client.query(
-          `SELECT public.finish_file_upload_cleanup(
+          `SELECT private.finish_file_upload_cleanup(
              $1, 2, true, NULL, clock_timestamp()
            ) AS result`,
           [expiredSessionId],
@@ -2181,14 +2132,14 @@ if (!databaseUrl) {
       try {
         await Promise.all([first.query('BEGIN'), second.query('BEGIN')]);
         await Promise.all([
-          first.query('SET LOCAL ROLE service_role'),
-          second.query('SET LOCAL ROLE service_role'),
+          first.query('SET LOCAL ROLE smart_job_archiver'),
+          second.query('SET LOCAL ROLE smart_job_archiver'),
         ]);
         const firstClaim = await first.query(
-          'SELECT * FROM public.claim_file_upload_cleanup_batch(1, 60, clock_timestamp())',
+          'SELECT * FROM private.claim_file_upload_cleanup_batch(1, 60, clock_timestamp())',
         );
         const secondClaim = await second.query(
-          'SELECT * FROM public.claim_file_upload_cleanup_batch(1, 60, clock_timestamp())',
+          'SELECT * FROM private.claim_file_upload_cleanup_batch(1, 60, clock_timestamp())',
         );
         assert.equal(firstClaim.rowCount, 1);
         assert.equal(secondClaim.rowCount, 1);
@@ -2218,14 +2169,14 @@ if (!databaseUrl) {
           status: 'cleanup_pending',
           cleanupAttempts: 4,
         });
-        await client.query('SET LOCAL ROLE service_role');
+        await client.query('SET LOCAL ROLE smart_job_archiver');
         const claim = await client.query(
-          'SELECT * FROM public.claim_file_upload_cleanup_batch(10, 60, clock_timestamp())',
+          'SELECT * FROM private.claim_file_upload_cleanup_batch(10, 60, clock_timestamp())',
         );
         assert.equal(claim.rows[0].session_id, sessionId);
         assert.equal(claim.rows[0].attempt_count, 5);
         const finish = await client.query(
-          `SELECT public.finish_file_upload_cleanup(
+          `SELECT private.finish_file_upload_cleanup(
              $1, 5, false, 'permanent storage failure', clock_timestamp()
            ) AS result`,
           [sessionId],
@@ -2279,16 +2230,12 @@ if (!databaseUrl) {
         const privileges = await client.query(
           `SELECT
              has_function_privilege('smart_job_api', $1, 'EXECUTE') AS api_can_execute,
-             has_function_privilege('anon', $1, 'EXECUTE') AS anon_can_execute,
-             has_function_privilege('authenticated', $1, 'EXECUTE') AS auth_can_execute,
-             has_function_privilege('service_role', $1, 'EXECUTE') AS service_can_execute`,
+             has_function_privilege('smart_job_backup', $1, 'EXECUTE') AS backup_can_execute`,
           [registrationFunction],
         );
         assert.deepEqual(privileges.rows[0], {
           api_can_execute: true,
-          anon_can_execute: false,
-          auth_can_execute: false,
-          service_can_execute: false,
+          backup_can_execute: false,
         });
       });
     });
@@ -2431,10 +2378,8 @@ if (!databaseUrl) {
           `SELECT
              has_function_privilege('smart_job_api', $1, 'EXECUTE') AS api_can_register,
              has_function_privilege('smart_job_api', $2, 'EXECUTE') AS api_can_clear,
-             has_function_privilege('anon', $1, 'EXECUTE') AS anon_can_register,
-             has_function_privilege('authenticated', $1, 'EXECUTE') AS auth_can_register,
-             has_function_privilege('service_role', $1, 'EXECUTE') AS service_can_register,
-             has_function_privilege('service_role', $2, 'EXECUTE') AS service_can_clear,
+             has_function_privilege('smart_job_backup', $1, 'EXECUTE') AS backup_can_register,
+             has_function_privilege('smart_job_backup', $2, 'EXECUTE') AS backup_can_clear,
              has_table_privilege('smart_job_api', 'private.push_devices', 'SELECT') AS api_can_read_table,
              has_function_privilege('smart_job_api', 'private.upsert_api_push_token(text,text)', 'EXECUTE') AS api_can_use_legacy_upsert`,
           [registerFunction, clearFunction],
@@ -2442,10 +2387,8 @@ if (!databaseUrl) {
         assert.deepEqual(privileges.rows[0], {
           api_can_register: true,
           api_can_clear: true,
-          anon_can_register: false,
-          auth_can_register: false,
-          service_can_register: false,
-          service_can_clear: false,
+          backup_can_register: false,
+          backup_can_clear: false,
           api_can_read_table: false,
           api_can_use_legacy_upsert: false,
         });
@@ -2567,29 +2510,10 @@ if (!databaseUrl) {
     timeout: 60_000,
   }, () => {
     const createFunction = 'private.create_api_company_invitation(uuid,text,text,integer)';
-    const redeemFunction = 'private.redeem_api_company_invitation(bigint,text,text,text)';
+    const redeemFunction = 'private.redeem_api_company_invitation(bigint,text,text,text,text)';
     const rateLimitFunction = 'private.consume_api_invitation_rate_limit(text)';
 
-    async function insertInvitationAuthUser(client, userId, email, verified = true) {
-      await client.query(
-        `INSERT INTO auth.users (
-           id, aud, role, email, email_confirmed_at,
-           raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-         ) VALUES (
-           $1, 'authenticated', 'authenticated', $2, $3,
-           '{}'::jsonb, '{}'::jsonb, clock_timestamp(), clock_timestamp()
-         )`,
-        [userId, email, verified ? new Date() : null],
-      );
-    }
-
     async function insertInvitationCompany(client, input) {
-      await insertInvitationAuthUser(
-        client,
-        input.managerUser,
-        input.managerEmail,
-        input.managerVerified ?? true,
-      );
       await client.query(
         `INSERT INTO public.app_users (id, email, display_name)
          VALUES ($1, $2, 'Invitation manager')`,
@@ -2645,15 +2569,20 @@ if (!databaseUrl) {
 
     async function redeemInvitation(client, input) {
       await setRuntimeContext(client, input.userId);
+      const identity = await client.query(
+        'SELECT email FROM public.app_users WHERE id = $1',
+        [input.userId],
+      );
       return client.query(
         `SELECT * FROM private.redeem_api_company_invitation(
-           $1::bigint, $2::text, $3::text, $4::text
+           $1::bigint, $2::text, $3::text, $4::text, $5::text
          )`,
         [
           input.publicCompanyId,
           input.inviteCode,
           input.displayName ?? null,
           input.phoneNumber ?? null,
+          input.verifiedEmail ?? identity.rows[0]?.email ?? null,
         ],
       );
     }
@@ -2665,12 +2594,6 @@ if (!databaseUrl) {
              has_function_privilege('smart_job_api', $1, 'EXECUTE') AS api_can_create,
              has_function_privilege('smart_job_api', $2, 'EXECUTE') AS api_can_redeem,
              has_function_privilege('smart_job_api', $3, 'EXECUTE') AS api_can_rate_limit,
-             has_function_privilege('anon', $1, 'EXECUTE') AS anon_can_create,
-             has_function_privilege('authenticated', $2, 'EXECUTE') AS auth_can_redeem,
-             has_function_privilege('authenticated', $3, 'EXECUTE') AS auth_can_rate_limit,
-             has_function_privilege('service_role', $1, 'EXECUTE') AS service_can_create,
-             has_function_privilege('service_role', $2, 'EXECUTE') AS service_can_redeem,
-             has_function_privilege('service_role', $3, 'EXECUTE') AS service_can_rate_limit,
              has_table_privilege('smart_job_api', 'public.company_invites', 'INSERT') AS api_can_insert_invite,
              has_table_privilege('smart_job_api', 'public.rate_limit_buckets', 'INSERT') AS api_can_insert_rate_limit,
              has_table_privilege('smart_job_api', 'public.company_memberships', 'INSERT') AS api_can_insert_member`,
@@ -2680,12 +2603,6 @@ if (!databaseUrl) {
           api_can_create: true,
           api_can_redeem: true,
           api_can_rate_limit: true,
-          anon_can_create: false,
-          auth_can_redeem: false,
-          auth_can_rate_limit: false,
-          service_can_create: false,
-          service_can_redeem: false,
-          service_can_rate_limit: false,
           api_can_insert_invite: false,
           api_can_insert_rate_limit: false,
           api_can_insert_member: false,
@@ -2770,7 +2687,6 @@ if (!databaseUrl) {
           company,
           publicCompanyId,
         });
-        await insertInvitationAuthUser(client, targetUser, targetEmail);
         await client.query(
           `INSERT INTO public.app_users (id, email)
            VALUES ($1, $2)`,
@@ -2884,7 +2800,6 @@ if (!databaseUrl) {
           company,
           publicCompanyId,
         });
-        await insertInvitationAuthUser(client, targetUser, targetEmail);
         await client.query(
           `INSERT INTO public.app_users (id, email)
            VALUES ($1, $2)`,
@@ -2947,33 +2862,6 @@ if (!databaseUrl) {
       });
     });
 
-    it('requires a verified Auth email before invitation creation', async () => {
-      await withTransaction(async (client) => {
-        const managerUser = randomUUID();
-        const company = randomUUID();
-        await insertInvitationCompany(client, {
-          managerUser,
-          managerEmail: `unverified-manager-${managerUser}@example.invalid`,
-          managerVerified: false,
-          managerMembership: randomUUID(),
-          company,
-          publicCompanyId: publicCompanyBase + 320,
-        });
-        await client.query('SAVEPOINT unverified_manager');
-        await expectDatabaseError(
-          createInvitation(client, { managerUser, company }),
-          '42501',
-          /EMAIL_VERIFICATION_REQUIRED/,
-        );
-        await client.query('ROLLBACK TO SAVEPOINT unverified_manager');
-        const invites = await client.query(
-          'SELECT id FROM public.company_invites WHERE company_id = $1',
-          [company],
-        );
-        assert.equal(invites.rowCount, 0);
-      });
-    });
-
     it('locks one invite so concurrent different users produce exactly one membership', async () => {
       const managerUser = randomUUID();
       const managerMembership = randomUUID();
@@ -2996,7 +2884,6 @@ if (!databaseUrl) {
             });
             for (const userId of [firstUser, secondUser]) {
               const email = `concurrent-invite-${userId}@example.invalid`;
-              await insertInvitationAuthUser(client, userId, email);
               await client.query(
                 `INSERT INTO public.app_users (id, email)
                  VALUES ($1, $2)`,
@@ -3024,16 +2911,24 @@ if (!databaseUrl) {
 
           const firstResult = await first.query(
             `SELECT * FROM private.redeem_api_company_invitation(
-               $1::bigint, $2::text, NULL, NULL
+               $1::bigint, $2::text, NULL, NULL, $3::text
              )`,
-            [publicCompanyId, invitation.invite_code],
+            [
+              publicCompanyId,
+              invitation.invite_code,
+              `concurrent-invite-${firstUser}@example.invalid`,
+            ],
           );
           assert.equal(firstResult.rowCount, 1);
           const secondAttempt = second.query(
             `SELECT * FROM private.redeem_api_company_invitation(
-               $1::bigint, $2::text, NULL, NULL
+               $1::bigint, $2::text, NULL, NULL, $3::text
              )`,
-            [publicCompanyId, invitation.invite_code],
+            [
+              publicCompanyId,
+              invitation.invite_code,
+              `concurrent-invite-${secondUser}@example.invalid`,
+            ],
           );
           await first.query('COMMIT');
           await expectDatabaseError(
@@ -3076,10 +2971,6 @@ if (!databaseUrl) {
             .catch(() => undefined);
           await client.query(
             'DELETE FROM public.app_users WHERE id = ANY($1::text[])',
-            [[managerUser, firstUser, secondUser]],
-          ).catch(() => undefined);
-          await client.query(
-            'DELETE FROM auth.users WHERE id = ANY($1::uuid[])',
             [[managerUser, firstUser, secondUser]],
           ).catch(() => undefined);
         });
@@ -3141,18 +3032,18 @@ if (!databaseUrl) {
 
     it('exposes exact schema readiness only through the API runtime function', async () => {
       await withTransaction(async (client) => {
-        const roles = ['anon', 'authenticated', 'service_role', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
+        const roles = ['smart_job_backup', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
         const privileges = await client.query(
           `SELECT role_name,
              has_function_privilege(role_name, 'private.check_api_readiness(text)', 'EXECUTE') AS can_check,
-             has_table_privilege(role_name, 'private.api_schema_metadata', 'SELECT,INSERT,UPDATE,DELETE') AS metadata_access
+             has_table_privilege(role_name, 'private.api_schema_metadata', 'INSERT,UPDATE,DELETE') AS metadata_write
            FROM unnest($1::text[]) AS role_name
            ORDER BY role_name`,
           [roles],
         );
         for (const row of privileges.rows) {
           assert.equal(row.can_check, row.role_name === 'smart_job_api');
-          assert.equal(row.metadata_access, false);
+          assert.equal(row.metadata_write, false);
         }
 
         await client.query('SET LOCAL ROLE smart_job_api');
@@ -3170,12 +3061,12 @@ if (!databaseUrl) {
 
     it('enforces the worker-role permission matrix without direct ERP table writes', async () => {
       await withClient(async (client) => {
-        const roles = ['anon', 'authenticated', 'service_role', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
+        const roles = ['smart_job_backup', 'smart_job_api', 'smart_job_pdf', 'smart_job_email', 'smart_job_archiver'];
         const result = await client.query(
           `SELECT role_name,
              has_table_privilege(role_name, 'public.documents', 'INSERT,UPDATE,DELETE') AS public_document_write,
-             has_table_privilege(role_name, 'private.document_email_deliveries', 'SELECT,INSERT,UPDATE,DELETE') AS email_table_access,
-             has_table_privilege(role_name, 'private.tax_submissions', 'SELECT,INSERT,UPDATE,DELETE') AS tax_table_access,
+             has_table_privilege(role_name, 'private.document_email_deliveries', 'INSERT,UPDATE,DELETE') AS email_table_write,
+             has_table_privilege(role_name, 'private.tax_submissions', 'INSERT,UPDATE,DELETE') AS tax_table_write,
              has_function_privilege(role_name, 'private.claim_pdf_document_task(text,uuid,integer)', 'EXECUTE') AS pdf_claim,
              has_function_privilege(role_name, 'private.claim_email_delivery(uuid,uuid,integer)', 'EXECUTE') AS email_claim,
              has_function_privilege(role_name, 'private.claim_archive_run_lease(uuid,text,text,timestamptz,timestamptz,timestamptz,uuid,integer)', 'EXECUTE') AS archive_claim,
@@ -3189,8 +3080,8 @@ if (!databaseUrl) {
         );
         for (const row of result.rows) {
           assert.equal(row.public_document_write, false, `${row.role_name} has direct document writes`);
-          assert.equal(row.email_table_access, false, `${row.role_name} has direct email-table access`);
-          assert.equal(row.tax_table_access, false, `${row.role_name} has direct tax-table access`);
+          assert.equal(row.email_table_write, false, `${row.role_name} has direct email-table writes`);
+          assert.equal(row.tax_table_write, false, `${row.role_name} has direct tax-table writes`);
           assert.equal(row.pdf_claim, row.role_name === 'smart_job_pdf');
           assert.equal(row.email_claim, row.role_name === 'smart_job_email');
           assert.equal(row.archive_claim, row.role_name === 'smart_job_archiver');

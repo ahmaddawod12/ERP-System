@@ -40,7 +40,7 @@ async function evictTenantQueries(uid: string, companyId: number): Promise<void>
 export function QueryProvider({ children }: { children: ReactNode }) {
   const { user } = useSession();
   const { workspace } = useTenant();
-  const uid = user?.id ?? null;
+  const uid = user?.uid ?? null;
   const companyId = workspace?.companyId ?? null;
   useEffect(() => {
     onlineManager.setEventListener((setOnline) => NetInfo.addEventListener((state) => {

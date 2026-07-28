@@ -166,7 +166,7 @@ export async function runStorageBackup(input: {
         break;
       }
       if (!page.nextKeyMarker) {
-        throw new Error("Truncated S3 inventory omitted its continuation marker");
+        throw new Error("Truncated GCS inventory omitted its continuation token");
       }
       keyMarker = page.nextKeyMarker;
       versionIdMarker = page.nextVersionIdMarker;
@@ -178,7 +178,7 @@ export async function runStorageBackup(input: {
   const completedAt = (input.now ?? new Date()).toISOString();
   const manifest: StorageManifest = {
     schemaVersion: 1,
-    kind: "supabase-storage-inventory",
+    kind: "gcs-storage-inventory",
     runId,
     startedAt,
     completedAt,

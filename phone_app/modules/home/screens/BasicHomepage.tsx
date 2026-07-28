@@ -225,7 +225,7 @@ export default function BasicHomepage() {
   const hasDocs = enabledModules.has('documents');
   const basicProfileAllowed = canLoadBasicProfile(workspace);
   const profileQuery = useBusinessProfile({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     enabled: tenantStatus === 'ready' && basicProfileAllowed,
   });

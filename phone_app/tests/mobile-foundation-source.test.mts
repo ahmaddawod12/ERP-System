@@ -34,10 +34,11 @@ test('the SQLCipher outbox remains per-user and staged files have explicit clean
   assert.match(appConfig, /useSQLCipher:\s*true/);
 });
 
-test('mobile Supabase sessions require verified email and remain in SecureStore', async () => {
-  const source = await readSource('../lib/auth/supabase-client.ts');
+test('mobile Firebase sessions require verified email and use the native SDK', async () => {
+  const source = await readSource('../lib/auth/firebase-auth.ts');
 
-  assert.match(source, /email_confirmed_at/);
-  assert.match(source, /expo-secure-store/);
+  assert.match(source, /@react-native-firebase\/auth/);
+  assert.match(source, /emailVerified/);
+  assert.match(source, /getIdToken/);
   assert.doesNotMatch(source, /AsyncStorage|react-native-mmkv/);
 });

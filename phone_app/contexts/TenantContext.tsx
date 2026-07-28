@@ -38,7 +38,7 @@ const TenantContext = createContext<TenantContextValue | null>(null);
 
 export function TenantProvider({ children }: { children: ReactNode }) {
   const { status: sessionStatus, user } = useSession();
-  const userId = user?.id ?? null;
+  const userId = user?.uid ?? null;
   const [status, setStatus] = useState<TenantStatus>('idle');
   const [workspaces, setWorkspaces] = useState<readonly WorkspaceSummary[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);

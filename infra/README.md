@@ -78,6 +78,6 @@ release workflow never stores a service-account key.
 
 The environment examples contain provisional capacity and retention values.
 Production database connection counts and retention periods must be reconciled
-with the purchased Supabase limit and the legal retention decision before an
+with the purchased PostgreSQL limit and the legal retention decision before an
 apply. The sum of service/job pool maxima must remain at or below 70% of the
 database connection limit.

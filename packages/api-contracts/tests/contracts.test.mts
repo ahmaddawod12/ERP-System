@@ -1171,7 +1171,7 @@ test("document contracts keep filters bounded and storage paths private", () => 
     status: "completed",
     documentId: "42-TI",
     previewURL: null,
-    downloadURL: "https://project.supabase.co/storage/file.pdf?token=short-lived",
+    downloadURL: "https://storage.googleapis.com/company-files/file.pdf?token=short-lived",
     pdfSize: 1024,
     error: null,
     createdAt: "2026-07-13T12:00:00.000Z",
@@ -1180,7 +1180,7 @@ test("document contracts keep filters bounded and storage paths private", () => 
   assert.equal(DocumentDownloadAccessSchema.safeParse({
     documentId: document.documentId,
     documentCode: document.documentCode,
-    downloadURL: "https://project.supabase.co/storage/file.pdf?token=short-lived",
+    downloadURL: "https://storage.googleapis.com/company-files/file.pdf?token=short-lived",
     expiresAt: "2026-07-13T12:15:00.000Z",
   }).success, true);
 

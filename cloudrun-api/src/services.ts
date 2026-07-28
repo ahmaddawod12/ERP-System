@@ -1,7 +1,7 @@
 import type {
   ApiRequestAuthenticator,
   GoogleServiceIdentityVerifier,
-  SupabaseUserClient,
+  FirebaseUserClient,
 } from "./auth/index.js";
 import type { ApiDatabaseRuntime } from "./database/runtime.js";
 import type { WebSessionService } from "./web-sessions/service.js";
@@ -15,7 +15,7 @@ import type { TaxGatewayClient } from "./tax/gateway-client.js";
 export interface ApiServices {
   readonly database: ApiDatabaseRuntime;
   readonly authenticator: ApiRequestAuthenticator;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
   readonly webSessions: WebSessionService;
   readonly storage?: CompanyFileStorage;
   readonly storageBucketId?: string;

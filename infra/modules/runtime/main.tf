@@ -106,13 +106,12 @@ locals {
         RECAPTCHA_ENTERPRISE_MIN_SCORE            = "0.7"
         RECAPTCHA_ENTERPRISE_PROJECT_ID           = var.project_id
         RECAPTCHA_ENTERPRISE_TIMEOUT_MS           = "8000"
-        SUPABASE_AUTH_TIMEOUT_MS                  = "8000"
+        FIREBASE_PROJECT_ID                       = var.project_id
         WEBSITE_ORIGIN                            = var.website_origin
       }
       secret_env = {
         CONTACT_CHALLENGE_SECRET = var.secret_ids["contact_challenge_secret"]
-        SUPABASE_PUBLISHABLE_KEY = var.secret_ids["supabase_publishable_key"]
-        SUPABASE_URL             = var.secret_ids["supabase_url"]
+        FIREBASE_WEB_API_KEY     = var.secret_ids["firebase_web_api_key"]
         WEBSITE_SESSION_SECRET   = var.secret_ids["website_session_secret"]
       }
     }
@@ -148,17 +147,16 @@ locals {
         NODE_ENV                           = "production"
         PORT                               = "8080"
         REQUEST_TIMEOUT_MS                 = "12000"
-        SUPABASE_JWT_AUDIENCE              = "authenticated"
-        SUPABASE_STORAGE_BUCKET            = "smart-job-company-files"
+        FIREBASE_PROJECT_ID                = var.project_id
+        COMPANY_FILES_BUCKET               = var.company_files_bucket_name
+        GCS_PROJECT_ID                     = var.project_id
         TAX_GATEWAY_TIMEOUT_MS             = "8000"
         TAX_SUBMISSION_MODE                = "disabled"
         WEB_SESSION_ENCRYPTION_KEY_VERSION = var.web_session_key_version
       }
       secret_env = {
         DATABASE_URL                      = var.secret_ids["api_database_url"]
-        SUPABASE_PUBLISHABLE_KEY          = var.secret_ids["supabase_publishable_key"]
-        SUPABASE_SECRET_KEY               = var.secret_ids["supabase_secret_key"]
-        SUPABASE_URL                      = var.secret_ids["supabase_url"]
+        FIREBASE_WEB_API_KEY              = var.secret_ids["firebase_web_api_key"]
         WEB_SESSION_ENCRYPTION_KEY_BASE64 = var.secret_ids["web_session_encryption_key"]
       }
     }
@@ -214,13 +212,12 @@ locals {
         PUPPETEER_EXECUTABLE_PATH              = "/usr/bin/google-chrome-stable"
         SHUTDOWN_TIMEOUT_MS                    = "30000"
         SMART_JOB_PERSISTENCE_BACKEND          = "sql"
-        SUPABASE_STORAGE_BUCKET                = "smart-job-company-files"
+        COMPANY_FILES_BUCKET                   = var.company_files_bucket_name
+        GCS_PROJECT_ID                         = var.project_id
         TAB_WAIT_TIMEOUT_MS                    = "10000"
       }
       secret_env = {
-        DATABASE_URL        = var.secret_ids["pdf_database_url"]
-        SUPABASE_SECRET_KEY = var.secret_ids["supabase_secret_key"]
-        SUPABASE_URL        = var.secret_ids["supabase_url"]
+        DATABASE_URL = var.secret_ids["pdf_database_url"]
       }
     }
     email = {
@@ -249,17 +246,16 @@ locals {
         PUBSUB_ALLOWED_SERVICE_ACCOUNTS = var.service_accounts["pubsub-push"]
         SES_FROM_NAME                   = "Smart-Job"
         SIGNED_DOWNLOAD_TTL_SECONDS     = "86400"
-        SUPABASE_STORAGE_BUCKET         = "smart-job-company-files"
+        COMPANY_FILES_BUCKET            = var.company_files_bucket_name
+        GCS_PROJECT_ID                  = var.project_id
         }, var.email_ses_federation.enabled ? {
         AWS_SES_ROLE_ARN                     = var.email_ses_federation.role_arn
         AWS_SES_OIDC_AUDIENCE                = var.email_ses_federation.oidc_audience
         AWS_GOOGLE_SERVICE_ACCOUNT_UNIQUE_ID = var.email_ses_federation.google_service_account_unique_id
       } : {})
       secret_env = merge({
-        DATABASE_URL        = var.secret_ids["email_database_url"]
-        SES_FROM_EMAIL      = var.secret_ids["ses_from_email"]
-        SUPABASE_SECRET_KEY = var.secret_ids["supabase_secret_key"]
-        SUPABASE_URL        = var.secret_ids["supabase_url"]
+        DATABASE_URL   = var.secret_ids["email_database_url"]
+        SES_FROM_EMAIL = var.secret_ids["ses_from_email"]
         }, var.email_ses_federation.enabled ? {} : {
         AWS_ACCESS_KEY_ID     = var.secret_ids["aws_access_key_id"]
         AWS_SECRET_ACCESS_KEY = var.secret_ids["aws_secret_access_key"]
@@ -280,24 +276,23 @@ locals {
       command         = []
       args            = []
       env = {
-        ARCHIVER_CANDIDATE_LIMIT       = "2000"
-        ARCHIVER_COMPANY_CONCURRENCY   = "2"
-        ARCHIVER_JOB_DEADLINE_MS       = "3300000"
-        ARCHIVER_LEASE_SECONDS         = "3600"
-        ARCHIVER_QUERY_PAGE_SIZE       = "500"
-        ARCHIVE_BUCKET                 = var.archive_bucket_name
-        DATABASE_MAX_CONNECTIONS       = tostring(var.database_pool_max.archiver)
-        DATABASE_SSL_MODE              = "require"
-        SMART_JOB_PERSISTENCE_BACKEND  = "sql"
-        UPLOAD_CLEANUP_BATCH_SIZE      = "25"
-        UPLOAD_CLEANUP_CONCURRENCY     = "4"
-        UPLOAD_CLEANUP_HTTP_TIMEOUT_MS = "10000"
-        UPLOAD_CLEANUP_LEASE_SECONDS   = "300"
+        ARCHIVER_CANDIDATE_LIMIT      = "2000"
+        ARCHIVER_COMPANY_CONCURRENCY  = "2"
+        ARCHIVER_JOB_DEADLINE_MS      = "3300000"
+        ARCHIVER_LEASE_SECONDS        = "3600"
+        ARCHIVER_QUERY_PAGE_SIZE      = "500"
+        ARCHIVE_BUCKET                = var.archive_bucket_name
+        DATABASE_MAX_CONNECTIONS      = tostring(var.database_pool_max.archiver)
+        DATABASE_SSL_MODE             = "require"
+        SMART_JOB_PERSISTENCE_BACKEND = "sql"
+        UPLOAD_CLEANUP_BATCH_SIZE     = "25"
+        UPLOAD_CLEANUP_CONCURRENCY    = "4"
+        UPLOAD_CLEANUP_LEASE_SECONDS  = "300"
+        COMPANY_FILES_BUCKET          = var.company_files_bucket_name
+        GCS_PROJECT_ID                = var.project_id
       }
       secret_env = {
-        DATABASE_URL        = var.secret_ids["archiver_database_url"]
-        SUPABASE_SECRET_KEY = var.secret_ids["supabase_secret_key"]
-        SUPABASE_URL        = var.secret_ids["supabase_url"]
+        DATABASE_URL = var.secret_ids["archiver_database_url"]
       }
     }
     backup-storage = {
@@ -317,14 +312,10 @@ locals {
         BACKUP_MODE              = "storage"
         BACKUP_RPO_MINUTES       = "15"
         NODE_ENV                 = "production"
-        SUPABASE_S3_REGION       = "eu-central-1"
-        SUPABASE_STORAGE_BUCKET  = "smart-job-company-files"
+        COMPANY_FILES_BUCKET     = var.company_files_bucket_name
+        GCS_PROJECT_ID           = var.project_id
       }
-      secret_env = {
-        SUPABASE_S3_ACCESS_KEY_ID     = var.secret_ids["supabase_s3_access_key_id"]
-        SUPABASE_S3_SECRET_ACCESS_KEY = var.secret_ids["supabase_s3_secret_access_key"]
-        SUPABASE_URL                  = var.secret_ids["supabase_url"]
-      }
+      secret_env = {}
     }
     backup-database = {
       location        = var.primary_region
@@ -434,8 +425,8 @@ resource "terraform_data" "deployment_preconditions" {
     }
 
     precondition {
-      condition     = local.database_connection_budget <= floor(var.supabase_connection_limit * 0.70)
-      error_message = "Aggregate maximum database pools exceed 70% of the Supabase connection limit."
+      condition     = local.database_connection_budget <= floor(var.database_connection_limit * 0.70)
+      error_message = "Aggregate maximum database pools exceed 70% of the database connection limit."
     }
 
     precondition {

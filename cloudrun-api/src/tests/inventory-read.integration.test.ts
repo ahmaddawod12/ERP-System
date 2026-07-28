@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Client, type QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
 import type {
@@ -206,7 +206,7 @@ if (adminDatabaseUrl.length === 0) {
         ["basic.payload.signature", basicUid],
         ["dev.payload.signature", devUid],
       ]);
-      const verifier: SupabaseJwtVerifier = {
+      const verifier: FirebaseTokenVerifier = {
         issuer: "http://127.0.0.1:55321/auth/v1",
         audiences: ["authenticated"],
         async verifyAuthorizationHeader() {

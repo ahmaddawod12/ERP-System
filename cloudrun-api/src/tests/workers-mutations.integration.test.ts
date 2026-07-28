@@ -136,7 +136,7 @@ if (adminDatabaseUrl.length === 0) {
       registerWorkerMutationRoutes(app, {
         authenticator,
         database: contextualRuntime(admin),
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser() {
             return {
               userId: activeUserId,
@@ -293,14 +293,14 @@ if (adminDatabaseUrl.length === 0) {
         `SELECT
            has_function_privilege('smart_job_api', 'private.update_api_worker_membership(uuid,integer,bigint,jsonb,timestamp with time zone)', 'EXECUTE') AS can_update,
            has_function_privilege('smart_job_api', 'private.disable_api_worker_membership(uuid,integer,bigint,timestamp with time zone)', 'EXECUTE') AS can_disable,
-           has_function_privilege('authenticated', 'private.update_api_worker_membership(uuid,integer,bigint,jsonb,timestamp with time zone)', 'EXECUTE') AS authenticated_can_update,
+           has_function_privilege('smart_job_backup', 'private.update_api_worker_membership(uuid,integer,bigint,jsonb,timestamp with time zone)', 'EXECUTE') AS backup_can_update,
            has_table_privilege('smart_job_api', 'public.company_memberships', 'UPDATE') AS can_update_directly,
            has_table_privilege('smart_job_api', 'public.company_memberships', 'DELETE') AS can_delete_directly`,
       );
       assert.deepEqual(privileges.rows[0], {
         can_update: true,
         can_disable: true,
-        authenticated_can_update: false,
+        backup_can_update: false,
         can_update_directly: false,
         can_delete_directly: false,
       });

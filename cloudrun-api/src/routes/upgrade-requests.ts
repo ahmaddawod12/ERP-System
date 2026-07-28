@@ -13,7 +13,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -43,7 +43,7 @@ const listResponseSchema = createApiSuccessResponseSchema(UpgradeRequestListPage
 export interface UpgradeRequestRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 async function enforceUpgradeRateLimit(
@@ -197,7 +197,7 @@ export function registerUpgradeRequestRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = UpgradeRequestCreateRequestSchema.parse(request.body);
 
@@ -281,7 +281,7 @@ export function registerUpgradeRequestRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = requestParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = UpgradeRequestModerationRequestSchema.parse(request.body);

@@ -246,6 +246,7 @@ Smart-Job ERP — multi-tenant field-service platform.
 | `packages/contracts/` | Shared enums/constants (`@smart-job/contracts`) | Node |
 | `packages/api-contracts/` | Shared Zod HTTP contracts (`@smart-job/api-contracts`) | Node 22 |
 | `packages/db/` | Drizzle ORM schema + migrations (`@smart-job/db`) | Node 22 |
+| `packages/control-db/` | Control-plane schema for identity, company routing, and shard provisioning | Node 22 |
 | `packages/observability/` | Redacted OpenTelemetry bootstrap/helpers | Node 22 |
 
 ---
@@ -266,6 +267,8 @@ npm --prefix packages/api-contracts install
 npm --prefix packages/api-contracts run build
 npm --prefix packages/db install
 npm --prefix packages/db run build
+npm --prefix packages/control-db install
+npm --prefix packages/control-db test
 npm --prefix packages/observability install
 npm --prefix packages/observability run build
 npm --prefix packages/db run db:migrate   # apply latest SQL migrations first
@@ -303,7 +306,7 @@ Keep the Expo 57-supported React/React DOM 19.2.3 pair. Do not upgrade React
 independently of the React Native renderer; this mobile client does not use
 React Server Components.
 
-### packages/contracts, packages/api-contracts & packages/db
+### packages/contracts, packages/api-contracts, packages/db & packages/control-db
 ```bash
 npm --prefix packages/contracts run typecheck
 npm --prefix packages/contracts run build
@@ -313,15 +316,17 @@ npm --prefix packages/api-contracts run build
 npm --prefix packages/db run typecheck
 npm --prefix packages/db run build
 npm --prefix packages/db run test
-npm --prefix packages/db run test:integration   # requires the isolated local Supabase DB
+npm --prefix packages/db run test:integration   # requires the isolated local PostgreSQL DB
 npm --prefix packages/db run test:migrations    # creates/drops one isolated loopback DB; verifies the single baseline
 npm --prefix packages/db run db:generate   # drizzle-kit generate (new migration from schema change)
 npm --prefix packages/db run db:migrate    # drizzle-kit migrate (apply to DB)
+npm --prefix packages/control-db test
+npm --prefix packages/control-db run db:migrate # requires CONTROL_DATABASE_URL
 ```
 
 Database profiling before broad index work:
 ```bash
-# Run against local/staging with realistic row counts through psql or Supabase SQL editor
+# Run against local/staging with realistic row counts through psql
 packages/db/perf/profiling.sql
 ```
 
@@ -339,34 +344,9 @@ npm --prefix cloudrun-email run test
 npm --prefix cloudrun-archiver run test
 ```
 
-### Isolated local Supabase stack
-
-The repository-owned Docker Desktop stack uses `project_id = "smart-job-erp-local"`
-from `supabase/config.toml`; do not reuse another project's containers or ports.
-Application migrations remain under `packages/db/migrations` and are intentionally
-disabled in the Supabase CLI migration directory.
-
-```powershell
-supabase start
-supabase status
-
-# Fresh local database: reset the Supabase services first, then apply Drizzle migrations.
-supabase db reset --local --no-seed
-$env:DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:55322/postgres"
-$env:DATABASE_SSL_MODE = "disable"
-npm --prefix packages/db run db:migrate
-npm --prefix packages/db run test:integration
-supabase db lint --local --schema public,private --level warning
-```
-
-Core ports are API `55321`, PostgreSQL `55322`, Studio `55323`, Inbucket
-`55324`, and Edge inspector `55883`; the full allocation is documented in
-`SETUP.md`. Never use `supabase stop --all` for this project.
-
 ### Complete local platform (recommended)
 
-After starting Docker Desktop, use the repository lifecycle script instead of
-manually combining Supabase and Compose:
+After starting Docker Desktop, use the repository lifecycle script:
 
 ```powershell
 .\scripts\local-platform.ps1 doctor
@@ -376,8 +356,8 @@ manually combining Supabase and Compose:
 .\scripts\local-platform.ps1 reset -Yes
 ```
 
-`compose.local.yml` and the Supabase CLI stack share the labeled external
-`smart-job-local` network. Generated role passwords and emulator tokens are
+`compose.local.yml` runs PostgreSQL 17, Firebase Auth, GCS, and mail emulators
+on the labeled external `smart-job-local` network. Generated role passwords and emulator tokens are
 stored only in ignored `local-platform/.env.generated`. Do not hand-set the
 `SMART_JOB_LOCAL_PLATFORM*` flags: services require the mounted repository
 marker, the website derives its verification signal in its entrypoint, and tax
@@ -423,13 +403,13 @@ all Cloud Run images.
 - `cloudrun_archiver` → builds `packages/contracts` + `packages/db` → `npm ci` → typecheck → test
 - `cloudrun_api` → builds all three local packages → `npm ci` → typecheck → test
 - `cloudrun_tax` → builds contracts packages → `npm ci` → typecheck → test
-- `integration_tests` → migration-upgrade verification, clean migrate, DB/API integration, Supabase lint
+- `integration_tests` → clean baseline verification, migration, and DB/API integration
 - `website_e2e` → mandatory self-contained Playwright auth/tenant journeys
-- `mobile_e2e` → mandatory Maestro Cloud login/tenant/job/offline journeys
+- `mobile_e2e` → mandatory open-source Maestro CLI login/tenant/job/offline journeys on a CI Android emulator
 - `cloudrun_images` → one Docker build per image + blocking HIGH/CRITICAL Trivy scan (no push)
 
 The Edge deploy workflow has been removed. All Edge functions and handlers
-under `supabase/functions/` and `supabase/handlers/` have been deleted.
+from the former edge runtime have been deleted.
 Mobile and website callers now use the Cloud Run API exclusively. Firebase
 Messaging and Crashlytics remain for push notifications and native crash
 reporting; Firebase Storage is no longer a runtime dependency.
@@ -453,8 +433,8 @@ Do not add `@ts-nocheck` to any file in those paths.
 
 ### `website/.env.local`
 ```
-SUPABASE_URL=
-SUPABASE_PUBLISHABLE_KEY=          # preferred server-side Auth key (sb_publishable_...)
+FIREBASE_PROJECT_ID=
+FIREBASE_WEB_API_KEY=
 BACKEND_API_BASE_URL=              # server-only Cloud Run API origin
 BACKEND_API_TIMEOUT_MS=12000       # optional; capped at 12 seconds
 WEBSITE_ORIGIN=                    # exact same-origin/CSRF origin
@@ -467,8 +447,8 @@ NEXT_PUBLIC_RECAPTCHA_ENTERPRISE_SITE_KEY=
 
 ```
 
-The opaque-session/SSR path must not expose a Supabase access or refresh token
-to browser JavaScript. The website has no Edge, Firebase, anon/service-role, or
+The opaque-session/SSR path must not expose a Firebase ID or refresh token
+to browser JavaScript. The website has no browser-side Firebase SDK or
 split legacy-cookie configuration. Secret keys exist only in trusted server
 workloads.
 
@@ -476,12 +456,10 @@ workloads.
 ```
 DATABASE_URL=                      # must authenticate as smart_job_api
 DATABASE_SSL_MODE=require          # disable only for loopback development
-SUPABASE_URL=
-SUPABASE_PUBLISHABLE_KEY=          # sb_publishable_...
-SUPABASE_SECRET_KEY=               # sb_secret_...; Storage administration only
-SUPABASE_STORAGE_BUCKET=smart-job-company-files
-SUPABASE_JWT_ISSUER=               # optional; defaults to ${SUPABASE_URL}/auth/v1
-SUPABASE_JWT_AUDIENCE=authenticated
+FIREBASE_PROJECT_ID=
+FIREBASE_WEB_API_KEY=
+GCS_PROJECT_ID=
+COMPANY_FILES_BUCKET=              # private active-file GCS bucket
 WEB_SESSION_ENCRYPTION_KEY_BASE64= # exactly 32 random bytes, canonical base64
 WEB_SESSION_ENCRYPTION_KEY_VERSION=
 DOCUMENT_PUBSUB_PROJECT_ID=
@@ -503,24 +481,21 @@ DATABASE_URL=                      # must authenticate as smart_job_email in pro
 DATABASE_SSL_MODE=require
 CLOUD_RUN_SERVICE_URL=
 PUBSUB_ALLOWED_SERVICE_ACCOUNTS=
-SUPABASE_URL=
-SUPABASE_SECRET_KEY=               # sb_secret_...; signed download creation only
-SUPABASE_STORAGE_BUCKET=smart-job-company-files
+GCS_PROJECT_ID=
+COMPANY_FILES_BUCKET=              # same private active-file GCS bucket
 AWS_REGION=eu-central-1
 SES_FROM_EMAIL=
 SES_FROM_NAME=Smart-Job
 ```
 
-There is no application `supabase/.env`: the Edge runtime has been removed.
-`supabase/config.toml` owns only the isolated local services and Auth templates;
-the lifecycle script generates ignored local credentials under
+The lifecycle script generates ignored local credentials under
 `local-platform/.env.generated`.
 
 ### `phone_app/` env + native files
 ```
-EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 EXPO_PUBLIC_BACKEND_API_BASE_URL=
+EXPO_PUBLIC_COMPANY_FILE_UPLOAD_ORIGIN=https://storage.googleapis.com
+EXPO_PUBLIC_COMPANY_FILES_BUCKET=
 ```
 Also requires: `phone_app/google-services.json`, `phone_app/GoogleService-Info.plist`
 
@@ -531,7 +506,7 @@ Also requires: `phone_app/google-services.json`, `phone_app/GoogleService-Info.p
 ## Architecture rules (will break things if violated)
 
 ### Identity
-- `uid` = canonical user identity (Supabase-issued)
+- `uid` = Firebase provider identity at the client boundary; the API maps it to a stable internal UUID
 - `companyId` = canonical tenant scope (SQL-allocated integer, NOT derived from uid or email)
 - Backend handlers must normalize public/incoming `companyId` to internal UUID before any SQL op
 
@@ -589,7 +564,7 @@ the company/profile/subscription/sync/membership state atomically.
 - Every API transaction must call `private.set_api_request_context(...)` before
   authenticated SQL work so `request.jwt.claim.sub` and transaction-local
   statement, lock, and idle-transaction timeouts are set together.
-- `private.web_sessions` stores only token hashes plus encrypted Supabase
+- `private.web_sessions` stores only token hashes plus encrypted Firebase
   credentials; `private.api_idempotency` and `private.file_upload_sessions`
   hold bounded operational state.
 - Jobs carry an opaque positive `entity_version`. Completion must use
@@ -729,9 +704,9 @@ the company/profile/subscription/sync/membership state atomically.
   confirmed writes; user and worker website inventory views are read-only.
 - Login, `/app` workspace routing, and onboarding now use the opaque session.
   Onboarding creation/invitation mutations go only through same-origin BFF
-  handlers; do not reintroduce browser Supabase tokens or `/api/callable` there.
+  handlers; do not expose browser Firebase tokens or reintroduce `/api/callable` there.
 - Mutations on the opaque path require the readable `sj_csrf` cookie to match
-  `X-SJ-CSRF` and require the exact configured `WEBSITE_ORIGIN`. No Supabase
+  `X-SJ-CSRF` and require the exact configured `WEBSITE_ORIGIN`. No Firebase
   token may enter HTML, browser storage, a readable cookie, or browser JSON.
 - Tailwind v4 with `@tailwindcss/postcss`; forms via React Hook Form + Zod v4
 
@@ -778,9 +753,9 @@ the company/profile/subscription/sync/membership state atomically.
 - Puppeteer 24; Docker base `ghcr.io/puppeteer/puppeteer:24.40.0`
 - Must set `PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable` in container env
 - Generated PDFs, previews, and logo reads use the private
-  `smart-job-company-files` bucket. Configure server-only `SUPABASE_URL` and
-  `SUPABASE_SECRET_KEY`; the service rejects legacy service-role keys and any
-  alternate bucket name.
+  company-files GCS bucket. Configure `GCS_PROJECT_ID` and
+  `COMPANY_FILES_BUCKET`; production access comes only from the PDF service
+  account.
 - Production SQL connections must authenticate as `smart_job_pdf`. The worker
   receives canonical task state only from private lease-token RPCs; Pub/Sub
   payloads contain only `taskId`.
@@ -792,16 +767,15 @@ the company/profile/subscription/sync/membership state atomically.
   network/timeout ambiguity after SES submission must become
   `delivery_unknown` and requires an explicit authorized manual retry.
 - Production SQL connections must authenticate as `smart_job_email`. Never log
-  recipient addresses or place SES/Supabase credentials in source or images.
+  recipient addresses or place SES/storage credentials in source or images.
 
 ### cloudrun-archiver
 - Before monthly archive work, the job runs one bounded abandoned-upload cleanup
-  batch through service-role-only RPCs from the consolidated baseline. Cleanup
+  batch through the dedicated `smart_job_archiver` database role. Cleanup
   failure is reported but
   must not prevent the monthly archive phase.
-- Configure server-only `SUPABASE_URL` and `SUPABASE_SECRET_KEY`
-  (`sb_secret_...`) to enable cleanup. Native requests send the opaque key only
-  in `apikey`, never in `Authorization`.
+- Configure `GCS_PROJECT_ID` and `COMPANY_FILES_BUCKET`; Application Default
+  Credentials authorize exact-object deletion.
 - Delete only the exact canonical `smart-job-company-files` paths returned by a
   claimed session manifest. Never delete consumed/finalized sessions, accept a
   cross-prefix path, or recursively delete a prefix.

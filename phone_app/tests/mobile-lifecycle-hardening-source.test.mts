@@ -49,7 +49,7 @@ test('query persistence uses primitive scope and cannot roll newer data backward
     readSource('../lib/query/persistence.ts'),
   ]);
 
-  assert.match(provider, /const uid = user\?\.id \?\? null/);
+  assert.match(provider, /const uid = user\?\.uid \?\? null/);
   assert.match(provider, /const companyId = workspace\?\.companyId \?\? null/);
   assert.match(provider, /\}, \[companyId, uid\]\)/);
   assert.doesNotMatch(provider, /\}, \[user, workspace\]\)/);
@@ -84,20 +84,18 @@ test('API requests stay on the configured origin and bind to the expected user',
   assert.match(client, /function apiRequestUrl\(path: string\)/);
   assert.match(client, /\^\\\/api\\\/v1/);
   assert.match(client, /resolved\.origin !== base\.origin/);
-  assert.match(client, /beforeRefresh = await restoreSupabaseSession\(\)/);
-  assert.match(client, /afterRefresh = await restoreSupabaseSession\(\)/);
-  assert.match(client, /return afterRefresh\.access_token/);
+  assert.match(client, /beforeRefresh = await restoreFirebaseUser\(\)/);
+  assert.match(client, /afterRefresh = await restoreFirebaseUser\(\)/);
+  assert.match(client, /const token = await getFirebaseIdToken\(true\)/);
   assert.match(client, /fetchWorkspaces\(uid: string\)/);
 });
 
-test('Supabase refresh single-flight cannot be reused across user identities', async () => {
-  const auth = await readSource('../lib/auth/supabase-client.ts');
+test('Firebase token refresh is bound to the same user before and after refresh', async () => {
+  const client = await readSource('../lib/api/client.ts');
 
-  assert.match(auth, /refreshFlight: \{[\s\S]*readonly userId: string/);
-  assert.match(auth, /refreshSessionSingleFlight\(expectedUserId: string\)/);
-  assert.match(auth, /active\.userId === expectedUserId/);
-  assert.match(auth, /data\.session\?\.user\.id === expectedUserId/);
-  assert.match(auth, /refreshSessionSingleFlight\(session\.user\.id\)/);
+  assert.match(client, /normalizedUserId\(beforeRefresh\?\.uid \?\? ''\)/);
+  assert.match(client, /normalizedUserId\(afterRefresh\?\.uid \?\? ''\)/);
+  assert.match(client, /throw identityChangedError\(\)/);
 });
 
 test('outbox uploads never materialize decrypted attachments on disk', async () => {
@@ -106,5 +104,8 @@ test('outbox uploads never materialize decrypted attachments on disk', async () 
   assert.match(upload, /const bytes = new Uint8Array\(new ArrayBuffer\(attachment\.sizeBytes\)\)/);
   assert.match(upload, /body: plaintextBytes\.buffer/);
   assert.match(upload, /plaintextBytes\.fill\(0\)/);
+  assert.match(upload, /EXPO_PUBLIC_COMPANY_FILE_UPLOAD_ORIGIN/);
+  assert.match(upload, /ifGenerationMatch/);
+  assert.match(upload, /response\.status !== 412/);
   assert.doesNotMatch(upload, /Paths\.cache|FileMode|createPlaintextUploadFile/);
 });

@@ -206,7 +206,7 @@ export default function Userjob() {
             throw new Error('The pending job is missing its required signature');
           }
           const attachments = await stageFinishedJobAttachments({
-            userId: sessionUser.id,
+            userId: sessionUser.uid,
             photos: Array.isArray(jobPayload.photos) ? jobPayload.photos : [],
             signature: jobPayload.signature,
           });

@@ -8,15 +8,15 @@ Server Components.
 
 ## Runtime Role
 
-- Uses Supabase access tokens for backend transport.
-- Stores Supabase access and refresh tokens in Expo SecureStore, not MMKV.
+- Uses Firebase ID tokens for backend transport.
+- Lets the native Firebase SDK persist credentials in platform-protected storage.
 - Calls backend gateway endpoints for protected operations.
 - Keeps registration and business onboarding on the website.
 - Uses React Native Firebase Messaging for remote FCM delivery and
   `react-native-notify-kit` for local display, notification actions, channels,
   and badge state. Firebase Crashlytics is the native crash-reporting module.
-  NotifyKit is configured not to intercept iOS remote events. Firebase Auth,
-  callable functions, and Firebase Storage are not mobile runtime dependencies.
+  NotifyKit is configured not to intercept iOS remote events. Firebase Auth is
+  the identity provider; callable functions and Firebase Storage are not runtime dependencies.
 - Publishes non-tax preview/generate work through the authenticated versioned
   document-task API and polls `/document-tasks/{taskId}` for completion. Tax
   invoice type 305 can be previewed, but final submission is unavailable until
@@ -80,7 +80,7 @@ Server Components.
   full-company read.
 - Team management calls the versioned workers and invitations endpoints with
   bounded opaque cursor pages. Managers invite workers to redeem access with
-  their own verified Supabase account; edits and guarded disable/restore writes
+  their own verified Firebase account; edits and guarded disable/restore writes
   use opaque entity versions and retry-stable idempotency keys. The mobile app
   never creates Auth users or calls the legacy Firebase worker callable.
 - Use `utils/logger.ts` for debug output so noisy logs are dev-only; keep warnings/errors visible.
@@ -94,7 +94,7 @@ Server Components.
   never written to a plaintext cache file.
 - Outbox synchronization runs only on app start, foreground, and connectivity
   restoration. Pending work remains encrypted across logout and can resume only
-  for the same Supabase user.
+  for the same Firebase user.
 - Synchronization reports `reconciled`, `queued`, `retry`, `conflict`, or
   `terminal` per operation. Online submission shows success only for a confirmed
   reconciliation; Settings exposes Pending Work with manual retry and explicit
@@ -112,7 +112,7 @@ Server Components.
   Storage upload, delete, and URL refresh calls are prohibited.
 - Notification listeners and push-token registration should start only after auth + cache bootstrap succeeds for the active session; notification channel initialization must stay idempotent.
 - Register and clear native FCM tokens through `/api/v1/me/push-token` with the
-  active Supabase user identity plus one UUID-like installation ID stored only
+  active Firebase user identity plus one UUID-like installation ID stored only
   in SecureStore. Logout clears only that installation, attempts server cleanup
   before local session teardown, and still proceeds when cleanup is offline.
   Tokens are not cached in MMKV or written to logs.
@@ -139,7 +139,7 @@ modules/        Feature logic grouped by domain
 components/     Shared UI grouped as primitives, layout, forms, feedback, and domain
 navigation/     Stable route constants used by screens and notification handling
 contexts/       Theme, alert, cache, auth, storage
-lib/auth/       SecureStore-backed Supabase auth transport
+lib/auth/       Native Firebase Auth transport
 lib/api/        Shared Cloud API and archive clients
 lib/notifications/ Firebase Messaging transport
 hooks/          Shared hooks
@@ -150,9 +150,9 @@ theme.ts        Design tokens
 
 ## Environment Variables
 
-- `EXPO_PUBLIC_SUPABASE_URL`
-- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `EXPO_PUBLIC_BACKEND_API_BASE_URL`
+- `EXPO_PUBLIC_COMPANY_FILE_UPLOAD_ORIGIN` (`https://storage.googleapis.com` in production)
+- `EXPO_PUBLIC_COMPANY_FILES_BUCKET` (the public name of the private GCS bucket)
 
 The backend API URL may be local HTTP only in development (`localhost`,
 `127.0.0.1`, `10.0.2.2`, or `::1`); release builds require HTTPS.

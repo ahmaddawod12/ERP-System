@@ -2,7 +2,7 @@
   "name": "@smart-job/cloudrun-backup",
   "version": "0.1.0",
   "private": true,
-  "description": "Resumable Supabase Storage and PostgreSQL recovery backup job",
+  "description": "Resumable Google Cloud Storage and PostgreSQL recovery backup job",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -17,7 +17,6 @@
     "node": "22.x"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1095.0",
     "@google-cloud/storage": "7.19.0",
     "@smart-job/observability": "file:../packages/observability"
   },

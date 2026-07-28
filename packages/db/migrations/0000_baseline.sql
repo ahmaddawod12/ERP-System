@@ -7,7 +7,8 @@
 -- ============================================================================
 -- Consolidated source: 0000_optimized_baseline.sql
 -- ============================================================================
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 CREATE TYPE account_type AS ENUM ('solo', 'business');
 CREATE TYPE workspace_status AS ENUM ('active', 'disabled', 'archived');
@@ -2018,7 +2019,6 @@ CREATE POLICY support_messages_owner_read_policy
 DO $$
 DECLARE
   function_signature TEXT;
-  role_name TEXT;
   function_signatures TEXT[] := ARRAY[
     'allocate_company_counter(UUID, TEXT)',
     'allocate_system_counter(TEXT, INTEGER)',
@@ -2036,25 +2036,14 @@ DECLARE
 BEGIN
   FOREACH function_signature IN ARRAY function_signatures LOOP
     EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || function_signature || ' FROM PUBLIC';
-
-    FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
-        EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || function_signature || ' FROM ' || quote_ident(role_name);
-      END IF;
-    END LOOP;
-
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-      EXECUTE 'GRANT EXECUTE ON FUNCTION ' || function_signature || ' TO service_role';
-    END IF;
   END LOOP;
 END $$;
 
 -- ============================================================================
--- Consolidated source: 0001_supabase_cost_perf_security_hardening.sql
+-- Consolidated source: database cost, performance, and security hardening
 -- ============================================================================
--- Supabase hardening pass:
+-- Database hardening pass:
 -- - move privileged RPC implementations out of the exposed public schema
--- - keep public RPC names as service-role-only compatibility wrappers
 -- - point RLS policies at private helper functions
 -- - add cost/performance helper indexes and cleanup RPCs
 
@@ -2062,22 +2051,6 @@ CREATE SCHEMA IF NOT EXISTS private;
 
 REVOKE ALL ON SCHEMA private FROM PUBLIC;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-    REVOKE ALL ON SCHEMA private FROM anon;
-    REVOKE CREATE ON SCHEMA public FROM anon;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    REVOKE ALL ON SCHEMA private FROM authenticated;
-    REVOKE CREATE ON SCHEMA public FROM authenticated;
-    GRANT USAGE ON SCHEMA private TO authenticated;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    GRANT USAGE ON SCHEMA private TO service_role;
-  END IF;
-END $$;
 
 CREATE OR REPLACE FUNCTION private.app_auth_uid()
 RETURNS text
@@ -2763,9 +2736,6 @@ DO $$
 DECLARE
   private_signature TEXT;
   public_signature TEXT;
-  has_anon BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon');
-  has_authenticated BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated');
-  has_service_role BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role');
 BEGIN
   FOREACH private_signature IN ARRAY ARRAY[
     'private.app_auth_uid()',
@@ -2773,12 +2743,6 @@ BEGIN
     'private.app_has_company_access(UUID)'
   ] LOOP
     EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || private_signature || ' FROM PUBLIC';
-    IF has_authenticated THEN
-      EXECUTE 'GRANT EXECUTE ON FUNCTION ' || private_signature || ' TO authenticated';
-    END IF;
-    IF has_service_role THEN
-      EXECUTE 'GRANT EXECUTE ON FUNCTION ' || private_signature || ' TO service_role';
-    END IF;
   END LOOP;
 
   FOREACH private_signature IN ARRAY ARRAY[
@@ -2798,15 +2762,6 @@ BEGIN
     'private.cleanup_expired_operational_rows(TIMESTAMPTZ)'
   ] LOOP
     EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || private_signature || ' FROM PUBLIC';
-    IF has_anon THEN
-      EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || private_signature || ' FROM anon';
-    END IF;
-    IF has_authenticated THEN
-      EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || private_signature || ' FROM authenticated';
-    END IF;
-    IF has_service_role THEN
-      EXECUTE 'GRANT EXECUTE ON FUNCTION ' || private_signature || ' TO service_role';
-    END IF;
   END LOOP;
 
   FOREACH public_signature IN ARRAY ARRAY[
@@ -2828,15 +2783,6 @@ BEGIN
     'public.cleanup_expired_operational_rows(TIMESTAMPTZ)'
   ] LOOP
     EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || public_signature || ' FROM PUBLIC';
-    IF has_anon THEN
-      EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || public_signature || ' FROM anon';
-    END IF;
-    IF has_authenticated THEN
-      EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || public_signature || ' FROM authenticated';
-    END IF;
-    IF has_service_role THEN
-      EXECUTE 'GRANT EXECUTE ON FUNCTION ' || public_signature || ' TO service_role';
-    END IF;
   END LOOP;
 END $$;
 
@@ -3793,7 +3739,7 @@ $$;
 -- Stage 2 API security foundation.
 --
 -- The Cloud Run API connects with a dedicated runtime role. It sets the verified
--- Supabase user id and bounded transaction timeouts before any tenant-scoped SQL.
+-- Firebase-derived internal user id and bounded transaction timeouts before any tenant-scoped SQL.
 -- Secrets remain encrypted by the API; Postgres stores only ciphertext and hashes.
 
 DO $$
@@ -3862,7 +3808,7 @@ CREATE TABLE private.web_sessions (
   session_token_hash BYTEA NOT NULL,
   csrf_token_hash BYTEA NOT NULL,
   user_id UUID NOT NULL,
-  supabase_session_id UUID NOT NULL,
+  identity_session_id TEXT NOT NULL,
   credentials_ciphertext BYTEA NOT NULL,
   credentials_iv BYTEA NOT NULL,
   credentials_auth_tag BYTEA NOT NULL,
@@ -3886,6 +3832,8 @@ CREATE TABLE private.web_sessions (
     CHECK (octet_length(credentials_auth_tag) = 16),
   CONSTRAINT web_sessions_key_version_present_check
     CHECK (btrim(encryption_key_version) <> ''),
+  CONSTRAINT web_sessions_identity_session_present_check
+    CHECK (length(identity_session_id) BETWEEN 1 AND 128),
   CONSTRAINT web_sessions_absolute_lifetime_check
     CHECK (
       absolute_expires_at > created_at
@@ -4164,8 +4112,8 @@ TO smart_job_api;
 -- The runtime role never calls public compatibility RPCs. Revoke ambient PUBLIC
 -- execution so its effective privileges are only the private functions granted below.
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
-REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM anon;
-REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM authenticated;
+
+
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM smart_job_api;
 
 REVOKE EXECUTE ON FUNCTION private.increment_job_entity_version() FROM PUBLIC;
@@ -4176,17 +4124,6 @@ GRANT EXECUTE ON FUNCTION private.app_auth_uid() TO smart_job_api;
 GRANT EXECUTE ON FUNCTION private.app_is_dev() TO smart_job_api;
 GRANT EXECUTE ON FUNCTION private.app_has_company_access(UUID) TO smart_job_api;
 GRANT EXECUTE ON FUNCTION private.app_is_company_manager(UUID) TO smart_job_api;
-
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    GRANT EXECUTE ON FUNCTION private.app_is_company_manager(UUID) TO authenticated;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    GRANT EXECUTE ON FUNCTION private.app_is_company_manager(UUID) TO service_role;
-  END IF;
-END;
-$$;
 
 -- The completion RPC reaches these legacy inventory/sync helpers. They were
 -- originally SECURITY DEFINER functions with search_path=public and unqualified
@@ -4493,7 +4430,7 @@ REVOKE EXECUTE ON FUNCTION private.apply_inventory_movement(
   UUID,
   TEXT,
   TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, smart_job_api;
+) FROM PUBLIC, smart_job_api;
 REVOKE EXECUTE ON FUNCTION private.apply_job_inventory_consumption_batch(
   UUID,
   UUID,
@@ -4501,32 +4438,12 @@ REVOKE EXECUTE ON FUNCTION private.apply_job_inventory_consumption_batch(
   UUID,
   JSONB,
   TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, smart_job_api;
+) FROM PUBLIC, smart_job_api;
 REVOKE EXECUTE ON FUNCTION private.bump_company_sync_version(UUID, TEXT)
-  FROM PUBLIC, anon, authenticated, smart_job_api;
-GRANT EXECUTE ON FUNCTION private.apply_inventory_movement(
-  UUID,
-  UUID,
-  NUMERIC,
-  UUID,
-  UUID,
-  public.inventory_movement_type,
-  UUID,
-  UUID,
-  UUID,
-  TEXT,
-  TIMESTAMPTZ
-) TO service_role;
-GRANT EXECUTE ON FUNCTION private.apply_job_inventory_consumption_batch(
-  UUID,
-  UUID,
-  UUID,
-  UUID,
-  JSONB,
-  TIMESTAMPTZ
-) TO service_role;
-GRANT EXECUTE ON FUNCTION private.bump_company_sync_version(UUID, TEXT)
-  TO service_role;
+  FROM PUBLIC, smart_job_api;
+
+
+
 
 CREATE OR REPLACE FUNCTION private.get_company_module_entitlements(
   p_company_id UUID
@@ -4618,9 +4535,9 @@ AS $$
 $$;
 
 REVOKE EXECUTE ON FUNCTION private.get_company_module_entitlements(UUID)
-  FROM PUBLIC, anon, authenticated;
+  FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION private.get_company_module_entitlements(UUID)
-  TO smart_job_api, service_role;
+  TO smart_job_api;
 
 CREATE OR REPLACE FUNCTION private.complete_job_with_details(
   p_company_id UUID,
@@ -5278,19 +5195,11 @@ AS $$
   );
 $$;
 
--- Migrations 0003 and 0004 created these functions after the earlier privilege
--- sweep. Repair them explicitly: Edge compatibility is service-role-only and the
--- new runtime role gets no access to payload-trusting legacy implementations.
+-- These functions were created after the earlier privilege sweep. Revoke their
+-- ambient execution explicitly; the API uses only narrow private functions.
 DO $$
 DECLARE
   function_record RECORD;
-  has_anon BOOLEAN := EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon');
-  has_authenticated BOOLEAN := EXISTS (
-    SELECT 1 FROM pg_roles WHERE rolname = 'authenticated'
-  );
-  has_service_role BOOLEAN := EXISTS (
-    SELECT 1 FROM pg_roles WHERE rolname = 'service_role'
-  );
   function_identity TEXT;
 BEGIN
   FOR function_record IN
@@ -5316,23 +5225,14 @@ BEGIN
 
     EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || function_identity || ' FROM PUBLIC';
     EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || function_identity || ' FROM smart_job_api';
-    IF has_anon THEN
-      EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || function_identity || ' FROM anon';
-    END IF;
-    IF has_authenticated THEN
-      EXECUTE 'REVOKE EXECUTE ON FUNCTION ' || function_identity || ' FROM authenticated';
-    END IF;
-    IF has_service_role THEN
-      EXECUTE 'GRANT EXECUTE ON FUNCTION ' || function_identity || ' TO service_role';
-    END IF;
   END LOOP;
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.app_auth_uid() FROM PUBLIC, anon, authenticated, smart_job_api;
-REVOKE EXECUTE ON FUNCTION public.prevent_company_profile_vat_update() FROM PUBLIC, anon, authenticated, smart_job_api;
-REVOKE EXECUTE ON FUNCTION public.prevent_document_number_mutation() FROM PUBLIC, anon, authenticated, smart_job_api;
-REVOKE EXECUTE ON FUNCTION private.cleanup_expired_operational_rows(TIMESTAMPTZ) FROM PUBLIC, anon, authenticated, smart_job_api;
+REVOKE EXECUTE ON FUNCTION public.app_auth_uid() FROM PUBLIC, smart_job_api;
+REVOKE EXECUTE ON FUNCTION public.prevent_company_profile_vat_update() FROM PUBLIC, smart_job_api;
+REVOKE EXECUTE ON FUNCTION public.prevent_document_number_mutation() FROM PUBLIC, smart_job_api;
+REVOKE EXECUTE ON FUNCTION private.cleanup_expired_operational_rows(TIMESTAMPTZ) FROM PUBLIC, smart_job_api;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA private REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
@@ -5340,40 +5240,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA private REVOKE EXECUTE ON FUNCTIONS FROM PUBL
 -- ============================================================================
 -- Consolidated source: 0007_api_job_creation_and_storage.sql
 -- ============================================================================
--- API job creation and the canonical private company-file bucket.
+-- API job creation using the canonical private company-file GCS bucket.
 -- All public identifiers are resolved inside the authenticated tenant and all
 -- writes (counter, job details, inventory, attachments, upload consumption,
 -- and sync versions) share the caller's transaction.
-
-INSERT INTO storage.buckets AS bucket (
-  id,
-  name,
-  public,
-  file_size_limit,
-  allowed_mime_types
-) VALUES (
-  'smart-job-company-files',
-  'smart-job-company-files',
-  false,
-  10485760,
-  ARRAY[
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/heic',
-    'image/heif'
-  ]::text[]
-)
-ON CONFLICT (id) DO UPDATE
-SET name = EXCLUDED.name,
-    public = false,
-    file_size_limit = EXCLUDED.file_size_limit,
-    allowed_mime_types = EXCLUDED.allowed_mime_types,
-    updated_at = pg_catalog.clock_timestamp()
-WHERE bucket.name IS DISTINCT FROM EXCLUDED.name
-   OR bucket.public IS DISTINCT FROM false
-   OR bucket.file_size_limit IS DISTINCT FROM EXCLUDED.file_size_limit
-   OR bucket.allowed_mime_types IS DISTINCT FROM EXCLUDED.allowed_mime_types;
 
 CREATE OR REPLACE FUNCTION private.create_api_job_with_details(
   p_company_id UUID,
@@ -5779,29 +5649,8 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'UPLOAD_MANIFEST_INVALID';
     END IF;
 
-    IF EXISTS (
-      SELECT 1
-      FROM pg_catalog.jsonb_array_elements(v_upload.expected_manifest) AS attachment(item)
-      LEFT JOIN storage.objects AS stored_object
-        ON stored_object.bucket_id = v_upload.bucket_id
-       AND stored_object.name = attachment.item ->> 'objectPath'
-      WHERE stored_object.id IS NULL
-        OR COALESCE(stored_object.metadata ->> 'mimetype', '')
-          <> attachment.item ->> 'mimeType'
-        OR CASE
-          WHEN COALESCE(stored_object.metadata ->> 'size', '') ~ '^[0-9]+$'
-          THEN (stored_object.metadata ->> 'size')::numeric
-            <> (attachment.item ->> 'sizeBytes')::numeric
-          ELSE true
-        END
-        OR (
-          stored_object.user_metadata ? 'sha256'
-          AND pg_catalog.lower(stored_object.user_metadata ->> 'sha256')
-            <> pg_catalog.lower(attachment.item ->> 'sha256')
-        )
-    ) THEN
-      RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'UPLOAD_OBJECT_MISMATCH';
-    END IF;
+    -- GCS object existence, size, MIME sniffing, and SHA-256 verification are
+    -- completed by the trusted API immediately before this transaction.
   END IF;
 
   SELECT COALESCE(membership.display_name, app_user.display_name)
@@ -5980,7 +5829,7 @@ REVOKE EXECUTE ON FUNCTION private.create_api_job_with_details(
   JSONB,
   UUID,
   TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated;
+) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION private.create_api_job_with_details(
   UUID,
   public.job_status,
@@ -5993,45 +5842,13 @@ GRANT EXECUTE ON FUNCTION private.create_api_job_with_details(
   JSONB,
   UUID,
   TIMESTAMPTZ
-) TO smart_job_api, service_role;
+) TO smart_job_api;
 
 -- ============================================================================
--- Consolidated source: 0008_pdf_supabase_storage.sql
+-- Consolidated source: generated document storage support
 -- ============================================================================
--- Extend the canonical private company-file bucket to generated documents.
--- The bucket remains private and create-only behavior is enforced by the
--- trusted PDF worker rather than by granting client overwrite policies.
-
-INSERT INTO storage.buckets AS bucket (
-  id,
-  name,
-  public,
-  file_size_limit,
-  allowed_mime_types
-) VALUES (
-  'smart-job-company-files',
-  'smart-job-company-files',
-  false,
-  10485760,
-  ARRAY[
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/heic',
-    'image/heif',
-    'application/pdf'
-  ]::text[]
-)
-ON CONFLICT (id) DO UPDATE
-SET name = EXCLUDED.name,
-    public = false,
-    file_size_limit = EXCLUDED.file_size_limit,
-    allowed_mime_types = EXCLUDED.allowed_mime_types,
-    updated_at = pg_catalog.clock_timestamp()
-WHERE bucket.name IS DISTINCT FROM EXCLUDED.name
-   OR bucket.public IS DISTINCT FROM false
-   OR bucket.file_size_limit IS DISTINCT FROM EXCLUDED.file_size_limit
-   OR bucket.allowed_mime_types IS DISTINCT FROM EXCLUDED.allowed_mime_types;
+-- Generated PDFs and user attachments share a private GCS bucket. Create-only
+-- behavior is enforced by the trusted API and PDF worker.
 
 -- ============================================================================
 -- Consolidated source: 0009_bounded_upload_session_cleanup.sql
@@ -6415,33 +6232,28 @@ $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.file_upload_cleanup_manifest_is_canonical(
   UUID, UUID, UUID, TEXT, TEXT, JSONB
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.queue_expired_file_upload_cleanup(TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.claim_file_upload_cleanup_batch(
   INTEGER, INTEGER, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.finish_file_upload_cleanup(
   UUID, INTEGER, BOOLEAN, TEXT, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION public.queue_expired_file_upload_cleanup(TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION public.claim_file_upload_cleanup_batch(
   INTEGER, INTEGER, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION public.finish_file_upload_cleanup(
   UUID, INTEGER, BOOLEAN, TEXT, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
-GRANT EXECUTE ON FUNCTION public.queue_expired_file_upload_cleanup(TIMESTAMPTZ)
-  TO service_role;--> statement-breakpoint
-GRANT EXECUTE ON FUNCTION public.claim_file_upload_cleanup_batch(
-  INTEGER, INTEGER, TIMESTAMPTZ
-) TO service_role;--> statement-breakpoint
-GRANT EXECUTE ON FUNCTION public.finish_file_upload_cleanup(
-  UUID, INTEGER, BOOLEAN, TEXT, TIMESTAMPTZ
-) TO service_role;
+--> statement-breakpoint
+--> statement-breakpoint
+
 
 -- ============================================================================
 -- Consolidated source: 0010_hardened_api_business_registration.sql
@@ -6747,7 +6559,7 @@ $$;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.register_api_business_account(
   TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
   TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.register_api_business_account(
   TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
@@ -6848,10 +6660,10 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.upsert_api_push_token(TEXT, TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.clear_api_push_token()
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.upsert_api_push_token(TEXT, TEXT)
 TO smart_job_api;--> statement-breakpoint
@@ -6865,7 +6677,7 @@ TO smart_job_api;
 -- Hardened invitation creation and redemption for the Node API.
 --
 -- Both functions derive the caller from transaction-local request context and
--- require a live, verified Supabase Auth email. The runtime role receives no
+-- require a live, verified Firebase Auth email. The runtime role receives no
 -- direct write access to public invitation, membership, profile, or inventory
 -- tables. Public company ids are resolved to internal UUIDs inside SQL.
 
@@ -6988,15 +6800,12 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'API_CONTEXT_USER_INVALID';
   END;
 
-  SELECT pg_catalog.lower(pg_catalog.btrim(auth_user.email))
+  SELECT pg_catalog.lower(pg_catalog.btrim(app_user.email))
   INTO v_verified_email
-  FROM auth.users AS auth_user
-  WHERE auth_user.id = v_uid
-    AND auth_user.email IS NOT NULL
-    AND auth_user.email_confirmed_at IS NOT NULL
-    AND auth_user.deleted_at IS NULL
-    AND NOT auth_user.is_anonymous
-  FOR KEY SHARE OF auth_user;
+  FROM public.app_users AS app_user
+  WHERE app_user.id = v_uid::text
+    AND app_user.email IS NOT NULL
+  FOR KEY SHARE OF app_user;
 
   IF v_verified_email IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'EMAIL_VERIFICATION_REQUIRED';
@@ -7119,7 +6928,8 @@ CREATE OR REPLACE FUNCTION private.redeem_api_company_invitation(
   p_public_company_id BIGINT,
   p_invite_code TEXT,
   p_display_name TEXT DEFAULT NULL,
-  p_phone_number TEXT DEFAULT NULL
+  p_phone_number TEXT DEFAULT NULL,
+  p_verified_email TEXT DEFAULT NULL
 ) RETURNS TABLE (
   internal_company_id UUID,
   public_company_id BIGINT,
@@ -7136,7 +6946,7 @@ AS $$
 DECLARE
   v_uid_text TEXT := private.app_auth_uid();
   v_uid UUID;
-  v_verified_email TEXT;
+  v_verified_email TEXT := pg_catalog.lower(pg_catalog.btrim(COALESCE(p_verified_email, '')));
   v_company_id UUID;
   v_code TEXT := pg_catalog.upper(pg_catalog.btrim(p_invite_code));
   v_display_name TEXT := NULLIF(pg_catalog.btrim(p_display_name), '');
@@ -7160,17 +6970,8 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'API_CONTEXT_USER_INVALID';
   END;
 
-  SELECT pg_catalog.lower(pg_catalog.btrim(auth_user.email))
-  INTO v_verified_email
-  FROM auth.users AS auth_user
-  WHERE auth_user.id = v_uid
-    AND auth_user.email IS NOT NULL
-    AND auth_user.email_confirmed_at IS NOT NULL
-    AND auth_user.deleted_at IS NULL
-    AND NOT auth_user.is_anonymous
-  FOR KEY SHARE OF auth_user;
-
-  IF v_verified_email IS NULL THEN
+  IF pg_catalog.char_length(v_verified_email) NOT BETWEEN 3 AND 320
+     OR v_verified_email !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'EMAIL_VERIFICATION_REQUIRED';
   END IF;
   IF p_public_company_id IS NULL OR p_public_company_id < 1 THEN
@@ -7385,18 +7186,18 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.create_api_company_invitation(UUID, TEXT, TEXT, INTEGER)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
-REVOKE ALL ON FUNCTION private.redeem_api_company_invitation(BIGINT, TEXT, TEXT, TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+REVOKE ALL ON FUNCTION private.redeem_api_company_invitation(BIGINT, TEXT, TEXT, TEXT, TEXT)
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.consume_api_invitation_rate_limit(TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.create_api_company_invitation(UUID, TEXT, TEXT, INTEGER)
 TO smart_job_api;--> statement-breakpoint
 
-GRANT EXECUTE ON FUNCTION private.redeem_api_company_invitation(BIGINT, TEXT, TEXT, TEXT)
+GRANT EXECUTE ON FUNCTION private.redeem_api_company_invitation(BIGINT, TEXT, TEXT, TEXT, TEXT)
 TO smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.consume_api_invitation_rate_limit(TEXT)
@@ -7711,10 +7512,10 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.update_api_viewer_profile(UUID, JSONB)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.update_api_company_profile(UUID, BIGINT, JSONB)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.update_api_viewer_profile(UUID, JSONB)
 TO smart_job_api;--> statement-breakpoint
@@ -7982,16 +7783,16 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.create_api_support_conversation(UUID, TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.append_api_support_message(UUID, TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.mark_api_support_conversation_read(UUID)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.close_api_support_conversation(UUID)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.create_api_support_conversation(UUID, TEXT)
 TO smart_job_api;--> statement-breakpoint
@@ -8174,7 +7975,7 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON TABLE private.push_devices
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.upsert_api_push_token(TEXT, TEXT)
 FROM smart_job_api;--> statement-breakpoint
@@ -8183,10 +7984,10 @@ REVOKE ALL ON FUNCTION private.clear_api_push_token()
 FROM smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.register_api_push_device(TEXT, TEXT, TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.clear_api_push_device(TEXT)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.register_api_push_device(TEXT, TEXT, TEXT)
 TO smart_job_api;--> statement-breakpoint
@@ -8543,9 +8344,9 @@ GRANT SELECT ON private.file_upload_sessions TO smart_job_api;--> statement-brea
 
 REVOKE ALL ON FUNCTION private.prepare_api_file_upload_session(
   UUID, UUID, TEXT, UUID, TEXT, TEXT, JSONB, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+) FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.record_api_file_upload_signing_failure(UUID, TEXT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION private.prepare_api_file_upload_session(
   UUID, UUID, TEXT, UUID, TEXT, TEXT, JSONB, TIMESTAMPTZ
 ) TO smart_job_api;--> statement-breakpoint
@@ -8864,12 +8665,10 @@ BEGIN
   END IF;
   v_requested_tier := p_requested_tier::public.subscription_tier;
 
-  SELECT pg_catalog.lower(pg_catalog.btrim(auth_user.email))
+  SELECT pg_catalog.lower(pg_catalog.btrim(app_user.email))
   INTO v_email
-  FROM auth.users AS auth_user
-  WHERE auth_user.id = v_uid
-    AND auth_user.email_confirmed_at IS NOT NULL
-    AND auth_user.deleted_at IS NULL;
+  FROM public.app_users AS app_user
+  WHERE app_user.id = v_uid::text;
   IF v_email IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'UPGRADE_VERIFIED_EMAIL_REQUIRED';
   END IF;
@@ -8944,10 +8743,9 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'API_CONTEXT_USER_INVALID';
   END;
   IF NOT EXISTS (
-    SELECT 1 FROM auth.users AS auth_user
-    WHERE auth_user.id = v_uid
-      AND auth_user.email_confirmed_at IS NOT NULL
-      AND auth_user.deleted_at IS NULL
+    SELECT 1 FROM public.app_users AS app_user
+    WHERE app_user.id = v_uid::text
+      AND app_user.email IS NOT NULL
   ) THEN
     RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'UPGRADE_VERIFIED_EMAIL_REQUIRED';
   END IF;
@@ -9132,25 +8930,25 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON private.api_upgrade_request_rows
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.increment_upgrade_request_entity_version()
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.api_enabled_modules_for_tier(public.subscription_tier)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.read_api_upgrade_request(UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.list_api_upgrade_requests(TEXT, TIMESTAMPTZ, UUID, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.consume_api_upgrade_request_rate_limit()
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.create_api_upgrade_request(UUID, TEXT, TEXT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.moderate_api_upgrade_request(UUID, TEXT, TEXT, BIGINT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.consume_api_contact_request_rate_limit(TEXT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.create_api_contact_request(TEXT, TEXT, TEXT, TEXT, TEXT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.read_api_upgrade_request(UUID)
   TO smart_job_api;--> statement-breakpoint
@@ -9621,22 +9419,22 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.increment_client_entity_version()
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.require_api_client_mutation_access(UUID)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.validate_api_client_payload(JSONB, BOOLEAN, BOOLEAN)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.create_api_client(UUID, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.update_api_client(UUID, UUID, BIGINT, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.delete_or_archive_api_client(UUID, UUID, BIGINT, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.create_api_client(UUID, JSONB, TIMESTAMPTZ)
 TO smart_job_api;--> statement-breakpoint
@@ -10740,34 +10538,32 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.increment_inventory_entity_version()
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.require_api_inventory_access(UUID, BOOLEAN)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.ensure_api_inventory_location(UUID, public.inventory_location_type, UUID, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.get_api_inventory_snapshot(UUID, UUID, UUID)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.apply_inventory_movement(UUID, UUID, NUMERIC, UUID, UUID, public.inventory_movement_type, UUID, UUID, UUID, TEXT, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.apply_inventory_pick_batch(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.create_api_inventory_part(UUID, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.update_api_inventory_part(UUID, UUID, BIGINT, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.archive_api_inventory_part(UUID, UUID, BIGINT, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.adjust_api_inventory_stock(UUID, UUID, TEXT, BIGINT, NUMERIC, TEXT, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.transfer_api_inventory_stock(UUID, UUID, INTEGER, TEXT, NUMERIC, BIGINT, TEXT, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.pick_api_inventory_stock(UUID, INTEGER, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
-GRANT EXECUTE ON FUNCTION private.apply_inventory_movement(UUID, UUID, NUMERIC, UUID, UUID, public.inventory_movement_type, UUID, UUID, UUID, TEXT, TIMESTAMPTZ)
-TO service_role;--> statement-breakpoint
-GRANT EXECUTE ON FUNCTION private.apply_inventory_pick_batch(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ)
-TO service_role;--> statement-breakpoint
+--> statement-breakpoint
+--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION private.create_api_inventory_part(UUID, JSONB, TIMESTAMPTZ)
 TO smart_job_api;--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION private.update_api_inventory_part(UUID, UUID, BIGINT, JSONB, TIMESTAMPTZ)
@@ -11097,17 +10893,17 @@ AS $$
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.increment_company_membership_entity_version()
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.require_api_worker_mutation_access(UUID)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.validate_api_worker_patch(JSONB)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.assert_api_worker_can_be_disabled(UUID, UUID)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.update_api_worker_membership(UUID, INTEGER, BIGINT, JSONB, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.disable_api_worker_membership(UUID, INTEGER, BIGINT, TIMESTAMPTZ)
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.update_api_worker_membership(UUID, INTEGER, BIGINT, JSONB, TIMESTAMPTZ)
 TO smart_job_api;--> statement-breakpoint
@@ -11754,17 +11550,17 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.require_api_job_mutation_actor(UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.validate_api_job_patch(JSONB)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.get_api_job_mutation_result(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.update_api_job(UUID, UUID, BIGINT, JSONB, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.accept_api_job(UUID, UUID, BIGINT, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.delete_api_job(UUID, UUID, BIGINT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api;--> statement-breakpoint
+  FROM PUBLIC, smart_job_api;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.update_api_job(UUID, UUID, BIGINT, JSONB, TIMESTAMPTZ)
   TO smart_job_api;--> statement-breakpoint
@@ -12491,21 +12287,21 @@ $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.increment_document_entity_version() FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.require_api_document_mutation_access(UUID, BOOLEAN)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.prepare_api_document_data(UUID, UUID, JSONB)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.create_api_document_preview_task(UUID, SMALLINT, JSONB, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.create_api_document_generation_task(UUID, SMALLINT, JSONB, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.delete_api_document(UUID, UUID, BIGINT)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.claim_api_document_dispatch_batch(UUID, INTEGER, INTEGER, TEXT)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.complete_api_document_dispatch(TEXT, UUID, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 REVOKE ALL ON FUNCTION private.retry_api_document_dispatch(TEXT, UUID, TEXT, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION private.create_api_document_preview_task(UUID, SMALLINT, JSONB, TIMESTAMPTZ)
   TO smart_job_api;
@@ -12804,13 +12600,13 @@ $$;--> statement-breakpoint
 REVOKE ALL ON FUNCTION private.process_api_tax_callback(
   VARCHAR, VARCHAR(64), VARCHAR(128), VARCHAR(32),
   VARCHAR(128), VARCHAR(128), TEXT, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
+) FROM PUBLIC;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.bind_api_tax_approval_session(UUID, VARCHAR(128))
-  FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
+  FROM PUBLIC;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.cleanup_tax_callback_events(INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
+  FROM PUBLIC;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.process_api_tax_callback(
   VARCHAR, VARCHAR(64), VARCHAR(128), VARCHAR(32),
@@ -12935,10 +12731,13 @@ END;
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.app_has_archive_access(UUID)
-  FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
+  FROM PUBLIC;--> statement-breakpoint
+
+GRANT EXECUTE ON FUNCTION private.app_has_archive_access(UUID)
+  TO smart_job_api;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.list_api_company_archives(UUID, VARCHAR(32), INTEGER, TIMESTAMPTZ, UUID)
-  FROM PUBLIC, anon, authenticated, service_role;--> statement-breakpoint
+  FROM PUBLIC;--> statement-breakpoint
 
 GRANT EXECUTE ON FUNCTION private.list_api_company_archives(UUID, VARCHAR(32), INTEGER, TIMESTAMPTZ, UUID)
   TO smart_job_api;--> statement-breakpoint
@@ -13157,7 +12956,7 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION private.accept_api_job(UUID, UUID, BIGINT, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION private.accept_api_job(UUID, UUID, BIGINT, TIMESTAMPTZ)
   TO smart_job_api;
 
@@ -13218,6 +13017,15 @@ ALTER ROLE smart_job_email SET idle_in_transaction_session_timeout = '15s';
 ALTER ROLE smart_job_archiver SET statement_timeout = '60min';
 ALTER ROLE smart_job_archiver SET lock_timeout = '5s';
 ALTER ROLE smart_job_archiver SET idle_in_transaction_session_timeout = '30s';
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION private.queue_expired_file_upload_cleanup(TIMESTAMPTZ)
+  TO smart_job_archiver;
+GRANT EXECUTE ON FUNCTION private.claim_file_upload_cleanup_batch(
+  INTEGER, INTEGER, TIMESTAMPTZ
+) TO smart_job_archiver;
+GRANT EXECUTE ON FUNCTION private.finish_file_upload_cleanup(
+  UUID, INTEGER, BOOLEAN, TEXT, TIMESTAMPTZ
+) TO smart_job_archiver;
 --> statement-breakpoint
 
 CREATE TABLE "private"."archive_run_leases" (
@@ -13465,15 +13273,15 @@ REVOKE ALL ON TABLE
   private.archive_run_leases,
   private.document_email_deliveries,
   private.tax_submissions
-FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+FROM PUBLIC, smart_job_api,
   smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.claim_archive_run_lease(
   UUID, TEXT, TEXT, TIMESTAMPTZ, UUID, INTEGER
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+) FROM PUBLIC, smart_job_api,
   smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.finish_archive_run_lease(
   UUID, UUID, BOOLEAN, TEXT
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+) FROM PUBLIC, smart_job_api,
   smart_job_pdf, smart_job_email;
 
 GRANT USAGE ON SCHEMA private TO smart_job_pdf, smart_job_email, smart_job_archiver;
@@ -14238,27 +14046,27 @@ $$;
 --> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.get_api_document_email_delivery_status(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.claim_pdf_document_task(TEXT, UUID, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_api, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.complete_pdf_document_task(TEXT, UUID, UUID, UUID, TEXT, INTEGER, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_api, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.fail_pdf_document_task(TEXT, UUID, UUID, UUID, TEXT, BOOLEAN, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_api, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.claim_email_delivery(UUID, UUID, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api, smart_job_pdf, smart_job_archiver;
+  FROM PUBLIC, smart_job_api, smart_job_pdf, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.complete_email_delivery(UUID, UUID, UUID, UUID, TEXT, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api, smart_job_pdf, smart_job_archiver;
+  FROM PUBLIC, smart_job_api, smart_job_pdf, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.resolve_email_delivery_failure(UUID, UUID, UUID, UUID, TEXT, TEXT, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api, smart_job_pdf, smart_job_archiver;
+  FROM PUBLIC, smart_job_api, smart_job_pdf, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.claim_api_email_dispatch_batch(UUID, INTEGER, INTEGER, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.complete_api_email_dispatch(UUID, UUID, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.retry_api_email_dispatch(UUID, UUID, TEXT, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.retry_api_document_email(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 
 GRANT EXECUTE ON FUNCTION private.claim_pdf_document_task(TEXT, UUID, INTEGER)
   TO smart_job_pdf;
@@ -14948,18 +14756,18 @@ $$;
 --> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.create_api_tax_invoice(UUID, JSONB, TIMESTAMPTZ)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.claim_api_tax_submission_batch(UUID, INTEGER, INTEGER, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.retry_api_tax_submission(UUID, UUID, TEXT, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.mark_api_tax_submission_unknown(UUID, UUID, TEXT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.process_api_tax_submission_result(
   VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, TEXT, TIMESTAMPTZ
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+) FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.get_api_tax_submission_status(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_pdf, smart_job_email, smart_job_archiver;
+  FROM PUBLIC, smart_job_pdf, smart_job_email, smart_job_archiver;
 
 GRANT EXECUTE ON FUNCTION private.create_api_tax_invoice(UUID, JSONB, TIMESTAMPTZ)
   TO smart_job_api;
@@ -15978,41 +15786,41 @@ $$;
 -- New private objects remain unreachable through PostgREST/client roles. The
 -- runtime worker has no direct source-table or archive-table write grants.
 REVOKE ALL ON FUNCTION private.list_archiver_companies()
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.list_archiver_candidates(TIMESTAMPTZ, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.claim_archive_run_lease(
   UUID, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, UUID, INTEGER
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+) FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.renew_archive_run_lease(UUID, UUID, INTEGER)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.read_archiver_jobs_page(
   UUID, UUID, TIMESTAMPTZ, UUID, INTEGER
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+) FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.read_archiver_documents_page(
   UUID, UUID, TIMESTAMPTZ, UUID, INTEGER
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+) FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.record_archiver_uploaded_run(
   UUID, UUID, INTEGER, TEXT, TEXT, BIGINT, TEXT, TEXT, BIGINT
-) FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+) FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.delete_archiver_records_chunk(UUID, UUID, INTEGER, UUID[])
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.complete_archiver_run(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.release_empty_archive_run_lease(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 REVOKE ALL ON FUNCTION private.finish_archive_run_lease(UUID, UUID, BOOLEAN, TEXT)
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
     smart_job_pdf, smart_job_email;
 --> statement-breakpoint
 
@@ -16122,7 +15930,7 @@ SET schema_version = EXCLUDED.schema_version,
     applied_at = pg_catalog.clock_timestamp();--> statement-breakpoint
 
 REVOKE ALL ON TABLE private.api_schema_metadata
-  FROM PUBLIC, anon, authenticated, service_role, smart_job_api,
+  FROM PUBLIC, smart_job_api,
        smart_job_pdf, smart_job_email, smart_job_archiver;--> statement-breakpoint
 
 CREATE OR REPLACE FUNCTION private.check_api_readiness(
@@ -16179,7 +15987,7 @@ AS $$
 $$;--> statement-breakpoint
 
 REVOKE ALL ON FUNCTION private.check_api_readiness(TEXT)
-  FROM PUBLIC, anon, authenticated, service_role,
+  FROM PUBLIC,
        smart_job_pdf, smart_job_email, smart_job_archiver;--> statement-breakpoint
 GRANT EXECUTE ON FUNCTION private.check_api_readiness(TEXT) TO smart_job_api;
 
@@ -16552,10 +16360,10 @@ $$;
 
 REVOKE ALL ON FUNCTION private.list_api_company_archives_v2(
   UUID, VARCHAR(32), TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, TIMESTAMPTZ, UUID
-) FROM PUBLIC, anon, authenticated, service_role,
+) FROM PUBLIC,
        smart_job_pdf, smart_job_email, smart_job_archiver;
 REVOKE ALL ON FUNCTION private.get_api_company_archive_run(UUID, UUID)
-  FROM PUBLIC, anon, authenticated, service_role,
+  FROM PUBLIC,
        smart_job_pdf, smart_job_email, smart_job_archiver;
 GRANT EXECUTE ON FUNCTION private.list_api_company_archives_v2(
   UUID, VARCHAR(32), TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, TIMESTAMPTZ, UUID
@@ -16797,13 +16605,22 @@ BEGIN
       NOCREATEDB
       NOCREATEROLE
       NOREPLICATION
-      NOINHERIT;
+      INHERIT
+      BYPASSRLS;
   END IF;
 END;
 $$;
 --> statement-breakpoint
 
+ALTER ROLE smart_job_backup INHERIT BYPASSRLS;
 GRANT pg_read_all_data TO smart_job_backup;
+GRANT USAGE ON SCHEMA public, private TO smart_job_backup;
+GRANT SELECT ON ALL TABLES IN SCHEMA public, private TO smart_job_backup;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, private TO smart_job_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO smart_job_backup;
+ALTER DEFAULT PRIVILEGES IN SCHEMA private
+  GRANT SELECT ON TABLES TO smart_job_backup;
 --> statement-breakpoint
 
 DO $$

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
 import type { ApiDatabaseRuntime, DatabaseQueryable } from "../database/runtime.js";
@@ -27,9 +27,9 @@ const secondDocumentId = "17d76e0f-69cc-40da-966c-9c16728fc359";
 const thirdDocumentId = "c1a7987d-226d-4d52-b8f0-4c866d3c2545";
 const taskId = `generate:${internalCompanyId}:200:${userId}:1783944000000`;
 
-function verifier(): SupabaseJwtVerifier {
+function verifier(): FirebaseTokenVerifier {
   return {
-    issuer: "https://project.supabase.co/auth/v1",
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -123,7 +123,7 @@ function storage(signedCalls: Array<{ path: string; ttl: number }>): CompanyFile
     async removeObjects() { throw new Error("not used"); },
     async createSignedDownloadUrl(path, ttl) {
       signedCalls.push({ path, ttl });
-      return `https://project.supabase.co/storage/v1/object/sign/smart-job-company-files/${path}?token=signed`;
+      return `https://storage.googleapis.com/company-files-test/${path}?X-Goog-Signature=signed`;
     },
   };
 }
@@ -249,7 +249,7 @@ test("document file and completed task routes create fresh scoped signed URLs", 
   });
   assert.equal(download.statusCode, 200, download.body);
   assert.equal(download.json().data.documentCode, "3-DN");
-  assert.match(download.json().data.downloadURL, /token=signed$/);
+  assert.match(download.json().data.downloadURL, /X-Goog-Signature=signed$/);
 
   const task = await app.inject({
     method: "GET",
@@ -258,7 +258,7 @@ test("document file and completed task routes create fresh scoped signed URLs", 
   });
   assert.equal(task.statusCode, 200, task.body);
   assert.equal(task.json().data.downloadURL.includes("expired.example"), false);
-  assert.match(task.json().data.downloadURL, /token=signed$/);
+  assert.match(task.json().data.downloadURL, /X-Goog-Signature=signed$/);
   assert.deepEqual(signedCalls, [
     { path: `${internalCompanyId}/documents/${documentId}.pdf`, ttl: 900 },
     { path: `${internalCompanyId}/documents/${documentId}.pdf`, ttl: 300 },

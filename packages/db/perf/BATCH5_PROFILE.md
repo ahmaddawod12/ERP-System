@@ -1,6 +1,6 @@
 # Batch 5 large-tenant profile
 
-Measured on 2026-07-21 against the repository-owned local Supabase PostgreSQL
+Measured on 2026-07-21 against the repository-owned local PostgreSQL
 stack. The profiler creates one tenant inside a transaction, inserts 100,000
 jobs, 50,000 documents, 20,000 inventory parts, and a deliberately extreme
 1,200-segment archive month, warms each query once, runs it 20 times, and rolls

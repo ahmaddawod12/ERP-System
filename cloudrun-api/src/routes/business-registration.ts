@@ -11,7 +11,7 @@ import {
   AuthError,
   type ApiRequestAuthenticator,
   type AuthenticatedApiRequest,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -35,7 +35,7 @@ const registrationResponseSchema = createApiSuccessResponseSchema(
 export interface BusinessRegistrationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
   readonly webSessions: Pick<WebSessionService, "currentSession">;
 }
 
@@ -52,7 +52,7 @@ async function readVerifiedEmail(
   services: BusinessRegistrationRouteServices,
 ): Promise<string> {
   if (authenticated.scheme === "bearer") {
-    const user = await services.supabaseUsers.getUser(authenticated.accessToken);
+    const user = await services.firebaseUsers.getUser(authenticated.accessToken);
     if (user.userId !== authenticated.userId) {
       throw new AuthError("AUTHORIZATION_INVALID").toAppError();
     }

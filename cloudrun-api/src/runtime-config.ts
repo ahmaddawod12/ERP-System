@@ -44,21 +44,39 @@ const runtimeEnvironmentSchema = z.object({
     100,
     12_000,
   ).default(10_000),
-  SUPABASE_URL: z.url("SUPABASE_URL must be a valid URL"),
-  SUPABASE_INTERNAL_URL: z.url("SUPABASE_INTERNAL_URL must be a valid URL").optional(),
-  SUPABASE_PUBLISHABLE_KEY: z.string()
+  FIREBASE_PROJECT_ID: z.string()
     .trim()
-    .min(20, "SUPABASE_PUBLISHABLE_KEY is required")
-    .regex(/^sb_publishable_[A-Za-z0-9_-]+$/, "SUPABASE_PUBLISHABLE_KEY is invalid"),
-  SUPABASE_SECRET_KEY: z.string()
+    .regex(
+      /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/,
+      "FIREBASE_PROJECT_ID must be a valid Google Cloud project ID",
+    ),
+  FIREBASE_WEB_API_KEY: z.string()
     .trim()
-    .min(20, "SUPABASE_SECRET_KEY is required")
-    .regex(/^sb_secret_[A-Za-z0-9_-]+$/, "SUPABASE_SECRET_KEY is invalid"),
-  SUPABASE_STORAGE_BUCKET: z.literal("smart-job-company-files")
+    .regex(/^[A-Za-z0-9_-]{20,256}$/, "FIREBASE_WEB_API_KEY is invalid"),
+  FIREBASE_AUTH_EMULATOR_HOST: z.string()
+    .trim()
+    .regex(
+      /^[a-z][a-z0-9-]{2,62}:9099$/,
+      "FIREBASE_AUTH_EMULATOR_HOST must use the local emulator port 9099",
+    )
+    .optional(),
+  GCS_PROJECT_ID: z.string()
+    .trim()
+    .regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/, "GCS_PROJECT_ID is invalid")
+    .optional(),
+  COMPANY_FILES_BUCKET: z.string()
+    .trim()
+    .min(3)
+    .max(63)
+    .regex(
+      /^[a-z0-9][a-z0-9._-]*[a-z0-9]$/,
+      "COMPANY_FILES_BUCKET must be a valid GCS bucket name",
+    )
     .default("smart-job-company-files"),
-  SUPABASE_JWT_ISSUER: z.url("SUPABASE_JWT_ISSUER must be a valid URL").optional(),
-  SUPABASE_JWKS_URL: z.url("SUPABASE_JWKS_URL must be a valid URL").optional(),
-  SUPABASE_JWT_AUDIENCE: z.string().trim().min(1).default("authenticated"),
+  GCS_API_ENDPOINT: z.url("GCS_API_ENDPOINT must be a valid URL").optional(),
+  COMPANY_FILES_PUBLIC_BASE_URL: z.url(
+    "COMPANY_FILES_PUBLIC_BASE_URL must be a valid URL",
+  ).optional(),
   WEB_SESSION_ENCRYPTION_KEY_BASE64: z.string()
     .trim()
     .min(1, "WEB_SESSION_ENCRYPTION_KEY_BASE64 is required"),
@@ -164,21 +182,17 @@ export interface DatabaseRuntimeConfig {
   readonly connectionTimeoutMillis: number;
 }
 
-export interface SupabaseJwtRuntimeConfig {
-  readonly issuer: string;
-  readonly jwksUrl: URL;
-  readonly audiences: readonly string[];
+export interface FirebaseAuthRuntimeConfig {
+  readonly projectId: string;
+  readonly webApiKey: string;
+  readonly authBaseUrl?: URL;
+  readonly tokenBaseUrl?: URL;
 }
 
-export interface SupabaseAuthRuntimeConfig {
-  readonly baseUrl: URL;
-  readonly publishableKey: string;
-}
-
-export interface SupabaseStorageRuntimeConfig {
-  readonly baseUrl: URL;
+export interface CompanyFileStorageRuntimeConfig {
+  readonly projectId?: string;
+  readonly apiEndpoint?: string;
   readonly publicBaseUrl?: URL;
-  readonly secretKey: string;
   readonly bucketId: string;
 }
 
@@ -212,9 +226,8 @@ export interface TaxSubmissionRuntimeConfig {
 
 export interface ApiRuntimeConfig {
   readonly database: DatabaseRuntimeConfig;
-  readonly supabaseAuth: SupabaseAuthRuntimeConfig;
-  readonly supabaseJwt: SupabaseJwtRuntimeConfig;
-  readonly supabaseStorage: SupabaseStorageRuntimeConfig;
+  readonly firebaseAuth: FirebaseAuthRuntimeConfig;
+  readonly companyFileStorage: CompanyFileStorageRuntimeConfig;
   readonly webSessionEncryption: WebSessionEncryptionRuntimeConfig;
   readonly documentDispatch?: DocumentDispatchRuntimeConfig;
   readonly internalIdentity?: InternalIdentityRuntimeConfig;
@@ -240,7 +253,7 @@ function normalizedUrl(value: string): URL {
   return parsed;
 }
 
-function ensureSafeSupabaseUrl(
+function ensureSafeServiceUrl(
   url: URL,
   field: string,
   expectedPath: string,
@@ -292,7 +305,7 @@ function parseDatabaseUrl(
     parsed.hostname.toLowerCase(),
   );
   const isLocalPlatformDatabase = allowLocalPlatformDatabase
-    && parsed.hostname === "smart-job-supabase-db"
+    && parsed.hostname === "smart-job-postgres"
     && (parsed.port === "5432" || parsed.port === "");
   if (sslMode === "disable" && !isLoopback && !isLocalPlatformDatabase) {
     throw new RuntimeConfigError([
@@ -359,14 +372,13 @@ export function loadApiRuntimeConfig(
     DATABASE_CONNECT_TIMEOUT_MS:
       environment.DATABASE_CONNECT_TIMEOUT_MS
       ?? environment.SMART_JOB_DATABASE_CONNECT_TIMEOUT_MS,
-    SUPABASE_URL: environment.SUPABASE_URL,
-    SUPABASE_INTERNAL_URL: environment.SUPABASE_INTERNAL_URL,
-    SUPABASE_PUBLISHABLE_KEY: environment.SUPABASE_PUBLISHABLE_KEY,
-    SUPABASE_SECRET_KEY: environment.SUPABASE_SECRET_KEY,
-    SUPABASE_STORAGE_BUCKET: environment.SUPABASE_STORAGE_BUCKET,
-    SUPABASE_JWT_ISSUER: environment.SUPABASE_JWT_ISSUER,
-    SUPABASE_JWKS_URL: environment.SUPABASE_JWKS_URL,
-    SUPABASE_JWT_AUDIENCE: environment.SUPABASE_JWT_AUDIENCE,
+    FIREBASE_PROJECT_ID: environment.FIREBASE_PROJECT_ID,
+    FIREBASE_WEB_API_KEY: environment.FIREBASE_WEB_API_KEY,
+    FIREBASE_AUTH_EMULATOR_HOST: environment.FIREBASE_AUTH_EMULATOR_HOST,
+    GCS_PROJECT_ID: environment.GCS_PROJECT_ID,
+    COMPANY_FILES_BUCKET: environment.COMPANY_FILES_BUCKET,
+    GCS_API_ENDPOINT: environment.GCS_API_ENDPOINT,
+    COMPANY_FILES_PUBLIC_BASE_URL: environment.COMPANY_FILES_PUBLIC_BASE_URL,
     WEB_SESSION_ENCRYPTION_KEY_BASE64:
       environment.WEB_SESSION_ENCRYPTION_KEY_BASE64,
     WEB_SESSION_ENCRYPTION_KEY_VERSION:
@@ -397,11 +409,12 @@ export function loadApiRuntimeConfig(
   }
 
   const localOnlyFields = [
-    result.data.SUPABASE_INTERNAL_URL,
-    result.data.SUPABASE_JWKS_URL,
+    result.data.FIREBASE_AUTH_EMULATOR_HOST,
     result.data.PUBSUB_API_BASE_URL,
     result.data.GOOGLE_METADATA_ACCESS_TOKEN_URL,
     result.data.LOCAL_INTERNAL_IDENTITY_TOKEN,
+    result.data.GCS_API_ENDPOINT,
+    result.data.COMPANY_FILES_PUBLIC_BASE_URL,
   ];
   const localOnlyFieldCount = localOnlyFields.filter((value) => value !== undefined).length;
   if ((localPlatformFlagsPresent || localOnlyFieldCount > 0) && !verifiedLocalPlatform) {
@@ -411,7 +424,7 @@ export function loadApiRuntimeConfig(
   }
   if (verifiedLocalPlatform && localOnlyFieldCount !== localOnlyFields.length) {
     throw new RuntimeConfigError([
-      "all local Supabase, Pub/Sub, metadata, and identity settings are required together",
+      "all local Auth, Pub/Sub, metadata, identity, and GCS settings are required together",
     ]);
   }
   if (verifiedLocalPlatform && result.data.TAX_SUBMISSION_MODE !== "disabled") {
@@ -420,40 +433,47 @@ export function loadApiRuntimeConfig(
     ]);
   }
 
-  const supabaseUrl = normalizedUrl(result.data.SUPABASE_URL);
-  ensureSafeSupabaseUrl(supabaseUrl, "SUPABASE_URL", "/");
-
-  let supabaseServiceUrl = supabaseUrl;
-  if (result.data.SUPABASE_INTERNAL_URL !== undefined) {
-    supabaseServiceUrl = normalizedUrl(result.data.SUPABASE_INTERNAL_URL);
-    ensureSafeSupabaseUrl(
-      supabaseServiceUrl,
-      "SUPABASE_INTERNAL_URL",
-      "/",
-      "smart-job-supabase-gateway",
+  let firebaseAuthBaseUrl: URL | undefined;
+  let firebaseTokenBaseUrl: URL | undefined;
+  if (result.data.FIREBASE_AUTH_EMULATOR_HOST !== undefined) {
+    firebaseAuthBaseUrl = new URL(
+      `http://${result.data.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/`,
     );
-    if (supabaseServiceUrl.port !== "8000") {
+    firebaseTokenBaseUrl = new URL(
+      `http://${result.data.FIREBASE_AUTH_EMULATOR_HOST}/securetoken.googleapis.com/`,
+    );
+  }
+
+  let storageEmulatorUrl: URL | undefined;
+  let companyFilesPublicBaseUrl: URL | undefined;
+  if (result.data.GCS_API_ENDPOINT !== undefined) {
+    storageEmulatorUrl = normalizedUrl(result.data.GCS_API_ENDPOINT);
+    ensureSafeServiceUrl(
+      storageEmulatorUrl,
+      "GCS_API_ENDPOINT",
+      "/",
+      "gcs-emulator",
+    );
+    if (storageEmulatorUrl.port !== "4443") {
       throw new RuntimeConfigError([
-        "SUPABASE_INTERNAL_URL must use the local Supabase Kong port 8000",
+        "GCS_API_ENDPOINT must use the local GCS emulator port 4443",
       ]);
     }
   }
-
-  const defaultIssuer = new URL("auth/v1", supabaseUrl.href);
-  const issuer = normalizedUrl(result.data.SUPABASE_JWT_ISSUER ?? defaultIssuer.href);
-  const jwksUrl = normalizedUrl(result.data.SUPABASE_JWKS_URL
-    ?? new URL(".well-known/jwks.json", `${issuer.href}/`).href);
-  ensureSafeSupabaseUrl(issuer, "SUPABASE_JWT_ISSUER", "/auth/v1");
-  ensureSafeSupabaseUrl(
-    jwksUrl,
-    "SUPABASE_JWKS_URL",
-    "/auth/v1/.well-known/jwks.json",
-    verifiedLocalPlatform ? "smart-job-supabase-gateway" : undefined,
-  );
-  if (verifiedLocalPlatform && jwksUrl.port !== "8000") {
-    throw new RuntimeConfigError([
-      "SUPABASE_JWKS_URL must use the local Supabase Kong port 8000",
-    ]);
+  if (result.data.COMPANY_FILES_PUBLIC_BASE_URL !== undefined) {
+    companyFilesPublicBaseUrl = normalizedUrl(
+      result.data.COMPANY_FILES_PUBLIC_BASE_URL,
+    );
+    ensureSafeServiceUrl(
+      companyFilesPublicBaseUrl,
+      "COMPANY_FILES_PUBLIC_BASE_URL",
+      "/",
+    );
+    if (companyFilesPublicBaseUrl.protocol !== "http:") {
+      throw new RuntimeConfigError([
+        "COMPANY_FILES_PUBLIC_BASE_URL must use loopback HTTP",
+      ]);
+    }
   }
 
   let localPubSubApiBaseUrl: URL | undefined;
@@ -461,13 +481,13 @@ export function loadApiRuntimeConfig(
   if (verifiedLocalPlatform) {
     localPubSubApiBaseUrl = normalizedUrl(result.data.PUBSUB_API_BASE_URL!);
     localMetadataTokenUrl = normalizedUrl(result.data.GOOGLE_METADATA_ACCESS_TOKEN_URL!);
-    ensureSafeSupabaseUrl(
+    ensureSafeServiceUrl(
       localPubSubApiBaseUrl,
       "PUBSUB_API_BASE_URL",
       "/",
       "local-platform-adapter",
     );
-    ensureSafeSupabaseUrl(
+    ensureSafeServiceUrl(
       localMetadataTokenUrl,
       "GOOGLE_METADATA_ACCESS_TOKEN_URL",
       "/computeMetadata/v1/instance/service-accounts/default/token",
@@ -478,18 +498,6 @@ export function loadApiRuntimeConfig(
         "local Pub/Sub and metadata URLs must use adapter port 8090",
       ]);
     }
-  }
-
-  const audiences = [...new Set(
-    result.data.SUPABASE_JWT_AUDIENCE
-      .split(",")
-      .map((audience) => audience.trim())
-      .filter(Boolean),
-  )];
-  if (audiences.length === 0 || audiences.length > 5) {
-    throw new RuntimeConfigError([
-      "SUPABASE_JWT_AUDIENCE must contain between one and five audiences",
-    ]);
   }
 
   const sslCa = result.data.DATABASE_SSL_CA.replace(/\\n/g, "\n").trim();
@@ -567,20 +575,23 @@ export function loadApiRuntimeConfig(
       idleTimeoutMillis: result.data.DATABASE_IDLE_TIMEOUT_MS,
       connectionTimeoutMillis: result.data.DATABASE_CONNECT_TIMEOUT_MS,
     },
-    supabaseAuth: {
-      baseUrl: supabaseServiceUrl,
-      publishableKey: result.data.SUPABASE_PUBLISHABLE_KEY,
+    firebaseAuth: {
+      projectId: result.data.FIREBASE_PROJECT_ID,
+      webApiKey: result.data.FIREBASE_WEB_API_KEY,
+      ...(firebaseAuthBaseUrl === undefined ? {} : { authBaseUrl: firebaseAuthBaseUrl }),
+      ...(firebaseTokenBaseUrl === undefined ? {} : { tokenBaseUrl: firebaseTokenBaseUrl }),
     },
-    supabaseJwt: {
-      issuer: issuer.href,
-      jwksUrl,
-      audiences,
-    },
-    supabaseStorage: {
-      baseUrl: supabaseServiceUrl,
-      ...(verifiedLocalPlatform ? { publicBaseUrl: supabaseUrl } : {}),
-      secretKey: result.data.SUPABASE_SECRET_KEY,
-      bucketId: result.data.SUPABASE_STORAGE_BUCKET,
+    companyFileStorage: {
+      ...(result.data.GCS_PROJECT_ID === undefined
+        ? {}
+        : { projectId: result.data.GCS_PROJECT_ID }),
+      ...(storageEmulatorUrl === undefined
+        ? {}
+        : { apiEndpoint: storageEmulatorUrl.origin }),
+      ...(companyFilesPublicBaseUrl === undefined
+        ? {}
+        : { publicBaseUrl: companyFilesPublicBaseUrl }),
+      bucketId: result.data.COMPANY_FILES_BUCKET,
     },
     webSessionEncryption: {
       key: parseWebSessionEncryptionKey(

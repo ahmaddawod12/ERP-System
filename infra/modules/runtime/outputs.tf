@@ -31,5 +31,5 @@ output "database_connection_budget" {
 }
 
 output "database_connection_ceiling" {
-  value = floor(var.supabase_connection_limit * 0.70)
+  value = floor(var.database_connection_limit * 0.70)
 }

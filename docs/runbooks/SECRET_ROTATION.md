@@ -26,9 +26,9 @@ committed `.env` file.
 - **Database roles:** rotate each runtime role independently. Test connection,
   request context, timeouts, and narrow RPC permissions before revoking the old
   password. The migration credential is never mounted into a runtime service.
-- **Supabase publishable/secret keys:** publishable keys may reach Auth clients;
-  `sb_secret_...` keys are trusted workload secrets only. Verify signed upload/
-  download and worker Storage operations before revocation.
+- **Firebase web API keys:** restrict each key to the intended Firebase/Identity
+  Toolkit APIs and approved application surfaces. Roll server consumers first,
+  then ship native configuration changes through new signed mobile builds.
 - **Website session encryption:** the API currently decrypts only the configured
   `WEB_SESSION_ENCRYPTION_KEY_VERSION`. Rotating it intentionally invalidates
   existing opaque sessions; schedule a controlled re-login window. Never reuse

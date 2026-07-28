@@ -2,6 +2,7 @@ output "foundation" {
   description = "Non-sensitive bootstrap outputs used by operators and CI."
   value = {
     archive_bucket             = module.foundation.archive_bucket_name
+    company_files_bucket       = module.foundation.company_files_bucket_name
     backup_bucket              = module.foundation.backup_bucket_name
     deploy_service_account     = module.foundation.deploy_service_account
     primary_egress_ip          = module.foundation.primary_egress_ip

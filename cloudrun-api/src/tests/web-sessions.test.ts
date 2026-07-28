@@ -39,7 +39,11 @@ test("web-session routes enforce opaque authorization and CSRF without exposing 
     },
     async authenticateSession(token) {
       calls.push(["authenticate", token]);
-      return { userId: viewer.uid, absoluteExpiresAt: new Date(absoluteExpiresAt) };
+      return {
+        userId: viewer.uid,
+        verifiedEmail: viewer.email,
+        absoluteExpiresAt: new Date(absoluteExpiresAt),
+      };
     },
     async currentSession(token) {
       calls.push(["current", token]);
@@ -86,7 +90,7 @@ test("web-session routes enforce opaque authorization and CSRF without exposing 
   });
   assert.equal(resolved.statusCode, 200, resolved.body);
   assert.deepEqual(resolved.json().data, current);
-  assert.doesNotMatch(resolved.body, /accessToken|refreshToken|supabase/i);
+  assert.doesNotMatch(resolved.body, /accessToken|refreshToken|firebase/i);
   assert.deepEqual(calls.shift(), ["current", sessionToken]);
 
   const missingCsrf = await app.inject({
@@ -118,7 +122,7 @@ test("AES-256-GCM credentials are bound to immutable session metadata", () => {
   const binding = {
     id: randomUUID(),
     userId: randomUUID(),
-    supabaseSessionId: randomUUID(),
+    identitySessionId: randomUUID(),
     absoluteExpiresAt: new Date("2026-07-14T00:00:00.000Z"),
   };
   const credentials = {

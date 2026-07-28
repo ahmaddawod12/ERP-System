@@ -18,7 +18,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -65,7 +65,7 @@ const closedResponseSchema = createApiSuccessResponseSchema(
 export interface SupportRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 function mapSupportDatabaseError(error: unknown): unknown {
@@ -173,7 +173,7 @@ export function registerSupportRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = SupportConversationCreateRequestSchema.parse(request.body);
 
@@ -270,7 +270,7 @@ export function registerSupportRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = conversationParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = SupportMessageCreateRequestSchema.parse(request.body);
@@ -323,7 +323,7 @@ export function registerSupportRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = conversationParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
 
@@ -376,7 +376,7 @@ export function registerSupportRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = conversationParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
 

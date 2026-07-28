@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 const workflow = readFileSync(".github/workflows/cloudrun-deploy.yml", "utf8");
 const foundation = readFileSync("infra/modules/foundation/main.tf", "utf8");
@@ -77,7 +77,7 @@ requireMatch(runtime, /TAX_SUBMISSION_MODE\s+= "disabled"/, "Tax submission must
 requireMatch(runtime, /min_instances\s+= 1/, "Website, API, and tax services require warm instances");
 requireMatch(runtime, /min_instances\s+= 0/, "Durable PDF and email workers must scale to zero");
 requireMatch(runtime, /task_count\s+= 1[\s\S]*parallelism\s+= 1/, "Cloud Run jobs must be single-task and non-parallel");
-requireMatch(runtime, /database_connection_budget <= floor\(var\.supabase_connection_limit \* 0\.70\)/, "Aggregate DB pools must stay at or below 70 percent");
+requireMatch(runtime, /database_connection_budget <= floor\(var\.database_connection_limit \* 0\.70\)/, "Aggregate DB pools must stay at or below 70 percent");
 const migrationJob = runtime.match(/\n    migration = \{([\s\S]*?)\n    smoke = \{/i)?.[1] || "";
 requireMatch(migrationJob, /max_retries\s+= 0/, "Migration job must not blindly retry schema changes");
 requireMatch(migrationJob, /DATABASE_URL\s+= var\.secret_ids\["migrator_database_url"\]/, "Migration job must use the dedicated migrator secret");

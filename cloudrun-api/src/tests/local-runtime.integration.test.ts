@@ -6,9 +6,9 @@ import { Client } from "pg";
 import {
   createApiRequestAuthenticator,
   type ApiRequestAuthenticator,
-  type SupabaseJwtVerifier,
-  type SupabaseUserClient,
-  type SupabaseWebAuthClient,
+  type FirebaseTokenVerifier,
+  type FirebaseUserClient,
+  type FirebaseWebAuthClient,
 } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { createApiDatabaseRuntime } from "../database/runtime.js";
@@ -216,7 +216,7 @@ if (adminDatabaseUrl.length === 0) {
       );
       assert.equal(disabledBootstrap.counts.jobs, 0);
 
-      const jwtVerifier: SupabaseJwtVerifier = {
+      const jwtVerifier: FirebaseTokenVerifier = {
         issuer: "http://127.0.0.1:55321/auth/v1",
         audiences: ["authenticated"],
         async verifyAuthorizationHeader() {
@@ -230,7 +230,7 @@ if (adminDatabaseUrl.length === 0) {
       app = await buildApp({ config: loadConfig({}), logger: false });
       let webSessionResolver: Pick<WebSessionService, "authenticateSession"> | undefined;
       let currentSessionResolver: Pick<WebSessionService, "currentSession"> | undefined;
-      let supabaseUserResolver: SupabaseUserClient | undefined;
+      let firebaseUserResolver: FirebaseUserClient | undefined;
       const domainAuthenticator: ApiRequestAuthenticator = createApiRequestAuthenticator({
         jwtVerifier,
         webSessions: {
@@ -245,7 +245,7 @@ if (adminDatabaseUrl.length === 0) {
       registerJobCompletionRoutes(app, {
         database,
         authenticator: domainAuthenticator,
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser(token) {
             assert.equal(token, "header.payload.signature");
             return {
@@ -260,12 +260,12 @@ if (adminDatabaseUrl.length === 0) {
       registerViewerRoutes(app, {
         database,
         authenticator: domainAuthenticator,
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser(token) {
-            if (supabaseUserResolver === undefined) {
+            if (firebaseUserResolver === undefined) {
               throw new Error("Viewer Auth lookup was used before session setup");
             }
-            return supabaseUserResolver.getUser(token);
+            return firebaseUserResolver.getUser(token);
           },
         },
         webSessions: {
@@ -397,6 +397,7 @@ if (adminDatabaseUrl.length === 0) {
 
       const webAuthSessionId = randomUUID();
       const webNow = new Date();
+      const authenticatedAt = Math.floor(webNow.getTime() / 1_000) - 60;
       const initialExpiresAt = Math.floor(webNow.getTime() / 1_000) + 30;
       const refreshedExpiresAt = Math.floor(webNow.getTime() / 1_000) + 3_600;
       const initialAccessToken = testAccessToken(userId, webAuthSessionId, initialExpiresAt);
@@ -404,7 +405,7 @@ if (adminDatabaseUrl.length === 0) {
       let refreshCalls = 0;
       let signOutCalls = 0;
       let userLookupCalls = 0;
-      const webJwtVerifier: SupabaseJwtVerifier = {
+      const webJwtVerifier: FirebaseTokenVerifier = {
         issuer: "http://127.0.0.1:55321/auth/v1",
         audiences: ["authenticated"],
         async verifyAuthorizationHeader() {
@@ -412,16 +413,19 @@ if (adminDatabaseUrl.length === 0) {
         },
         async verifyAccessToken(token) {
           if (token === initialAccessToken) {
-            return { userId, expiresAt: initialExpiresAt };
+            return { userId, expiresAt: initialExpiresAt, authenticatedAt };
           }
           assert.equal(token, refreshedAccessToken);
-          return { userId, expiresAt: refreshedExpiresAt };
+          return { userId, expiresAt: refreshedExpiresAt, authenticatedAt };
         },
       };
-      const supabaseUsers: SupabaseUserClient = {
+      const firebaseUsers: FirebaseUserClient = {
         async getUser(token) {
           userLookupCalls += 1;
-          assert.equal(token, refreshedAccessToken);
+          assert.ok(
+            token === initialAccessToken || token === refreshedAccessToken,
+            "user lookup must use one of the current Firebase ID tokens",
+          );
           return {
             userId,
             email: `runtime-${userId}@example.invalid`,
@@ -429,7 +433,7 @@ if (adminDatabaseUrl.length === 0) {
           };
         },
       };
-      const supabaseWebAuth: SupabaseWebAuthClient = {
+      const firebaseWebAuth: FirebaseWebAuthClient = {
         async signInWithPassword(email, passwordValue) {
           assert.equal(email, `runtime-${userId}@example.invalid`);
           assert.equal(passwordValue, "local-password");
@@ -467,14 +471,14 @@ if (adminDatabaseUrl.length === 0) {
       const webSessions = createWebSessionService({
         database,
         jwtVerifier: webJwtVerifier,
-        supabaseUsers,
-        supabaseWebAuth,
+        firebaseUsers,
+        firebaseWebAuth,
         crypto: webSessionCrypto,
         now: () => new Date(webNow),
       });
       webSessionResolver = webSessions;
       currentSessionResolver = webSessions;
-      supabaseUserResolver = supabaseUsers;
+      firebaseUserResolver = firebaseUsers;
 
       const createdWebSession = await webSessions.createSession(
         `runtime-${userId}@example.invalid`,
@@ -489,18 +493,20 @@ if (adminDatabaseUrl.length === 0) {
       ]);
       assert.deepEqual(authenticatedSession, {
         userId,
+        verifiedEmail: `runtime-${userId}@example.invalid`,
         absoluteExpiresAt: new Date(createdWebSession.absoluteExpiresAt),
       });
       assert.deepEqual(Object.keys(authenticatedSession).sort(), [
         "absoluteExpiresAt",
         "userId",
+        "verifiedEmail",
       ]);
       assert.deepEqual(secondCurrent, firstCurrent);
       assert.equal(refreshCalls, 1, "the row lock must single-flight refresh-token rotation");
       assert.equal(
         userLookupCalls,
-        2,
-        "internal authentication must not make an Auth-user network lookup",
+        4,
+        "each opaque-session authentication must re-check Firebase user state",
       );
 
       const opaqueWorkspace = await app.inject({
@@ -520,7 +526,7 @@ if (adminDatabaseUrl.length === 0) {
       });
       assert.equal(bearerWorkspace.statusCode, 200, bearerWorkspace.body);
       assert.deepEqual(bearerWorkspace.json().data, opaqueWorkspace.json().data);
-      assert.equal(userLookupCalls, 2);
+      assert.equal(userLookupCalls, 5);
 
       const opaqueViewer = await app.inject({
         method: "GET",
@@ -532,7 +538,7 @@ if (adminDatabaseUrl.length === 0) {
       assert.equal(opaqueViewer.statusCode, 200, opaqueViewer.body);
       assert.equal(opaqueViewer.json().data.uid, userId);
       assert.equal(opaqueViewer.json().data.emailVerified, true);
-      assert.equal(userLookupCalls, 3, "/me must load authoritative verified email state");
+      assert.equal(userLookupCalls, 7, "/me must load authoritative verified email state");
 
       await admin.query(
         `INSERT INTO public.jobs (

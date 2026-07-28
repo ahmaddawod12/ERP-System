@@ -14,9 +14,9 @@ import {
 import type { ZodType } from 'zod';
 
 import {
-  getSupabaseAccessToken,
-  restoreSupabaseSession,
-} from '../auth/supabase-client';
+  getFirebaseIdToken,
+  restoreFirebaseUser,
+} from '../auth/firebase-auth';
 
 const REQUEST_TIMEOUT_MS = 12_000;
 const tenantControllers = new Map<string, Set<AbortController>>();
@@ -189,24 +189,24 @@ function identityChangedError(): ApiClientError {
 
 async function getIdentityBoundAccessToken(expectedUid?: string): Promise<string | null> {
   if (!expectedUid) {
-    return getSupabaseAccessToken(true);
+    return getFirebaseIdToken(true);
   }
 
   const normalizedExpectedUid = normalizedUserId(expectedUid);
-  const beforeRefresh = await restoreSupabaseSession();
-  if (normalizedUserId(beforeRefresh?.user.id ?? '') !== normalizedExpectedUid) {
+  const beforeRefresh = await restoreFirebaseUser();
+  if (normalizedUserId(beforeRefresh?.uid ?? '') !== normalizedExpectedUid) {
     throw identityChangedError();
   }
 
-  await getSupabaseAccessToken(true);
-  const afterRefresh = await restoreSupabaseSession();
+  const token = await getFirebaseIdToken(true);
+  const afterRefresh = await restoreFirebaseUser();
   if (
-    normalizedUserId(afterRefresh?.user.id ?? '') !== normalizedExpectedUid
-    || !afterRefresh?.access_token
+    normalizedUserId(afterRefresh?.uid ?? '') !== normalizedExpectedUid
+    || !token
   ) {
     throw identityChangedError();
   }
-  return afterRefresh.access_token;
+  return token;
 }
 
 interface ApiRequestOptions {

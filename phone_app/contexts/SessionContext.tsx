@@ -7,23 +7,20 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
-
 import {
-  getSupabaseAccessToken,
-  installSupabaseAuthLifecycle,
-  restoreSupabaseSession,
-  signInSupabase,
-  signOutSupabase,
-  subscribeSupabaseAuth,
-} from '../lib/auth/supabase-client';
+  getFirebaseIdToken,
+  restoreFirebaseUser,
+  signInFirebase,
+  signOutFirebase,
+  subscribeFirebaseAuth,
+  type FirebaseAuthUser,
+} from '../lib/auth/firebase-auth';
 
 type SessionStatus = 'restoring' | 'authenticated' | 'unauthenticated';
 
 interface SessionContextValue {
   readonly status: SessionStatus;
-  readonly session: Session | null;
-  readonly user: User | null;
+  readonly user: FirebaseAuthUser | null;
   readonly error: Error | null;
   readonly signIn: (email: string, password: string) => Promise<void>;
   readonly signOut: () => Promise<void>;
@@ -33,28 +30,27 @@ interface SessionContextValue {
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<FirebaseAuthUser | null>(null);
   const [status, setStatus] = useState<SessionStatus>('restoring');
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     let active = true;
-    const removeLifecycle = installSupabaseAuthLifecycle();
-    const unsubscribe = subscribeSupabaseAuth((nextSession) => {
+    const unsubscribe = subscribeFirebaseAuth((nextUser) => {
       if (!active) {
         return;
       }
-      setSession(nextSession);
-      setStatus(nextSession ? 'authenticated' : 'unauthenticated');
+      setUser(nextUser);
+      setStatus(nextUser ? 'authenticated' : 'unauthenticated');
       setError(null);
     });
 
-    void restoreSupabaseSession()
+    void restoreFirebaseUser()
       .then((restored) => {
         if (!active) {
           return;
         }
-        setSession(restored);
+        setUser(restored);
         setStatus(restored ? 'authenticated' : 'unauthenticated');
       })
       .catch((cause: unknown) => {
@@ -68,32 +64,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
       unsubscribe();
-      removeLifecycle();
     };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
     setError(null);
-    const established = await signInSupabase(email, password);
-    setSession(established);
+    const established = await signInFirebase(email, password);
+    setUser(established);
     setStatus('authenticated');
   }, []);
 
   const signOut = useCallback(async () => {
-    await signOutSupabase();
-    setSession(null);
+    await signOutFirebase();
+    setUser(null);
     setStatus('unauthenticated');
   }, []);
 
   const value = useMemo<SessionContextValue>(() => ({
     status,
-    session,
-    user: session?.user ?? null,
+    user,
     error,
     signIn,
     signOut,
-    getAccessToken: () => getSupabaseAccessToken(true),
-  }), [error, session, signIn, signOut, status]);
+    getAccessToken: () => getFirebaseIdToken(true),
+  }), [error, signIn, signOut, status, user]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
@@ -105,4 +99,3 @@ export function useSession(): SessionContextValue {
   }
   return context;
 }
-

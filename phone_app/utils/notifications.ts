@@ -183,7 +183,7 @@ export async function getFCMToken(): Promise<string | null> {
  * Saves the native FCM token through the authenticated Smart-Job API
  * Always overwrites existing token (handles token rotation)
  * 
- * @param {string} userId - Current Supabase Auth user ID
+ * @param {string} userId - Current Firebase Auth user ID
  * @returns {Promise<boolean>} Success status
  */
 export async function registerPushTokenForUser(userId: string): Promise<boolean> {
@@ -273,7 +273,7 @@ export async function displayLocalNotification({ title, body, data = {} }: Local
  * - Background/quit message handling
  * - Notification tap interactions
  *
- * @param {string} userId - Current Supabase user identity for token refresh
+ * @param {string} userId - Current Firebase user identity for token refresh
  * @param {Function} onNotificationReceived - Called when notification is received while app is in foreground
  * @param {Function} onNotificationTapped - Called when user taps on notification
  * @returns {Function} Cleanup function to remove listeners

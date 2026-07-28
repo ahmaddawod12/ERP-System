@@ -99,7 +99,7 @@ export function resolveSqlPoolConfig(
     throw new Error('DATABASE_SSL_MODE must be disable or require');
   }
   const isLocalPlatformDatabase = verifiedLocalPlatform
-    && databaseUrl.hostname === 'smart-job-supabase-db'
+      && databaseUrl.hostname === 'smart-job-postgres'
     && (databaseUrl.port === '5432' || databaseUrl.port === '');
   if (sslMode === 'disable' && !isLoopback(databaseUrl.hostname) && !isLocalPlatformDatabase) {
     throw new Error('DATABASE_SSL_MODE=disable is allowed only for a loopback database');

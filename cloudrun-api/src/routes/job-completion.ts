@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
 import { mapDatabaseError } from "../database/errors.js";
@@ -40,7 +40,7 @@ export interface JobCompletionRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly authenticator: ApiRequestAuthenticator;
   readonly storage?: CompanyFileStorage;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 export function registerJobCompletionRoutes(
@@ -71,7 +71,7 @@ export function registerJobCompletionRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = completionParamsSchema.parse(request.params);
       const headers = completionHeadersSchema.parse(request.headers);
       const body = JobCompletionRequestSchema.parse(request.body);

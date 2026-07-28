@@ -8,8 +8,8 @@ production-like volume.
 
 Treat these as separate recovery sets:
 
-- Supabase/PostgreSQL physical backup and PITR for database rows.
-- Private Supabase Storage objects for active attachments and generated files.
+- PostgreSQL physical backup and PITR for database rows.
+- Private GCS objects for active attachments and generated files.
 - Versioned GCS archive objects and their companion ID manifests.
 - Secret/IAM configuration and immutable deployment metadata.
 
@@ -19,10 +19,10 @@ must be recovered separately.
 
 ## Routine controls
 
-1. Enable managed Supabase PITR with a window that meets the approved RPO and
+1. Enable managed PostgreSQL PITR with a window that meets the approved RPO and
    verify it daily. The `cloudrun-backup` image supplements PITR with a daily
    PostgreSQL 17 custom-format export and a resumable 15-minute inventory of
-   every version in the private Supabase Storage bucket.
+   every generation in the private company-files GCS bucket.
 2. Enable retention/versioning policies appropriate to the private file and
    archive buckets. Alert on unauthorized deletion and retention-policy changes.
 3. Record custom database role definitions separately. Restored managed backups
@@ -68,14 +68,14 @@ production-like target.
    outbox drains, archiver schedules, and business writes before restoring.
 2. Prefer restoring/duplicating into an isolated project first. Validate the
    selected backup predates the corruption and quantify expected data loss.
-3. Restore through the Supabase Dashboard or approved Management API process.
+3. Restore through the approved managed-PostgreSQL recovery process.
    Expect downtime on an in-place restore.
 4. Re-provision custom runtime-role passwords and update their Secret Manager
    versions. Confirm grants remain least privilege.
 5. Compare the Drizzle journal and schema fingerprint with the reviewed release.
    Apply only required forward migrations; never run `test:migrations` against a
    non-loopback database.
-6. Reconcile private Storage and archive objects by canonical path, size, MIME,
+6. Reconcile private GCS and archive objects by canonical path, size, MIME,
    generation, and SHA-256 metadata. Do not create public buckets or replace
    missing objects with unchecked content.
 7. Before reopening traffic, verify exact readiness metadata, tenant isolation,

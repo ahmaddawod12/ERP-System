@@ -7,11 +7,9 @@ export interface BackupConfig {
   backupBucket: string;
   databaseUrl?: string;
   source?: {
-    endpoint: string;
-    region: string;
+    projectId?: string;
+    apiEndpoint?: string;
     bucket: string;
-    accessKeyId: string;
-    secretAccessKey: string;
   };
   rpoMinutes: number;
   maxPagesPerRun: number;
@@ -61,19 +59,15 @@ export function loadBackupConfig(
     mode === "database" ? required(env, "BACKUP_DATABASE_URL") : undefined;
   let source: BackupConfig["source"];
   if (mode === "storage") {
-    const supabaseUrl = required(env, "SUPABASE_URL");
-    const parsed = new URL(supabaseUrl);
-    if (parsed.protocol !== "https:" && env.NODE_ENV === "production") {
-      throw new BackupConfigError("SUPABASE_URL must use HTTPS in production");
+    const projectId = String(env.GCS_PROJECT_ID || "").trim();
+    const apiEndpoint = String(env.GCS_API_ENDPOINT || "").trim();
+    if (apiEndpoint && env.NODE_ENV === "production") {
+      throw new BackupConfigError("GCS_API_ENDPOINT is forbidden in production");
     }
     source = {
-      endpoint: new URL("/storage/v1/s3", parsed).toString(),
-      region: String(env.SUPABASE_S3_REGION ?? "eu-central-1").trim(),
-      bucket: String(
-        env.SUPABASE_STORAGE_BUCKET ?? "smart-job-company-files",
-      ).trim(),
-      accessKeyId: required(env, "SUPABASE_S3_ACCESS_KEY_ID"),
-      secretAccessKey: required(env, "SUPABASE_S3_SECRET_ACCESS_KEY"),
+      bucket: required(env, "COMPANY_FILES_BUCKET"),
+      ...(projectId ? { projectId } : {}),
+      ...(apiEndpoint ? { apiEndpoint } : {}),
     };
   }
 

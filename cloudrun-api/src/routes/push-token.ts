@@ -11,7 +11,7 @@ import type { FastifyInstance } from "fastify";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -28,7 +28,7 @@ const clearResponseSchema = createApiSuccessResponseSchema(PushTokenClearResultS
 export interface PushTokenRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 function mapPushTokenDatabaseError(error: unknown): unknown {
@@ -89,7 +89,7 @@ export function registerPushTokenRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const body = PushTokenUpsertRequestSchema.parse(request.body);
 
       try {
@@ -122,7 +122,7 @@ export function registerPushTokenRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const body = PushTokenClearRequestSchema.parse(request.body);
 
       try {

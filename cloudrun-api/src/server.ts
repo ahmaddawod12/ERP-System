@@ -5,9 +5,9 @@ import {
   createApiRequestAuthenticator,
   createGoogleServiceIdentityVerifier,
   createLocalServiceIdentityVerifier,
-  createSupabaseJwtVerifier,
-  createSupabaseUserClient,
-  createSupabaseWebAuthClient,
+  createFirebaseTokenVerifier,
+  createFirebaseUserClient,
+  createFirebaseWebAuthClient,
 } from "./auth/index.js";
 import { loadConfig } from "./config.js";
 import { createApiDatabaseRuntime } from "./database/runtime.js";
@@ -22,6 +22,8 @@ import { createTaxGatewayClient } from "./tax/gateway-client.js";
 import { createWebSessionCrypto } from "./web-sessions/crypto.js";
 import { createWebSessionService } from "./web-sessions/service.js";
 import { createApiReadinessCheck } from "./readiness.js";
+
+const LOGICAL_COMPANY_FILE_BUCKET_ID = "smart-job-company-files";
 
 export async function startServer(): Promise<void> {
   const config = loadConfig();
@@ -41,18 +43,21 @@ export async function startServer(): Promise<void> {
       })}\n`);
     },
   });
-  const jwtVerifier = createSupabaseJwtVerifier({
-    issuer: runtimeConfig.supabaseJwt.issuer,
-    audiences: runtimeConfig.supabaseJwt.audiences,
-    jwksUrl: runtimeConfig.supabaseJwt.jwksUrl,
+  const jwtVerifier = createFirebaseTokenVerifier({
+    projectId: runtimeConfig.firebaseAuth.projectId,
   });
-  const supabaseUsers = createSupabaseUserClient({
-    baseUrl: runtimeConfig.supabaseAuth.baseUrl,
-    publishableKey: runtimeConfig.supabaseAuth.publishableKey,
+  const firebaseUsers = createFirebaseUserClient({
+    projectId: runtimeConfig.firebaseAuth.projectId,
+    verifier: jwtVerifier,
   });
-  const supabaseWebAuth = createSupabaseWebAuthClient({
-    baseUrl: runtimeConfig.supabaseAuth.baseUrl,
-    publishableKey: runtimeConfig.supabaseAuth.publishableKey,
+  const firebaseWebAuth = createFirebaseWebAuthClient({
+    apiKey: runtimeConfig.firebaseAuth.webApiKey,
+    ...(runtimeConfig.firebaseAuth.authBaseUrl === undefined
+      ? {}
+      : { authBaseUrl: runtimeConfig.firebaseAuth.authBaseUrl }),
+    ...(runtimeConfig.firebaseAuth.tokenBaseUrl === undefined
+      ? {}
+      : { tokenBaseUrl: runtimeConfig.firebaseAuth.tokenBaseUrl }),
   });
   const webSessionCrypto = createWebSessionCrypto({
     key: runtimeConfig.webSessionEncryption.key,
@@ -61,12 +66,12 @@ export async function startServer(): Promise<void> {
   const webSessions = createWebSessionService({
     database,
     jwtVerifier,
-    supabaseUsers,
-    supabaseWebAuth,
+    firebaseUsers,
+    firebaseWebAuth,
     crypto: webSessionCrypto,
   });
   const authenticator = createApiRequestAuthenticator({ jwtVerifier, webSessions });
-  const storage = createCompanyFileStorage(runtimeConfig.supabaseStorage);
+  const storage = createCompanyFileStorage(runtimeConfig.companyFileStorage);
   const documentTaskPublisher = runtimeConfig.documentDispatch === undefined
     ? undefined
     : createPubSubDocumentTaskPublisher(runtimeConfig.documentDispatch, {
@@ -110,8 +115,8 @@ export async function startServer(): Promise<void> {
         ...(runtimeConfig.documentDispatch?.metadataTokenUrl !== undefined
           ? { metadataTokenUrl: runtimeConfig.documentDispatch.metadataTokenUrl }
           : {}),
-        ...(process.env.STORAGE_EMULATOR_HOST
-          ? { gcsApiBaseUrl: String(process.env.STORAGE_EMULATOR_HOST).replace(/\/+$/, "") }
+        ...(process.env.GCS_API_ENDPOINT
+          ? { gcsApiBaseUrl: String(process.env.GCS_API_ENDPOINT).replace(/\/+$/, "") }
           : {}),
       })
     : undefined;
@@ -127,10 +132,10 @@ export async function startServer(): Promise<void> {
     services: {
       database,
       authenticator,
-      supabaseUsers,
+      firebaseUsers,
       webSessions,
       storage,
-      storageBucketId: runtimeConfig.supabaseStorage.bucketId,
+      storageBucketId: LOGICAL_COMPANY_FILE_BUCKET_ID,
       ...(archiveStorage === undefined ? {} : { archiveStorage }),
       ...(documentTaskPublisher === undefined ? {} : { documentTaskPublisher }),
       ...(emailDeliveryPublisher === undefined ? {} : { emailDeliveryPublisher }),

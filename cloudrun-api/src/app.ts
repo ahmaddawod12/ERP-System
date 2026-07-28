@@ -123,7 +123,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     registerBusinessRegistrationRoutes(app, {
       authenticator: options.services.authenticator,
       database: options.services.database,
-      supabaseUsers: options.services.supabaseUsers,
+      firebaseUsers: options.services.firebaseUsers,
       webSessions: options.services.webSessions,
     });
     registerArchiveReadRoutes(app, options.services);
@@ -161,7 +161,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
         database: options.services.database,
         storage: options.services.storage,
         storageBucketId: options.services.storageBucketId,
-        supabaseUsers: options.services.supabaseUsers,
+        firebaseUsers: options.services.firebaseUsers,
       });
     }
     registerUpgradeRequestRoutes(app, options.services);

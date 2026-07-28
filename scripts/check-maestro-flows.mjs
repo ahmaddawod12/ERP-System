@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FLOW_ROOT = resolve(ROOT, 'phone_app', '.maestro');
 const RELEASE_FLOW_ROOT = resolve(ROOT, 'phone_app', '.maestro-release');
+const CI_WORKFLOW = resolve(ROOT, '.github', 'workflows', 'ci.yml');
+const RELEASE_WORKFLOW = resolve(ROOT, '.github', 'workflows', 'release-matrices.yml');
+const LOCAL_ACTION = resolve(ROOT, '.github', 'actions', 'run-maestro-android', 'action.yml');
 const required = new Map([
   ['login.yaml', ['subflows/authenticate.yaml', 'dashboard-screen']],
   ['tenant-switch.yaml', ['Select a company', 'MAESTRO_TEST_WORKSPACE', 'dashboard-screen']],
@@ -57,6 +60,40 @@ for (const marker of [
 }
 if (/(?:password|api[-_]?key)\s*:\s*(?!\$\{)/i.test(releaseFlow)) {
   failures.push('.maestro-release/reconciliation.yaml: credentials must never be embedded in a flow');
+}
+
+const ciWorkflow = readFileSync(CI_WORKFLOW, 'utf8');
+const releaseWorkflow = readFileSync(RELEASE_WORKFLOW, 'utf8');
+const localAction = readFileSync(LOCAL_ACTION, 'utf8');
+const workflowSource = `${ciWorkflow}\n${releaseWorkflow}`;
+for (const forbidden of [
+  'action-maestro-cloud',
+  'MAESTRO_CLOUD_API_KEY',
+  'MAESTRO_CLOUD_PROJECT_ID',
+  'MAESTRO_CLOUD_APP_BINARY_ID',
+]) {
+  if (workflowSource.includes(forbidden)) {
+    failures.push(`workflows must not depend on paid Maestro Cloud setting ${forbidden}`);
+  }
+}
+for (const requiredMarker of [
+  'uses: ./.github/actions/run-maestro-android',
+  'FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64',
+  'MOBILE_E2E_API_BASE_URL',
+]) {
+  if (!workflowSource.includes(requiredMarker)) {
+    failures.push(`free Maestro workflow is missing ${requiredMarker}`);
+  }
+}
+for (const requiredMarker of [
+  'maestro-cli-2.4.0-linux-aea22ce67ab6718997ec990c58652ede0c2be8f10ac4799039ca3dce3390d634',
+  'aea22ce67ab6718997ec990c58652ede0c2be8f10ac4799039ca3dce3390d634',
+  'reactivecircus/android-emulator-runner@324029e2f414c084d8b15ba075288885e74aef9c',
+  'maestro "${maestro_args[@]}"',
+]) {
+  if (!localAction.includes(requiredMarker)) {
+    failures.push(`free Maestro action is missing ${requiredMarker}`);
+  }
 }
 
 if (failures.length > 0) {

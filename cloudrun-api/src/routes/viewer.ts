@@ -8,7 +8,7 @@ import type { FastifyInstance } from "fastify";
 import {
   AuthError,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
 import { apiSuccess } from "../http/envelope.js";
@@ -20,7 +20,7 @@ const viewerResponseSchema = createApiSuccessResponseSchema(ViewerSchema);
 export interface ViewerRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly authenticator: ApiRequestAuthenticator;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
   readonly webSessions: Pick<WebSessionService, "currentSession">;
 }
 
@@ -55,7 +55,7 @@ export function registerViewerRoutes(
       }
 
       const [authUser, databaseData] = await Promise.all([
-        services.supabaseUsers.getUser(authenticated.accessToken),
+        services.firebaseUsers.getUser(authenticated.accessToken),
         services.database.withTransaction(
           { userId: authenticated.userId },
           (transaction) => readViewerDatabaseData(

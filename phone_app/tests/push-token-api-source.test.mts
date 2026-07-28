@@ -108,7 +108,7 @@ test('settings binds logout cleanup to the current SessionContext user', async (
   const settings = await readSource('../modules/settings/screens/Settings.tsx');
 
   assert.match(settings, /const \{ user, signOut: signOutSession \} = useSession\(\)/);
-  assert.match(settings, /runLogoutSequence\(\{[\s\S]*userId: user\?\.id \?\? null/);
+  assert.match(settings, /runLogoutSequence\(\{[\s\S]*userId: user\?\.uid \?\? null/);
   assert.match(settings, /clearPushToken: clearViewerPushToken/);
   assert.match(settings, /signOut: signOutSession/);
   assert.match(settings, /logger\.warn\('Failed to clear push token before logout:'/);

@@ -75,7 +75,7 @@ export default function ClientBook() {
   const { workspace, status: tenantStatus } = useTenant();
   const { getDataForMonth } = useDocumentHistoryCache();
   const { createMutation, updateMutation, removeMutation } = useClientMutations({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
   });
   const [actionKeys] = useState(() => new StableClientActionKeys(() => randomUUID()));
@@ -106,7 +106,7 @@ export default function ClientBook() {
     pageSize: 50,
   }), [debouncedSearchQuery]);
   const { query: clientsQuery, clients } = useClientsInfinite({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     filters: clientFilters,
     enabled: tenantStatus === 'ready',
@@ -122,7 +122,7 @@ export default function ClientBook() {
 
   useEffect(() => {
     actionKeys.reset();
-  }, [actionKeys, user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   useEffect(() => {
     if (clientsQuery.error) {

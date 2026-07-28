@@ -1,31 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDocumentDownloadUrl } from "../src/storage.js";
+import {
+  createDocumentDownloadUrl,
+  type DocumentDownloadUrlSigner,
+} from "../src/storage.js";
 
-test("local storage signing keeps the private request internal and returns a browser URL", async () => {
-  const originalFetch = globalThis.fetch;
-  let requested = "";
-  globalThis.fetch = async (input) => {
-    requested = String(input);
-    return new Response(JSON.stringify({
-      signedURL: "/storage/v1/object/sign/smart-job-company-files/company/document.pdf?token=local",
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
+test("document signing uses the exact GCS object and configured expiry", async () => {
+  const calls: Array<{ objectPath: string; expiresAt: number }> = [];
+  const signer: DocumentDownloadUrlSigner = {
+    async sign(objectPath, expiresAt) {
+      calls.push({ objectPath, expiresAt });
+      return "https://storage.googleapis.com/smart-job-company-files/company/document.pdf"
+        + "?X-Goog-Signature=test";
+    },
   };
-  try {
-    const result = await createDocumentDownloadUrl({
-      baseUrl: new URL("http://smart-job-supabase-gateway:8000"),
-      publicBaseUrl: new URL("http://127.0.0.1:55321"),
-      secretKey: "sb_secret_local",
-      bucket: "smart-job-company-files",
-      signedUrlTtlSeconds: 300,
-    }, "company/document.pdf");
-    assert.match(requested, /^http:\/\/smart-job-supabase-gateway:8000\/storage\/v1\/object\/sign\//);
-    assert.equal(
-      result,
-      "http://127.0.0.1:55321/storage/v1/object/sign/smart-job-company-files/company/document.pdf?token=local",
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const before = Date.now();
+  const result = await createDocumentDownloadUrl({
+    projectId: "smart-job-prod",
+    bucket: "smart-job-company-files",
+    signedUrlTtlSeconds: 300,
+  }, "company/document.pdf", signer);
+
+  assert.match(result, /^https:\/\/storage\.googleapis\.com\//);
+  assert.equal(calls[0]?.objectPath, "company/document.pdf");
+  assert.ok((calls[0]?.expiresAt ?? 0) >= before + 300_000);
+});
+
+test("document signing rejects traversal and unexpected URL schemes", async () => {
+  const signer: DocumentDownloadUrlSigner = {
+    async sign() {
+      return "file:///private/document.pdf";
+    },
+  };
+  const config = {
+    bucket: "smart-job-company-files" as const,
+    signedUrlTtlSeconds: 300,
+  };
+  await assert.rejects(
+    createDocumentDownloadUrl(config, "../document.pdf", signer),
+    /object path is invalid/,
+  );
+  await assert.rejects(
+    createDocumentDownloadUrl(config, "company/document.pdf", signer),
+    /unexpected URL/,
+  );
 });

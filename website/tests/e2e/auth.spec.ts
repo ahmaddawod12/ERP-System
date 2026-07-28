@@ -50,7 +50,7 @@ test.describe("Workspace routing", () => {
 });
 
 test.describe("Security assertions", () => {
-  test("Supabase credentials never enter browser storage, cookies, or HTML", async ({ page }) => {
+  test("Firebase credentials never enter browser storage, cookies, or HTML", async ({ page }) => {
     await login(page);
 
     const cookies = await page.context().cookies();

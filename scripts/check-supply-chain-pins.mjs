@@ -7,10 +7,16 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
 const shaReference = /@[0-9a-f]{40}(?:\s+#.*)?$/;
+const githubYamlPaths = [
+  ...readdirSync(resolve(ROOT, '.github', 'workflows'))
+    .filter((name) => /\.ya?ml$/.test(name))
+    .map((name) => `.github/workflows/${name}`),
+  ...readdirSync(resolve(ROOT, '.github', 'actions'), { recursive: true })
+    .filter((name) => /\.ya?ml$/.test(name))
+    .map((name) => `.github/actions/${name.replaceAll('\\', '/')}`),
+];
 
-for (const name of readdirSync(resolve(ROOT, '.github', 'workflows'))) {
-  if (!/\.ya?ml$/.test(name)) continue;
-  const relativePath = `.github/workflows/${name}`;
+for (const relativePath of githubYamlPaths) {
   const source = readFileSync(resolve(ROOT, relativePath), 'utf8');
   source.split(/\r?\n/).forEach((line, index) => {
     const match = line.match(/^\s*-?\s*uses:\s*(\S.*)$/);

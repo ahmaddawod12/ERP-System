@@ -332,7 +332,7 @@ export default function OnboardingClient({ viewer }: { viewer: Viewer }) {
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5 dark:border-slate-800">
                 <p className="max-w-md text-xs leading-5 text-slate-500 dark:text-slate-400">
-                  The browser sends no Supabase token. This form uses your opaque website session and a replay-safe operation key.
+                  The browser sends no identity token. This form uses your opaque website session and a replay-safe operation key.
                 </p>
                 <Button type="submit" disabled={isSubmitting} className="gap-2">
                   {isSubmitting

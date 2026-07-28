@@ -2,7 +2,7 @@
 
 Node 22/Fastify service for the versioned Smart-Job ERP API. In addition to
 the common HTTP foundation, it now includes the least-privileged Postgres
-runtime adapter, Supabase JWKS verification, opaque website sessions, and the
+runtime adapter, Firebase ID-token verification, opaque website sessions, and the
 workspace/viewer/bootstrap/client/inventory/worker/job/document routes,
 durable PDF/email dispatch, and authoritative tax creation/submission. It
 is the sole business-data trust boundary for website and mobile clients. Tax
@@ -43,14 +43,13 @@ variables are injected exclusively by the repository lifecycle script.
 | `DATABASE_URL` | required | Must authenticate as `smart_job_api`; the password is provisioned out of band |
 | `DATABASE_SSL_MODE` | `require` | `disable` is accepted only for a loopback database |
 | `DATABASE_MAX_CONNECTIONS` | `5` | Positive integer capped at five |
-| `SUPABASE_URL` | required | HTTPS, except for local loopback development |
-| `SUPABASE_INTERNAL_URL` | verified local only | Internal Supabase Kong origin; public issuer/storage links remain loopback |
-| `SUPABASE_PUBLISHABLE_KEY` | required | Current `sb_publishable_...` server-side Auth key |
-| `SUPABASE_SECRET_KEY` | required | Current `sb_secret_...`; trusted Storage administration only |
-| `SUPABASE_STORAGE_BUCKET` | `smart-job-company-files` | Exact canonical private bucket |
-| `SUPABASE_JWT_ISSUER` | `${SUPABASE_URL}/auth/v1` | Exact Supabase Auth issuer |
-| `SUPABASE_JWKS_URL` | derived | Separately routable Auth JWKS endpoint; internal HTTP is marker-gated locally |
-| `SUPABASE_JWT_AUDIENCE` | `authenticated` | One to five comma-separated exact audiences |
+| `FIREBASE_PROJECT_ID` | required | Google Cloud project that owns Firebase Authentication |
+| `FIREBASE_WEB_API_KEY` | required | Server-side Identity Toolkit key for password and refresh exchanges |
+| `FIREBASE_AUTH_EMULATOR_HOST` | verified local only | Internal Firebase Auth emulator host and port |
+| `GCS_PROJECT_ID` | ADC project | Google Cloud project containing active company files |
+| `COMPANY_FILES_BUCKET` | local default | Globally unique private GCS bucket name |
+| `GCS_API_ENDPOINT` | verified local only | Internal fake-GCS endpoint |
+| `COMPANY_FILES_PUBLIC_BASE_URL` | verified local only | Public loopback origin returned to native clients |
 | `WEB_SESSION_ENCRYPTION_KEY_BASE64` | required | Canonical base64 for exactly 32 random bytes |
 | `WEB_SESSION_ENCRYPTION_KEY_VERSION` | required | Non-secret key-version label |
 | `DOCUMENT_PUBSUB_PROJECT_ID` | production required | Pub/Sub project used by document/email topics |
@@ -75,7 +74,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
 - `GET /healthz` is dependency-free process liveness.
 - `GET /readyz` verifies the exact database schema/RPC marker, company-file and
   archive buckets, and all mandatory Pub/Sub topics.
-- Domain routes accept exactly one strict credential: Supabase
+- Domain routes accept exactly one strict credential: Firebase
   `Authorization: Bearer <JWT>` for mobile or
   `Authorization: SmartJobSession <opaque-token>` for the website. Combined,
   duplicate, and comma-joined credentials are rejected.
@@ -83,7 +82,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
   the refresh window it rechecks under `FOR UPDATE`, refreshes once, and returns
   only the user ID and absolute session expiry
   to domain authorization. `/api/v1/me` additionally performs the authoritative
-  Auth-user lookup needed for email/verification state. Supabase access/refresh
+  Auth-user lookup needed for email/verification state. Firebase ID/refresh
   tokens never leave the web-session service.
 - `GET /api/v1/me`, `GET /api/v1/workspaces`, and
   `GET /api/v1/companies/{companyId}/bootstrap` are implemented.
@@ -99,7 +98,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
   returned or included in structured logs.
 - `POST /api/v1/companies/{companyId}/invitations` creates a manager-owned,
   team-entitled invitation. `POST /api/v1/auth/invitations/redeem` binds the
-  public company ID and code to the verified Supabase Auth subject. Both
+  public company ID and code to the verified Firebase Auth subject. Both
   require `Idempotency-Key`. The consolidated baseline keeps
   role and tenant authority in SQL, locks the exact invite during atomic
   consumption, permits memberships in other workspaces, and makes a
@@ -160,7 +159,7 @@ Configuration is validated before the server starts. Invalid values fail closed.
   underflow/stale versions, and commits movements with the inventory sync bump.
 - `POST /api/v1/companies/{companyId}/jobs/{jobId}/complete` uses the atomic,
   version-checked SQL function and idempotency state. Finished-job creation and
-  assigned completion can consume verified private Supabase Storage upload
+  assigned completion can consume verified private GCS upload
   sessions in the same database transaction as attachment finalization.
 - `PATCH /api/v1/companies/{companyId}/jobs/{jobId}`, `POST` on
   `.../{jobId}/accept`, and `DELETE` on the job resource require verified

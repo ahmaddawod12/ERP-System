@@ -14,7 +14,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -54,7 +54,7 @@ const mutationResponses = {
 export interface JobMutationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 export function registerJobMutationRoutes(
@@ -75,7 +75,7 @@ export function registerJobMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = jobParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = JobUpdateRequestSchema.parse(request.body);
@@ -131,7 +131,7 @@ export function registerJobMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = jobParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = JobAcceptRequestSchema.parse(request.body);
@@ -186,7 +186,7 @@ export function registerJobMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = jobParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = JobDeleteRequestSchema.parse(request.body);

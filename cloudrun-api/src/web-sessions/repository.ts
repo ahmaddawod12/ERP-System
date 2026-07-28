@@ -7,7 +7,7 @@ import type {
 export interface WebSessionRow {
   readonly id: string;
   readonly userId: string;
-  readonly supabaseSessionId: string;
+  readonly identitySessionId: string;
   readonly csrfTokenHash: Buffer;
   readonly credentials: EncryptedWebSessionCredentials;
   readonly accessTokenExpiresAt: Date;
@@ -17,7 +17,7 @@ export interface WebSessionRow {
 interface RawWebSessionRow {
   readonly id: string;
   readonly user_id: string;
-  readonly supabase_session_id: string;
+  readonly identity_session_id: string;
   readonly csrf_token_hash: Buffer;
   readonly credentials_ciphertext: Buffer;
   readonly credentials_iv: Buffer;
@@ -39,7 +39,7 @@ function mapWebSessionRow(row: RawWebSessionRow): WebSessionRow {
   return {
     id: row.id.toLowerCase(),
     userId: row.user_id.toLowerCase(),
-    supabaseSessionId: row.supabase_session_id.toLowerCase(),
+    identitySessionId: row.identity_session_id.toLowerCase(),
     csrfTokenHash: row.csrf_token_hash,
     credentials: {
       ciphertext: row.credentials_ciphertext,
@@ -58,12 +58,12 @@ export async function insertWebSession(
 ): Promise<void> {
   await transaction.query(
     `INSERT INTO private.web_sessions (
-       id, session_token_hash, csrf_token_hash, user_id, supabase_session_id,
+       id, session_token_hash, csrf_token_hash, user_id, identity_session_id,
        credentials_ciphertext, credentials_iv, credentials_auth_tag,
        encryption_key_version, access_token_expires_at, absolute_expires_at,
        created_at, updated_at
      ) VALUES (
-       $1::uuid, $2::bytea, $3::bytea, $4::uuid, $5::uuid,
+       $1::uuid, $2::bytea, $3::bytea, $4::uuid, $5::text,
        $6::bytea, $7::bytea, $8::bytea, $9::text, $10::timestamptz,
        $11::timestamptz, $12::timestamptz, $12::timestamptz
      )`,
@@ -72,7 +72,7 @@ export async function insertWebSession(
       record.sessionTokenHash,
       record.csrfTokenHash,
       record.userId,
-      record.supabaseSessionId,
+      record.identitySessionId,
       record.credentials.ciphertext,
       record.credentials.iv,
       record.credentials.authTag,
@@ -91,7 +91,7 @@ export async function lockActiveWebSession(
 ): Promise<WebSessionRow | null> {
   const result = await transaction.query<RawWebSessionRow>(
     `SELECT
-       id, user_id, supabase_session_id, csrf_token_hash,
+       id, user_id, identity_session_id, csrf_token_hash,
        credentials_ciphertext, credentials_iv, credentials_auth_tag,
        encryption_key_version, access_token_expires_at, absolute_expires_at
      FROM private.web_sessions
@@ -117,7 +117,7 @@ export async function readActiveWebSession(
 ): Promise<WebSessionRow | null> {
   const result = await transaction.query<RawWebSessionRow>(
     `SELECT
-       id, user_id, supabase_session_id, csrf_token_hash,
+       id, user_id, identity_session_id, csrf_token_hash,
        credentials_ciphertext, credentials_iv, credentials_auth_tag,
        encryption_key_version, access_token_expires_at, absolute_expires_at
      FROM private.web_sessions

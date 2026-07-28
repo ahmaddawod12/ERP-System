@@ -160,7 +160,7 @@ if (adminDatabaseUrl.length === 0) {
       registerInventoryMutationRoutes(app, {
         authenticator,
         database: contextualRuntime(admin),
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser() {
             return {
               userId: activeUserId,

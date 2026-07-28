@@ -4,8 +4,8 @@ import type { QueryResultRow } from "pg";
 
 import {
   createApiRequestAuthenticator,
-  type SupabaseJwtVerifier,
-  type SupabaseUserClient,
+  type FirebaseTokenVerifier,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import type {
   ApiDatabaseRuntime,
@@ -20,8 +20,8 @@ const webSessionToken = "W".repeat(43);
 
 test("viewer route combines verified Auth state with SQL-owned membership data", async (context) => {
   let databaseClosed = false;
-  const verifier: SupabaseJwtVerifier = {
-    issuer: "https://project.supabase.co/auth/v1",
+  const verifier: FirebaseTokenVerifier = {
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -31,7 +31,7 @@ test("viewer route combines verified Auth state with SQL-owned membership data",
       return { userId, expiresAt: 4_102_444_800 };
     },
   };
-  const supabaseUsers: SupabaseUserClient = {
+  const firebaseUsers: FirebaseUserClient = {
     async getUser(token) {
       assert.equal(token, "header.payload.signature");
       return {
@@ -73,12 +73,13 @@ test("viewer route combines verified Auth state with SQL-owned membership data",
           assert.equal(token, webSessionToken);
           return {
             userId,
+            verifiedEmail: "viewer@example.test",
             absoluteExpiresAt: new Date("2026-07-14T00:00:00.000Z"),
           };
         },
       },
     }),
-    supabaseUsers,
+    firebaseUsers,
     webSessions: {
       async currentSession(token) {
         assert.equal(token, webSessionToken);

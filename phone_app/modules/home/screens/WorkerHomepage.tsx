@@ -134,7 +134,7 @@ export default function WorkerHomepage() {
   const hasInventory = enabledModules.has('inventory');
   const workspaceActive = canLoadWorkerBootstrap(workspace);
   const bootstrapQuery = useCompanyBootstrap({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     enabled: tenantStatus === 'ready' && workspaceActive,
   });

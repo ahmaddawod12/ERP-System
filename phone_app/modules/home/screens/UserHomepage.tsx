@@ -167,7 +167,7 @@ export default function UserHomepage() {
   const hasWork = hasSoloJob || hasInventory || hasClients;
   const workspaceActive = canLoadUserBootstrap(workspace);
   const bootstrapQuery = useCompanyBootstrap({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     enabled: tenantStatus === 'ready' && workspaceActive,
   });

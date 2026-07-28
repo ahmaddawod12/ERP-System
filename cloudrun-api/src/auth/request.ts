@@ -6,7 +6,7 @@ import {
   parseBearerAuthorization,
 } from "./authorization.js";
 import { AuthError } from "./errors.js";
-import type { AuthenticatedUser, SupabaseJwtVerifier } from "./supabase-jwt.js";
+import type { AuthenticatedUser, FirebaseTokenVerifier } from "./firebase-token.js";
 
 export interface AuthenticatedBearerRequest {
   readonly accessToken: string;
@@ -23,6 +23,7 @@ export type AuthenticatedApiRequest =
   | {
       readonly scheme: "smart-job-session";
       readonly userId: string;
+      readonly verifiedEmail: string;
       readonly absoluteExpiresAt: Date;
       readonly sessionToken: string;
     };
@@ -32,13 +33,13 @@ export interface ApiRequestAuthenticator {
 }
 
 export interface CreateApiRequestAuthenticatorOptions {
-  readonly jwtVerifier: SupabaseJwtVerifier;
+  readonly jwtVerifier: FirebaseTokenVerifier;
   readonly webSessions: Pick<WebSessionService, "authenticateSession">;
 }
 
 export async function authenticateBearerRequest(
   request: FastifyRequest,
-  verifier: SupabaseJwtVerifier,
+  verifier: FirebaseTokenVerifier,
 ): Promise<AuthenticatedBearerRequest> {
   try {
     const accessToken = parseBearerAuthorization(request.headers.authorization);
@@ -85,6 +86,7 @@ export function createApiRequestAuthenticator(
       return {
         scheme: "smart-job-session",
         userId: session.userId,
+        verifiedEmail: session.verifiedEmail,
         absoluteExpiresAt: new Date(session.absoluteExpiresAt),
         sessionToken: credential.token,
       };

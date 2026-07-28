@@ -38,8 +38,7 @@ function dependencies(overrides: Partial<EmailWorkerDependencies> = {}): EmailWo
       database: { connectionString: "postgresql://localhost/test", ssl: false, max: 1 },
       pubsub: { audience: undefined, allowedServiceAccounts: [], sharedToken: "test-token" },
       storage: {
-        baseUrl: new URL("http://127.0.0.1:55321"),
-        secretKey: "sb_secret_test",
+        projectId: "smart-job-test",
         bucket: "smart-job-company-files",
         signedUrlTtlSeconds: 300,
       },

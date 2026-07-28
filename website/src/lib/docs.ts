@@ -24,7 +24,7 @@ export const docs: DocEntry[] = [
     title: "Getting Started",
     summary: "Create an account, complete onboarding, and use the protected app routes.",
     body: [
-      "Sign in with Supabase auth and complete onboarding on the website.",
+      "Sign in with Firebase Authentication and complete onboarding on the website.",
       "Managers create business workspaces; workers/basic members join via invite flow.",
       "The website uses an opaque Postgres-backed session and a server-only BFF; browsers never call Cloud Run directly.",
       "Core runtime data is SQL-first through the Cloud Run API.",
@@ -45,7 +45,7 @@ export const docs: DocEntry[] = [
         title: "Ownership Map",
         columns: ["Area", "Primary Layer", "Notes"],
         rows: [
-          ["Identity", "Supabase Auth", "uid is canonical identity"],
+          ["Identity", "Firebase Auth", "provider uid maps to an internal UUID"],
           ["Tenant scope", "SQL companies + memberships", "companyId normalized to internal UUID server-side"],
           ["Jobs/Clients/Documents/Inventory", "PostgreSQL", "Accessed via gateway handlers and read-model"],
           ["Files", "Cloud Storage", "Persist storagePath, issue signed URLs on demand"],

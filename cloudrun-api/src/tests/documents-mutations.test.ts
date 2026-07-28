@@ -144,7 +144,7 @@ test("document mutations use verified, idempotent, narrow SQL transactions", asy
   registerDocumentMutationRoutes(app, {
     authenticator,
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         return { userId, email: "manager@example.test", emailVerified: true };
       },

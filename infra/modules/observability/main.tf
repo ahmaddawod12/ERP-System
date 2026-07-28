@@ -77,7 +77,7 @@ locals {
         "resource.labels.service_name=\"${lookup(var.service_names, "api", "")}\"",
         "jsonPayload.databasePoolSaturation=true",
       ])
-      documentation = "Inspect API concurrency, pool waiters, and Supabase connection utilization. Do not raise pool limits without rechecking the Terraform 70-percent connection budget."
+      documentation = "Inspect API concurrency, pool waiters, and PostgreSQL connection utilization. Do not raise pool limits without rechecking the Terraform 70-percent connection budget."
     }
     session_refresh_failures = {
       display_name  = "Opaque session refresh failures"
@@ -87,7 +87,7 @@ locals {
         "resource.labels.service_name=\"${lookup(var.service_names, "api", "")}\"",
         "jsonPayload.sessionRefreshFailure=true",
       ])
-      documentation = "Inspect Supabase Auth availability and the opaque-session refresh transaction. Never log or expose the encrypted access/refresh credentials."
+      documentation = "Inspect Firebase Auth availability and the opaque-session refresh transaction. Never log or expose the encrypted access/refresh credentials."
     }
   } : {}
 }

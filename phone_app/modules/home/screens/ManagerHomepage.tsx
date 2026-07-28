@@ -213,7 +213,7 @@ export default function ManagerHomepage() {
   const hasClients = enabledModules.has('clients');
   const managerBootstrapAllowed = canLoadManagerBootstrap(workspace);
   const bootstrapQuery = useCompanyBootstrap({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     enabled: tenantStatus === 'ready' && managerBootstrapAllowed,
   });

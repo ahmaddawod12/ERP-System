@@ -23,23 +23,20 @@ test('typed job and document screens do not regress to ts-nocheck', () => {
   assert.doesNotMatch(fillJob, /@ts-nocheck/);
 });
 
-test('auth tokens are stored in SecureStore instead of MMKV-derived keys', () => {
+test('Firebase Auth uses native credential storage instead of app MMKV keys', () => {
   const mmkvStorage = readProjectFile('contexts', 'mmkv-storage.ts');
   const authTransport = readProjectFile('lib', 'auth', 'transport.ts');
-  const supabaseClient = readProjectFile('lib', 'auth', 'supabase-client.ts');
+  const firebaseAuth = readProjectFile('lib', 'auth', 'firebase-auth.ts');
 
   assert.doesNotMatch(mmkvStorage, /encryptionKey:\s*['"]smart-job-auth-v1['"]/);
   assert.doesNotMatch(mmkvStorage, /AUTH_STORAGE_KEY_SEED/);
   assert.doesNotMatch(mmkvStorage, /storage\.getString\([^\n]*AUTH_STORAGE_KEY/);
   assert.doesNotMatch(mmkvStorage, /EXPO_PUBLIC_MMKV_AUTH_KEY/);
   assert.doesNotMatch(authTransport, /authStorage\.(getString|set|remove)/);
-  assert.match(supabaseClient, /expo-secure-store/);
-  assert.match(supabaseClient, /SecureStore\.setItemAsync/);
-  assert.match(supabaseClient, /SecureStore\.getItemAsync/);
-  assert.match(supabaseClient, /EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
-  assert.match(supabaseClient, /refreshSessionSingleFlight/);
-  assert.match(supabaseClient, /AppState\.addEventListener/);
-  assert.doesNotMatch(supabaseClient, /EXPO_PUBLIC_SUPABASE_ANON_KEY/);
+  assert.match(firebaseAuth, /@react-native-firebase\/auth/);
+  assert.match(firebaseAuth, /getIdToken\(user, forceRefresh\)/);
+  assert.match(firebaseAuth, /emailVerified/);
+  assert.doesNotMatch(firebaseAuth, /SecureStore|AsyncStorage|react-native-mmkv/);
 });
 
 test('read-model list helpers use Cloud API with bounded cursor windows', () => {

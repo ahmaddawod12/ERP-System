@@ -1,27 +1,22 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
 import test from "node:test";
-
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AppError } from "../http/errors.js";
 import {
   createCompanyFileStorage,
+  type CompanyFileObjectStore,
   type StoredUploadAttachment,
 } from "../storage/company-files.js";
 
-const BASE_URL = new URL("https://project.supabase.co/");
 const BUCKET_ID = "smart-job-company-files";
-const SECRET_KEY = "sb_secret_storage_test_key_123456789012345";
+const NOW = Date.UTC(2026, 6, 28, 12);
 const fileBytes = Buffer.from([
   0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46,
   0x49, 0x46, 0x00, 0x01, 0x76, 0x65, 0x72, 0x69,
   0x66, 0x69, 0x65, 0x64, 0xff, 0xd9,
 ]);
-const invalidHashBytes = Buffer.from(fileBytes);
-invalidHashBytes[15] = (invalidHashBytes[15] ?? 0) ^ 0x01;
-const wrongContentBytes = Buffer.from(fileBytes);
-wrongContentBytes.fill(0, 0, 3);
 const attachment: StoredUploadAttachment = {
   attachmentId: "b1448e2d-4d9f-462f-8564-6d453be3b759",
   kind: "photo",
@@ -33,40 +28,27 @@ const attachment: StoredUploadAttachment = {
     "00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002/session/photo.jpg",
 };
 
-interface FakeBucket {
-  createSignedUploadUrl(
-    path: string,
-    options?: { upsert: boolean },
-  ): Promise<unknown>;
-  createSignedUrl(path: string, expiresIn: number): Promise<unknown>;
-  info(path: string): Promise<unknown>;
-  remove(paths: string[]): Promise<unknown>;
-}
-
-function clientFor(bucket: FakeBucket): SupabaseClient {
+function unusedStore(
+  overrides: Partial<CompanyFileObjectStore> = {},
+): CompanyFileObjectStore {
   return {
-    storage: {
-      from(bucketId: string) {
-        assert.equal(bucketId, BUCKET_ID);
-        return bucket;
-      },
+    async checkReadiness() {
+      throw new Error("checkReadiness was not expected");
     },
-  } as unknown as SupabaseClient;
-}
-
-function unusedBucket(overrides: Partial<FakeBucket> = {}): FakeBucket {
-  return {
     async createSignedUploadUrl() {
       throw new Error("createSignedUploadUrl was not expected");
     },
-    async createSignedUrl() {
-      throw new Error("createSignedUrl was not expected");
+    async getMetadata() {
+      throw new Error("getMetadata was not expected");
     },
-    async info() {
-      throw new Error("info was not expected");
+    createReadStream() {
+      throw new Error("createReadStream was not expected");
     },
-    async remove() {
-      throw new Error("remove was not expected");
+    async createSignedDownloadUrl() {
+      throw new Error("createSignedDownloadUrl was not expected");
+    },
+    async removeObject() {
+      throw new Error("removeObject was not expected");
     },
     ...overrides,
   };
@@ -81,218 +63,93 @@ function assertAppError(
     && error.statusCode === statusCode;
 }
 
-test("signed upload targets stay on the configured origin/path and require create-only headers", async () => {
-  const calls: Array<{ path: string; options?: { upsert: boolean } }> = [];
-  const expectedPath = `/storage/v1/object/upload/sign/${BUCKET_ID}/${attachment.objectPath}`;
+test("signed upload targets preserve create-only GCS URLs and required headers", async () => {
+  const calls: unknown[] = [];
+  const objectStore = unusedStore({
+    async createSignedUploadUrl(input) {
+      calls.push(input);
+      return `https://storage.googleapis.com/${BUCKET_ID}/${attachment.objectPath}`
+        + "?ifGenerationMatch=0&X-Goog-Signature=test";
+    },
+  });
   const storage = createCompanyFileStorage({
-    baseUrl: BASE_URL,
     bucketId: BUCKET_ID,
-    secretKey: SECRET_KEY,
-    client: clientFor(unusedBucket({
-      async createSignedUploadUrl(path, options) {
-        calls.push({ path, ...(options === undefined ? {} : { options }) });
-        return {
-          data: {
-            path,
-            token: "signed-token",
-            signedUrl: `${BASE_URL.origin}${expectedPath}?token=signed-token`,
-          },
-          error: null,
-        };
-      },
-    })),
+    objectStore,
+    now: () => NOW,
   });
 
   const targets = await storage.createSignedUploadTargets([attachment]);
 
-  assert.deepEqual(calls, [{ path: attachment.objectPath, options: { upsert: false } }]);
-  assert.equal(new URL(targets[0]?.uploadUrl ?? "").origin, BASE_URL.origin);
-  assert.equal(new URL(targets[0]?.uploadUrl ?? "").pathname, expectedPath);
+  assert.deepEqual(calls, [{
+    objectPath: attachment.objectPath,
+    contentType: attachment.mimeType,
+    expiresAt: NOW + 600_000,
+  }]);
+  assert.equal(
+    targets[0]?.uploadUrl,
+    `https://storage.googleapis.com/${BUCKET_ID}/${attachment.objectPath}`
+      + "?ifGenerationMatch=0&X-Goog-Signature=test",
+  );
   assert.deepEqual(targets[0]?.requiredHeaders, {
-    "cache-control": "max-age=3600",
+    "cache-control": "private, max-age=3600",
     "content-type": attachment.mimeType,
-    "x-upsert": "false",
   });
 });
 
-test("signed downloads stay on the configured private bucket path", async () => {
-  const objectPath = `${attachment.objectPath}.pdf`;
-  const expectedPath = `/storage/v1/object/sign/${BUCKET_ID}/${objectPath}`;
-  const calls: Array<{ path: string; expiresIn: number }> = [];
+test("signed downloads validate object paths and bounded expirations", async () => {
+  const calls: unknown[] = [];
+  const objectStore = unusedStore({
+    async createSignedDownloadUrl(input) {
+      calls.push(input);
+      return `https://storage.googleapis.com/${BUCKET_ID}/${input.objectPath}`
+        + "?X-Goog-Signature=download";
+    },
+  });
   const storage = createCompanyFileStorage({
-    baseUrl: BASE_URL,
     bucketId: BUCKET_ID,
-    secretKey: SECRET_KEY,
-    client: clientFor(unusedBucket({
-      async createSignedUrl(path, expiresIn) {
-        calls.push({ path, expiresIn });
-        return {
-          data: { signedUrl: `${BASE_URL.origin}${expectedPath}?token=download-token` },
-          error: null,
-        };
-      },
-    })),
+    objectStore,
+    now: () => NOW,
   });
 
-  assert.equal(
-    await storage.createSignedDownloadUrl?.(objectPath, 900),
-    `${BASE_URL.origin}${expectedPath}?token=download-token`,
+  assert.match(
+    await storage.createSignedDownloadUrl!(attachment.objectPath, 900),
+    /X-Goog-Signature=download$/,
   );
-  assert.deepEqual(calls, [{ path: objectPath, expiresIn: 900 }]);
+  assert.deepEqual(calls, [{
+    objectPath: attachment.objectPath,
+    expiresAt: NOW + 900_000,
+  }]);
   await assert.rejects(
     storage.createSignedDownloadUrl!("../cross-tenant.pdf", 900),
     /Storage object path is invalid/,
   );
+  await assert.rejects(
+    storage.createSignedDownloadUrl!(attachment.objectPath, 10),
+    /between 60 seconds and one hour/,
+  );
 });
 
-test("local signed URLs validate against the internal origin and return the public loopback origin", async () => {
-  const internalBaseUrl = new URL("http://smart-job-supabase-gateway:8000/");
-  const publicBaseUrl = new URL("http://127.0.0.1:55321/");
-  const expectedPath = `/storage/v1/object/upload/sign/${BUCKET_ID}/${attachment.objectPath}`;
+test("uploaded attachment verification streams bytes and checks MIME plus SHA-256", async () => {
+  const reads: string[] = [];
   const storage = createCompanyFileStorage({
-    baseUrl: internalBaseUrl,
-    publicBaseUrl,
     bucketId: BUCKET_ID,
-    secretKey: SECRET_KEY,
-    client: clientFor(unusedBucket({
-      async createSignedUploadUrl(path) {
+    objectStore: unusedStore({
+      async getMetadata(objectPath) {
+        assert.equal(objectPath, attachment.objectPath);
         return {
-          data: {
-            path,
-            token: "local-token",
-            signedUrl: `${internalBaseUrl.origin}${expectedPath}?token=local-token`,
-          },
-          error: null,
+          sizeBytes: fileBytes.length,
+          contentType: "image/jpeg; charset=binary",
         };
       },
-    })),
-  });
-
-  const [target] = await storage.createSignedUploadTargets([attachment]);
-  assert.equal(target?.uploadUrl, `${publicBaseUrl.origin}${expectedPath}?token=local-token`);
-});
-
-test("signed upload targets reject malformed, cross-origin, and wrong-object URLs", async () => {
-  const invalidUrls = [
-    "not-a-url",
-    `https://attacker.example${
-      `/storage/v1/object/upload/sign/${BUCKET_ID}/${attachment.objectPath}`
-    }?token=signed-token`,
-    `${BASE_URL.origin}/storage/v1/object/upload/sign/other-bucket/wrong.jpg?token=signed-token`,
-    `${BASE_URL.origin}/storage/v1/object/upload/sign/${BUCKET_ID}/${attachment.objectPath}`,
-  ];
-
-  for (const signedUrl of invalidUrls) {
-    const storage = createCompanyFileStorage({
-      baseUrl: BASE_URL,
-      bucketId: BUCKET_ID,
-      secretKey: SECRET_KEY,
-      client: clientFor(unusedBucket({
-        async createSignedUploadUrl(path) {
-          return {
-            data: { path, token: "signed-token", signedUrl },
-            error: null,
-          };
-        },
-      })),
-    });
-    await assert.rejects(
-      storage.createSignedUploadTargets([attachment]),
-      assertAppError("STORAGE_UNAVAILABLE", 503),
-    );
-  }
-});
-
-test("unexpected Supabase Storage failures map to retryable service errors", async (context) => {
-  await context.test("signed URL request", async () => {
-    const storage = createCompanyFileStorage({
-      baseUrl: BASE_URL,
-      bucketId: BUCKET_ID,
-      secretKey: SECRET_KEY,
-      client: clientFor(unusedBucket({
-        async createSignedUploadUrl() {
-          throw new TypeError("network failed");
-        },
-      })),
-    });
-    await assert.rejects(
-      storage.createSignedUploadTargets([attachment]),
-      (error: unknown) => assertAppError("STORAGE_UNAVAILABLE", 503)(error)
-        && (error as AppError).retryable,
-    );
-  });
-
-  await context.test("object info request", async () => {
-    const storage = createCompanyFileStorage({
-      baseUrl: BASE_URL,
-      bucketId: BUCKET_ID,
-      secretKey: SECRET_KEY,
-      client: clientFor(unusedBucket({
-        async info() {
-          throw new TypeError("network failed");
-        },
-      })),
-    });
-    await assert.rejects(
-      storage.verifyUploadedAttachments([attachment]),
-      (error: unknown) => assertAppError("STORAGE_UNAVAILABLE", 503)(error)
-        && (error as AppError).retryable,
-    );
-  });
-
-  await context.test("object cleanup request", async () => {
-    const storage = createCompanyFileStorage({
-      baseUrl: BASE_URL,
-      bucketId: BUCKET_ID,
-      secretKey: SECRET_KEY,
-      client: clientFor(unusedBucket({
-        async remove() {
-          throw new TypeError("network failed");
-        },
-      })),
-    });
-    await assert.rejects(
-      storage.removeObjects([attachment.objectPath]),
-      (error: unknown) => assertAppError("STORAGE_UNAVAILABLE", 503)(error)
-        && (error as AppError).retryable,
-    );
-  });
-});
-
-test("uploaded attachment verification streams the exact private object and checks SHA-256", async () => {
-  let requestedUrl: URL | undefined;
-  let requestInit: RequestInit | undefined;
-  const storage = createCompanyFileStorage({
-    baseUrl: BASE_URL,
-    bucketId: BUCKET_ID,
-    secretKey: SECRET_KEY,
-    client: clientFor(unusedBucket({
-      async info(path) {
-        assert.equal(path, attachment.objectPath);
-        return {
-          data: { size: fileBytes.length, contentType: "image/jpeg; charset=binary" },
-          error: null,
-        };
+      createReadStream(objectPath) {
+        reads.push(objectPath);
+        return Readable.from([fileBytes.subarray(0, 10), fileBytes.subarray(10)]);
       },
-    })),
-    fetch: (async (input, init) => {
-      requestedUrl = new URL(String(input));
-      requestInit = init;
-      return new Response(fileBytes, { status: 200 });
-    }) as typeof globalThis.fetch,
+    }),
   });
 
   await storage.verifyUploadedAttachments([attachment]);
-
-  assert.equal(
-    requestedUrl?.pathname,
-    `/storage/v1/object/authenticated/${BUCKET_ID}/${attachment.objectPath}`,
-  );
-  assert.equal(requestInit?.method, "GET");
-  assert.equal(requestInit?.redirect, "error");
-  const headers = new Headers(requestInit?.headers);
-  assert.equal(headers.get("apikey"), SECRET_KEY);
-  assert.equal(headers.get("authorization"), null);
+  assert.deepEqual(reads, [attachment.objectPath]);
 });
 
 test("uploaded attachment verification recognizes every allowed image format", async () => {
@@ -311,113 +168,108 @@ test("uploaded attachment verification recognizes every allowed image format", a
       sha256: createHash("sha256").update(body).digest("hex"),
     };
     const storage = createCompanyFileStorage({
-      baseUrl: BASE_URL,
       bucketId: BUCKET_ID,
-      secretKey: SECRET_KEY,
-      client: clientFor(unusedBucket({
-        async info() {
-          return { data: { size: body.length, contentType: mimeType }, error: null };
+      objectStore: unusedStore({
+        async getMetadata() {
+          return { sizeBytes: body.length, contentType: mimeType };
         },
-      })),
-      fetch: (async () => new Response(body, { status: 200 })) as typeof globalThis.fetch,
+        createReadStream() {
+          return Readable.from([body]);
+        },
+      }),
     });
 
     await storage.verifyUploadedAttachments([candidate]);
   }
 });
 
-test("uploaded attachment verification rejects size, MIME, and SHA mismatches", async () => {
+test("uploaded attachment verification rejects size, MIME, bytes, and SHA mismatches", async () => {
+  const invalidHashBytes = Buffer.from(fileBytes);
+  invalidHashBytes[15] = (invalidHashBytes[15] ?? 0) ^ 0x01;
+  const wrongContentBytes = Buffer.from(fileBytes);
+  wrongContentBytes.fill(0, 0, 3);
   const scenarios = [
     {
-      name: "metadata size",
-      info: { size: fileBytes.length + 1, contentType: attachment.mimeType },
+      metadata: { sizeBytes: fileBytes.length + 1, contentType: attachment.mimeType },
       body: fileBytes,
-      expectedMessage: /unexpected size/i,
+      expected: /unexpected size/i,
     },
     {
-      name: "metadata MIME",
-      info: { size: fileBytes.length, contentType: "image/png" },
+      metadata: { sizeBytes: fileBytes.length, contentType: "image/png" },
       body: fileBytes,
-      expectedMessage: /unexpected content type/i,
+      expected: /unexpected content type/i,
     },
     {
-      name: "downloaded SHA",
-      info: { size: fileBytes.length, contentType: attachment.mimeType },
+      metadata: { sizeBytes: fileBytes.length, contentType: attachment.mimeType },
       body: invalidHashBytes,
-      expectedMessage: /integrity verification/i,
+      expected: /integrity verification/i,
     },
     {
-      name: "downloaded content",
-      info: { size: fileBytes.length, contentType: attachment.mimeType },
+      metadata: { sizeBytes: fileBytes.length, contentType: attachment.mimeType },
       body: wrongContentBytes,
-      expectedMessage: /declared content type/i,
+      expected: /declared content type/i,
     },
   ] as const;
 
   for (const scenario of scenarios) {
-    let fetchCalls = 0;
-    const candidate = attachment;
     const storage = createCompanyFileStorage({
-      baseUrl: BASE_URL,
       bucketId: BUCKET_ID,
-      secretKey: SECRET_KEY,
-      client: clientFor(unusedBucket({
-        async info() {
-          return { data: scenario.info, error: null };
+      objectStore: unusedStore({
+        async getMetadata() {
+          return scenario.metadata;
         },
-      })),
-      fetch: (async () => {
-        fetchCalls += 1;
-        return new Response(scenario.body, { status: 200 });
-      }) as typeof globalThis.fetch,
+        createReadStream() {
+          return Readable.from([scenario.body]);
+        },
+      }),
     });
-
     await assert.rejects(
-      storage.verifyUploadedAttachments([candidate]),
+      storage.verifyUploadedAttachments([attachment]),
       (error: unknown) => assertAppError("UPLOAD_OBJECT_INVALID", 400)(error)
-        && scenario.expectedMessage.test((error as Error).message),
-    );
-    assert.equal(
-      fetchCalls,
-      scenario.name === "metadata size" || scenario.name === "metadata MIME" ? 0 : 1,
+        && scenario.expected.test((error as Error).message),
     );
   }
 });
 
 test("missing upload objects return retryable 425 responses", async () => {
-  const missingInfoStorage = createCompanyFileStorage({
-    baseUrl: BASE_URL,
+  const storage = createCompanyFileStorage({
     bucketId: BUCKET_ID,
-    secretKey: SECRET_KEY,
-    client: clientFor(unusedBucket({
-      async info() {
-        return { data: null, error: { statusCode: 404 } };
+    objectStore: unusedStore({
+      async getMetadata() {
+        return null;
       },
-    })),
+    }),
   });
+
   await assert.rejects(
-    missingInfoStorage.verifyUploadedAttachments([attachment]),
+    storage.verifyUploadedAttachments([attachment]),
     (error: unknown) => assertAppError("UPLOAD_OBJECT_NOT_READY", 425)(error)
       && (error as AppError).retryable,
   );
+});
 
-  const missingDownloadStorage = createCompanyFileStorage({
-    baseUrl: BASE_URL,
+test("GCS readiness and cleanup failures map to retryable service errors", async () => {
+  const cause = new Error("GCS unavailable");
+  const storage = createCompanyFileStorage({
     bucketId: BUCKET_ID,
-    secretKey: SECRET_KEY,
-    client: clientFor(unusedBucket({
-      async info() {
-        return {
-          data: { size: attachment.sizeBytes, contentType: attachment.mimeType },
-          error: null,
-        };
+    objectStore: unusedStore({
+      async checkReadiness() {
+        throw cause;
       },
-    })),
-    fetch: (async () => new Response(null, { status: 404 })) as typeof globalThis.fetch,
+      async removeObject() {
+        throw cause;
+      },
+    }),
   });
+
   await assert.rejects(
-    missingDownloadStorage.verifyUploadedAttachments([attachment]),
-    (error: unknown) => assertAppError("UPLOAD_OBJECT_NOT_READY", 425)(error)
+    storage.checkReadiness!(),
+    (error: unknown) => assertAppError("STORAGE_UNAVAILABLE", 503)(error)
+      && (error as AppError).retryable,
+  );
+  await assert.rejects(
+    storage.removeObjects([attachment.objectPath]),
+    (error: unknown) => assertAppError("STORAGE_UNAVAILABLE", 503)(error)
       && (error as AppError).retryable,
   );
 });

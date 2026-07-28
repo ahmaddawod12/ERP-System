@@ -46,7 +46,7 @@ export default function WorkerInventory() {
 
   useEffect(() => {
     actionKeys.reset();
-  }, [actionKeys, user?.id, workspace?.companyId]);
+  }, [actionKeys, user?.uid, workspace?.companyId]);
 
   const inventoryRef = useRef(inventory);
 
@@ -60,14 +60,14 @@ export default function WorkerInventory() {
     pageSize: 50,
   }), [debouncedSearchQuery]);
   const { query: inventoryQuery, parts: apiInventory } = useInventoryInfinite({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     scope: 'member',
     filters: inventoryFilters,
     enabled: tenantStatus === 'ready' && readScope === 'member',
   });
   const { adjustMutation } = useInventoryMutations({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
   });
 

@@ -1,0 +1,205 @@
+name: Run Maestro Android flows
+description: Build the Android app and run open-source Maestro CLI flows on a local CI emulator
+
+inputs:
+  flow-path:
+    description: Repository-relative Maestro flow directory
+    required: true
+  backend-api-base-url:
+    description: HTTPS API origin used by the test build
+    required: true
+  google-services-json-base64:
+    description: Base64-encoded Firebase Android configuration
+    required: true
+  test-email:
+    description: Seeded primary test-user email
+    required: true
+  test-password:
+    description: Seeded primary test-user password
+    required: true
+  test-workspace:
+    description: Seeded primary workspace name
+    required: true
+  test-job-title:
+    description: Seeded job title
+    required: true
+  release-job-id:
+    description: Release reconciliation job ID
+    required: false
+    default: ""
+  release-job-title:
+    description: Release reconciliation job title
+    required: false
+    default: ""
+  second-user-email:
+    description: Seeded isolation-check user email
+    required: false
+    default: ""
+  second-user-password:
+    description: Seeded isolation-check user password
+    required: false
+    default: ""
+  second-user-workspace:
+    description: Seeded isolation-check workspace name
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate local Maestro inputs
+      shell: bash
+      env:
+        MAESTRO_FLOW_PATH: ${{ inputs.flow-path }}
+        MOBILE_E2E_API_BASE_URL: ${{ inputs.backend-api-base-url }}
+        FIREBASE_ANDROID_CONFIG: ${{ inputs.google-services-json-base64 }}
+        MAESTRO_TEST_EMAIL: ${{ inputs.test-email }}
+        MAESTRO_TEST_PASSWORD: ${{ inputs.test-password }}
+        MAESTRO_TEST_WORKSPACE: ${{ inputs.test-workspace }}
+        MAESTRO_TEST_JOB_TITLE: ${{ inputs.test-job-title }}
+        MAESTRO_RELEASE_JOB_ID: ${{ inputs.release-job-id }}
+        MAESTRO_RELEASE_JOB_TITLE: ${{ inputs.release-job-title }}
+        MAESTRO_SECOND_USER_EMAIL: ${{ inputs.second-user-email }}
+        MAESTRO_SECOND_USER_PASSWORD: ${{ inputs.second-user-password }}
+        MAESTRO_SECOND_USER_WORKSPACE: ${{ inputs.second-user-workspace }}
+      run: |
+        required=(
+          MOBILE_E2E_API_BASE_URL
+          FIREBASE_ANDROID_CONFIG
+          MAESTRO_TEST_EMAIL
+          MAESTRO_TEST_PASSWORD
+          MAESTRO_TEST_WORKSPACE
+          MAESTRO_TEST_JOB_TITLE
+        )
+        if [[ "$MAESTRO_FLOW_PATH" == "phone_app/.maestro-release" ]]; then
+          required+=(
+            MAESTRO_RELEASE_JOB_ID
+            MAESTRO_RELEASE_JOB_TITLE
+            MAESTRO_SECOND_USER_EMAIL
+            MAESTRO_SECOND_USER_PASSWORD
+            MAESTRO_SECOND_USER_WORKSPACE
+          )
+        elif [[ "$MAESTRO_FLOW_PATH" != "phone_app/.maestro" ]]; then
+          echo "::error::Unsupported Maestro flow path"
+          exit 1
+        fi
+        for name in "${required[@]}"; do
+          if [[ -z "${!name}" ]]; then
+            echo "::error::$name is required"
+            exit 1
+          fi
+        done
+        if [[ "$MOBILE_E2E_API_BASE_URL" != https://* ]]; then
+          echo "::error::MOBILE_E2E_API_BASE_URL must use HTTPS"
+          exit 1
+        fi
+
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: |
+          phone_app/package-lock.json
+          packages/contracts/package-lock.json
+          packages/api-contracts/package-lock.json
+
+    - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Install mobile build dependencies
+      shell: bash
+      run: |
+        npm --prefix packages/contracts ci
+        npm --prefix packages/contracts run build
+        npm --prefix packages/api-contracts ci
+        npm --prefix packages/api-contracts run build
+        npm --prefix phone_app ci
+
+    - name: Write the Firebase Android configuration
+      shell: bash
+      env:
+        FIREBASE_ANDROID_CONFIG: ${{ inputs.google-services-json-base64 }}
+      run: |
+        printf '%s' "$FIREBASE_ANDROID_CONFIG" | base64 --decode > phone_app/google-services.json
+        jq -e '.project_info.project_id and .client[0].client_info.android_client_info.package_name == "erpsystem.app"' \
+          phone_app/google-services.json > /dev/null
+
+    - name: Generate and build the Android debug APK
+      shell: bash
+      working-directory: phone_app
+      env:
+        EXPO_PUBLIC_BACKEND_API_BASE_URL: ${{ inputs.backend-api-base-url }}
+      run: |
+        npx expo prebuild --platform android --clean --no-install
+        ./android/gradlew -p android assembleDebug --no-daemon
+
+    - name: Cache the pinned Maestro CLI
+      id: maestro-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.maestro
+        key: maestro-cli-2.4.0-linux-aea22ce67ab6718997ec990c58652ede0c2be8f10ac4799039ca3dce3390d634
+
+    - name: Install the pinned open-source Maestro CLI
+      if: steps.maestro-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        archive="$RUNNER_TEMP/maestro-2.4.0.zip"
+        curl --fail --location --silent --show-error \
+          https://github.com/mobile-dev-inc/maestro/releases/download/cli-2.4.0/maestro.zip \
+          --output "$archive"
+        echo "aea22ce67ab6718997ec990c58652ede0c2be8f10ac4799039ca3dce3390d634  $archive" \
+          | sha256sum --check
+        unzip -q "$archive" -d "$RUNNER_TEMP/maestro-dist"
+        mkdir -p "$HOME/.maestro"
+        cp -R "$RUNNER_TEMP/maestro-dist/maestro/." "$HOME/.maestro/"
+
+    - name: Add Maestro to PATH
+      shell: bash
+      run: echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+    - name: Run Maestro flows on the CI Android emulator
+      uses: reactivecircus/android-emulator-runner@324029e2f414c084d8b15ba075288885e74aef9c # v2.34.0
+      env:
+        MAESTRO_FLOW_PATH: ${{ inputs.flow-path }}
+        MAESTRO_APP_ID: erpsystem.app
+        MAESTRO_TEST_EMAIL: ${{ inputs.test-email }}
+        MAESTRO_TEST_PASSWORD: ${{ inputs.test-password }}
+        MAESTRO_TEST_WORKSPACE: ${{ inputs.test-workspace }}
+        MAESTRO_TEST_JOB_TITLE: ${{ inputs.test-job-title }}
+        MAESTRO_RELEASE_JOB_ID: ${{ inputs.release-job-id }}
+        MAESTRO_RELEASE_JOB_TITLE: ${{ inputs.release-job-title }}
+        MAESTRO_SECOND_USER_EMAIL: ${{ inputs.second-user-email }}
+        MAESTRO_SECOND_USER_PASSWORD: ${{ inputs.second-user-password }}
+        MAESTRO_SECOND_USER_WORKSPACE: ${{ inputs.second-user-workspace }}
+      with:
+        api-level: 35
+        arch: x86_64
+        profile: pixel_6
+        disable-animations: true
+        emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+        script: |
+          adb install -r phone_app/android/app/build/outputs/apk/debug/app-debug.apk
+          maestro_args=(
+            test
+            -e "MAESTRO_APP_ID=$MAESTRO_APP_ID"
+            -e "MAESTRO_TEST_EMAIL=$MAESTRO_TEST_EMAIL"
+            -e "MAESTRO_TEST_PASSWORD=$MAESTRO_TEST_PASSWORD"
+            -e "MAESTRO_TEST_WORKSPACE=$MAESTRO_TEST_WORKSPACE"
+            -e "MAESTRO_TEST_JOB_TITLE=$MAESTRO_TEST_JOB_TITLE"
+          )
+          for name in \
+            MAESTRO_RELEASE_JOB_ID \
+            MAESTRO_RELEASE_JOB_TITLE \
+            MAESTRO_SECOND_USER_EMAIL \
+            MAESTRO_SECOND_USER_PASSWORD \
+            MAESTRO_SECOND_USER_WORKSPACE
+          do
+            if [[ -n "${!name}" ]]; then
+              maestro_args+=(-e "$name=${!name}")
+            fi
+          done
+          maestro_args+=("$MAESTRO_FLOW_PATH")
+          maestro "${maestro_args[@]}"

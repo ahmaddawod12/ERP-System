@@ -70,7 +70,7 @@ function resultFromOperation(operation: OutboxOperation): OutboxOperationResult 
 
 export function OutboxProvider({ children }: { children: ReactNode }) {
   const { user } = useSession();
-  const userId = user?.id ?? null;
+  const userId = user?.uid ?? null;
   const databaseRef = useRef<UserOutboxDatabase | null>(null);
   const [ready, setReady] = useState(false);
   const [syncing, setSyncing] = useState(false);

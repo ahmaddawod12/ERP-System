@@ -4,7 +4,7 @@ import type { QueryResultRow } from "pg";
 
 import type {
   ApiRequestAuthenticator,
-  SupabaseUserClient,
+  FirebaseUserClient,
 } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
@@ -38,7 +38,7 @@ function bearerAuthenticator(): ApiRequestAuthenticator {
   };
 }
 
-function authUser(emailVerified: boolean): SupabaseUserClient {
+function authUser(emailVerified: boolean): FirebaseUserClient {
   return {
     async getUser(token) {
       assert.equal(token, accessToken);
@@ -155,7 +155,7 @@ test("business registration requires a verified email before database work", asy
   registerBusinessRegistrationRoutes(app, {
     authenticator: bearerAuthenticator(),
     database,
-    supabaseUsers: authUser(false),
+    firebaseUsers: authUser(false),
     webSessions: {
       async currentSession() {
         throw new Error("Bearer registration must not read a web session");
@@ -185,7 +185,7 @@ test("business registration creates one server-derived workspace atomically", as
   registerBusinessRegistrationRoutes(app, {
     authenticator: bearerAuthenticator(),
     database: database.database,
-    supabaseUsers: authUser(true),
+    firebaseUsers: authUser(true),
     webSessions: {
       async currentSession() {
         throw new Error("Bearer registration must not read a web session");

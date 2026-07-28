@@ -27,7 +27,7 @@ describe("sensitive-route content security policy", () => {
     assert.equal(isSensitiveCspPath("/application"), false);
   });
 
-  it("uses a nonce without production inline/eval escapes or browser Supabase access", () => {
+  it("uses a nonce without production inline/eval escapes or browser identity-provider access", () => {
     const policy = buildSensitiveContentSecurityPolicy("fixture-nonce", false);
     const scriptDirective = policy
       .split("; ")
@@ -36,7 +36,7 @@ describe("sensitive-route content security policy", () => {
     assert.match(scriptDirective ?? "", /'strict-dynamic'/);
     assert.doesNotMatch(scriptDirective ?? "", /unsafe-inline/);
     assert.doesNotMatch(scriptDirective ?? "", /unsafe-eval/);
-    assert.doesNotMatch(policy, /supabase/);
+    assert.doesNotMatch(policy, /identitytoolkit|securetoken/);
     assert.match(policy, /object-src 'none'/);
   });
 

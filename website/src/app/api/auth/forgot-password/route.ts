@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server.js";
-import { serverSendPasswordReset } from "@/lib/auth/server-supabase";
+import { serverSendPasswordReset } from "@/lib/auth/server-firebase";
 import { parseWebsiteOrigin } from "@/lib/auth/opaque-session";
 import { z } from "zod";
 

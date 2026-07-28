@@ -11,7 +11,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -33,7 +33,7 @@ const acceptedResponseSchema = createApiSuccessResponseSchema(TaxInvoiceAccepted
 export interface TaxInvoiceRouteServices {
   readonly database: ApiDatabaseRuntime;
   readonly authenticator: ApiRequestAuthenticator;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
   readonly taxSubmissionMode?: TaxSubmissionMode;
   readonly taxGatewayClient?: TaxGatewayClient;
 }
@@ -101,7 +101,7 @@ export function registerTaxInvoiceRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       if ((services.taxSubmissionMode ?? "disabled") === "disabled") {
         throw new AppError({
           statusCode: 503,

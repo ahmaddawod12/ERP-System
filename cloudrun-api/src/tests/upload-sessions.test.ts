@@ -5,7 +5,7 @@ import type { QueryResultRow } from "pg";
 
 import type {
   ApiRequestAuthenticator,
-  SupabaseUserClient,
+  FirebaseUserClient,
 } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
@@ -56,7 +56,7 @@ function bearerAuthenticator(): ApiRequestAuthenticator {
   };
 }
 
-function supabaseUsers(emailVerified: boolean): SupabaseUserClient {
+function firebaseUsers(emailVerified: boolean): FirebaseUserClient {
   return {
     async getUser(token) {
       assert.equal(token, accessToken);
@@ -203,12 +203,11 @@ function successfulStorage(): CompanyFileStorage {
       return attachments.map((attachment) => ({
         ...attachment,
         uploadUrl:
-          `https://project.supabase.co/storage/v1/object/upload/sign/${bucketId}`
-          + `/${attachment.objectPath}?token=signed-token`,
+          `https://storage.googleapis.com/company-files-test/${attachment.objectPath}`
+          + "?ifGenerationMatch=0&X-Goog-Signature=signed-token",
         requiredHeaders: {
-          "cache-control": "max-age=3600",
+          "cache-control": "private, max-age=3600",
           "content-type": attachment.mimeType,
-          "x-upsert": "false",
         },
       }));
     },
@@ -230,7 +229,7 @@ test("upload-session route requires an Idempotency-Key before database work", as
     database: database.database,
     storage: successfulStorage(),
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(true),
+    firebaseUsers: firebaseUsers(true),
   });
 
   const response = await app.inject({
@@ -261,7 +260,7 @@ test("upload-session route requires a verified bearer identity before database w
       },
     },
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(false),
+    firebaseUsers: firebaseUsers(false),
   });
 
   const response = await app.inject({
@@ -297,7 +296,7 @@ test("upload-session route creates signed, tenant-owned upload targets", async (
       },
     },
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(true),
+    firebaseUsers: firebaseUsers(true),
   });
 
   const response = await app.inject({
@@ -321,7 +320,14 @@ test("upload-session route creates signed, tenant-owned upload targets", async (
     `${internalCompanyId}/${userId}/${body.data.uploadSessionId}/${attachmentId}.jpg`,
   );
   assert.equal(body.data.attachments[0].objectPath, signedObjectPath);
-  assert.equal(body.data.attachments[0].requiredHeaders["x-upsert"], "false");
+  assert.equal(
+    body.data.attachments[0].requiredHeaders["cache-control"],
+    "private, max-age=3600",
+  );
+  assert.equal(
+    new URL(body.data.attachments[0].uploadUrl).searchParams.get("ifGenerationMatch"),
+    "0",
+  );
   assert.equal(database.transactionCalls(), 2);
   assert.equal(
     database.queries.filter(({ text }) =>
@@ -353,7 +359,7 @@ test("idempotent replay reuses one session and creates a fresh signed URL", asyn
       },
     },
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(true),
+    firebaseUsers: firebaseUsers(true),
   });
 
   const request = {
@@ -404,7 +410,7 @@ test("completed replay refuses a session inside the expiry safety window", async
       },
     },
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(true),
+    firebaseUsers: firebaseUsers(true),
   });
   const request = {
     method: "POST" as const,
@@ -454,7 +460,7 @@ test("upload rate and active-session quota denials commit before HTTP 429", asyn
           },
         },
         storageBucketId: bucketId,
-        supabaseUsers: supabaseUsers(true),
+        firebaseUsers: firebaseUsers(true),
       });
 
       const response = await app.inject({
@@ -496,7 +502,7 @@ test("signed-URL failures retain the deterministic session for bounded retry", a
       async removeObjects() {},
     },
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(true),
+    firebaseUsers: firebaseUsers(true),
   });
 
   const response = await app.inject({
@@ -547,7 +553,7 @@ test("three initial signing failures queue cleanup and stop signing the same cla
       async removeObjects() {},
     },
     storageBucketId: bucketId,
-    supabaseUsers: supabaseUsers(true),
+    firebaseUsers: firebaseUsers(true),
   });
   const request = {
     method: "POST" as const,

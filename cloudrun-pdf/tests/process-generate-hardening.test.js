@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,14 +24,14 @@ test('generate tasks use a bounded database processing lease', () => {
 });
 
 test('generated PDFs use byte-verified create-only storage and lease-guarded RPC finalization', () => {
-  assert.match(storageSource, /upsert:\s*false/);
+  assert.match(storageSource, /ifGenerationMatch:\s*0/);
   assert.match(storageSource, /verifyExistingPdf/);
   assert.match(source, /completePdfDocumentTask/);
   assert.match(workerStoreSource, /private\.complete_pdf_document_task/);
   assert.match(workerStoreSource, /task\.internalCompanyId/);
   assert.match(workerStoreSource, /task\.internalDocumentId/);
   assert.doesNotMatch(workerStoreSource, /UPDATE public\.|INSERT INTO public\.|DELETE FROM public\./);
-  assert.doesNotMatch(source, /@google-cloud\/storage|storage\.bucket\(/);
+  assert.doesNotMatch(source, /@postgres\/postgres-js|client\.storage/);
 });
 
 test('generated PDF is retained when SQL finalization has an ambiguous outcome', () => {

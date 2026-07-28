@@ -88,7 +88,7 @@ export default function ViewDocument() {
   
   // Parse document from params (passed from DocumentHistory)
   const routeDocument = safeJsonParse(params.document) as DocumentHistoryRecord | null;
-  const uid = user?.id ?? '';
+  const uid = user?.uid ?? '';
   const companyId = workspace?.companyId ?? 0;
   const documentId = String(routeDocument?.documentId || routeDocument?.id || '').trim();
   const detailQuery = useQuery({
@@ -190,7 +190,7 @@ export default function ViewDocument() {
   const openDocumentPdf = async () => {
     if (!document) return;
     try {
-      const uid = user?.id;
+      const uid = user?.uid;
       const companyId = workspace?.companyId;
       const documentId = document.documentId || document.id;
       if (!document.hasFile || !uid || !companyId || !documentId) {

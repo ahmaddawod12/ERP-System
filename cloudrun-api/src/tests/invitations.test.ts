@@ -4,7 +4,7 @@ import type { QueryResultRow } from "pg";
 
 import type {
   ApiRequestAuthenticator,
-  SupabaseUserClient,
+  FirebaseUserClient,
 } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
@@ -38,7 +38,7 @@ function bearerAuthenticator(): ApiRequestAuthenticator {
   };
 }
 
-function verifiedSupabaseUser(emailVerified = true): SupabaseUserClient {
+function verifiedFirebaseUser(emailVerified = true): FirebaseUserClient {
   return {
     async getUser(token) {
       assert.equal(token, accessToken);
@@ -154,7 +154,7 @@ test("manager invitation creation resolves the public tenant and uses only the h
   registerInvitationRoutes(app, {
     authenticator: bearerAuthenticator(),
     database: databaseUsing(transaction),
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const response = await app.inject({
@@ -182,7 +182,7 @@ test("manager invitation creation resolves the public tenant and uses only the h
   assert.equal(queries.filter(({ text }) => text.includes("create_api_company_invitation")).length, 1);
 });
 
-test("invitation redemption permits existing memberships in other companies and never sends uid, email, or role to SQL", async (context) => {
+test("invitation redemption permits existing memberships and sends only the server-verified email claim", async (context) => {
   let requestHash: Buffer | undefined;
   let redemptionValues: readonly unknown[] | undefined;
   const transaction: DatabaseQueryable = {
@@ -209,8 +209,9 @@ test("invitation redemption permits existing memberships in other companies and 
           "A1B2-C3D4",
           "Field Technician",
           "+972501234567",
+          "manager@example.test",
         ]);
-        assert.doesNotMatch(text, /\$5|p_uid|p_email|target_role/i);
+        assert.doesNotMatch(text, /p_uid|target_role/i);
         return result<Row>([{
           internal_company_id: internalCompanyId,
           public_company_id: "1001",
@@ -256,7 +257,7 @@ test("invitation redemption permits existing memberships in other companies and 
   registerInvitationRoutes(app, {
     authenticator: bearerAuthenticator(),
     database: databaseUsing(transaction),
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const response = await app.inject({
@@ -277,7 +278,7 @@ test("invitation redemption permits existing memberships in other companies and 
   assert.equal(response.statusCode, 200, response.body);
   assert.ok(redemptionValues);
   assert.equal(redemptionValues.includes(userId), false);
-  assert.equal(redemptionValues.includes("manager@example.test"), false);
+  assert.equal(redemptionValues.includes("manager@example.test"), true);
   assert.deepEqual(response.json().data, {
     workspace: {
       companyId: 1001,
@@ -320,7 +321,7 @@ test("invitation mutations reject an unverified bearer before database work", as
         throw new Error("database must not run for an unverified identity");
       },
     },
-    supabaseUsers: verifiedSupabaseUser(false),
+    firebaseUsers: verifiedFirebaseUser(false),
   });
 
   const response = await app.inject({
@@ -349,7 +350,7 @@ test("invitation routes require idempotency before opening a transaction", async
         throw new Error("database must not run without idempotency");
       },
     },
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const response = await app.inject({
@@ -416,13 +417,14 @@ test("opaque-session invitation replay returns the completed response without Au
         return {
           scheme: "smart-job-session",
           userId,
+          verifiedEmail: "viewer@example.test",
           absoluteExpiresAt: new Date("2099-01-01T00:00:00.000Z"),
           sessionToken: "A".repeat(43),
         };
       },
     },
     database: databaseUsing(transaction),
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         authUserCalls += 1;
         throw new Error("opaque mutations must not expose the stored Auth token");
@@ -456,7 +458,7 @@ test("invitation database state errors map to stable non-enumerating responses",
         throw { code: "P0001", message: "INVITATION_EXPIRED private details" };
       },
     }),
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const response = await app.inject({
@@ -485,7 +487,7 @@ test("invitation rate limiting fails closed and maps exhaustion to 429", async (
   registerInvitationRoutes(app, {
     authenticator: bearerAuthenticator(),
     database: databaseUsing(transaction),
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
   const request = {
     method: "POST" as const,

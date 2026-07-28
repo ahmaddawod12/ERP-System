@@ -14,6 +14,7 @@ module "foundation" {
   primary_subnet_cidr              = var.primary_subnet_cidr
   tax_subnet_cidr                  = var.tax_subnet_cidr
   archive_bucket_name              = var.archive_bucket_name
+  company_files_bucket_name        = var.company_files_bucket_name
   backup_bucket_name               = var.backup_bucket_name
   archive_retention_days           = var.archive_retention_days
   backup_retention_days            = var.backup_retention_days

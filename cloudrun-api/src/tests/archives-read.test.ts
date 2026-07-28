@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import type { ArchiveStorage } from "../archives/archive-storage.js";
 import {
   READ_ARCHIVE_DOWNLOAD_SQL,
@@ -163,8 +163,8 @@ test("exact archive downloads use the recorded path and filter worker rows serve
     async close() {},
     async withTransaction(_request, work) { return work(transaction); },
   };
-  const verifier: SupabaseJwtVerifier = {
-    issuer: "https://project.supabase.co/auth/v1",
+  const verifier: FirebaseTokenVerifier = {
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       return { userId: workerId, expiresAt: 4_102_444_800 };

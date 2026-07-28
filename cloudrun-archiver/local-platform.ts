@@ -28,7 +28,7 @@ export function assertArchiverRuntimeConfig(
   const localOverridesPresent = env.SMART_JOB_DEPLOYMENT_ENV === 'local'
     || env.SMART_JOB_LOCAL_PLATFORM !== undefined
     || env.LOCAL_PLATFORM_MARKER_PATH !== undefined
-    || env.STORAGE_EMULATOR_HOST !== undefined;
+    || env.GCS_API_ENDPOINT !== undefined;
   if (env.ALLOW_LOCAL_ARCHIVER_ADMIN !== undefined) {
     throw new Error('ALLOW_LOCAL_ARCHIVER_ADMIN has been removed; use smart_job_archiver');
   }
@@ -49,20 +49,20 @@ export function assertArchiverRuntimeConfig(
     throw new Error('The archiver database pool must be limited to one connection');
   }
   if (verifiedLocalPlatform) {
-    if (env.STORAGE_EMULATOR_HOST !== 'http://gcs-emulator:4443') {
+    if (env.GCS_API_ENDPOINT !== 'http://gcs-emulator:4443') {
       throw new Error('Local archiver requires the canonical GCS emulator endpoint');
     }
     if (
-      databaseUrl.hostname !== 'smart-job-supabase-db'
+      databaseUrl.hostname !== 'smart-job-postgres'
       || (databaseUrl.port !== '' && databaseUrl.port !== '5432')
     ) {
-      throw new Error('Local archiver access is restricted to the repository-owned Supabase database');
+      throw new Error('Local archiver access is restricted to the repository-owned PostgreSQL database');
     }
     if (env.DATABASE_SSL_MODE !== 'disable') {
       throw new Error('Local archiver database SSL mode must be disable');
     }
-  } else if (env.STORAGE_EMULATOR_HOST !== undefined) {
-    throw new Error('STORAGE_EMULATOR_HOST is forbidden outside the verified local platform');
+  } else if (env.GCS_API_ENDPOINT !== undefined) {
+    throw new Error('GCS_API_ENDPOINT is forbidden outside the verified local platform');
   }
   return { verifiedLocalPlatform };
 }

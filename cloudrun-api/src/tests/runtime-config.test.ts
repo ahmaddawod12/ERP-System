@@ -10,27 +10,22 @@ import {
 const baseEnvironment = {
   DATABASE_URL: "postgresql://smart_job_api:local-only@127.0.0.1:55322/postgres",
   DATABASE_SSL_MODE: "disable",
-  SUPABASE_URL: "http://127.0.0.1:55321",
-  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_local_test_key_123456789",
-  SUPABASE_SECRET_KEY: "sb_secret_local_test_key_123456789012345",
+  FIREBASE_PROJECT_ID: "smart-job-local",
+  FIREBASE_WEB_API_KEY: "firebase-local-api-key-123456789",
   WEB_SESSION_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 7).toString("base64"),
   WEB_SESSION_ENCRYPTION_KEY_VERSION: "local-v1",
 };
 
-test("runtime config derives local JWKS settings and caps the API pool", () => {
+test("runtime config validates Firebase settings and caps the API pool", () => {
   const config = loadApiRuntimeConfig(baseEnvironment);
 
   assert.equal(config.database.maxConnections, MAX_DATABASE_POOL_SIZE);
   assert.equal(config.database.ssl, false);
-  assert.equal(config.supabaseJwt.issuer, "http://127.0.0.1:55321/auth/v1");
-  assert.equal(
-    config.supabaseJwt.jwksUrl.href,
-    "http://127.0.0.1:55321/auth/v1/.well-known/jwks.json",
-  );
-  assert.deepEqual(config.supabaseJwt.audiences, ["authenticated"]);
+  assert.equal(config.firebaseAuth.projectId, "smart-job-local");
+  assert.equal(config.firebaseAuth.webApiKey, "firebase-local-api-key-123456789");
   assert.equal(config.webSessionEncryption.key.length, 32);
   assert.equal(config.webSessionEncryption.keyVersion, "local-v1");
-  assert.equal(config.supabaseStorage.bucketId, "smart-job-company-files");
+  assert.equal(config.companyFileStorage.bucketId, "smart-job-company-files");
 });
 
 test("runtime config accepts strict managed settings without exposing credentials", () => {
@@ -42,11 +37,10 @@ test("runtime config accepts strict managed settings without exposing credential
     DATABASE_MAX_CONNECTIONS: "3",
     DATABASE_IDLE_TIMEOUT_MS: "25000",
     DATABASE_CONNECT_TIMEOUT_MS: "5000",
-    SUPABASE_URL: "https://project.supabase.co/",
-    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_managed_test_key_123456789",
-    SUPABASE_SECRET_KEY: "sb_secret_managed_test_key_1234567890123",
-    SUPABASE_STORAGE_BUCKET: "smart-job-company-files",
-    SUPABASE_JWT_AUDIENCE: "authenticated,smart-job-mobile,authenticated",
+    FIREBASE_PROJECT_ID: "smart-job-prod",
+    FIREBASE_WEB_API_KEY: "firebase-managed-api-key-123456789",
+    GCS_PROJECT_ID: "smart-job-prod",
+    COMPANY_FILES_BUCKET: "smart-job-company-files",
     WEB_SESSION_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 9).toString("base64"),
     WEB_SESSION_ENCRYPTION_KEY_VERSION: "managed-v3",
     DOCUMENT_PUBSUB_PROJECT_ID: "smart-job-prod",
@@ -63,13 +57,10 @@ test("runtime config accepts strict managed settings without exposing credential
     ca: "line-one\nline-two",
   });
   assert.equal(config.database.maxConnections, 3);
-  assert.deepEqual(config.supabaseJwt.audiences, [
-    "authenticated",
-    "smart-job-mobile",
-  ]);
-  assert.equal(config.supabaseStorage.baseUrl.href, "https://project.supabase.co/");
-  assert.equal(config.supabaseStorage.secretKey, "sb_secret_managed_test_key_1234567890123");
-  assert.equal(config.supabaseStorage.bucketId, "smart-job-company-files");
+  assert.deepEqual(config.companyFileStorage, {
+    projectId: "smart-job-prod",
+    bucketId: "smart-job-company-files",
+  });
   assert.deepEqual(config.documentDispatch, {
     projectId: "smart-job-prod",
     previewTopic: "document-preview",
@@ -94,10 +85,8 @@ test("runtime config accepts marker-gated Compose endpoints and keeps tax disabl
     SMART_JOB_LOCAL_PLATFORM: "true",
     LOCAL_PLATFORM_MARKER_PATH: "/run/secrets/smart_job_local_platform",
     DATABASE_URL:
-      "postgresql://smart_job_api:local-only@smart-job-supabase-db:5432/postgres",
-    SUPABASE_INTERNAL_URL: "http://smart-job-supabase-gateway:8000",
-    SUPABASE_JWKS_URL:
-      "http://smart-job-supabase-gateway:8000/auth/v1/.well-known/jwks.json",
+      "postgresql://smart_job_api:local-only@smart-job-postgres:5432/postgres",
+    FIREBASE_AUTH_EMULATOR_HOST: "firebase-auth-emulator:9099",
     DOCUMENT_PUBSUB_PROJECT_ID: "smart-job-local",
     DOCUMENT_PREVIEW_TOPIC: "document-preview",
     DOCUMENT_GENERATE_TOPIC: "document-generate",
@@ -106,6 +95,8 @@ test("runtime config accepts marker-gated Compose endpoints and keeps tax disabl
     GOOGLE_METADATA_ACCESS_TOKEN_URL:
       "http://local-platform-adapter:8090/computeMetadata/v1/instance/service-accounts/default/token",
     LOCAL_INTERNAL_IDENTITY_TOKEN: "local_identity_012345678901234567890123456789",
+    GCS_API_ENDPOINT: "http://gcs-emulator:4443",
+    COMPANY_FILES_PUBLIC_BASE_URL: "http://127.0.0.1:58080",
     TAX_SUBMISSION_MODE: "disabled",
   };
   const config = loadApiRuntimeConfig(localEnvironment, {
@@ -114,10 +105,14 @@ test("runtime config accepts marker-gated Compose endpoints and keeps tax disabl
 
   assert.equal(config.database.ssl, false);
   assert.equal(
-    config.supabaseAuth.baseUrl.href,
-    "http://smart-job-supabase-gateway:8000/",
+    config.firebaseAuth.authBaseUrl?.href,
+    "http://firebase-auth-emulator:9099/identitytoolkit.googleapis.com/",
   );
-  assert.equal(config.supabaseStorage.publicBaseUrl?.href, "http://127.0.0.1:55321/");
+  assert.equal(config.companyFileStorage.apiEndpoint, "http://gcs-emulator:4443");
+  assert.equal(
+    config.companyFileStorage.publicBaseUrl?.href,
+    "http://127.0.0.1:58080/",
+  );
   assert.equal(config.documentDispatch?.apiBaseUrl?.href, "http://local-platform-adapter:8090/");
   assert.equal(config.localIdentityToken, localEnvironment.LOCAL_INTERNAL_IDENTITY_TOKEN);
   assert.deepEqual(config.taxSubmission, { mode: "disabled" });
@@ -145,14 +140,11 @@ test("runtime config fails closed for missing, oversized, and insecure settings"
       DATABASE_URL: "postgresql://smart_job_api:secret@db.example.test/postgres",
       DATABASE_SSL_MODE: "disable",
     },
-    { ...baseEnvironment, SUPABASE_URL: "http://project.supabase.co" },
-    { ...baseEnvironment, SUPABASE_URL: "https://project.supabase.co/storage/v1" },
-    { ...baseEnvironment, SUPABASE_URL: "https://user:password@project.supabase.co/" },
-    { ...baseEnvironment, SUPABASE_URL: "https://project.supabase.co/?next=unsafe" },
-    { ...baseEnvironment, SUPABASE_URL: "https://project.supabase.co/#fragment" },
-    { ...baseEnvironment, SUPABASE_SECRET_KEY: "service-role-jwt" },
-    { ...baseEnvironment, SUPABASE_STORAGE_BUCKET: "company-files-staging" },
-    { ...baseEnvironment, SUPABASE_JWT_ISSUER: "http://keys.example.test/auth/v1" },
+    { ...baseEnvironment, FIREBASE_PROJECT_ID: "INVALID_PROJECT" },
+    { ...baseEnvironment, FIREBASE_WEB_API_KEY: "short" },
+    { ...baseEnvironment, COMPANY_FILES_BUCKET: "INVALID_BUCKET" },
+    { ...baseEnvironment, GCS_PROJECT_ID: "INVALID_PROJECT" },
+    { ...baseEnvironment, FIREBASE_AUTH_EMULATOR_HOST: "remote.example.test:9099" },
     { ...baseEnvironment, WEB_SESSION_ENCRYPTION_KEY_BASE64: "not-base64" },
     {
       ...baseEnvironment,

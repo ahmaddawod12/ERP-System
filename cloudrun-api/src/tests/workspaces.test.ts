@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import type {
   ApiDatabaseRuntime,
   DatabaseQueryable,
@@ -15,9 +15,9 @@ import { LIST_WORKSPACES_SQL } from "../workspaces/repository.js";
 const viewerId = "8b6867e1-1010-4fc6-8501-b1746b27fd30";
 const webSessionToken = "S".repeat(43);
 
-function fakeVerifier(): SupabaseJwtVerifier {
+function fakeVerifier(): FirebaseTokenVerifier {
   return {
-    issuer: "https://project.supabase.co/auth/v1",
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAccessToken() {
       return { userId: viewerId, expiresAt: 4_102_444_800 };
@@ -84,6 +84,7 @@ test("workspace route authenticates, scopes SQL, and maps safe DTOs", async (con
           assert.equal(token, webSessionToken);
           return {
             userId: viewerId,
+            verifiedEmail: "viewer@example.test",
             absoluteExpiresAt: new Date("2026-07-14T00:00:00.000Z"),
           };
         },

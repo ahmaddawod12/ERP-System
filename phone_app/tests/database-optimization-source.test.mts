@@ -48,7 +48,7 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
   assert.match(migration, /CREATE OR REPLACE FUNCTION apply_inventory_pick_batch/);
   assert.match(migration, /ALTER TABLE app_users ENABLE ROW LEVEL SECURITY/);
   assert.match(migration, /REVOKE EXECUTE ON FUNCTION '\s*\|\| function_signature/);
-  assert.match(migration, /GRANT EXECUTE ON FUNCTION '\s*\|\| function_signature/);
+  assert.doesNotMatch(migration, /\bservice_role\b/);
   assert.match(migration, /apply_inventory_movement\(UUID, UUID, NUMERIC/);
   assert.match(migration, /apply_inventory_pick_batch\(UUID, UUID, UUID, UUID, JSONB, TIMESTAMPTZ\)/);
   assert.match(migration, /bump_company_sync_version\(UUID, TEXT\)/);
@@ -56,7 +56,7 @@ test('database optimization migration adds indexes, RLS, and RPC execute hardeni
   assert.match(hardeningMigration, /ALTER FUNCTION public\.apply_inventory_movement[\s\S]*SET SCHEMA private/);
   assert.match(hardeningMigration, /CREATE OR REPLACE FUNCTION public\.apply_inventory_movement[\s\S]*SECURITY INVOKER/);
   assert.match(hardeningMigration, /REVOKE EXECUTE ON FUNCTION '\s*\|\| public_signature/);
-  assert.match(hardeningMigration, /GRANT EXECUTE ON FUNCTION '\s*\|\| public_signature[\s\S]*TO service_role/);
+  assert.match(hardeningMigration, /GRANT EXECUTE ON FUNCTION private\.set_api_request_context[\s\S]*TO smart_job_api/);
   assert.match(hardeningMigration, /documents_company_visible_created_cursor_idx/);
   assert.match(hardeningMigration, /tax_invoice_reservations_idempotency_lookup_idx/);
   assert.match(hardeningMigration, /cleanup_expired_operational_rows/);

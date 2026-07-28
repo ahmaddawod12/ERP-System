@@ -127,7 +127,7 @@ export default function FillJob() {
       const currentJobId = editingJob?.id || null;
       const freshURL = await resolveJobFileUri(
         signatureRef,
-        sessionUser?.id,
+        sessionUser?.uid,
         companyId,
         currentJobId,
       );
@@ -151,7 +151,7 @@ export default function FillJob() {
       const nextUrls = await Promise.all(
         (Array.isArray(photos) ? photos : []).map((photo) => resolveJobFileUri(
           photo,
-          sessionUser?.id,
+          sessionUser?.uid,
           companyId,
           currentJobId,
         )),
@@ -440,7 +440,7 @@ export default function FillJob() {
           parts: selectedParts,
         });
         const attachments = await stageFinishedJobAttachments({
-          userId: sessionUser.id,
+          userId: sessionUser.uid,
           photos: jobData.photos,
           signature: jobData.signature,
         });
@@ -473,7 +473,7 @@ export default function FillJob() {
             logger.warn('Could not refresh the pending-work list after enqueue', refreshError);
           });
         }
-        void invalidateTenantQueries(sessionUser.id, workspace.companyId, 'jobs').catch((queryError) => {
+        void invalidateTenantQueries(sessionUser.uid, workspace.companyId, 'jobs').catch((queryError) => {
           logger.warn('Could not refresh the jobs list after enqueue', queryError);
         });
 
@@ -506,7 +506,7 @@ export default function FillJob() {
         parts: selectedParts,
       });
       const attachments = await stageFinishedJobAttachments({
-        userId: sessionUser.id,
+        userId: sessionUser.uid,
         photos: jobData.photos,
         signature: jobData.signature,
       });
@@ -533,7 +533,7 @@ export default function FillJob() {
           logger.warn('Could not refresh the pending-work list after enqueue', refreshError);
         });
       }
-      void invalidateTenantQueries(sessionUser.id, workspace.companyId, 'jobs').catch((queryError) => {
+      void invalidateTenantQueries(sessionUser.uid, workspace.companyId, 'jobs').catch((queryError) => {
         logger.warn('Could not refresh the jobs list after completion enqueue', queryError);
       });
 

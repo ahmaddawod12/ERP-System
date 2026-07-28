@@ -100,7 +100,7 @@ export default function SupportChat() {
   const colors = getColors(isDarkMode);
   const t = getSupportTranslations(language);
   const statusText = statusTranslations[language] || statusTranslations.en;
-  const uid = user?.id ?? null;
+  const uid = user?.uid ?? null;
   const companyId = workspace?.companyId ?? null;
   const scopeCompanyId = companyId ?? 0;
   const supportEnabled = sessionStatus === 'authenticated' && tenantStatus !== 'loading';

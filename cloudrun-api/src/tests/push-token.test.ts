@@ -5,7 +5,7 @@ import type { QueryResultRow } from "pg";
 
 import type {
   ApiRequestAuthenticator,
-  SupabaseUserClient,
+  FirebaseUserClient,
 } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
@@ -33,7 +33,7 @@ function bearerAuthenticator(): ApiRequestAuthenticator {
   };
 }
 
-function verifiedSupabaseUser(): SupabaseUserClient {
+function verifiedFirebaseUser(): FirebaseUserClient {
   return {
     async getUser(token) {
       assert.equal(token, accessToken);
@@ -87,7 +87,7 @@ test("push-token routes write only the authenticated profile and never return or
   registerPushTokenRoutes(app, {
     authenticator: bearerAuthenticator(),
     database: databaseUsing(transaction),
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const upsertResponse = await app.inject({
@@ -137,7 +137,7 @@ test("push-token mutation requires an authoritative verified email", async (cont
         throw new Error("database must not run for an unverified user");
       },
     },
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         return { userId, email: "pending@example.test", emailVerified: false };
       },
@@ -171,7 +171,7 @@ test("push-token route rejects unsupported platforms before writing", async (con
         throw new Error("database must not run for invalid input");
       },
     },
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const response = await app.inject({
@@ -194,7 +194,7 @@ test("missing authenticated profile produces a stable not-found response", async
         throw Object.assign(new Error("PUSH_DEVICE_USER_NOT_FOUND"), { code: "P0002" });
       },
     }),
-    supabaseUsers: verifiedSupabaseUser(),
+    firebaseUsers: verifiedFirebaseUser(),
   });
 
   const response = await app.inject({

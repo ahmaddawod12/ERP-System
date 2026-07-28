@@ -148,7 +148,7 @@ test("pool saturation is reported without changing transaction behavior", async 
 });
 
 test("runtime refuses migration, admin, and service-role database credentials", () => {
-  for (const role of ["postgres", "service_role", "supabase_admin", "worker_role"]) {
+  for (const role of ["postgres", "service_role", "firebase_admin", "worker_role"]) {
     assert.throws(
       () =>
         createApiDatabaseRuntime({

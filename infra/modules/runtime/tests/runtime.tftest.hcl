@@ -1,22 +1,23 @@
 mock_provider "google" {}
 
 variables {
-  project_id            = "smart-job-test"
-  environment           = "dev"
-  name_prefix           = "smart-job-test"
-  enable_runtime        = false
-  primary_region        = "europe-west3"
-  tax_region            = "me-west1"
-  network_id            = "projects/smart-job-test/global/networks/platform"
-  primary_subnet_id     = "projects/smart-job-test/regions/europe-west3/subnetworks/primary"
-  tax_subnet_id         = "projects/smart-job-test/regions/me-west1/subnetworks/tax"
-  archive_bucket_name   = "smart-job-test-archive"
-  backup_bucket_name    = "smart-job-test-backup"
-  website_origin        = "https://app.test.example.com"
-  api_origin            = "https://api.test.example.com"
-  tax_origin            = "https://tax.test.example.com"
-  recaptcha_site_key    = "test-public-site-key"
-  image_registry_prefix = "europe-west3-docker.pkg.dev/smart-job-test/smart-job/"
+  project_id                = "smart-job-test"
+  environment               = "dev"
+  name_prefix               = "smart-job-test"
+  enable_runtime            = false
+  primary_region            = "europe-west3"
+  tax_region                = "me-west1"
+  network_id                = "projects/smart-job-test/global/networks/platform"
+  primary_subnet_id         = "projects/smart-job-test/regions/europe-west3/subnetworks/primary"
+  tax_subnet_id             = "projects/smart-job-test/regions/me-west1/subnetworks/tax"
+  archive_bucket_name       = "smart-job-test-archive"
+  company_files_bucket_name = "smart-job-test-company-files"
+  backup_bucket_name        = "smart-job-test-backup"
+  website_origin            = "https://app.test.example.com"
+  api_origin                = "https://api.test.example.com"
+  tax_origin                = "https://tax.test.example.com"
+  recaptcha_site_key        = "test-public-site-key"
+  image_registry_prefix     = "europe-west3-docker.pkg.dev/smart-job-test/smart-job/"
 
   service_accounts = {
     website     = "website@smart-job-test.iam.gserviceaccount.com"
@@ -33,43 +34,35 @@ variables {
   }
 
   secret_ids = {
-    api_database_url              = "test-api-database-url"
-    archiver_database_url         = "test-archiver-database-url"
-    backup_database_url           = "test-backup-database-url"
-    aws_access_key_id             = "test-aws-access-key-id"
-    aws_secret_access_key         = "test-aws-secret-access-key"
-    contact_challenge_secret      = "test-contact-challenge-secret"
-    email_database_url            = "test-email-database-url"
-    migrator_database_url         = "test-migrator-database-url"
-    pdf_database_url              = "test-pdf-database-url"
-    ses_from_email                = "test-ses-from-email"
-    supabase_publishable_key      = "test-supabase-publishable-key"
-    supabase_s3_access_key_id     = "test-supabase-s3-access-key-id"
-    supabase_s3_secret_access_key = "test-supabase-s3-secret-access-key"
-    supabase_secret_key           = "test-supabase-secret-key"
-    supabase_url                  = "test-supabase-url"
-    web_session_encryption_key    = "test-web-session-key"
-    website_session_secret        = "test-website-session-secret"
+    api_database_url           = "test-api-database-url"
+    archiver_database_url      = "test-archiver-database-url"
+    backup_database_url        = "test-backup-database-url"
+    aws_access_key_id          = "test-aws-access-key-id"
+    aws_secret_access_key      = "test-aws-secret-access-key"
+    contact_challenge_secret   = "test-contact-challenge-secret"
+    email_database_url         = "test-email-database-url"
+    migrator_database_url      = "test-migrator-database-url"
+    pdf_database_url           = "test-pdf-database-url"
+    ses_from_email             = "test-ses-from-email"
+    firebase_web_api_key       = "test-firebase-web-api-key"
+    web_session_encryption_key = "test-web-session-key"
+    website_session_secret     = "test-website-session-secret"
   }
 
   secret_versions = {
-    test-api-database-url              = "1"
-    test-archiver-database-url         = "1"
-    test-backup-database-url           = "1"
-    test-aws-access-key-id             = "1"
-    test-aws-secret-access-key         = "1"
-    test-contact-challenge-secret      = "1"
-    test-email-database-url            = "1"
-    test-migrator-database-url         = "1"
-    test-pdf-database-url              = "1"
-    test-ses-from-email                = "1"
-    test-supabase-publishable-key      = "1"
-    test-supabase-s3-access-key-id     = "1"
-    test-supabase-s3-secret-access-key = "1"
-    test-supabase-secret-key           = "1"
-    test-supabase-url                  = "1"
-    test-web-session-key               = "1"
-    test-website-session-secret        = "1"
+    test-api-database-url         = "1"
+    test-archiver-database-url    = "1"
+    test-backup-database-url      = "1"
+    test-aws-access-key-id        = "1"
+    test-aws-secret-access-key    = "1"
+    test-contact-challenge-secret = "1"
+    test-email-database-url       = "1"
+    test-migrator-database-url    = "1"
+    test-pdf-database-url         = "1"
+    test-ses-from-email           = "1"
+    test-firebase-web-api-key     = "1"
+    test-web-session-key          = "1"
+    test-website-session-secret   = "1"
   }
 
   image_digests = {
@@ -83,7 +76,7 @@ variables {
     migration = "europe-west3-docker.pkg.dev/smart-job-test/smart-job/cloudrun-migrations@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   }
 
-  supabase_connection_limit = 100
+  database_connection_limit = 100
   service_max_instances = {
     website = 4
     api     = 8

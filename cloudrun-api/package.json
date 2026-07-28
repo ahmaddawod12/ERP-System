@@ -28,13 +28,14 @@
   },
   "dependencies": {
     "@fastify/swagger": "9.8.0",
+    "@google-cloud/storage": "7.21.0",
     "@smart-job/api-contracts": "file:../packages/api-contracts",
     "@smart-job/contracts": "file:../packages/contracts",
     "@smart-job/db": "file:../packages/db",
     "@smart-job/observability": "file:../packages/observability",
-    "@supabase/supabase-js": "2.110.3",
     "fastify": "5.10.0",
     "fastify-type-provider-zod": "7.0.0",
+    "firebase-admin": "14.2.0",
     "jose": "6.2.3",
     "pg": "8.20.0",
     "zod": "4.4.3"
@@ -45,7 +46,8 @@
     "typescript": "5.9.3"
   },
   "overrides": {
-    "find-my-way": "9.7.0"
+    "find-my-way": "9.7.0",
+    "uuid": "11.1.1"
   },
   "license": "UNLICENSED"
 }

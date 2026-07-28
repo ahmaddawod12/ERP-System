@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server.js";
-import { serverSignUp } from "@/lib/auth/server-supabase";
+import { serverSignUp } from "@/lib/auth/server-firebase";
 import { parseWebsiteOrigin } from "@/lib/auth/opaque-session";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       }, { status: 400, headers: { "Cache-Control": "private, no-store" } });
     }
 
-    await serverSignUp(email, password);
+    await serverSignUp(email, password, `${websiteOrigin}/auth/confirm`);
     return NextResponse.json({ ok: true, verificationRequired: true }, {
       headers: { "Cache-Control": "private, no-store" },
     });

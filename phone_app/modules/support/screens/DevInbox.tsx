@@ -122,7 +122,7 @@ export default function DevInbox() {
   const alert = useAlert();
   const colors = getColors(isDarkMode);
   const t = translations[language] || translations.en;
-  const uid = user?.id ?? null;
+  const uid = user?.uid ?? null;
   const companyId = workspace?.companyId ?? null;
   const scopeCompanyId = companyId ?? 0;
   const actionKeysRef = useRef<StableSupportActionKeys | null>(null);

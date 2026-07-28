@@ -10,14 +10,8 @@ const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const composeFile = join(repositoryRoot, "compose.local.yml");
 const runtimeEnvFile = join(repositoryRoot, "local-platform", ".env.generated");
 const markerFile = join(repositoryRoot, "local-platform", "marker");
-const supabaseConfig = join(repositoryRoot, "supabase", "config.toml");
 const localNetwork = "smart-job-local";
-const projectId = "smart-job-erp-local";
 const expectedMarker = "smart-job-erp-local-platform-v1";
-const supabaseNetworkAliases = Object.freeze({
-  database: "smart-job-supabase-db",
-  gateway: "smart-job-supabase-gateway",
-});
 
 function fail(message) {
   process.stderr.write(`Local platform: ${message}\n`);
@@ -57,12 +51,8 @@ function run(command, args, options = {}) {
 }
 
 function assertRepository() {
-  if (!existsSync(composeFile) || !existsSync(supabaseConfig) || !existsSync(markerFile)) {
+  if (!existsSync(composeFile) || !existsSync(markerFile)) {
     fail("run this command from the Smart-Job ERP repository checkout");
-  }
-  const config = readFileSync(supabaseConfig, "utf8");
-  if (!/^project_id\s*=\s*"smart-job-erp-local"\s*$/m.test(config)) {
-    fail("supabase/config.toml does not identify the repository-owned local project");
   }
   if (readFileSync(markerFile, "utf8").trim() !== expectedMarker) {
     fail("the repository local-platform marker is invalid");
@@ -89,7 +79,6 @@ function requireTooling() {
   }
   run("node", ["--version"], { capture: true });
   run("npm", ["--version"], { capture: true });
-  run("supabase", ["--version"], { capture: true });
 }
 
 function ensureNetwork() {
@@ -116,82 +105,6 @@ function ensureNetwork() {
   ], { capture: true });
 }
 
-function startSupabase() {
-  process.stdout.write("Starting the repository-owned Supabase CLI stack...\n");
-  run("supabase", ["start", "--network-id", localNetwork], { capture: true });
-  ensureSupabaseNetworkAlias("5432/tcp", supabaseNetworkAliases.database);
-  ensureSupabaseNetworkAlias("8000/tcp", supabaseNetworkAliases.gateway);
-}
-
-function resolveSupabaseContainer(exposedPort) {
-  const candidates = run("docker", [
-    "ps",
-    "--filter",
-    `network=${localNetwork}`,
-    "--format",
-    "{{.ID}}",
-  ], { capture: true });
-  const matches = String(candidates.stdout || "")
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .filter((containerId) => {
-      const inspected = run("docker", [
-        "inspect",
-        containerId,
-        "--format",
-        "{{json .}}",
-      ], { capture: true });
-      try {
-        const metadata = JSON.parse(String(inspected.stdout || "").trim());
-        const config = metadata.Config || {};
-        const labels = config.Labels || {};
-        const belongsToProject =
-          Object.values(labels).some((value) => String(value) === projectId)
-          || String(metadata.Name || "").includes(projectId);
-        return belongsToProject && Object.hasOwn(config.ExposedPorts || {}, exposedPort);
-      } catch {
-        fail(`Docker returned invalid metadata for local container ${containerId}`);
-      }
-    });
-  if (matches.length !== 1) {
-    fail(`expected one ${projectId} container exposing ${exposedPort}, found ${matches.length}`);
-  }
-  return matches[0];
-}
-
-function ensureSupabaseNetworkAlias(exposedPort, alias) {
-  const containerId = resolveSupabaseContainer(exposedPort);
-  const inspected = run("docker", [
-    "inspect",
-    containerId,
-    "--format",
-    `{{json (index .NetworkSettings.Networks "${localNetwork}").Aliases}}`,
-  ], { capture: true });
-  let aliases;
-  try {
-    aliases = JSON.parse(String(inspected.stdout || "").trim());
-  } catch {
-    fail(`Docker returned invalid ${localNetwork} aliases for ${containerId}`);
-  }
-  if (Array.isArray(aliases) && aliases.includes(alias)) return;
-
-  // Supabase may attach the container before this script can assign a stable
-  // repository-owned alias. Reattach only this validated project container.
-  run("docker", ["network", "disconnect", localNetwork, containerId], { capture: true });
-  run("docker", ["network", "connect", "--alias", alias, localNetwork, containerId], { capture: true });
-  const verified = run("docker", [
-    "inspect",
-    containerId,
-    "--format",
-    `{{json (index .NetworkSettings.Networks "${localNetwork}").Aliases}}`,
-  ], { capture: true });
-  const verifiedAliases = JSON.parse(String(verified.stdout || "").trim());
-  if (!Array.isArray(verifiedAliases) || !verifiedAliases.includes(alias)) {
-    fail(`${containerId} does not expose the required ${localNetwork} alias ${alias}`);
-  }
-}
-
 function parseEnvironmentFile(text) {
   const parsed = new Map();
   for (const line of text.split(/\r?\n/)) {
@@ -201,15 +114,6 @@ function parseEnvironmentFile(text) {
     parsed.set(match[1], raw.replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
   }
   return parsed;
-}
-
-function readSupabaseStatus() {
-  const result = run("supabase", ["status", "-o", "env"], { capture: true });
-  const values = parseEnvironmentFile(String(result.stdout || ""));
-  for (const key of ["DB_URL", "PUBLISHABLE_KEY", "SECRET_KEY"]) {
-    if (!values.get(key)) fail(`Supabase status did not return ${key}`);
-  }
-  return values;
 }
 
 function randomBase64Url(bytes = 32) {
@@ -222,15 +126,9 @@ function existingRuntimeValues() {
     : new Map();
 }
 
-function ensureRuntimeEnvironment(supabase) {
+function ensureRuntimeEnvironment() {
   const existing = existingRuntimeValues();
   const stable = (name, factory = randomBase64Url) => existing.get(name) || factory();
-  let databasePassword = "postgres";
-  try {
-    databasePassword = new URL(supabase.get("DB_URL")).password || databasePassword;
-  } catch {
-    fail("Supabase returned an invalid local database URL");
-  }
   const values = new Map([
     ["SMART_JOB_LOCAL_NETWORK", localNetwork],
     ["LOCAL_WEBSITE_PORT", existing.get("LOCAL_WEBSITE_PORT") || "3000"],
@@ -241,9 +139,10 @@ function ensureRuntimeEnvironment(supabase) {
     ["LOCAL_EMAIL_PORT", existing.get("LOCAL_EMAIL_PORT") || "58085"],
     ["LOCAL_GCS_PORT", existing.get("LOCAL_GCS_PORT") || "58080"],
     ["LOCAL_MAILPIT_PORT", existing.get("LOCAL_MAILPIT_PORT") || "58025"],
-    ["LOCAL_SUPABASE_PUBLISHABLE_KEY", supabase.get("PUBLISHABLE_KEY")],
-    ["LOCAL_SUPABASE_SECRET_KEY", supabase.get("SECRET_KEY")],
-    ["LOCAL_SUPABASE_DB_PASSWORD", databasePassword],
+    ["LOCAL_POSTGRES_PORT", existing.get("LOCAL_POSTGRES_PORT") || "55432"],
+    ["LOCAL_FIREBASE_AUTH_PORT", existing.get("LOCAL_FIREBASE_AUTH_PORT") || "59099"],
+    ["LOCAL_POSTGRES_PASSWORD", stable("LOCAL_POSTGRES_PASSWORD")],
+    ["LOCAL_FIREBASE_WEB_API_KEY", stable("LOCAL_FIREBASE_WEB_API_KEY", () => randomBase64Url(24))],
     ["LOCAL_API_DB_PASSWORD", stable("LOCAL_API_DB_PASSWORD")],
     ["LOCAL_PDF_DB_PASSWORD", stable("LOCAL_PDF_DB_PASSWORD")],
     ["LOCAL_EMAIL_DB_PASSWORD", stable("LOCAL_EMAIL_DB_PASSWORD")],
@@ -284,24 +183,41 @@ function ensureDatabaseTooling() {
   }
 }
 
-function migrateDatabase(supabase) {
-  ensureDatabaseTooling();
-  process.stdout.write("Applying expand-only Drizzle migrations...\n");
-  run("npm", ["--prefix", "packages/db", "run", "db:migrate"], {
-    env: {
-      ...process.env,
-      DATABASE_URL: supabase.get("DB_URL"),
-      DATABASE_SSL_MODE: "disable",
-    },
-  });
-}
-
 function composeArguments(...args) {
   return ["compose", "-f", composeFile, "--env-file", runtimeEnvFile, ...args];
 }
 
 function validateCompose() {
   run("docker", composeArguments("config", "--quiet"), { capture: true });
+}
+
+function startDependencies() {
+  process.stdout.write("Starting PostgreSQL and local service emulators...\n");
+  run("docker", composeArguments(
+    "up",
+    "--build",
+    "--detach",
+    "--wait",
+    "postgres",
+    "firebase-auth-emulator",
+    "gcs-emulator",
+    "mailpit",
+    "local-platform-adapter",
+  ));
+}
+
+function migrateDatabase(values) {
+  ensureDatabaseTooling();
+  process.stdout.write("Applying Drizzle migrations to local PostgreSQL...\n");
+  const password = values.get("LOCAL_POSTGRES_PASSWORD");
+  const port = values.get("LOCAL_POSTGRES_PORT");
+  run("npm", ["--prefix", "packages/db", "run", "db:migrate"], {
+    env: {
+      ...process.env,
+      DATABASE_URL: `postgresql://postgres:${password}@127.0.0.1:${port}/postgres`,
+      DATABASE_SSL_MODE: "disable",
+    },
+  });
 }
 
 function bootstrapRoles() {
@@ -326,9 +242,9 @@ function printEndpoints(values) {
     "Local platform is ready:",
     `  Website:       http://127.0.0.1:${values.get("LOCAL_WEBSITE_PORT")}`,
     `  API:           http://127.0.0.1:${values.get("LOCAL_API_PORT")}`,
+    `  Firebase Auth: http://127.0.0.1:${values.get("LOCAL_FIREBASE_AUTH_PORT")}`,
+    `  PostgreSQL:    postgresql://127.0.0.1:${values.get("LOCAL_POSTGRES_PORT")}/postgres`,
     `  Mailpit:       http://127.0.0.1:${values.get("LOCAL_MAILPIT_PORT")}`,
-    "  Supabase:      http://127.0.0.1:55321",
-    "  Supabase UI:   http://127.0.0.1:55323",
     "  Tax gateway:   disabled",
     "",
   ].join("\n"));
@@ -344,11 +260,10 @@ function doctor() {
 function start() {
   doctor();
   ensureNetwork();
-  startSupabase();
-  const supabase = readSupabaseStatus();
-  const values = ensureRuntimeEnvironment(supabase);
+  const values = ensureRuntimeEnvironment();
   validateCompose();
-  migrateDatabase(supabase);
+  startDependencies();
+  migrateDatabase(values);
   bootstrapRoles();
   startApplications();
   printEndpoints(values);
@@ -359,35 +274,20 @@ function stop() {
   if (existsSync(runtimeEnvFile)) {
     run("docker", composeArguments("down", "--remove-orphans"));
   }
-  run("supabase", ["stop"], { capture: true });
   process.stdout.write("Stopped the repository local platform; named volumes were preserved.\n");
 }
 
 function reset(confirmed) {
   if (!confirmed) {
-    fail("reset deletes only this project's local database, queues, archives, and test email; pass --yes to confirm");
+    fail("reset deletes only this project's local database, auth users, queues, archives, and test email; pass --yes to confirm");
   }
   doctor();
   ensureNetwork();
-  if (existsSync(runtimeEnvFile)) {
-    run("docker", composeArguments("down", "--volumes", "--remove-orphans"));
-  }
-  startSupabase();
-  process.stdout.write("Resetting the repository-owned local Supabase database...\n");
-  run("supabase", [
-    "db",
-    "reset",
-    "--local",
-    "--no-seed",
-    "--network-id",
-    localNetwork,
-  ]);
-  ensureSupabaseNetworkAlias("5432/tcp", supabaseNetworkAliases.database);
-  ensureSupabaseNetworkAlias("8000/tcp", supabaseNetworkAliases.gateway);
-  const supabase = readSupabaseStatus();
-  const values = ensureRuntimeEnvironment(supabase);
+  const values = ensureRuntimeEnvironment();
   validateCompose();
-  migrateDatabase(supabase);
+  run("docker", composeArguments("down", "--volumes", "--remove-orphans"));
+  startDependencies();
+  migrateDatabase(values);
   bootstrapRoles();
   startApplications();
   printEndpoints(values);
@@ -395,11 +295,6 @@ function reset(confirmed) {
 
 function status() {
   doctor();
-  // The CLI's default status table includes publishable, secret, and S3 keys.
-  // Capture the env form only to verify that the stack is available, and never
-  // forward its stdout to the terminal.
-  readSupabaseStatus();
-  process.stdout.write("Supabase local development stack is running.\n");
   if (existsSync(runtimeEnvFile)) {
     run("docker", composeArguments("ps"));
     printEndpoints(existingRuntimeValues());
@@ -430,12 +325,12 @@ switch (command) {
       "Usage: node scripts/local-platform.mjs <command>",
       "",
       "Commands:",
-      "  doctor       verify Docker Desktop, Supabase CLI, Node, and repository identity",
-      "  start        start Supabase, migrate/bootstrap roles, and launch Compose",
+      "  doctor       verify Docker Desktop, Node, and repository identity",
+      "  start        start PostgreSQL, Firebase Auth, migrate roles, and launch Compose",
       "  status       show local service status and non-secret endpoints",
       "  stop         stop this repository's services while preserving local data",
       "  reset --yes  destroy and recreate only this repository's local data",
-      "  archive      run the opt-in local archiver compatibility job",
+      "  archive      run the opt-in local archiver job",
       "",
     ].join("\n"));
 }

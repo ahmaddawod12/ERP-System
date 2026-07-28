@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import { loadConfig } from "../config.js";
 import type {
@@ -31,9 +31,9 @@ const firstPartId = "a4178724-4774-41b2-ac17-433ca2a819a3";
 const secondPartId = "04a5348f-f405-4da6-9494-7cc5c21b38ae";
 const thirdPartId = "4a7d2cff-522f-4fa3-854b-8ac2f87f958d";
 
-function verifier(): SupabaseJwtVerifier {
+function verifier(): FirebaseTokenVerifier {
   return {
-    issuer: "https://project.supabase.co/auth/v1",
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");

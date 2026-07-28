@@ -21,6 +21,7 @@ test('PDF health and readiness endpoints have separate dependency semantics', ()
   assert.match(sql, /has_function_privilege/);
   assert.match(sql, /private\.claim_pdf_document_task\(text,uuid,integer\)/);
   assert.doesNotMatch(sql, /private\.claim_document_task/);
-  assert.match(storage, /client\.storage\.getBucket/);
+  assert.match(storage, /bucket\.getMetadata\(\)/);
+  assert.match(storage, /ifGenerationMatch:\s*0/);
   assert.doesNotMatch(index, /response\.status\(503\).*error\.message/s);
 });

@@ -13,7 +13,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import {
   createClient,
@@ -46,7 +46,7 @@ const removalResponseSchema = createApiSuccessResponseSchema(ClientDeleteResultS
 export interface ClientMutationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 function mapClientMutationDatabaseError(error: unknown): unknown {
@@ -136,7 +136,7 @@ export function registerClientMutationRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = companyParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = ClientCreateRequestSchema.parse(request.body);
@@ -199,7 +199,7 @@ export function registerClientMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = clientParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = ClientUpdateRequestSchema.parse(request.body);
@@ -264,7 +264,7 @@ export function registerClientMutationRoutes(
     },
     async (request) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(authenticated, services.firebaseUsers);
       const params = clientParamsSchema.parse(request.params);
       const headers = mutationHeadersSchema.parse(request.headers);
       const body = ClientDeleteRequestSchema.parse(request.body);

@@ -27,6 +27,10 @@ variable "archive_bucket_name" {
   type = string
 }
 
+variable "company_files_bucket_name" {
+  type = string
+}
+
 variable "backup_bucket_name" {
   type = string
 }
@@ -134,7 +138,7 @@ variable "web_session_key_version" {
   default = "v1"
 }
 
-variable "supabase_connection_limit" {
+variable "database_connection_limit" {
   description = "Purchased Postgres connection limit used by the 70% capacity guard."
   type        = number
 }

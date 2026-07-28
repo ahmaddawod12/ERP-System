@@ -192,7 +192,7 @@ if (adminDatabaseUrl.length === 0) {
       registerJobMutationRoutes(app, {
         authenticator,
         database: contextualRuntime(admin),
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser() {
             return {
               userId: activeUserId,
@@ -415,7 +415,7 @@ if (adminDatabaseUrl.length === 0) {
            has_function_privilege('smart_job_api', 'private.accept_api_job(uuid,uuid,bigint,timestamp with time zone)', 'EXECUTE') AS can_accept,
            has_function_privilege('smart_job_api', 'private.delete_api_job(uuid,uuid,bigint)', 'EXECUTE') AS can_delete,
            has_function_privilege('smart_job_api', 'private.validate_api_job_patch(jsonb)', 'EXECUTE') AS can_call_helper,
-           has_function_privilege('authenticated', 'private.update_api_job(uuid,uuid,bigint,jsonb,timestamp with time zone)', 'EXECUTE') AS authenticated_can_update,
+           has_function_privilege('smart_job_backup', 'private.update_api_job(uuid,uuid,bigint,jsonb,timestamp with time zone)', 'EXECUTE') AS backup_can_update,
            has_table_privilege('smart_job_api', 'public.jobs', 'UPDATE') AS can_update_directly,
            has_table_privilege('smart_job_api', 'public.jobs', 'DELETE') AS can_delete_directly`,
       );
@@ -424,7 +424,7 @@ if (adminDatabaseUrl.length === 0) {
         can_accept: true,
         can_delete: true,
         can_call_helper: false,
-        authenticated_can_update: false,
+        backup_can_update: false,
         can_update_directly: false,
         can_delete_directly: false,
       });

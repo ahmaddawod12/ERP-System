@@ -186,7 +186,7 @@ test("job update, accept, and delete share verified idempotent RPC boundaries", 
   registerJobMutationRoutes(app, {
     authenticator,
     database,
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser(accessToken) {
         verifiedLookups += 1;
         assert.equal(accessToken, "job.payload.signature");
@@ -265,7 +265,7 @@ test("job mutation schemas reject missing keys, direct finish, and legacy author
         throw new Error("invalid requests must not reach the database");
       },
     },
-    supabaseUsers: {
+    firebaseUsers: {
       async getUser() {
         throw new Error("invalid requests must not verify users");
       },

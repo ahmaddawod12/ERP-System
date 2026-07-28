@@ -4,236 +4,181 @@ const { describe, it } = require('node:test');
 const {
   readUploadCleanupConfig,
   runUploadCleanup,
-  runUploadCleanupFromEnvironment,
   runUploadCleanupStartup,
 } = require('../upload-cleanup');
 
-const SECRET_KEY = 'sb_secret_unit_test_key_not_real';
 const COMPANY_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const SESSION_ID = '33333333-3333-4333-8333-333333333333';
 const ATTACHMENT_ID = '44444444-4444-4444-8444-444444444444';
 
-function jsonResponse(value, status = 200) {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
 function validClaim(overrides = {}) {
-  const sessionId = overrides.session_id || SESSION_ID;
+  const sessionId = overrides.sessionId || SESSION_ID;
   return {
-    session_id: sessionId,
-    bucket_id: 'smart-job-company-files',
-    object_paths: [
+    sessionId,
+    bucketId: 'smart-job-company-files',
+    objectPaths: [
       `${COMPANY_ID}/${USER_ID}/${sessionId}/${ATTACHMENT_ID}.jpg`,
     ],
-    lease_expires_at: '2026-07-13T12:05:00.000Z',
-    attempt_count: 1,
+    leaseExpiresAt: '2026-07-13T12:05:00.000Z',
+    attemptCount: 1,
     ...overrides,
   };
 }
 
 function config(overrides = {}) {
   return {
-    supabaseOrigin: 'https://project-ref.supabase.co',
-    secretKey: SECRET_KEY,
+    projectId: 'smart-job-production',
+    bucketId: 'smart-job-company-files',
     batchSize: 25,
     leaseSeconds: 300,
     concurrency: 2,
-    timeoutMs: 10_000,
     ...overrides,
   };
 }
 
-function pathname(input) {
-  return new URL(String(input)).pathname;
+function dependencies(claims, options = {}) {
+  const finishes = [];
+  const deleted = [];
+  return {
+    finishes,
+    deleted,
+    value: {
+      database: {
+        async queue() {
+          return { uploadSessionsQueued: claims.length };
+        },
+        async claim(limit, leaseSeconds) {
+          assert.equal(limit, 25);
+          assert.equal(leaseSeconds, 300);
+          return claims;
+        },
+        async finish(input) {
+          finishes.push(input);
+          return {
+            outcome: input.succeeded
+              ? 'cleanup_complete'
+              : (options.failedOutcome || 'cleanup_pending'),
+          };
+        },
+      },
+      bucket: {
+        file(path) {
+          return {
+            async delete(input) {
+              assert.deepEqual(input, { ignoreNotFound: true });
+              if (options.deleteError) throw options.deleteError;
+              deleted.push(path);
+            },
+          };
+        },
+      },
+    },
+  };
 }
 
 describe('abandoned upload cleanup worker', () => {
-  it('uses the secret only as apikey and deletes exactly the claimed manifest', async () => {
-    const calls = [];
-    const fetchImpl = async (input, init) => {
-      calls.push({ input, init });
-      const path = pathname(input);
-      if (path.endsWith('/queue_expired_file_upload_cleanup')) {
-        return jsonResponse({ uploadSessionsQueued: 1, uploadSessionsQuarantined: 0 });
-      }
-      if (path.endsWith('/claim_file_upload_cleanup_batch')) {
-        return jsonResponse([validClaim()]);
-      }
-      if (path === '/storage/v1/object/smart-job-company-files') {
-        return jsonResponse([{ name: validClaim().object_paths[0] }]);
-      }
-      if (path.endsWith('/finish_file_upload_cleanup')) {
-        return jsonResponse({ outcome: 'cleanup_complete', status: 'cleanup_complete' });
-      }
-      throw new Error(`unexpected request ${path}`);
-    };
+  it('deletes exactly the paths claimed by PostgreSQL and marks success', async () => {
+    const claim = validClaim();
+    const mocks = dependencies([claim]);
+    const summary = await runUploadCleanup(config(), mocks.value);
 
-    const summary = await runUploadCleanup(config(), fetchImpl);
     assert.equal(summary.completed, 1);
     assert.equal(summary.failures.length, 0);
-    assert.equal(calls.length, 4);
-
-    for (const call of calls) {
-      assert.equal(call.init.headers.apikey, SECRET_KEY);
-      assert.equal(
-        Object.keys(call.init.headers).some((name) => name.toLowerCase() === 'authorization'),
-        false,
-        'opaque Supabase secret keys must never be sent as bearer tokens',
-      );
-    }
-
-    const storageCall = calls.find((call) => call.init.method === 'DELETE');
-    assert.ok(storageCall);
-    assert.deepEqual(JSON.parse(storageCall.init.body), {
-      prefixes: validClaim().object_paths,
-    });
-    const finishCall = calls.find((call) => pathname(call.input).endsWith('/finish_file_upload_cleanup'));
-    assert.deepEqual(JSON.parse(finishCall.init.body), {
-      p_session_id: SESSION_ID,
-      p_attempt_count: 1,
-      p_succeeded: true,
-      p_error: null,
-    });
+    assert.deepEqual(mocks.deleted, claim.objectPaths);
+    assert.deepEqual(mocks.finishes, [{
+      sessionId: SESSION_ID,
+      attemptCount: 1,
+      succeeded: true,
+      error: null,
+    }]);
   });
 
-  it('rejects a cross-prefix claim before Storage and safely requeues it', async () => {
-    const calls = [];
+  it('rejects a cross-prefix claim before GCS and safely requeues it', async () => {
     const crossPrefix = validClaim({
-      object_paths: [
+      objectPaths: [
         `${COMPANY_ID}/${USER_ID}/55555555-5555-4555-8555-555555555555/${ATTACHMENT_ID}.jpg`,
       ],
     });
-    const fetchImpl = async (input, init) => {
-      calls.push({ input, init });
-      const path = pathname(input);
-      if (path.endsWith('/queue_expired_file_upload_cleanup')) return jsonResponse({});
-      if (path.endsWith('/claim_file_upload_cleanup_batch')) return jsonResponse([crossPrefix]);
-      if (path.endsWith('/finish_file_upload_cleanup')) {
-        const body = JSON.parse(init.body);
-        assert.equal(body.p_succeeded, false);
-        assert.match(body.p_error, /non-canonical/);
-        return jsonResponse({ outcome: 'cleanup_pending', status: 'cleanup_pending' });
-      }
-      throw new Error(`Storage DELETE must not run for ${path}`);
-    };
+    const mocks = dependencies([crossPrefix]);
+    const summary = await runUploadCleanup(config(), mocks.value);
 
-    const summary = await runUploadCleanup(config(), fetchImpl);
     assert.equal(summary.requeued, 1);
-    assert.equal(summary.failures.length, 1);
     assert.equal(summary.failures[0].stage, 'validation');
-    assert.equal(calls.some((call) => call.init.method === 'DELETE'), false);
+    assert.deepEqual(mocks.deleted, []);
+    assert.equal(mocks.finishes[0].succeeded, false);
   });
 
-  it('reports Storage failures after acknowledging a bounded retry', async () => {
-    const fetchImpl = async (input, init) => {
-      const path = pathname(input);
-      if (path.endsWith('/queue_expired_file_upload_cleanup')) return jsonResponse({});
-      if (path.endsWith('/claim_file_upload_cleanup_batch')) return jsonResponse([validClaim()]);
-      if (path === '/storage/v1/object/smart-job-company-files') {
-        return jsonResponse({ message: 'temporary failure' }, 503);
-      }
-      if (path.endsWith('/finish_file_upload_cleanup')) {
-        const body = JSON.parse(init.body);
-        assert.equal(body.p_succeeded, false);
-        assert.match(body.p_error, /HTTP 503/);
-        return jsonResponse({ outcome: 'cleanup_pending', status: 'cleanup_pending' });
-      }
-      throw new Error(`unexpected request ${path}`);
-    };
+  it('reports GCS deletion failures after acknowledging a bounded retry', async () => {
+    const mocks = dependencies(
+      [validClaim()],
+      { deleteError: new Error('GCS unavailable') },
+    );
+    const summary = await runUploadCleanup(config(), mocks.value);
 
-    const summary = await runUploadCleanup(config(), fetchImpl);
-    assert.equal(summary.completed, 0);
     assert.equal(summary.requeued, 1);
-    assert.equal(summary.failures.length, 1);
     assert.equal(summary.failures[0].stage, 'delete');
+    assert.match(mocks.finishes[0].error, /GCS unavailable/);
   });
 
-  it('keeps object deletion concurrency within the configured bound', async () => {
+  it('keeps claim concurrency within the configured bound', async () => {
     const claims = Array.from({ length: 5 }, (_, index) => {
       const suffix = String(index + 10).padStart(12, '0');
       const sessionId = `00000000-0000-4000-8000-${suffix}`;
       const attachmentId = `00000000-0000-4000-9000-${suffix}`;
       return validClaim({
-        session_id: sessionId,
-        object_paths: [`${COMPANY_ID}/${USER_ID}/${sessionId}/${attachmentId}.jpg`],
+        sessionId,
+        objectPaths: [`${COMPANY_ID}/${USER_ID}/${sessionId}/${attachmentId}.jpg`],
       });
     });
-    let activeDeletes = 0;
-    let maximumActiveDeletes = 0;
-    const fetchImpl = async (input) => {
-      const path = pathname(input);
-      if (path.endsWith('/queue_expired_file_upload_cleanup')) return jsonResponse({});
-      if (path.endsWith('/claim_file_upload_cleanup_batch')) return jsonResponse(claims);
-      if (path === '/storage/v1/object/smart-job-company-files') {
-        activeDeletes += 1;
-        maximumActiveDeletes = Math.max(maximumActiveDeletes, activeDeletes);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        activeDeletes -= 1;
-        return jsonResponse([]);
-      }
-      if (path.endsWith('/finish_file_upload_cleanup')) {
-        return jsonResponse({ outcome: 'cleanup_complete', status: 'cleanup_complete' });
-      }
-      throw new Error(`unexpected request ${path}`);
-    };
-
-    const summary = await runUploadCleanup(config({ concurrency: 2 }), fetchImpl);
-    assert.equal(summary.completed, 5);
-    assert.ok(maximumActiveDeletes <= 2);
-  });
-
-  it('skips cleanly when startup cleanup is not configured', async () => {
-    const summary = await runUploadCleanupFromEnvironment({}, async () => {
-      throw new Error('fetch must not be called');
-    });
-    assert.equal(summary.skipped, true);
-  });
-
-  it('reports a startup failure without throwing into monthly archive work', async () => {
-    const errors = [];
-    const logger = {
-      log() {},
-      warn() {},
-      error(...args) { errors.push(args); },
-    };
-    const result = await runUploadCleanupStartup({
-      env: {
-        SUPABASE_URL: 'https://project-ref.supabase.co',
-        SUPABASE_SECRET_KEY: SECRET_KEY,
+    let active = 0;
+    let maximum = 0;
+    const database = dependencies(claims).value.database;
+    const summary = await runUploadCleanup(config({ concurrency: 2 }), {
+      database,
+      bucket: {
+        file() {
+          return {
+            async delete() {
+              active += 1;
+              maximum = Math.max(maximum, active);
+              await new Promise((resolve) => setTimeout(resolve, 5));
+              active -= 1;
+            },
+          };
+        },
       },
-      fetchImpl: async () => jsonResponse({ message: 'offline' }, 503),
-      logger,
+    });
+    assert.equal(summary.completed, 5);
+    assert.ok(maximum <= 2);
+  });
+
+  it('validates the canonical GCS bucket and bounded worker settings', () => {
+    const parsed = readUploadCleanupConfig({
+      GCS_PROJECT_ID: 'smart-job-production',
+      COMPANY_FILES_BUCKET: 'smart-job-company-files',
+      UPLOAD_CLEANUP_BATCH_SIZE: '50',
+    });
+    assert.equal(parsed.projectId, 'smart-job-production');
+    assert.equal(parsed.batchSize, 50);
+    assert.throws(
+      () => readUploadCleanupConfig({ COMPANY_FILES_BUCKET: 'other-bucket' }),
+      /smart-job-company-files/,
+    );
+  });
+
+  it('reports invalid startup configuration without blocking archive work', async () => {
+    const errors = [];
+    const result = await runUploadCleanupStartup({
+      env: {},
+      logger: {
+        log() {},
+        warn() {},
+        error(...args) { errors.push(args); },
+      },
     });
     assert.equal(result, null);
     assert.equal(errors.length, 1);
     assert.match(errors[0][0], /monthly archives will continue/);
-  });
-
-  it('requires an opaque server secret and an exact secure project origin', () => {
-    assert.throws(
-      () => readUploadCleanupConfig({
-        SUPABASE_URL: 'https://project-ref.supabase.co',
-        SUPABASE_SECRET_KEY: 'legacy-service-role-jwt',
-      }),
-      /sb_secret_/,
-    );
-    assert.throws(
-      () => readUploadCleanupConfig({
-        SUPABASE_URL: 'http://project-ref.supabase.co',
-        SUPABASE_SECRET_KEY: SECRET_KEY,
-      }),
-      /HTTPS/,
-    );
-    assert.equal(
-      readUploadCleanupConfig({
-        SUPABASE_URL: 'http://127.0.0.1:55321',
-        SUPABASE_SECRET_KEY: SECRET_KEY,
-      }).supabaseOrigin,
-      'http://127.0.0.1:55321',
-    );
   });
 });

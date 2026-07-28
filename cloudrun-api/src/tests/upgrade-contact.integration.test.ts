@@ -84,19 +84,6 @@ if (adminDatabaseUrl.length === 0) {
     await admin.connect();
     try {
       await admin.query(
-        `INSERT INTO auth.users (
-           id, aud, role, email, email_confirmed_at,
-           raw_app_meta_data, raw_user_meta_data, created_at, updated_at
-         ) VALUES
-           ($1, 'authenticated', 'authenticated', $2, clock_timestamp(),
-            '{}'::jsonb, '{}'::jsonb, clock_timestamp(), clock_timestamp()),
-           ($3, 'authenticated', 'authenticated', $4, clock_timestamp(),
-            '{}'::jsonb, '{}'::jsonb, clock_timestamp(), clock_timestamp()),
-           ($5, 'authenticated', 'authenticated', $6, clock_timestamp(),
-            '{}'::jsonb, '{}'::jsonb, clock_timestamp(), clock_timestamp())`,
-        [managerId, managerEmail, developerId, developerEmail, outsiderId, outsiderEmail],
-      );
-      await admin.query(
         `INSERT INTO public.app_users (id, email, display_name, system_role)
          VALUES
            ($1, $2, 'Upgrade Manager', NULL),
@@ -144,7 +131,7 @@ if (adminDatabaseUrl.length === 0) {
       registerUpgradeRequestRoutes(app, {
         authenticator,
         database,
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser() {
             const emails = new Map([
               [managerId, managerEmail],
@@ -352,10 +339,6 @@ if (adminDatabaseUrl.length === 0) {
         .catch(() => undefined);
       await admin.query(
         "DELETE FROM public.app_users WHERE id IN ($1, $2, $3)",
-        [managerId, developerId, outsiderId],
-      ).catch(() => undefined);
-      await admin.query(
-        "DELETE FROM auth.users WHERE id IN ($1, $2, $3)",
         [managerId, developerId, outsiderId],
       ).catch(() => undefined);
       await admin.end();

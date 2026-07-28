@@ -76,7 +76,7 @@ test("tax creation fails closed while disabled without allocating a document", a
   registerTaxInvoiceRoutes(app, {
     database,
     authenticator: authenticator(),
-    supabaseUsers: verifiedUsers(),
+    firebaseUsers: verifiedUsers(),
     taxSubmissionMode: "disabled",
   });
 
@@ -160,7 +160,7 @@ test("tax creation is strict, server-typed, and idempotently queues one reservat
   registerTaxInvoiceRoutes(app, {
     database,
     authenticator: authenticator(),
-    supabaseUsers: verifiedUsers(),
+    firebaseUsers: verifiedUsers(),
     taxSubmissionMode: "sandbox",
     taxGatewayClient: { async requestApproval() { throw new Error("drain-only dependency"); } },
   });

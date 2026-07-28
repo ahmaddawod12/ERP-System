@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { QueryResultRow } from "pg";
 
-import { createApiRequestAuthenticator, type SupabaseJwtVerifier } from "../auth/index.js";
+import { createApiRequestAuthenticator, type FirebaseTokenVerifier } from "../auth/index.js";
 import { buildApp } from "../app.js";
 import {
   READ_CLIENTS_ENTITLEMENT_SQL,
@@ -27,9 +27,9 @@ const firstClientId = "ffe77602-d9b1-4a53-97e1-52df99f97224";
 const secondClientId = "4877089d-60c8-44f6-be79-116e6f3b34cc";
 const thirdClientId = "126bf50f-51de-4cf7-a2a1-90fb615e12b5";
 
-function verifier(): SupabaseJwtVerifier {
+function verifier(): FirebaseTokenVerifier {
   return {
-    issuer: "https://project.supabase.co/auth/v1",
+    issuer: "https://project.firebase.co/auth/v1",
     audiences: ["authenticated"],
     async verifyAuthorizationHeader() {
       throw new Error("not used");
@@ -132,6 +132,7 @@ test("clients route applies bounded SQL search and returns canonical cursor DTOs
           assert.equal(token, webSessionToken);
           return {
             userId,
+            verifiedEmail: "viewer@example.test",
             absoluteExpiresAt: new Date("2026-07-14T00:00:00.000Z"),
           };
         },

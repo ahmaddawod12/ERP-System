@@ -114,7 +114,7 @@ export default function ViewJobDetails({
   const [resolvedSignatureUri, setResolvedSignatureUri] = useState<string | null>(null);
   const safeJob = job ?? null;
   const companyId = Number(getCompanyId());
-  const uid = user?.id ?? '';
+  const uid = user?.uid ?? '';
   const jobId = String(safeJob?.id || '').trim();
   const canLoadDetail = visible
     && uid.length > 0

@@ -28,7 +28,7 @@ type FormValues = z.infer<typeof schema>;
 const setupFlow = [
   {
     title: "Create account",
-    description: "Email + password with Supabase Authentication.",
+    description: "Email + password with Firebase Authentication.",
   },
   {
     title: "Verify your email",

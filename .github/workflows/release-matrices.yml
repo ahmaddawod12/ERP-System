@@ -49,99 +49,22 @@ jobs:
 
   mobile_reconciliation_matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 65
     environment: mobile-release-e2e
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Validate disposable release fixture configuration
-        shell: bash
-        env:
-          MAESTRO_CLOUD_API_KEY: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
-          MAESTRO_CLOUD_PROJECT_ID: ${{ vars.MAESTRO_CLOUD_PROJECT_ID }}
-          MAESTRO_CLOUD_APP_BINARY_ID: ${{ vars.MAESTRO_CLOUD_APP_BINARY_ID }}
-          MAESTRO_TEST_EMAIL: ${{ secrets.MAESTRO_TEST_EMAIL }}
-          MAESTRO_TEST_PASSWORD: ${{ secrets.MAESTRO_TEST_PASSWORD }}
-          MAESTRO_TEST_WORKSPACE: ${{ vars.MAESTRO_TEST_WORKSPACE }}
-          MAESTRO_RELEASE_JOB_ID: ${{ vars.MAESTRO_RELEASE_JOB_ID }}
-          MAESTRO_RELEASE_JOB_TITLE: ${{ vars.MAESTRO_RELEASE_JOB_TITLE }}
-          MAESTRO_SECOND_USER_EMAIL: ${{ secrets.MAESTRO_SECOND_USER_EMAIL }}
-          MAESTRO_SECOND_USER_PASSWORD: ${{ secrets.MAESTRO_SECOND_USER_PASSWORD }}
-          MAESTRO_SECOND_USER_WORKSPACE: ${{ vars.MAESTRO_SECOND_USER_WORKSPACE }}
-        run: |
-          missing=0
-          for name in \
-            MAESTRO_CLOUD_API_KEY \
-            MAESTRO_CLOUD_PROJECT_ID \
-            MAESTRO_CLOUD_APP_BINARY_ID \
-            MAESTRO_TEST_EMAIL \
-            MAESTRO_TEST_PASSWORD \
-            MAESTRO_TEST_WORKSPACE \
-            MAESTRO_RELEASE_JOB_ID \
-            MAESTRO_RELEASE_JOB_TITLE \
-            MAESTRO_SECOND_USER_EMAIL \
-            MAESTRO_SECOND_USER_PASSWORD \
-            MAESTRO_SECOND_USER_WORKSPACE
-          do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::$name must be configured in the mobile-release-e2e environment"
-              missing=1
-            fi
-          done
-          exit "$missing"
-      - name: Run mutation, restart, reconciliation, and cross-user isolation flow
-        uses: mobile-dev-inc/action-maestro-cloud@a988946a094437ff87f549b32b4d4c9af246c0d6 # v1
+      - name: Run free Maestro CLI reconciliation flow
+        uses: ./.github/actions/run-maestro-android
         with:
-          api-key: ${{ secrets.MAESTRO_CLOUD_API_KEY }}
-          project-id: ${{ vars.MAESTRO_CLOUD_PROJECT_ID }}
-          app-binary-id: ${{ vars.MAESTRO_CLOUD_APP_BINARY_ID }}
-          workspace: phone_app/.maestro-release
-          timeout: 50
-          env: |
-            MAESTRO_APP_ID=erpsystem.app
-            MAESTRO_TEST_EMAIL=${{ secrets.MAESTRO_TEST_EMAIL }}
-            MAESTRO_TEST_PASSWORD=${{ secrets.MAESTRO_TEST_PASSWORD }}
-            MAESTRO_TEST_WORKSPACE=${{ vars.MAESTRO_TEST_WORKSPACE }}
-            MAESTRO_RELEASE_JOB_ID=${{ vars.MAESTRO_RELEASE_JOB_ID }}
-            MAESTRO_RELEASE_JOB_TITLE=${{ vars.MAESTRO_RELEASE_JOB_TITLE }}
-            MAESTRO_SECOND_USER_EMAIL=${{ secrets.MAESTRO_SECOND_USER_EMAIL }}
-            MAESTRO_SECOND_USER_PASSWORD=${{ secrets.MAESTRO_SECOND_USER_PASSWORD }}
-            MAESTRO_SECOND_USER_WORKSPACE=${{ vars.MAESTRO_SECOND_USER_WORKSPACE }}
-
-  supabase_cli_compatibility:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Start a newer CLI against an isolated compatibility stack
-        shell: bash
-        run: |
-          set -euo pipefail
-          compatibility_root="${RUNNER_TEMP}/supabase-cli-compatibility"
-          rm -rf "${compatibility_root}"
-          mkdir -p "${compatibility_root}"
-          cp -R supabase "${compatibility_root}/supabase"
-          config="${compatibility_root}/supabase/config.toml"
-          sed -i \
-            -e 's/smart-job-erp-local/smart-job-erp-cli-compat/g' \
-            -e 's/55320/56320/g' \
-            -e 's/55321/56321/g' \
-            -e 's/55322/56322/g' \
-            -e 's/55323/56323/g' \
-            -e 's/55324/56324/g' \
-            -e 's/55325/56325/g' \
-            -e 's/55326/56326/g' \
-            -e 's/55327/56327/g' \
-            -e 's/55329/56329/g' \
-            -e 's/55883/56883/g' \
-            "${config}"
-          npx --yes supabase@latest start --workdir "${compatibility_root}"
-          npx --yes supabase@latest status --workdir "${compatibility_root}" -o json >/dev/null
-          npx --yes supabase@latest stop --workdir "${compatibility_root}" --no-backup
-      - name: Stop compatibility stack after failure
-        if: failure()
-        shell: bash
-        run: |
-          compatibility_root="${RUNNER_TEMP}/supabase-cli-compatibility"
-          if [[ -f "${compatibility_root}/supabase/config.toml" ]]; then
-            npx --yes supabase@latest stop --workdir "${compatibility_root}" --no-backup || true
-          fi
+          flow-path: phone_app/.maestro-release
+          backend-api-base-url: ${{ vars.MOBILE_E2E_API_BASE_URL }}
+          google-services-json-base64: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+          test-email: ${{ secrets.MAESTRO_TEST_EMAIL }}
+          test-password: ${{ secrets.MAESTRO_TEST_PASSWORD }}
+          test-workspace: ${{ vars.MAESTRO_TEST_WORKSPACE }}
+          test-job-title: ${{ vars.MAESTRO_TEST_JOB_TITLE }}
+          release-job-id: ${{ vars.MAESTRO_RELEASE_JOB_ID }}
+          release-job-title: ${{ vars.MAESTRO_RELEASE_JOB_TITLE }}
+          second-user-email: ${{ secrets.MAESTRO_SECOND_USER_EMAIL }}
+          second-user-password: ${{ secrets.MAESTRO_SECOND_USER_PASSWORD }}
+          second-user-workspace: ${{ vars.MAESTRO_SECOND_USER_WORKSPACE }}

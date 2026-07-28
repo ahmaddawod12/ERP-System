@@ -12,7 +12,7 @@ import { z } from "zod";
 import {
   requireVerifiedMutationIdentity,
   type ApiRequestAuthenticator,
-  type SupabaseUserClient,
+  type FirebaseUserClient,
 } from "../auth/index.js";
 import { mapDatabaseError } from "../database/errors.js";
 import type { ApiDatabaseRuntime } from "../database/runtime.js";
@@ -49,7 +49,7 @@ const invitationRedemptionResponseSchema = createApiSuccessResponseSchema(
 export interface InvitationRouteServices {
   readonly authenticator: ApiRequestAuthenticator;
   readonly database: ApiDatabaseRuntime;
-  readonly supabaseUsers: SupabaseUserClient;
+  readonly firebaseUsers: FirebaseUserClient;
 }
 
 type InvitationOperation = "create" | "redeem";
@@ -221,7 +221,10 @@ export function registerInvitationRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      await requireVerifiedMutationIdentity(
+        authenticated,
+        services.firebaseUsers,
+      );
       const params = invitationParamsSchema.parse(request.params);
       const headers = idempotencyHeadersSchema.parse(request.headers);
       const body = InvitationCreateRequestSchema.parse(request.body);
@@ -291,7 +294,10 @@ export function registerInvitationRoutes(
     },
     async (request, reply) => {
       const authenticated = await services.authenticator.authenticate(request);
-      await requireVerifiedMutationIdentity(authenticated, services.supabaseUsers);
+      const verifiedIdentity = await requireVerifiedMutationIdentity(
+        authenticated,
+        services.firebaseUsers,
+      );
       const headers = idempotencyHeadersSchema.parse(request.headers);
       const body = InvitationRedeemRequestSchema.parse(request.body);
 
@@ -316,7 +322,18 @@ export function registerInvitationRoutes(
               return InvitationRedemptionResultSchema.parse(claim.responseBody);
             }
 
-            const membership = await redeemCompanyInvitation(transaction, body);
+            const verifiedEmail = verifiedIdentity?.email;
+            if (!verifiedEmail) {
+              throw new AppError({
+                statusCode: 403,
+                code: "EMAIL_VERIFICATION_REQUIRED",
+                message: "A verified email is required to redeem an invitation.",
+              });
+            }
+            const membership = await redeemCompanyInvitation(transaction, {
+              request: body,
+              verifiedEmail,
+            });
             const workspaces = await listWorkspaceSummaries(
               transaction,
               authenticated.userId,

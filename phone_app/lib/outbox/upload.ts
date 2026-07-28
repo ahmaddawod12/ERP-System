@@ -6,22 +6,26 @@ import { readDecryptedAttachmentChunks } from './attachments';
 import type { OutboxAttachmentRecord } from './database';
 
 const UPLOAD_TIMEOUT_MS = 60_000;
-const COMPANY_FILE_BUCKET = 'smart-job-company-files';
-
-function encodedObjectPath(objectPath: string): string {
-  return [COMPANY_FILE_BUCKET, ...objectPath.split('/')]
+function encodedObjectPath(bucket: string, objectPath: string): string {
+  return [bucket, ...objectPath.split('/')]
     .map((segment) => encodeURIComponent(segment))
     .join('/');
 }
 
 function verifiedUploadUrl(target: SignedUploadTarget): URL {
-  const configuredSupabaseUrl = String(
-    process.env.EXPO_PUBLIC_SUPABASE_URL || '',
+  const configuredUploadOrigin = String(
+    process.env.EXPO_PUBLIC_COMPANY_FILE_UPLOAD_ORIGIN || '',
+  ).trim();
+  const configuredBucket = String(
+    process.env.EXPO_PUBLIC_COMPANY_FILES_BUCKET || '',
   ).trim();
   let expectedOrigin: string;
   let uploadUrl: URL;
   try {
-    expectedOrigin = new URL(configuredSupabaseUrl).origin;
+    if (!/^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(configuredBucket)) {
+      throw new Error('invalid bucket');
+    }
+    expectedOrigin = new URL(configuredUploadOrigin).origin;
     uploadUrl = new URL(target.uploadUrl);
   } catch {
     throw new ApiClientError(
@@ -33,9 +37,12 @@ function verifiedUploadUrl(target: SignedUploadTarget): URL {
   }
   if (
     uploadUrl.origin !== expectedOrigin
-    || uploadUrl.pathname
-      !== `/storage/v1/object/upload/sign/${encodedObjectPath(target.objectPath)}`
-    || !uploadUrl.searchParams.get('token')
+    || uploadUrl.pathname !== `/${encodedObjectPath(configuredBucket, target.objectPath)}`
+    || uploadUrl.searchParams.get('ifGenerationMatch') !== '0'
+    || (
+      uploadUrl.protocol === 'https:'
+      && !uploadUrl.searchParams.get('X-Goog-Signature')
+    )
     || uploadUrl.hash !== ''
   ) {
     throw new ApiClientError(
@@ -115,7 +122,12 @@ export async function uploadEncryptedAttachment(
     });
     // A retried create-only upload may report an existing object. The final
     // server-side size/MIME/SHA verification decides whether it is acceptable.
-    if (!response.ok && response.status !== 400 && response.status !== 409) {
+    if (
+      !response.ok
+      && response.status !== 400
+      && response.status !== 409
+      && response.status !== 412
+    ) {
       throw new ApiClientError(
         'File upload failed',
         response.status,

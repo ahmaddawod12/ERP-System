@@ -7,15 +7,11 @@ import {
   type WebSessionCreated,
   type WebSessionCurrent,
 } from "@smart-job/api-contracts";
-import { decodeJwt } from "jose";
-import { z } from "zod";
-
 import {
   AuthError,
-  type SupabaseJwtVerifier,
-  type SupabaseUserClient,
-  type SupabaseWebAuthClient,
-  type SupabaseWebAuthUser,
+  type FirebaseTokenVerifier,
+  type FirebaseUserClient,
+  type FirebaseWebAuthClient,
 } from "../auth/index.js";
 import type { WebSessionDatabaseRuntime } from "../database/runtime.js";
 import { AppError } from "../http/errors.js";
@@ -32,7 +28,6 @@ import {
 
 const WEB_SESSION_LIFETIME_MS = 12 * 60 * 60 * 1_000;
 const DEFAULT_REFRESH_WINDOW_MS = 60_000;
-const sessionClaimSchema = z.object({ session_id: z.uuid() }).passthrough();
 
 interface ResolvedSession {
   readonly id: string;
@@ -50,9 +45,10 @@ interface ResolvedWebSession {
   readonly session: ResolvedSession;
 }
 
-/** Safe domain-auth result; encrypted Supabase credentials never cross this boundary. */
+/** Safe domain-auth result; encrypted Firebase credentials never cross this boundary. */
 export interface WebSessionAuthentication {
   readonly userId: string;
+  readonly verifiedEmail: string;
   readonly absoluteExpiresAt: Date;
 }
 
@@ -65,9 +61,9 @@ export interface WebSessionService {
 
 export interface CreateWebSessionServiceOptions {
   readonly database: WebSessionDatabaseRuntime;
-  readonly jwtVerifier: SupabaseJwtVerifier;
-  readonly supabaseUsers: SupabaseUserClient;
-  readonly supabaseWebAuth: SupabaseWebAuthClient;
+  readonly jwtVerifier: FirebaseTokenVerifier;
+  readonly firebaseUsers: FirebaseUserClient;
+  readonly firebaseWebAuth: FirebaseWebAuthClient;
   readonly crypto: WebSessionCrypto;
   readonly now?: () => Date;
   readonly refreshWindowMs?: number;
@@ -108,10 +104,14 @@ function authUnavailable(cause?: unknown): AppError {
 }
 
 async function verifyAccessToken(
-  verifier: SupabaseJwtVerifier,
+  verifier: FirebaseTokenVerifier,
   accessToken: string,
-): Promise<{ readonly userId: string; readonly expiresAt: number; readonly sessionId: string }> {
-  let identity: Awaited<ReturnType<SupabaseJwtVerifier["verifyAccessToken"]>>;
+): Promise<{
+  readonly userId: string;
+  readonly expiresAt: number;
+  readonly identitySessionId: string;
+}> {
+  let identity: Awaited<ReturnType<FirebaseTokenVerifier["verifyAccessToken"]>>;
   try {
     identity = await verifier.verifyAccessToken(accessToken);
   } catch (error) {
@@ -119,22 +119,14 @@ async function verifyAccessToken(
     throw error;
   }
 
-  let sessionId: string;
-  try {
-    sessionId = sessionClaimSchema.parse(decodeJwt(accessToken)).session_id.toLowerCase();
-  } catch (error) {
-    throw new AppError({
-      statusCode: 401,
-      code: "WEB_SESSION_INVALID",
-      message: "The website session is invalid or expired.",
-      cause: error,
-    });
-  }
-  return { ...identity, sessionId };
+  return {
+    ...identity,
+    identitySessionId: String(identity.authenticatedAt ?? identity.expiresAt),
+  };
 }
 
 function viewerFrom(
-  authUser: SupabaseWebAuthUser | Awaited<ReturnType<SupabaseUserClient["getUser"]>>,
+  authUser: Awaited<ReturnType<FirebaseUserClient["getUser"]>>,
   databaseData: Awaited<ReturnType<typeof readViewerDatabaseData>>,
 ) {
   return ViewerSchema.parse({
@@ -150,7 +142,7 @@ function binding(row: WebSessionRow) {
   return {
     id: row.id,
     userId: row.userId,
-    supabaseSessionId: row.supabaseSessionId,
+    identitySessionId: row.identitySessionId,
     absoluteExpiresAt: row.absoluteExpiresAt,
   };
 }
@@ -165,7 +157,7 @@ export function createWebSessionService(
   }
 
   async function bestEffortSignOut(accessToken: string): Promise<void> {
-    await options.supabaseWebAuth.signOut(accessToken).catch(() => undefined);
+    await options.firebaseWebAuth.signOut(accessToken).catch(() => undefined);
   }
 
   async function invalidateResolvedSession(
@@ -215,7 +207,7 @@ export function createWebSessionService(
         if (row.accessTokenExpiresAt.getTime() <= lockedAt.getTime() + refreshWindowMs) {
           let refreshed;
           try {
-            refreshed = await options.supabaseWebAuth.refreshSession(credentials.refreshToken);
+            refreshed = await options.firebaseWebAuth.refreshSession(credentials.refreshToken);
           } catch (error) {
             if (error instanceof AppError && error.statusCode === 401) {
               await revokeWebSession(transaction, row.id, "refresh_invalid", now());
@@ -236,8 +228,7 @@ export function createWebSessionService(
           }
           if (
             verified.userId !== row.userId
-            || verified.sessionId !== row.supabaseSessionId
-            || (refreshed.user !== null && refreshed.user.userId !== row.userId)
+            || verified.identitySessionId !== row.identitySessionId
           ) {
             await revokeWebSession(transaction, row.id, "identity_mismatch", now());
             return { kind: "invalid" };
@@ -275,10 +266,10 @@ export function createWebSessionService(
 
   async function loadVerifiedAuthUser(
     resolved: ResolvedWebSession,
-  ): Promise<Awaited<ReturnType<SupabaseUserClient["getUser"]>>> {
-    let authUser: Awaited<ReturnType<SupabaseUserClient["getUser"]>>;
+  ): Promise<Awaited<ReturnType<FirebaseUserClient["getUser"]>>> {
+    let authUser: Awaited<ReturnType<FirebaseUserClient["getUser"]>>;
     try {
-      authUser = await options.supabaseUsers.getUser(resolved.session.accessToken);
+      authUser = await options.firebaseUsers.getUser(resolved.session.accessToken);
     } catch (error) {
       if (error instanceof AppError && error.statusCode === 401) {
         await invalidateResolvedSession(
@@ -312,11 +303,13 @@ export function createWebSessionService(
 
   return {
     async createSession(email, password) {
-      const authSession = await options.supabaseWebAuth.signInWithPassword(email, password);
-      const authUser = authSession.user;
-      if (authUser === null) {
+      const authSession = await options.firebaseWebAuth.signInWithPassword(email, password);
+      let authUser: Awaited<ReturnType<FirebaseUserClient["getUser"]>>;
+      try {
+        authUser = await options.firebaseUsers.getUser(authSession.accessToken);
+      } catch (error) {
         await bestEffortSignOut(authSession.accessToken);
-        throw authUnavailable();
+        throw error;
       }
       if (!authUser.emailVerified) {
         await bestEffortSignOut(authSession.accessToken);
@@ -346,7 +339,7 @@ export function createWebSessionService(
       const encryptionBinding = {
         id,
         userId: verified.userId,
-        supabaseSessionId: verified.sessionId,
+        identitySessionId: verified.identitySessionId,
         absoluteExpiresAt,
       };
       let databaseData: Awaited<ReturnType<typeof readViewerDatabaseData>>;
@@ -383,9 +376,13 @@ export function createWebSessionService(
     },
 
     async authenticateSession(sessionToken) {
-      const { session } = await resolveWebSession(sessionToken);
+      const resolved = await resolveWebSession(sessionToken);
+      const authUser = await loadVerifiedAuthUser(resolved);
+      const { session } = resolved;
+      if (!authUser.email) throw emailNotVerified();
       return {
         userId: session.userId,
+        verifiedEmail: authUser.email,
         absoluteExpiresAt: new Date(session.absoluteExpiresAt),
       };
     },

@@ -98,7 +98,7 @@ export default function Settings() {
           onPress: async () => {
             try {
               await runLogoutSequence({
-                userId: user?.id ?? null,
+                userId: user?.uid ?? null,
                 clearPushToken: clearViewerPushToken,
                 signOut: signOutSession,
                 clearCache,

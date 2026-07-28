@@ -13,6 +13,46 @@ x-local-service: &local-service
     - smart_job_local_platform
 
 services:
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:?run the local-platform start script}
+    ports:
+      - 127.0.0.1:${LOCAL_POSTGRES_PORT:-55432}:5432
+    volumes:
+      - local-postgres-data:/var/lib/postgresql/data
+    networks:
+      smart-job-local:
+        aliases:
+          - smart-job-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  firebase-auth-emulator:
+    build:
+      context: ./local-platform/firebase-auth
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      GCLOUD_PROJECT: smart-job-local
+    ports:
+      - 127.0.0.1:${LOCAL_FIREBASE_AUTH_PORT:-59099}:9099
+    volumes:
+      - local-firebase-auth-data:/data
+    networks:
+      - smart-job-local
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9099/emulator/v1/projects/smart-job-local/config').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   gcs-emulator:
     image: fsouza/fake-gcs-server:1.55.0@sha256:2845d1504bb4a5a4fe54b16dd70e398814eb139af49b01b07839e016120ff123
     restart: unless-stopped
@@ -106,19 +146,17 @@ services:
       HOST: 0.0.0.0
       PORT: "8080"
       LOG_LEVEL: info
-      DATABASE_URL: postgresql://smart_job_api:${LOCAL_API_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
+      DATABASE_URL: postgresql://smart_job_api:${LOCAL_API_DB_PASSWORD:?run the local-platform start script}@smart-job-postgres:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "5"
-      SUPABASE_URL: http://127.0.0.1:55321
-      SUPABASE_INTERNAL_URL: http://smart-job-supabase-gateway:8000
-      SUPABASE_PUBLISHABLE_KEY: ${LOCAL_SUPABASE_PUBLISHABLE_KEY:?run the local-platform start script}
-      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
-      SUPABASE_STORAGE_BUCKET: smart-job-company-files
-      SUPABASE_JWT_ISSUER: http://127.0.0.1:55321/auth/v1
-      SUPABASE_JWKS_URL: http://smart-job-supabase-gateway:8000/auth/v1/.well-known/jwks.json
-      SUPABASE_JWT_AUDIENCE: authenticated
+      FIREBASE_PROJECT_ID: smart-job-local
+      FIREBASE_WEB_API_KEY: ${LOCAL_FIREBASE_WEB_API_KEY:?run the local-platform start script}
+      FIREBASE_AUTH_EMULATOR_HOST: firebase-auth-emulator:9099
+      GCS_PROJECT_ID: smart-job-local
+      COMPANY_FILES_BUCKET: smart-job-company-files
+      COMPANY_FILES_PUBLIC_BASE_URL: http://127.0.0.1:${LOCAL_GCS_PORT:-58080}
       ARCHIVE_BUCKET: smart-job-archives-local
-      STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
+      GCS_API_ENDPOINT: http://gcs-emulator:4443
       WEB_SESSION_ENCRYPTION_KEY_BASE64: ${LOCAL_WEB_SESSION_ENCRYPTION_KEY_BASE64:?run the local-platform start script}
       WEB_SESSION_ENCRYPTION_KEY_VERSION: local-v1
       DOCUMENT_PUBSUB_PROJECT_ID: smart-job-local
@@ -133,6 +171,10 @@ services:
     ports:
       - 127.0.0.1:${LOCAL_API_PORT:-58081}:8080
     depends_on:
+      postgres:
+        condition: service_healthy
+      firebase-auth-emulator:
+        condition: service_healthy
       local-platform-adapter:
         condition: service_healthy
     healthcheck:
@@ -172,13 +214,13 @@ services:
       NODE_ENV: production
       PORT: "8080"
       SMART_JOB_PERSISTENCE_BACKEND: sql
-      DATABASE_URL: postgresql://smart_job_pdf:${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
+      DATABASE_URL: postgresql://smart_job_pdf:${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}@smart-job-postgres:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "3"
-      SUPABASE_URL: http://smart-job-supabase-gateway:8000
-      SUPABASE_PUBLIC_URL: http://127.0.0.1:55321
-      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
-      SUPABASE_STORAGE_BUCKET: smart-job-company-files
+      GCS_PROJECT_ID: smart-job-local
+      COMPANY_FILES_BUCKET: smart-job-company-files
+      GCS_API_ENDPOINT: http://gcs-emulator:4443
+      COMPANY_FILES_PUBLIC_BASE_URL: http://127.0.0.1:${LOCAL_GCS_PORT:-58080}
       PUBSUB_VERIFICATION_TOKEN: ${LOCAL_PUBSUB_VERIFICATION_TOKEN:?run the local-platform start script}
       MAX_CONCURRENT_TABS: "2"
       MAX_TAB_WAITERS: "32"
@@ -204,14 +246,14 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "8080"
-      DATABASE_URL: postgresql://smart_job_email:${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
+      DATABASE_URL: postgresql://smart_job_email:${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}@smart-job-postgres:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "3"
       PUBSUB_VERIFICATION_TOKEN: ${LOCAL_PUBSUB_VERIFICATION_TOKEN:?run the local-platform start script}
-      SUPABASE_URL: http://smart-job-supabase-gateway:8000
-      SUPABASE_PUBLIC_URL: http://127.0.0.1:55321
-      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
-      SUPABASE_STORAGE_BUCKET: smart-job-company-files
+      GCS_PROJECT_ID: smart-job-local
+      COMPANY_FILES_BUCKET: smart-job-company-files
+      GCS_API_ENDPOINT: http://gcs-emulator:4443
+      COMPANY_FILES_PUBLIC_BASE_URL: http://127.0.0.1:${LOCAL_GCS_PORT:-58080}
       AWS_REGION: eu-central-1
       AWS_SES_ENDPOINT: http://local-platform-adapter:8090/ses
       AWS_ACCESS_KEY_ID: local-access-key
@@ -242,8 +284,9 @@ services:
       PORT: "3000"
       BACKEND_API_BASE_URL: http://cloudrun-api:8080
       BACKEND_API_TIMEOUT_MS: "12000"
-      SUPABASE_URL: http://smart-job-supabase-gateway:8000
-      SUPABASE_PUBLISHABLE_KEY: ${LOCAL_SUPABASE_PUBLISHABLE_KEY:?run the local-platform start script}
+      FIREBASE_PROJECT_ID: smart-job-local
+      FIREBASE_WEB_API_KEY: ${LOCAL_FIREBASE_WEB_API_KEY:?run the local-platform start script}
+      FIREBASE_AUTH_EMULATOR_HOST: firebase-auth-emulator:9099
       WEBSITE_ORIGIN: http://127.0.0.1:${LOCAL_WEBSITE_PORT:-3000}
       WEBSITE_SESSION_SECRET: ${LOCAL_WEBSITE_SESSION_SECRET:?run the local-platform start script}
       CONTACT_CHALLENGE_SECRET: ${LOCAL_CONTACT_CHALLENGE_SECRET:?run the local-platform start script}
@@ -265,11 +308,11 @@ services:
     networks:
       - smart-job-local
     environment:
-      PGHOST: smart-job-supabase-db
+      PGHOST: smart-job-postgres
       PGPORT: "5432"
       PGDATABASE: postgres
       PGUSER: postgres
-      PGPASSWORD: ${LOCAL_SUPABASE_DB_PASSWORD:-postgres}
+      PGPASSWORD: ${LOCAL_POSTGRES_PASSWORD:?run the local-platform start script}
       LOCAL_API_DB_PASSWORD: ${LOCAL_API_DB_PASSWORD:?run the local-platform start script}
       LOCAL_PDF_DB_PASSWORD: ${LOCAL_PDF_DB_PASSWORD:?run the local-platform start script}
       LOCAL_EMAIL_DB_PASSWORD: ${LOCAL_EMAIL_DB_PASSWORD:?run the local-platform start script}
@@ -300,19 +343,23 @@ services:
       <<: *local-environment
       NODE_ENV: production
       SMART_JOB_PERSISTENCE_BACKEND: sql
-      DATABASE_URL: postgresql://smart_job_archiver:${LOCAL_ARCHIVER_DB_PASSWORD:?run the local-platform start script}@smart-job-supabase-db:5432/postgres
+      DATABASE_URL: postgresql://smart_job_archiver:${LOCAL_ARCHIVER_DB_PASSWORD:?run the local-platform start script}@smart-job-postgres:5432/postgres
       DATABASE_SSL_MODE: disable
       DATABASE_MAX_CONNECTIONS: "1"
-      STORAGE_EMULATOR_HOST: http://gcs-emulator:4443
+      GCS_API_ENDPOINT: http://gcs-emulator:4443
+      GCS_PROJECT_ID: smart-job-local
+      COMPANY_FILES_BUCKET: smart-job-company-files
       ARCHIVE_BUCKET: smart-job-archives-local
       ARCHIVER_QUERY_PAGE_SIZE: "500"
       ARCHIVER_COMPANY_CONCURRENCY: "1"
       ARCHIVER_LEASE_SECONDS: "3600"
       ARCHIVER_JOB_DEADLINE_MS: "3300000"
       ARCHIVER_CANDIDATE_LIMIT: "2000"
-      SUPABASE_URL: http://smart-job-supabase-gateway:8000
-      SUPABASE_SECRET_KEY: ${LOCAL_SUPABASE_SECRET_KEY:?run the local-platform start script}
     depends_on:
+      postgres:
+        condition: service_healthy
+      gcs-emulator:
+        condition: service_healthy
       local-platform-adapter:
         condition: service_healthy
 
@@ -321,6 +368,8 @@ secrets:
     file: ./local-platform/marker
 
 volumes:
+  local-postgres-data:
+  local-firebase-auth-data:
   local-adapter-data:
   local-gcs-data:
   local-mailpit-data:

@@ -99,6 +99,10 @@ variable "archive_bucket_name" {
   type = string
 }
 
+variable "company_files_bucket_name" {
+  type = string
+}
+
 variable "backup_bucket_name" {
   type = string
 }
@@ -148,13 +152,13 @@ variable "web_session_key_version" {
   default     = "v1"
 }
 
-variable "supabase_connection_limit" {
-  description = "Purchased Supabase/Postgres connection ceiling."
+variable "database_connection_limit" {
+  description = "Purchased PostgreSQL connection ceiling."
   type        = number
 
   validation {
-    condition     = var.supabase_connection_limit >= 10
-    error_message = "supabase_connection_limit must be at least 10."
+    condition     = var.database_connection_limit >= 10
+    error_message = "database_connection_limit must be at least 10."
   }
 }
 

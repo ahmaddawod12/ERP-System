@@ -76,7 +76,7 @@ export default function Workerjob() {
     pageSize: 50,
   }), [dateFilter.endDate, dateFilter.startDate, dateFilter.type]);
   const { query: jobsQuery, jobs } = useJobsInfinite({
-    uid: user?.id ?? null,
+    uid: user?.uid ?? null,
     companyId: workspace?.companyId ?? null,
     filters: jobsFilters,
   });

@@ -14,7 +14,7 @@ test("login establishes an opaque same-origin session without browser auth SDKs"
   assert.match(loginClient, /workspaceDestination\(parsed\.data\.data\.viewer\.workspaces\)/);
   assert.doesNotMatch(
     loginClient,
-    /signInWithConfiguredProvider|client-auth|NEXT_PUBLIC_SUPABASE|localStorage|sessionStorage|access[_-]?token|refresh[_-]?token|Authorization/i,
+    /signInWithConfiguredProvider|client-auth|NEXT_PUBLIC_FIREBASE|localStorage|sessionStorage|access[_-]?token|refresh[_-]?token|Authorization/i,
   );
 });
 

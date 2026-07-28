@@ -1,9 +1,9 @@
 # Mobile rollout
 
-The shipped client uses the Cloud Run API exclusively for ERP data. Supabase
-Edge, Firebase Auth/Functions/Firestore/Storage, and the old rollback endpoint
-are not present in the repository; rollback therefore depends on API backward
-compatibility and a previously healthy native build, not a legacy data path.
+The shipped client uses Firebase Authentication for identity and the Cloud Run
+API exclusively for ERP data. Firebase Functions/Firestore/Storage and the old
+rollback endpoint are not present; rollback therefore depends on API backward
+compatibility and a previously healthy native build.
 
 ## Release prerequisites
 
@@ -26,23 +26,28 @@ compatibility and a previously healthy native build, not a legacy data path.
    signing certificate or iOS bundle identifier, and rotate any unrestricted
    key before approving the build.
    Confirm the API origin is stable HTTPS and matches the release environment.
-4. Confirm the API and worker image digests, database migrations, Supabase
-   Storage, FCM/APNs, Crashlytics, Pub/Sub, email, archive, and tax-disabled
+4. Confirm the API and worker image digests, database migrations, GCS,
+   Firebase Auth, FCM/APNs, Crashlytics, Pub/Sub, email, archive, and tax-disabled
    paths are healthy before building the production binary.
-5. Run the mandatory Maestro Cloud flows against a seeded non-production
-   environment. CI requires:
+5. Run the mandatory open-source Maestro CLI flows against a seeded
+   non-production environment. CI builds a debug APK and runs it on its own
+   Android emulator; no Maestro Cloud account or paid plan is used. CI requires:
 
-   - secret `MAESTRO_CLOUD_API_KEY`
-   - variable `MAESTRO_CLOUD_PROJECT_ID`
-   - variable `MAESTRO_CLOUD_APP_BINARY_ID`
+   - secret `FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_BASE64`
+   - variable `MOBILE_E2E_API_BASE_URL`
    - secret `MAESTRO_TEST_EMAIL`
    - secret `MAESTRO_TEST_PASSWORD`
    - variable `MAESTRO_TEST_WORKSPACE`
    - variable `MAESTRO_TEST_JOB_TITLE`
 
-   CI derives `MAESTRO_APP_ID` from the canonical Android package and iOS
-   bundle identifier (`erpsystem.app`) and fails in a dedicated preflight step
-   when any externally managed Maestro value is absent.
+   The Firebase secret is the base64 encoding of the non-production
+   `google-services.json`; the API URL must be HTTPS. The release reconciliation
+   environment additionally requires the release job and second-user fixture
+   values already referenced by `.maestro-release/reconciliation.yaml`.
+
+   CI uses the canonical Android package (`erpsystem.app`) and fails in a
+   dedicated preflight step when any externally managed value is absent.
+   Maestro CLI is pinned to a fixed version and archive checksum.
 
    The seeded user must have multiple workspaces and one job with the configured
    title. Offline mode is Android-only in Maestro and verifies that Pending Work

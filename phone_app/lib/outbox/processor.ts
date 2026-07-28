@@ -12,7 +12,7 @@ import {
   AUTH_IDENTITY_CHANGED_CODE,
   requestApi,
 } from '../api/client';
-import { restoreSupabaseSession } from '../auth/supabase-client';
+import { restoreFirebaseUser } from '../auth/firebase-auth';
 import {
   deleteStagedAttachment,
   deleteStagedAttachmentDirectory,
@@ -214,8 +214,8 @@ export function waitForActiveOutboxSynchronization(
 }
 
 async function currentUserMatches(database: UserOutboxDatabase): Promise<boolean> {
-  const session = await restoreSupabaseSession();
-  return session?.user.id.toLowerCase() === database.userId;
+  const user = await restoreFirebaseUser();
+  return user?.uid.toLowerCase() === database.userId;
 }
 
 async function drainFileCleanup(database: UserOutboxDatabase): Promise<void> {

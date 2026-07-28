@@ -89,7 +89,7 @@ if (adminDatabaseUrl.length === 0) {
       registerBusinessRegistrationRoutes(app, {
         authenticator,
         database: contextualRuntime(admin),
-        supabaseUsers: {
+        firebaseUsers: {
           async getUser(token) {
             assert.equal(token, "registration.payload.signature");
             return { userId, email: verifiedEmail, emailVerified: true };
